@@ -1,0 +1,29 @@
+# ==========================================
+# OpenMailStack Configuration Variables
+# ==========================================
+
+# Your primary mail domain (e.g., example.com)
+FIRST_DOMAIN="example.com"
+
+# The hostname of your mail server (e.g., mail.example.com)
+MAIL_HOSTNAME="mail.${FIRST_DOMAIN}"
+
+# Database Settings
+DB_ROOT_PASSWORD="ChangeMe_DB_Root_Pass"
+VMAIL_DB_NAME="vmail"
+VMAIL_DB_USER="vmail"
+VMAIL_DB_PASSWORD="ChangeMe_Vmail_Pass"
+
+# PostfixAdmin Settings
+POSTFIXADMIN_DB_NAME="postfixadmin"
+POSTFIXADMIN_DB_USER="postfixadmin"
+POSTFIXADMIN_DB_PASSWORD="ChangeMe_PFA_Pass"
+POSTFIXADMIN_SETUP_PASSWORD="ChangeMe_Setup_Pass"
+
+# Roundcube Settings
+ROUNDCUBE_DB_NAME="roundcube"
+ROUNDCUBE_DB_USER="roundcube"
+ROUNDCUBE_DB_PASSWORD="ChangeMe_RC_Pass"
+
+# Let's Encrypt Email (for expiry notifications)
+LETSENCRYPT_EMAIL="admin@${FIRST_DOMAIN}"

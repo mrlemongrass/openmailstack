@@ -26,44 +26,24 @@ apt-get install -y -qq dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd do
 DOVECOT_VERSION=$(dovecot --version | grep -oE '^[0-9]+\.[0-9]+')
 echo -e "Detected Dovecot Version: ${DOVECOT_VERSION}"
 
-# 2. Configure the SQL Connection
-echo -e "Configuring Dovecot SQL connection..."
-
-if [[ "$DOVECOT_VERSION" == "2.4" ]]; then
-    # Dovecot 2.4+ Syntax
-    cat <<EOF > /etc/dovecot/dovecot-sql.conf.ext
-driver = mysql
-connect = host=127.0.0.1 dbname=${POSTFIXADMIN_DB_NAME} user=${POSTFIXADMIN_DB_USER} password=${POSTFIXADMIN_DB_PASSWORD}
-default_pass_scheme = BLF-CRYPT
-password_query = SELECT username AS user, password FROM mailbox WHERE username = '%{user}' AND active = '1'
-user_query = SELECT maildir, 5000 AS uid, 5000 AS gid FROM mailbox WHERE username = '%{user}' AND active = '1'
-EOF
-else
-    # Dovecot 2.3 and below Syntax
-    cat <<EOF > /etc/dovecot/dovecot-sql.conf.ext
-driver = mysql
-connect = host=127.0.0.1 dbname=${POSTFIXADMIN_DB_NAME} user=${POSTFIXADMIN_DB_USER} password=${POSTFIXADMIN_DB_PASSWORD}
-default_pass_scheme = BLF-CRYPT
-password_query = SELECT username AS user, password FROM mailbox WHERE username = '%u' AND active = '1'
-user_query = SELECT maildir, 5000 AS uid, 5000 AS gid FROM mailbox WHERE username = '%u' AND active = '1'
-EOF
-fi
-
-chown root:root /etc/dovecot/dovecot-sql.conf.ext
-chmod 600 /etc/dovecot/dovecot-sql.conf.ext
-
-# 3. Create the clean local override configuration
+# 2. Configure the SQL Connection & Local Overrides
 echo -e "Applying Dovecot local configuration overrides..."
 
 if [[ "$DOVECOT_VERSION" == "2.4" ]]; then
-    # Dovecot 2.4+ Configuration block
+    # ==========================================
+    # Dovecot 2.4+ Syntax
+    # ==========================================
+    
+    # Clean up the old ext file if it exists from a previous run
+    rm -f /etc/dovecot/dovecot-sql.conf.ext
+
     cat <<EOF > /etc/dovecot/local.conf
 dovecot_config_version = 2.4.0
 dovecot_storage_version = 2.4.0
 
 protocols = imap pop3 lmtp
 
-disable_plaintext_auth = yes
+# disable_plaintext_auth was removed in 2.4. auth_allow_cleartext = no is the new default.
 auth_mechanisms = plain login
 
 mail_driver = maildir
@@ -73,11 +53,22 @@ mail_gid = 5000
 first_valid_uid = 5000
 last_valid_uid = 5000
 
-passdb sql {
-  args = /etc/dovecot/dovecot-sql.conf.ext
+# In 2.4, SQL connections are defined natively at the global level
+sql_driver = mysql
+mysql 127.0.0.1 {
+  user = ${POSTFIXADMIN_DB_USER}
+  password = ${POSTFIXADMIN_DB_PASSWORD}
+  dbname = ${POSTFIXADMIN_DB_NAME}
 }
+
+passdb_default_password_scheme = BLF-CRYPT
+
+passdb sql {
+  query = SELECT username AS user, password FROM mailbox WHERE username = '%{user}' AND active = '1'
+}
+
 userdb sql {
-  args = /etc/dovecot/dovecot-sql.conf.ext
+  query = SELECT CONCAT('/var/vmail/', maildir) AS mail_path, 5000 AS uid, 5000 AS gid FROM mailbox WHERE username = '%{user}' AND active = '1'
 }
 
 service lmtp {
@@ -101,7 +92,21 @@ service auth {
 EOF
 
 else
-    # Dovecot 2.3 and below Configuration block
+    # ==========================================
+    # Dovecot 2.3 and below Syntax
+    # ==========================================
+    echo -e "Configuring Dovecot SQL connection (Legacy 2.3)..."
+    cat <<EOF > /etc/dovecot/dovecot-sql.conf.ext
+driver = mysql
+connect = host=127.0.0.1 dbname=${POSTFIXADMIN_DB_NAME} user=${POSTFIXADMIN_DB_USER} password=${POSTFIXADMIN_DB_PASSWORD}
+default_pass_scheme = BLF-CRYPT
+password_query = SELECT username AS user, password FROM mailbox WHERE username = '%u' AND active = '1'
+user_query = SELECT maildir, 5000 AS uid, 5000 AS gid FROM mailbox WHERE username = '%u' AND active = '1'
+EOF
+
+    chown root:root /etc/dovecot/dovecot-sql.conf.ext
+    chmod 600 /etc/dovecot/dovecot-sql.conf.ext
+
     cat <<EOF > /etc/dovecot/local.conf
 protocols = imap pop3 lmtp
 
@@ -143,6 +148,10 @@ service auth {
 }
 EOF
 fi
+
+# Ensure permissions on the local config file are secure
+chown root:root /etc/dovecot/local.conf
+chmod 644 /etc/dovecot/local.conf
 
 # Restart and enable Dovecot
 echo -e "Restarting Dovecot..."

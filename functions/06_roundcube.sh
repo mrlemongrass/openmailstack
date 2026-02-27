@@ -42,7 +42,9 @@ fi
 
 # 3. Configure Roundcube
 echo -e "Generating Roundcube configuration..."
-DES_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 24 | head -n 1)
+# FIX: Use openssl rand to generate exactly 12 bytes (24 hex characters). 
+# This avoids the SIGPIPE error caused by cat /dev/urandom.
+DES_KEY=$(openssl rand -hex 12)
 
 cat <<EOF > /var/www/roundcube/config/config.inc.php
 <?php

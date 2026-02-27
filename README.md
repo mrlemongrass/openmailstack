@@ -38,7 +38,7 @@ sudo su -
 
 **Step 2:** Clone this repository and enter the directory.
 \`\`\`bash
-git clone https://github.com/yourusername/openmailstack.git
+git clone https://github.com/mrlemongrass/openmailstack.git
 cd openmailstack
 \`\`\`
 

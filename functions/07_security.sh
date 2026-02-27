@@ -37,7 +37,6 @@ if [[ "$CERT_CHOICE" =~ ^[Ss]$ ]]; then
     echo -e "\n${YELLOW}Generating Self-Signed Certificate for local testing...${NC}"
     mkdir -p /etc/ssl/openmailstack
     
-    # Generate a dummy cert valid for 1 year
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout /etc/ssl/openmailstack/privkey.pem \
         -out /etc/ssl/openmailstack/fullchain.pem \
@@ -45,10 +44,6 @@ if [[ "$CERT_CHOICE" =~ ^[Ss]$ ]]; then
     
     CERT_FILE="/etc/ssl/openmailstack/fullchain.pem"
     KEY_FILE="/etc/ssl/openmailstack/privkey.pem"
-    
-    echo -e "${YELLOW}Notice: Web interfaces (Nginx) will remain on HTTP for local testing.${NC}"
-    echo -e "${YELLOW}Postfix and Dovecot will use the self-signed cert for IMAP/SMTP encryption.${NC}"
-    echo -e "${YELLOW}To upgrade to a real cert later, ensure you have a public IP and re-run this script.${NC}"
 else
     echo -e "\n${GREEN}Requesting Let's Encrypt SSL Certificate for ${MAIL_HOSTNAME}...${NC}"
     
@@ -57,17 +52,13 @@ else
     else
         echo -e "${GREEN}SSL Certificate for ${MAIL_HOSTNAME} already exists. Skipping Certbot.${NC}"
     fi
-    
     systemctl enable --now certbot.timer
-    
     CERT_FILE="/etc/letsencrypt/live/${MAIL_HOSTNAME}/fullchain.pem"
     KEY_FILE="/etc/letsencrypt/live/${MAIL_HOSTNAME}/privkey.pem"
 fi
 
-# 3. Apply SSL to Postfix & Tighten TLS Protocols
+# 3. Apply SSL to Postfix
 echo -e "\nSecuring Postfix with modern SSL/TLS..."
-# Because postconf overwrites existing values natively, it seamlessly 
-# switches between self-signed and Let's Encrypt paths if re-run!
 postconf -e "smtpd_tls_cert_file = ${CERT_FILE}"
 postconf -e "smtpd_tls_key_file = ${KEY_FILE}"
 postconf -e "smtpd_use_tls = yes"
@@ -78,37 +69,48 @@ postconf -e "smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1"
 
 # 4. Apply SSL to Dovecot (Clean replacement strategy)
 echo -e "Securing Dovecot with SSL/TLS..."
-# First, we delete any existing OpenMailStack SSL blocks to prevent duplicates
+DOVECOT_VERSION=$(dovecot --version | grep -oE '^[0-9]+\.[0-9]+')
+
+# Scrub any previous OpenMailStack SSL configs to stay idempotent
 sed -i '/^# --- OpenMailStack SSL ---/d' /etc/dovecot/local.conf || true
-sed -i '/^ssl = required/d' /etc/dovecot/local.conf || true
+sed -i '/^ssl =/d' /etc/dovecot/local.conf || true
 sed -i '/^ssl_cert =/d' /etc/dovecot/local.conf || true
 sed -i '/^ssl_key =/d' /etc/dovecot/local.conf || true
+sed -i '/^ssl_server_cert_file =/d' /etc/dovecot/local.conf || true
+sed -i '/^ssl_server_key_file =/d' /etc/dovecot/local.conf || true
 
-# Now we append the correct paths based on the user's choice
+# Append dynamic config based on 2.3 vs 2.4 rules
 cat <<EOF >> /etc/dovecot/local.conf
 # --- OpenMailStack SSL ---
 ssl = required
+EOF
+
+if [[ "$DOVECOT_VERSION" == "2.4" ]]; then
+cat <<EOF >> /etc/dovecot/local.conf
+ssl_server_cert_file = ${CERT_FILE}
+ssl_server_key_file = ${KEY_FILE}
+EOF
+else
+cat <<EOF >> /etc/dovecot/local.conf
 ssl_cert = <${CERT_FILE}
 ssl_key = <${KEY_FILE}
 EOF
+fi
 
 # 5. Configure the Firewall (UFW)
 echo -e "Configuring UFW Firewall..."
 ufw default deny incoming
 ufw default allow outgoing
-
-# Allow necessary ports
-ufw allow 22/tcp      # SSH
-ufw allow 80/tcp      # HTTP
-ufw allow 443/tcp     # HTTPS
-ufw allow 25/tcp      # SMTP
-ufw allow 587/tcp     # Message Submission
-ufw allow 993/tcp     # IMAPS
-ufw allow 995/tcp     # POP3S
-
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow 25/tcp
+ufw allow 587/tcp
+ufw allow 993/tcp
+ufw allow 995/tcp
 ufw --force enable
 
-# 6. Configure Fail2ban (Idempotent overwrite)
+# 6. Configure Fail2ban
 echo -e "Configuring Fail2ban..."
 cat <<EOF > /etc/fail2ban/jail.local
 [DEFAULT]

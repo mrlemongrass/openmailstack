@@ -1,74 +1,88 @@
 #!/usr/bin/env bash
 
+# ==============================================================================
+# Strict Bash Mode
+# ==============================================================================
+set -euo pipefail
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-echo -e "${RED}===============================================================${NC}"
-echo -e "${RED} WARNING: TOTAL SYSTEM WIPE INITIATED                          ${NC}"
-echo -e "${RED}===============================================================${NC}"
-echo -e "This script will completely remove OpenMailStack from your server."
-echo -e "It will DELETE all databases, web files, configurations, and"
-echo -e "${YELLOW}EVERY SINGLE EMAIL STORED IN /var/vmail.${NC}"
-echo ""
+echo -e "${RED}======================================================================${NC}"
+echo -e "${RED} OpenMailStack Uninstaller                                            ${NC}"
+echo -e "${RED}======================================================================${NC}"
 
-# Ensure script is run as root
+# 1. Root Check
 if [[ $EUID -ne 0 ]]; then
    echo -e "${RED}Error: This script must be run as root.${NC}" 
    exit 1
 fi
 
-read -p "Are you absolutely sure you want to destroy this mail server? (Type 'YES' to continue): " CONFIRM_WIPE
+echo -e "${YELLOW}WARNING: This will permanently destroy all mailboxes, databases, and web files!${NC}"
+read -p "Are you absolutely sure you want to completely remove OpenMailStack? [y/N]: " CONFIRM
 
-if [[ "$CONFIRM_WIPE" != "YES" ]]; then
-    echo -e "${GREEN}Phew! Uninstall aborted. Your server is safe.${NC}"
+if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+    echo -e "${GREEN}Uninstall cancelled. Your server is safe.${NC}"
     exit 0
 fi
 
-echo -e "${YELLOW}Stopping services...${NC}"
-systemctl stop postfix dovecot nginx mariadb rspamd redis-server clamav-daemon fail2ban php*-fpm || true
+echo -e "\nStarting teardown..."
 
-echo -e "${YELLOW}Purging installed packages...${NC}"
+# 2. Stop All Services
+echo -e "Stopping all mail and web services..."
+systemctl stop nginx mariadb postfix dovecot redis-server rspamd clamav-daemon clamav-freshclam fail2ban 2>/dev/null || true
+# Catch whichever version of PHP FPM is running
+systemctl stop php*-fpm 2>/dev/null || true
+
+# 3. Disable UFW Firewall
+echo -e "Disabling UFW Firewall..."
+ufw --force disable 2>/dev/null || true
+
+# 4. Purge Packages
+echo -e "Purging installed packages (this may take a minute)..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get purge -y -qq \
+    nginx nginx-common \
+    mariadb-server mariadb-client \
     postfix postfix-mysql \
     dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd dovecot-mysql \
-    mariadb-server \
-    nginx \
-    php-fpm php-mysql php-cli php-mbstring php-imap php-intl php-xml php-curl php-zip php-gd php-bz2 \
-    rspamd redis-server clamav-daemon clamav-freshclam \
-    certbot python3-certbot-nginx ufw fail2ban
+    rspamd redis-server redis-tools clamav clamav-daemon clamav-freshclam \
+    certbot python3-certbot-nginx ufw fail2ban \
+    php-fpm php-mysql php-cli php-mbstring php-intl php-xml php-curl php-zip php-gd php-bz2 php-common \
+    2>/dev/null || true
 
-echo -e "${YELLOW}Cleaning up unused dependencies...${NC}"
+echo -e "Cleaning up unused dependencies..."
 apt-get autoremove -y -qq
+apt-get clean
 
-echo -e "${YELLOW}Deleting configuration and data directories...${NC}"
-# Remove web roots
-rm -rf /var/www/postfixadmin
-rm -rf /var/www/roundcube
-# Remove mail storage
-rm -rf /var/vmail
-# Remove databases
-rm -rf /var/lib/mysql
-# Remove configurations
+# 5. Remove Configurations and Web Roots
+echo -e "Deleting configurations, certificates, and web files..."
 rm -rf /etc/postfix
 rm -rf /etc/dovecot
+rm -rf /var/www/postfixadmin
+rm -rf /var/www/roundcube
+rm -rf /etc/nginx/sites-available/mailserver.conf
+rm -rf /etc/nginx/sites-enabled/mailserver.conf
 rm -rf /etc/rspamd
 rm -rf /var/lib/rspamd
-# Note: We do NOT delete /etc/letsencrypt. Let's Encrypt has strict rate limits. 
-# If a user wipes their server 5 times in an hour and deletes the certs, Let's Encrypt will block them for a week.
+rm -rf /etc/fail2ban/jail.local
+rm -rf /etc/ssl/openmailstack
+rm -rf /etc/letsencrypt/live/*
+rm -rf /etc/letsencrypt/archive/*
+rm -rf /etc/letsencrypt/renewal/*
 
-echo -e "${YELLOW}Removing local vmail user and group...${NC}"
-userdel vmail || true
-groupdel vmail || true
+# 6. Destroy Databases
+echo -e "Destroying MariaDB databases..."
+rm -rf /var/lib/mysql
 
-# Reset UFW to prevent getting locked out of SSH if it was enabled
-echo -e "${YELLOW}Resetting UFW firewall...${NC}"
-ufw --force reset || true
-ufw allow 22/tcp || true
+# 7. Remove Vmail User and Physical Mailboxes
+echo -e "Removing vmail user and physical mail data..."
+if id "vmail" &>/dev/null; then
+    userdel -f vmail
+fi
+rm -rf /var/vmail
 
-echo -e "${GREEN}===============================================================${NC}"
-echo -e "${GREEN} Uninstall Complete. The server has been wiped clean.          ${NC}"
-echo -e "${GREEN}===============================================================${NC}"
+echo -e "${GREEN}Uninstall complete! The system has been returned to a clean slate.${NC}"

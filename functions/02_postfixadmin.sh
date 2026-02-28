@@ -37,7 +37,7 @@ echo -e "Generating secure setup password hash..."
 SETUP_HASH=$(php -r "echo password_hash('${POSTFIXADMIN_SETUP_PASSWORD}', PASSWORD_DEFAULT);")
 
 # 3. Create config.local.php
-echo -e "Configuring PostfixAdmin database connections..."
+echo -e "Configuring PostfixAdmin database connections and encryption..."
 cat <<EOF > /var/www/postfixadmin/config.local.php
 <?php
 \$CONF['configured'] = true;
@@ -47,6 +47,17 @@ cat <<EOF > /var/www/postfixadmin/config.local.php
 \$CONF['database_password'] = '${POSTFIXADMIN_DB_PASSWORD}';
 \$CONF['database_name'] = '${POSTFIXADMIN_DB_NAME}';
 \$CONF['setup_password'] = '${SETUP_HASH}';
+
+// --- OpenMailStack Modern Security & Lab Bypasses ---
+// Force Dovecot's native Blowfish encryption to prevent auth mismatches
+\$CONF['encrypt'] = 'dovecot:BLF-CRYPT';
+\$CONF['dovecotpw'] = '/usr/bin/doveadm pw';
+
+// Allow local/lab domains (.local, .test) without strictly checking global DNS
+\$CONF['domain_in_dns'] = 'NO';
+\$CONF['emailcheck_resolve_domain'] = 'NO';
+
+// --- Quotas and Defaults ---
 \$CONF['default_aliases'] = array (
     'abuse'      => 'abuse@${FIRST_DOMAIN}',
     'hostmaster' => 'hostmaster@${FIRST_DOMAIN}',
@@ -71,8 +82,6 @@ chmod 640 /var/www/postfixadmin/config.local.php
 
 # 4. Configure Nginx
 echo -e "Configuring Nginx for PostfixAdmin..."
-
-# BUG FIXED: Removed the stray backslashes here!
 PHP_SOCK=$(find /run/php -name "php*-fpm.sock" | head -n 1)
 
 cat <<EOF > /etc/nginx/sites-available/mailserver.conf
@@ -105,7 +114,6 @@ systemctl restart nginx
 
 # 5. Initialize the Database
 echo -e "Initializing PostfixAdmin Database tables..."
-# upgrade.php is natively idempotent; it just checks if tables exist and updates them!
 sudo -u www-data php /var/www/postfixadmin/public/upgrade.php
 
 echo -e "${GREEN}PostfixAdmin setup complete!${NC}"

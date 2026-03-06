@@ -15,15 +15,40 @@ echo -e "${YELLOW}Starting PostfixAdmin Installation...${NC}"
 
 # Source the configuration file
 source ./config.conf
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/lib_os.sh"
+detect_openmailstack_os
+
+POSTFIXADMIN_ALLOW_LAB_DOMAINS="${POSTFIXADMIN_ALLOW_LAB_DOMAINS:-0}"
+if [[ ! "${POSTFIXADMIN_ALLOW_LAB_DOMAINS}" =~ ^[01]$ ]]; then
+    echo -e "\033[0;31mError: POSTFIXADMIN_ALLOW_LAB_DOMAINS must be 0 or 1.\033[0m" >&2
+    exit 1
+fi
+
+PFA_DOMAIN_IN_DNS="YES"
+PFA_EMAILCHECK_RESOLVE_DOMAIN="YES"
+if [[ "${POSTFIXADMIN_ALLOW_LAB_DOMAINS}" -eq 1 ]]; then
+    echo -e "${YELLOW}PostfixAdmin lab domain mode enabled (DNS checks disabled).${NC}"
+    PFA_DOMAIN_IN_DNS="NO"
+    PFA_EMAILCHECK_RESOLVE_DOMAIN="NO"
+fi
 
 # 1. Download and Extract PostfixAdmin
 PFA_VERSION="3.3.13"
+PFA_TARBALL="postfixadmin-${PFA_VERSION}.tar.gz"
+PFA_URL="https://github.com/postfixadmin/postfixadmin/archive/refs/tags/postfixadmin-${PFA_VERSION}.tar.gz"
+# Update this checksum whenever PFA_VERSION changes.
+PFA_SHA256="026c4f370656b96b6c9f62328e901b9416a6e56d1c4df86249995d661498947b"
+
 echo -e "Downloading PostfixAdmin version ${PFA_VERSION}..."
 cd /tmp
-wget -q -O postfixadmin.tar.gz "https://github.com/postfixadmin/postfixadmin/archive/refs/tags/postfixadmin-${PFA_VERSION}.tar.gz"
+wget -q -O "${PFA_TARBALL}" "${PFA_URL}"
+
+echo -e "Verifying PostfixAdmin tarball checksum..."
+echo "${PFA_SHA256}  ${PFA_TARBALL}" | sha256sum -c -
 
 echo -e "Extracting to /var/www/postfixadmin..."
-tar -xzf postfixadmin.tar.gz
+tar -xzf "${PFA_TARBALL}"
 # Removing the directory first ensures a clean overwrite if re-run
 rm -rf /var/www/postfixadmin
 mv postfixadmin-postfixadmin-${PFA_VERSION} /var/www/postfixadmin
@@ -34,7 +59,17 @@ chmod -R 755 /var/www/postfixadmin
 
 # 2. Generate Setup Password Hash
 echo -e "Generating secure setup password hash..."
-SETUP_HASH=$(php -r "echo password_hash('${POSTFIXADMIN_SETUP_PASSWORD}', PASSWORD_DEFAULT);")
+SETUP_HASH=$(
+    POSTFIXADMIN_SETUP_PASSWORD="${POSTFIXADMIN_SETUP_PASSWORD}" php <<'PHP'
+<?php
+$password = getenv('POSTFIXADMIN_SETUP_PASSWORD');
+if ($password === false || $password === '') {
+    fwrite(STDERR, "Error: POSTFIXADMIN_SETUP_PASSWORD is empty.\n");
+    exit(1);
+}
+echo password_hash($password, PASSWORD_DEFAULT);
+PHP
+)
 
 # 3. Create config.local.php
 echo -e "Configuring PostfixAdmin database connections and encryption..."
@@ -48,14 +83,14 @@ cat <<EOF > /var/www/postfixadmin/config.local.php
 \$CONF['database_name'] = '${POSTFIXADMIN_DB_NAME}';
 \$CONF['setup_password'] = '${SETUP_HASH}';
 
-// --- OpenMailStack Modern Security & Lab Bypasses ---
+// --- OpenMailStack Modern Security ---
 // Force Dovecot's native Blowfish encryption to prevent auth mismatches
 \$CONF['encrypt'] = 'dovecot:BLF-CRYPT';
 \$CONF['dovecotpw'] = '/usr/bin/doveadm pw';
 
-// Allow local/lab domains (.local, .test) without strictly checking global DNS
-\$CONF['domain_in_dns'] = 'NO';
-\$CONF['emailcheck_resolve_domain'] = 'NO';
+// Production-safe by default; can be relaxed for local labs via config.
+\$CONF['domain_in_dns'] = '${PFA_DOMAIN_IN_DNS}';
+\$CONF['emailcheck_resolve_domain'] = '${PFA_EMAILCHECK_RESOLVE_DOMAIN}';
 
 // --- Quotas and Defaults ---
 \$CONF['default_aliases'] = array (
@@ -82,7 +117,11 @@ chmod 640 /var/www/postfixadmin/config.local.php
 
 # 4. Configure Nginx
 echo -e "Configuring Nginx for PostfixAdmin..."
-PHP_SOCK=$(find /run/php -name "php*-fpm.sock" | head -n 1)
+PHP_SOCK=$(openmailstack_php_fpm_socket || true)
+if [[ -z "${PHP_SOCK}" ]]; then
+    echo -e "\033[0;31mError: Could not detect a PHP-FPM socket for ${OPENMAILSTACK_OS_LABEL}.\033[0m"
+    exit 1
+fi
 
 cat <<EOF > /etc/nginx/sites-available/mailserver.conf
 server {
@@ -92,9 +131,9 @@ server {
     index index.php index.html;
 
     location /postfixadmin {
-        alias /var/www/postfixadmin/public;
+        alias /var/www/postfixadmin/public/;
         index index.php;
-        try_files \$uri \$uri/ /postfixadmin/public/index.php;
+        try_files \$uri \$uri/ /postfixadmin/index.php?\$query_string;
     }
 
     location ~ ^/postfixadmin/(.+\.php)$ {
@@ -102,7 +141,7 @@ server {
         fastcgi_pass unix:${PHP_SOCK};
         fastcgi_index index.php;
         include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME \$request_filename;
+        fastcgi_param SCRIPT_FILENAME /var/www/postfixadmin/public/\$1;
     }
 }
 EOF

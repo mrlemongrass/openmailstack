@@ -9,7 +9,6 @@ FIRST_DOMAIN="example.com"
 MAIL_HOSTNAME="mail.${FIRST_DOMAIN}"
 
 # Database Settings
-DB_ROOT_PASSWORD="ChangeMe_DB_Root_Pass"
 VMAIL_DB_NAME="vmail"
 VMAIL_DB_USER="vmail"
 VMAIL_DB_PASSWORD="ChangeMe_Vmail_Pass"
@@ -19,6 +18,10 @@ POSTFIXADMIN_DB_NAME="postfixadmin"
 POSTFIXADMIN_DB_USER="postfixadmin"
 POSTFIXADMIN_DB_PASSWORD="ChangeMe_PFA_Pass"
 POSTFIXADMIN_SETUP_PASSWORD="ChangeMe_Setup_Pass"
+# PostfixAdmin domain checks:
+# 0 = production-safe DNS checks enabled
+# 1 = allow local/lab domains by disabling DNS checks
+POSTFIXADMIN_ALLOW_LAB_DOMAINS="0"
 
 # Roundcube Settings
 ROUNDCUBE_DB_NAME="roundcube"
@@ -27,3 +30,16 @@ ROUNDCUBE_DB_PASSWORD="ChangeMe_RC_Pass"
 
 # Let's Encrypt Email (for expiry notifications)
 LETSENCRYPT_EMAIL="admin@${FIRST_DOMAIN}"
+
+# SSL certificate mode: auto | letsencrypt | self-signed
+# - auto: try Let's Encrypt, fall back to self-signed if unavailable/fails
+# - letsencrypt: require Let's Encrypt success
+# - self-signed: always generate and use local certificate
+SSL_CERT_MODE="auto"
+
+# Antivirus: 1 = enable ClamAV integration, 0 = disable to save memory
+CLAMAV_ENABLED="1"
+
+# System Monitoring (optional)
+# ENABLE_MONIT="false"  # Enable monit for process monitoring
+# MONIT_EMAIL="admin@${FIRST_DOMAIN}"

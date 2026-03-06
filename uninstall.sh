@@ -31,9 +31,17 @@ fi
 
 echo -e "\nStarting teardown..."
 
+# Load hostname if available so certificate cleanup stays scoped.
+MAIL_HOSTNAME=""
+if [[ -f "./config.conf" ]]; then
+    # shellcheck source=/dev/null
+    source ./config.conf || true
+fi
+
 # 2. Stop All Services
 echo -e "Stopping all mail and web services..."
-systemctl stop nginx mariadb postfix dovecot redis-server rspamd clamav-daemon clamav-freshclam fail2ban 2>/dev/null || true
+systemctl stop nginx mariadb postfix dovecot redis-server rspamd clamav-daemon clamav-freshclam fail2ban openmailstack-dkim-sync.service openmailstack-dkim-sync.timer 2>/dev/null || true
+systemctl disable openmailstack-dkim-sync.timer 2>/dev/null || true
 # Catch whichever version of PHP FPM is running
 systemctl stop php*-fpm 2>/dev/null || true
 
@@ -70,9 +78,19 @@ rm -rf /etc/rspamd
 rm -rf /var/lib/rspamd
 rm -rf /etc/fail2ban/jail.local
 rm -rf /etc/ssl/openmailstack
-rm -rf /etc/letsencrypt/live/*
-rm -rf /etc/letsencrypt/archive/*
-rm -rf /etc/letsencrypt/renewal/*
+rm -f /etc/systemd/system/openmailstack-dkim-sync.service
+rm -f /etc/systemd/system/openmailstack-dkim-sync.timer
+rm -f /usr/local/sbin/openmailstack-dkim-sync
+rm -f /etc/openmailstack/dkim-sync.conf
+rmdir /etc/openmailstack 2>/dev/null || true
+if [[ -n "${MAIL_HOSTNAME}" ]]; then
+    rm -rf "/etc/letsencrypt/live/${MAIL_HOSTNAME}"
+    rm -rf "/etc/letsencrypt/archive/${MAIL_HOSTNAME}"
+    rm -f "/etc/letsencrypt/renewal/${MAIL_HOSTNAME}.conf"
+else
+    echo -e "${YELLOW}Skipping Let's Encrypt cleanup because MAIL_HOSTNAME is unavailable.${NC}"
+fi
+systemctl daemon-reload 2>/dev/null || true
 
 # 6. Destroy Databases
 echo -e "Destroying MariaDB databases..."

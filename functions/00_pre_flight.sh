@@ -10,22 +10,36 @@ YELLOW='\033[0;33m'
 NC='\033[0m'
 
 echo -e "${YELLOW}Starting Pre-Flight Checks...${NC}"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # Source the configuration file
 source ./config.conf
+source "${SCRIPT_DIR}/lib_os.sh"
 
 # 1. Check Operating System
 echo -e "Checking Operating System..."
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    if [[ "$ID" != "ubuntu" && "$ID" != "debian" ]]; then
-        echo -e "${RED}Error: This script only supports Ubuntu or Debian. Detected: $ID${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}OS check passed: $PRETTY_NAME${NC}"
-else
-    echo -e "${RED}Error: Cannot determine the operating system.${NC}"
+detect_openmailstack_os
+
+if ! openmailstack_require_supported_platform; then
+    echo -e "${RED}Error: Unsupported platform detected: ${OPENMAILSTACK_OS_LABEL}${NC}"
     exit 1
+fi
+
+echo -e "${GREEN}OS check passed: ${OPENMAILSTACK_OS_LABEL}${NC}"
+echo -e "OS details -> id: ${OPENMAILSTACK_OS_ID}, version: ${OPENMAILSTACK_OS_VERSION_ID}, codename: ${OPENMAILSTACK_OS_CODENAME:-unknown}"
+
+# Warn early if memory is below recommended minimum (2 GB).
+TOTAL_MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+if [[ "${TOTAL_MEM_KB}" -gt 0 && "${TOTAL_MEM_KB}" -lt 2097152 ]]; then
+    TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
+    echo -e "${YELLOW}Warning: Only ${TOTAL_MEM_MB} MB RAM detected. ClamAV may fail below 2 GB.${NC}" >&2
+fi
+
+# Check disk space availability (minimum 10GB recommended)
+AVAILABLE_DISK_KB=$(df -k / 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+if [[ "${AVAILABLE_DISK_KB}" -gt 0 && "${AVAILABLE_DISK_KB}" -lt 10485760 ]]; then
+    AVAILABLE_DISK_GB=$((AVAILABLE_DISK_KB / 1024 / 1024))
+    echo -e "${YELLOW}Warning: Only ${AVAILABLE_DISK_GB} GB disk space available. Minimum 10GB recommended.${NC}" >&2
 fi
 
 # 2. Set the Hostname
@@ -54,21 +68,26 @@ echo -e "${GREEN}FQDN validation passed: $CURRENT_FQDN${NC}"
 echo -e "${YELLOW}Updating package lists and installing base tools...${NC}"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get upgrade -y -qq
+apt-get upgrade -y -qq || openmailstack_record_soft_error "Package upgrade had non-fatal issues"
+
+# Verify essential tools are working
+for tool in curl wget lsb-release openssl; do
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+        echo -e "${YELLOW}Warning: ${tool} not found after installation.${NC}" >&2
+    fi
+done
+
+# Log system resources for troubleshooting
+echo -e "${GREEN}System resources:${NC}"
+TOTAL_MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
+echo -e "  RAM: ${TOTAL_MEM_MB:-0} MB"
+DISK_AVAIL=$(df -h / 2>/dev/null | awk 'NR==2 {print $4}' || echo "unknown")
+echo -e "  Disk: ${DISK_AVAIL} available"
 
 # Install essential tools required for the rest of the scripts
-apt-get install -y -qq \
-    curl \
-    wget \
-    sudo \
-    gnupg2 \
-    ca-certificates \
-    lsb-release \
-    apt-transport-https \
-    software-properties-common \
-    dnsutils \
-    net-tools \
-    unzip
+mapfile -t BASE_PACKAGES < <(openmailstack_base_packages)
+openmailstack_install_required_packages "${BASE_PACKAGES[@]}"
 
 echo -e "${GREEN}System updated and base dependencies installed.${NC}"
 echo -e "${GREEN}Pre-Flight Checks Complete!${NC}"

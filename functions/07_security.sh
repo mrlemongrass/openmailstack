@@ -16,48 +16,153 @@ echo -e "${YELLOW}Starting Security Configuration (SSL, Firewall, Fail2ban)...${
 
 # Source the configuration file
 source ./config.conf
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/lib_os.sh"
+detect_openmailstack_os
 
 export DEBIAN_FRONTEND=noninteractive
 
 # 1. Install Security Packages
 echo -e "Installing Certbot, UFW, and Fail2ban..."
-apt-get install -y -qq certbot python3-certbot-nginx ufw fail2ban openssl
+openmailstack_install_required_packages openssl
+openmailstack_install_optional_packages certbot python3-certbot-nginx ufw fail2ban
 
-# 2. SSL Certificate Strategy (Interactive Prompt)
-echo -e "\n${CYAN}======================================================================${NC}"
-echo -e "${CYAN} SSL Certificate Configuration                                        ${NC}"
-echo -e "${CYAN}======================================================================${NC}"
-echo -e "Let's Encrypt requires a public IP and valid DNS A-record to succeed."
-echo -e "If you are testing locally (e.g., in a VM), Let's Encrypt will fail."
-echo ""
-read -p "Use (L)et's Encrypt or (S)elf-Signed cert for local testing? [L/s]: " CERT_CHOICE
-CERT_CHOICE=${CERT_CHOICE:-L}
+SEC_HAS_CERTBOT=0
+SEC_HAS_CERTBOT_NGINX=0
+SEC_HAS_UFW=0
+SEC_HAS_FAIL2BAN=0
 
-if [[ "$CERT_CHOICE" =~ ^[Ss]$ ]]; then
+if openmailstack_package_installed "certbot"; then SEC_HAS_CERTBOT=1; fi
+if openmailstack_package_installed "python3-certbot-nginx"; then SEC_HAS_CERTBOT_NGINX=1; fi
+if openmailstack_package_installed "ufw"; then SEC_HAS_UFW=1; fi
+if openmailstack_package_installed "fail2ban"; then SEC_HAS_FAIL2BAN=1; fi
+
+CERT_FILE=""
+KEY_FILE=""
+LE_CERT_DIR="/etc/letsencrypt/live/${MAIL_HOSTNAME}"
+
+generate_self_signed_cert() {
     echo -e "\n${YELLOW}Generating Self-Signed Certificate for local testing...${NC}"
     mkdir -p /etc/ssl/openmailstack
-    
+
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout /etc/ssl/openmailstack/privkey.pem \
         -out /etc/ssl/openmailstack/fullchain.pem \
         -subj "/C=US/ST=Test/L=Test/O=OpenMailStack/CN=${MAIL_HOSTNAME}" 2>/dev/null
-    
+
     CERT_FILE="/etc/ssl/openmailstack/fullchain.pem"
     KEY_FILE="/etc/ssl/openmailstack/privkey.pem"
-else
-    echo -e "\n${GREEN}Requesting Let's Encrypt SSL Certificate for ${MAIL_HOSTNAME}...${NC}"
-    
-    if [[ ! -d "/etc/letsencrypt/live/${MAIL_HOSTNAME}" ]]; then
-        certbot --nginx --non-interactive --agree-tos --email "${LETSENCRYPT_EMAIL}" -d "${MAIL_HOSTNAME}"
-    else
-        echo -e "${GREEN}SSL Certificate for ${MAIL_HOSTNAME} already exists. Skipping Certbot.${NC}"
+}
+
+# Ensure the main Nginx vhost always serves HTTPS with the selected certificate.
+configure_nginx_tls() {
+    local nginx_conf="/etc/nginx/sites-available/mailserver.conf"
+    local tmp_conf
+
+    if [[ ! -f "${nginx_conf}" ]]; then
+        openmailstack_record_soft_error "Nginx vhost ${nginx_conf} is missing; skipping HTTPS vhost update."
+        return 0
     fi
-    systemctl enable --now certbot.timer
-    CERT_FILE="/etc/letsencrypt/live/${MAIL_HOSTNAME}/fullchain.pem"
-    KEY_FILE="/etc/letsencrypt/live/${MAIL_HOSTNAME}/privkey.pem"
+
+    tmp_conf=$(mktemp)
+    if ! awk -v cert="${CERT_FILE}" -v key="${KEY_FILE}" '
+        BEGIN { inserted=0; skip=0; }
+        $0 ~ /# --- OpenMailStack TLS ---/ { skip=1; next; }
+        skip && $0 ~ /# --- End OpenMailStack TLS ---/ { skip=0; next; }
+        skip { next; }
+        {
+            print;
+            if (inserted == 0 && $0 ~ /^[[:space:]]*listen[[:space:]]+80;/) {
+                print "    # --- OpenMailStack TLS ---";
+                print "    listen 443 ssl;";
+                print "    ssl_certificate " cert ";";
+                print "    ssl_certificate_key " key ";";
+                print "    # --- End OpenMailStack TLS ---";
+                inserted=1;
+            }
+        }
+        END {
+            if (inserted == 0) {
+                exit 2;
+            }
+        }
+    ' "${nginx_conf}" > "${tmp_conf}"; then
+        rm -f "${tmp_conf}"
+        openmailstack_record_soft_error "Failed to inject TLS directives into ${nginx_conf}; keeping existing Nginx configuration."
+        return 0
+    fi
+
+    install -m 644 "${tmp_conf}" "${nginx_conf}"
+    rm -f "${tmp_conf}"
+}
+
+request_letsencrypt_cert() {
+    if [[ -f "${LE_CERT_DIR}/fullchain.pem" && -f "${LE_CERT_DIR}/privkey.pem" ]]; then
+        return 0
+    fi
+
+    if [[ "${SEC_HAS_CERTBOT}" -eq 0 || "${SEC_HAS_CERTBOT_NGINX}" -eq 0 ]]; then
+        return 1
+    fi
+
+    certbot certonly --nginx --non-interactive --agree-tos --email "${LETSENCRYPT_EMAIL}" -d "${MAIL_HOSTNAME}"
+
+    [[ -f "${LE_CERT_DIR}/fullchain.pem" && -f "${LE_CERT_DIR}/privkey.pem" ]]
+}
+
+enable_certbot_timer_if_available() {
+    if [[ "${SEC_HAS_CERTBOT}" -eq 1 ]]; then
+        systemctl enable --now certbot.timer || openmailstack_record_soft_error "Failed to enable certbot.timer; certificate renewal may require manual intervention."
+    else
+        openmailstack_record_soft_error "Let's Encrypt certificate exists but certbot is not installed; automatic renewal is unavailable."
+    fi
+}
+
+# 2. SSL Certificate Strategy (Non-interactive)
+SSL_CERT_MODE="${SSL_CERT_MODE:-auto}"
+SSL_CERT_MODE="${SSL_CERT_MODE,,}"
+echo -e "Using SSL certificate mode: ${SSL_CERT_MODE}"
+
+case "${SSL_CERT_MODE}" in
+    self-signed)
+        generate_self_signed_cert
+        ;;
+    letsencrypt)
+        echo -e "\n${GREEN}Requesting Let's Encrypt SSL Certificate for ${MAIL_HOSTNAME}...${NC}"
+        if ! request_letsencrypt_cert; then
+            echo -e "\033[0;31mError: SSL_CERT_MODE=letsencrypt but certificate request failed for ${MAIL_HOSTNAME}.\033[0m" >&2
+            echo -e "\033[0;31mEnsure DNS A-record points to this host and certbot packages are available.\033[0m" >&2
+            exit 1
+        fi
+        enable_certbot_timer_if_available
+        CERT_FILE="${LE_CERT_DIR}/fullchain.pem"
+        KEY_FILE="${LE_CERT_DIR}/privkey.pem"
+        ;;
+    auto)
+        if request_letsencrypt_cert; then
+            echo -e "${GREEN}Using Let's Encrypt certificate for ${MAIL_HOSTNAME}.${NC}"
+            enable_certbot_timer_if_available
+            CERT_FILE="${LE_CERT_DIR}/fullchain.pem"
+            KEY_FILE="${LE_CERT_DIR}/privkey.pem"
+        else
+            openmailstack_record_soft_error "Let's Encrypt is unavailable or failed for ${MAIL_HOSTNAME}; falling back to self-signed certificate."
+            generate_self_signed_cert
+        fi
+        ;;
+    *)
+        echo -e "\033[0;31mError: Invalid SSL_CERT_MODE='${SSL_CERT_MODE}'. Expected auto, letsencrypt, or self-signed.\033[0m" >&2
+        exit 1
+        ;;
+esac
+
+# 3. Apply HTTPS certificate to Nginx
+echo -e "Configuring Nginx HTTPS listener..."
+configure_nginx_tls
+if command -v nginx >/dev/null 2>&1; then
+    nginx -t
 fi
 
-# 3. Apply SSL to Postfix
+# 4. Apply SSL to Postfix
 echo -e "\nSecuring Postfix with modern SSL/TLS..."
 postconf -e "smtpd_tls_cert_file = ${CERT_FILE}"
 postconf -e "smtpd_tls_key_file = ${KEY_FILE}"
@@ -67,7 +172,7 @@ postconf -e "smtpd_tls_security_level = may"
 postconf -e "smtpd_tls_auth_only = yes"
 postconf -e "smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1"
 
-# 4. Apply SSL to Dovecot (Clean replacement strategy)
+# 5. Apply SSL to Dovecot (Clean replacement strategy)
 echo -e "Securing Dovecot with SSL/TLS..."
 DOVECOT_VERSION=$(dovecot --version | grep -oE '^[0-9]+\.[0-9]+')
 
@@ -97,21 +202,47 @@ ssl_key = <${KEY_FILE}
 EOF
 fi
 
-# 5. Configure the Firewall (UFW)
+# 6. Configure the Firewall (UFW)
 echo -e "Configuring UFW Firewall..."
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 25/tcp
-ufw allow 587/tcp
-ufw allow 993/tcp
-ufw allow 995/tcp
-ufw --force enable
 
-# 6. Configure Fail2ban
+# Preserve SSH access even when the daemon is configured on a non-default port.
+SSH_PORTS="22"
+if command -v sshd >/dev/null 2>&1; then
+    DETECTED_SSH_PORTS=$(sshd -T 2>/dev/null | awk '$1=="port" {print $2}' | sort -u | tr '\n' ' ')
+    if [[ -n "${DETECTED_SSH_PORTS// }" ]]; then
+        SSH_PORTS="${DETECTED_SSH_PORTS}"
+    fi
+fi
+
+# Also allow the current SSH session port as an extra safety guard.
+if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    CURRENT_SSH_PORT=$(awk '{print $4}' <<< "${SSH_CONNECTION}")
+    if [[ -n "${CURRENT_SSH_PORT}" ]]; then
+        SSH_PORTS="${SSH_PORTS} ${CURRENT_SSH_PORT}"
+    fi
+fi
+
+if [[ "${SEC_HAS_UFW}" -eq 1 ]]; then
+    ufw default deny incoming
+    ufw default allow outgoing
+    for SSH_PORT in $(echo "${SSH_PORTS}" | tr ' ' '\n' | awk '/^[0-9]+$/' | sort -u); do
+        echo -e "Allowing SSH on port ${SSH_PORT}/tcp..."
+        ufw allow "${SSH_PORT}/tcp"
+    done
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+    ufw allow 25/tcp
+    ufw allow 587/tcp
+    ufw allow 993/tcp
+    ufw allow 995/tcp
+    ufw --force enable
+else
+    openmailstack_record_soft_error "UFW is not installed on ${OPENMAILSTACK_OS_LABEL}; firewall configuration skipped."
+fi
+
+# 7. Configure Fail2ban
 echo -e "Configuring Fail2ban..."
+if [[ "${SEC_HAS_FAIL2BAN}" -eq 1 ]]; then
 cat <<EOF > /etc/fail2ban/jail.local
 [DEFAULT]
 bantime = 1h
@@ -131,10 +262,15 @@ enabled = true
 port = pop3,pop3s,imap,imaps,submission
 logpath = /var/log/mail.log
 EOF
+else
+    openmailstack_record_soft_error "Fail2ban is not installed on ${OPENMAILSTACK_OS_LABEL}; intrusion protection setup skipped."
+fi
 
-# 7. Restart Services
+# 8. Restart Services
 echo -e "Restarting all services to apply security settings..."
 systemctl restart nginx postfix dovecot
-systemctl enable --now fail2ban
+if [[ "${SEC_HAS_FAIL2BAN}" -eq 1 ]]; then
+    systemctl enable --now fail2ban
+fi
 
 echo -e "${GREEN}Security setup complete!${NC}"

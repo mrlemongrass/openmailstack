@@ -15,6 +15,9 @@ echo -e "${YELLOW}Starting Postfix MTA Installation and Configuration...${NC}"
 
 # Source the configuration file
 source ./config.conf
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/lib_os.sh"
+detect_openmailstack_os
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -25,7 +28,7 @@ echo "postfix postfix/mailname string ${MAIL_HOSTNAME}" | debconf-set-selections
 
 # 2. Install Postfix and the MySQL plugin
 echo -e "Installing Postfix and postfix-mysql..."
-apt-get install -y -qq postfix postfix-mysql
+openmailstack_install_required_packages postfix postfix-mysql
 
 # 3. Create the 'vmail' user and group (Idempotent check)
 echo -e "Creating local 'vmail' user and mail directory..."

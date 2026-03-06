@@ -15,12 +15,21 @@ echo -e "${YELLOW}Starting Dovecot IMAP/POP3 Installation...${NC}"
 
 # Source the configuration file
 source ./config.conf
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/lib_os.sh"
+detect_openmailstack_os
 
 export DEBIAN_FRONTEND=noninteractive
 
 # 1. Install Dovecot
 echo -e "Installing Dovecot and MySQL modules..."
-apt-get install -y -qq dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd dovecot-mysql
+openmailstack_install_required_packages dovecot-core dovecot-imapd dovecot-lmtpd dovecot-mysql
+openmailstack_install_optional_packages dovecot-pop3d
+
+DOVECOT_PROTOCOLS="imap lmtp"
+if openmailstack_package_installed "dovecot-pop3d"; then
+    DOVECOT_PROTOCOLS="imap pop3 lmtp"
+fi
 
 # Determine Dovecot Version (e.g., 2.3 or 2.4)
 DOVECOT_VERSION=$(dovecot --version | grep -oE '^[0-9]+\.[0-9]+')
@@ -41,7 +50,7 @@ if [[ "$DOVECOT_VERSION" == "2.4" ]]; then
 dovecot_config_version = 2.4.0
 dovecot_storage_version = 2.4.0
 
-protocols = imap pop3 lmtp
+protocols = ${DOVECOT_PROTOCOLS}
 
 # disable_plaintext_auth was removed in 2.4. auth_allow_cleartext = no is the new default.
 auth_mechanisms = plain login
@@ -108,7 +117,7 @@ EOF
     chmod 600 /etc/dovecot/dovecot-sql.conf.ext
 
     cat <<EOF > /etc/dovecot/local.conf
-protocols = imap pop3 lmtp
+protocols = ${DOVECOT_PROTOCOLS}
 
 disable_plaintext_auth = yes
 auth_mechanisms = plain login
@@ -149,9 +158,9 @@ service auth {
 EOF
 fi
 
-# Ensure permissions on the local config file are secure
+# local.conf can contain SQL credentials on Dovecot 2.4+, so keep it root-only.
 chown root:root /etc/dovecot/local.conf
-chmod 644 /etc/dovecot/local.conf
+chmod 600 /etc/dovecot/local.conf
 
 # Restart and enable Dovecot
 echo -e "Restarting Dovecot..."

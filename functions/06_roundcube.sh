@@ -15,15 +15,30 @@ echo -e "${YELLOW}Starting Roundcube Webmail Installation...${NC}"
 
 # Source the configuration file
 source ./config.conf
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/lib_os.sh"
+detect_openmailstack_os
+
+escape_mysql_identifier() {
+    printf "%s" "$1" | sed 's/`/``/g'
+}
 
 # 1. Download and Extract Roundcube
 RC_VERSION="1.6.9"
+RC_TARBALL="roundcubemail-${RC_VERSION}-complete.tar.gz"
+RC_URL="https://github.com/roundcube/roundcubemail/releases/download/${RC_VERSION}/${RC_TARBALL}"
+# Update this checksum whenever RC_VERSION changes.
+RC_SHA256="b61a5f5c22f890c299e935aacfcf0870676990d8aebff0d6cdff075bf17cef4f"
+
 echo -e "Downloading Roundcube version ${RC_VERSION}..."
 cd /tmp
-wget -q -O roundcube.tar.gz "https://github.com/roundcube/roundcubemail/releases/download/${RC_VERSION}/roundcubemail-${RC_VERSION}-complete.tar.gz"
+wget -q -O "${RC_TARBALL}" "${RC_URL}"
+
+echo -e "Verifying Roundcube tarball checksum..."
+echo "${RC_SHA256}  ${RC_TARBALL}" | sha256sum -c -
 
 echo -e "Extracting to /var/www/roundcube..."
-tar -xzf roundcube.tar.gz
+tar -xzf "${RC_TARBALL}"
 # Removing the directory first ensures a clean, idempotent overwrite
 rm -rf /var/www/roundcube
 mv roundcubemail-${RC_VERSION} /var/www/roundcube
@@ -32,8 +47,12 @@ chmod -R 755 /var/www/roundcube
 
 # 2. Initialize the Roundcube Database (Guarded)
 echo -e "Importing Roundcube database schema..."
+ROUNDCUBE_DB_NAME_SQL="$(escape_mysql_identifier "${ROUNDCUBE_DB_NAME}")"
 # Check if the 'users' table exists. If not, import the schema.
-if ! mysql -e "SELECT 1 FROM ${ROUNDCUBE_DB_NAME}.users LIMIT 1;" &>/dev/null; then
+if ! mysql --batch --skip-column-names <<SQL >/dev/null 2>&1
+SELECT 1 FROM \`${ROUNDCUBE_DB_NAME_SQL}\`.users LIMIT 1;
+SQL
+then
     mysql "${ROUNDCUBE_DB_NAME}" < /var/www/roundcube/SQL/mysql.initial.sql
     echo -e "Database initialized."
 else
@@ -69,7 +88,11 @@ rm -rf /var/www/roundcube/installer
 
 # 4. Update Nginx Configuration (Guarded)
 echo -e "Adding /webmail alias to Nginx..."
-PHP_SOCK=$(find /run/php -name "php*-fpm.sock" | head -n 1)
+PHP_SOCK=$(openmailstack_php_fpm_socket || true)
+if [[ -z "${PHP_SOCK}" ]]; then
+    echo -e "\033[0;31mError: Could not detect a PHP-FPM socket for ${OPENMAILSTACK_OS_LABEL}.\033[0m"
+    exit 1
+fi
 
 if ! grep -q "# --- OpenMailStack Roundcube ---" /etc/nginx/sites-available/mailserver.conf; then
 # Inject the config right before the final closing brace '}'

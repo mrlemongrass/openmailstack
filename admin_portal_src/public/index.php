@@ -49,7 +49,9 @@ if (empty($_SESSION['csrf_token'])) {
                         <li data-view="mailboxes">Mailboxes</li>
                         <li data-view="aliases">Aliases & Groups</li>
                         <li data-view="routing">Cross-Domain Routing</li>
-                        <li data-view="spam">Spam & Security</li>
+                        <li data-view="quarantine">Spam Quarantine</li>
+                        <li data-view="spam_policies">Spam Policies</li>
+                        <li data-view="spam">Rspamd WebUI</li>
                         <li data-view="admins">Administrators</li>
                         <li data-view="logs">Audit Logs</li>
                         <li data-view="apikeys">API Keys</li>

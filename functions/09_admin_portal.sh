@@ -161,6 +161,24 @@ if [[ "$ADMIN_OPT" == "1" ]]; then
             domain VARCHAR(255) PRIMARY KEY,
             token VARCHAR(255) NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS global_spam_rules (
+            id INT PRIMARY KEY DEFAULT 1,
+            rules_json TEXT
+        );
+        INSERT IGNORE INTO global_spam_rules (id, rules_json) VALUES (1, '{\"whitelisted_senders\":[],\"blacklisted_senders\":[],\"banned_ips\":[],\"banned_extensions\":[]}');
+        CREATE TABLE IF NOT EXISTS domain_spam_rules (
+            domain VARCHAR(255) PRIMARY KEY,
+            rules_json TEXT
+        );
+        CREATE TABLE IF NOT EXISTS quarantine_log (
+            uuid VARCHAR(36) PRIMARY KEY,
+            sender VARCHAR(255),
+            recipient VARCHAR(255),
+            subject TEXT,
+            score DECIMAL(5,2),
+            file_path VARCHAR(500),
+            created DATETIME
+        );
     "
     echo -e "${GREEN}New Admin account '$ADMIN_USER' created successfully!${NC}"
 fi

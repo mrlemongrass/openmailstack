@@ -719,7 +719,107 @@ try {
             
             echo json_encode(['success' => true, 'output' => $output]);
             break;
+            
+        // --- Quarantine & Security ---
+        case 'get_quarantine':
+            if (!$is_admin) throw new Exception('Unauthorized');
+            if ($is_superadmin) {
+                $stmt = $pdo->query("SELECT uuid, sender, recipient, subject, score, created FROM quarantine_log ORDER BY created DESC");
+            } else {
+                $stmt = $pdo->prepare("SELECT uuid, sender, recipient, subject, score, created FROM quarantine_log WHERE recipient LIKE CONCAT('%@', (SELECT domain FROM domain_admins WHERE username = ? LIMIT 1)) ORDER BY created DESC");
+                // Note: The above assumes domain admins check their allowed domains. We can do a simpler IN clause.
+                $stmt = $pdo->prepare("SELECT q.uuid, q.sender, q.recipient, q.subject, q.score, q.created FROM quarantine_log q JOIN domain_admins da ON q.recipient LIKE CONCAT('%@', da.domain) WHERE da.username = ? ORDER BY q.created DESC");
+                $stmt->execute([$_SESSION['username']]);
+            }
+            echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
+            break;
+            
+        case 'view_quarantine':
+            if (!$is_admin) throw new Exception('Unauthorized');
+            $uuid = $_POST['uuid'] ?? '';
+            $stmt = $pdo->prepare("SELECT file_path FROM quarantine_log WHERE uuid = ?");
+            $stmt->execute([$uuid]);
+            $file = $stmt->fetchColumn();
+            if (!$file || !file_exists($file)) throw new Exception("Quarantine file not found");
+            echo json_encode(['success' => true, 'content' => file_get_contents($file)]);
+            break;
+            
+        case 'delete_quarantine':
+            if (!$is_admin) throw new Exception('Unauthorized');
+            $uuid = $_POST['uuid'] ?? '';
+            $stmt = $pdo->prepare("SELECT file_path FROM quarantine_log WHERE uuid = ?");
+            $stmt->execute([$uuid]);
+            $file = $stmt->fetchColumn();
+            if ($file && file_exists($file)) unlink($file);
+            $pdo->prepare("DELETE FROM quarantine_log WHERE uuid = ?")->execute([$uuid]);
+            audit_log($pdo, $_SESSION['username'], 'ALL', 'delete_quarantine', "Deleted quarantined email UUID $uuid");
+            echo json_encode(['success' => true]);
+            break;
+            
+        case 'release_quarantine':
+            if (!$is_admin) throw new Exception('Unauthorized');
+            $uuid = $_POST['uuid'] ?? '';
+            $stmt = $pdo->prepare("SELECT recipient, file_path FROM quarantine_log WHERE uuid = ?");
+            $stmt->execute([$uuid]);
+            $q = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$q || !file_exists($q['file_path'])) throw new Exception("Quarantine file not found");
+            
+            // Release via sendmail
+            $rcpt = escapeshellarg($q['recipient']);
+            $file = escapeshellarg($q['file_path']);
+            exec("/usr/sbin/sendmail -t $rcpt < $file", $out, $ret);
+            
+            if ($ret === 0) {
+                unlink($q['file_path']);
+                $pdo->prepare("DELETE FROM quarantine_log WHERE uuid = ?")->execute([$uuid]);
+                audit_log($pdo, $_SESSION['username'], 'ALL', 'release_quarantine', "Released quarantined email to $rcpt");
+                echo json_encode(['success' => true]);
+            } else {
+                echo json_encode(['success' => false, 'error' => "Failed to release email. Sendmail exit code $ret"]);
+            }
+            break;
 
+        case 'get_spam_policies':
+            if (!$is_admin) throw new Exception('Unauthorized');
+            $domain = $_POST['domain'] ?? 'GLOBAL';
+            if ($domain === 'GLOBAL') {
+                if (!$is_superadmin) throw new Exception('Unauthorized for Global rules');
+                $stmt = $pdo->query("SELECT rules_json FROM global_spam_rules WHERE id = 1");
+            } else {
+                if (!$is_superadmin) {
+                    $stmt = $pdo->prepare("SELECT 1 FROM domain_admins WHERE username = ? AND domain = ?");
+                    $stmt->execute([$_SESSION['username'], $domain]);
+                    if (!$stmt->fetch()) throw new Exception('Unauthorized for this domain');
+                }
+                $stmt = $pdo->prepare("SELECT rules_json FROM domain_spam_rules WHERE domain = ?");
+                $stmt->execute([$domain]);
+            }
+            $rules = $stmt->fetchColumn();
+            echo json_encode(['success' => true, 'rules' => $rules ? json_decode($rules, true) : null]);
+            break;
+            
+        case 'set_spam_policies':
+            if (!$is_admin) throw new Exception('Unauthorized');
+            $domain = $_POST['domain'] ?? 'GLOBAL';
+            $rules = $_POST['rules'] ?? '{}';
+            if (!json_decode($rules)) throw new Exception('Invalid JSON payload');
+            
+            if ($domain === 'GLOBAL') {
+                if (!$is_superadmin) throw new Exception('Unauthorized for Global rules');
+                $stmt = $pdo->prepare("INSERT INTO global_spam_rules (id, rules_json) VALUES (1, ?) ON DUPLICATE KEY UPDATE rules_json = ?");
+                $stmt->execute([$rules, $rules]);
+            } else {
+                if (!$is_superadmin) {
+                    $stmt = $pdo->prepare("SELECT 1 FROM domain_admins WHERE username = ? AND domain = ?");
+                    $stmt->execute([$_SESSION['username'], $domain]);
+                    if (!$stmt->fetch()) throw new Exception('Unauthorized for this domain');
+                }
+                $stmt = $pdo->prepare("INSERT INTO domain_spam_rules (domain, rules_json) VALUES (?, ?) ON DUPLICATE KEY UPDATE rules_json = ?");
+                $stmt->execute([$domain, $rules, $rules]);
+            }
+            audit_log($pdo, $_SESSION['username'], $domain, 'set_spam_policies', "Updated spam policies");
+            echo json_encode(['success' => true]);
+            break;
         default:
             echo json_encode(['error' => 'Invalid action']);
             break;

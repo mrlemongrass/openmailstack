@@ -42,6 +42,8 @@ document.addEventListener('DOMContentLoaded', () => {
         aliases: renderAliases,
         routing: renderRouting,
         spam: renderSpam,
+        quarantine: renderQuarantine,
+        spam_policies: renderSpamPolicies,
         admins: renderAdmins,
         apikeys: renderApiKeys,
         logs: renderLogs,
@@ -247,6 +249,129 @@ document.addEventListener('DOMContentLoaded', () => {
 
         html += '</div>';
         viewContent.innerHTML = html;
+    }
+
+    async function renderQuarantine() {
+        viewContent.innerHTML = '<div class="loader">Loading Quarantine...</div>';
+        const res = await apiCall('get_quarantine');
+        if(!res.success) return viewContent.innerHTML = `<div class="error-msg">${escapeHTML(res.error)}</div>`;
+
+        let html = `<table>
+            <thead><tr><th>Date</th><th>Score</th><th>Sender</th><th>Recipient</th><th>Subject</th><th>Actions</th></tr></thead>
+            <tbody>`;
+        if (res.data.length === 0) {
+            html += `<tr><td colspan="6" style="text-align:center;">Quarantine is empty! 🎉</td></tr>`;
+        } else {
+            res.data.forEach(q => {
+                html += `<tr>
+                    <td><small>${escapeHTML(q.created)}</small></td>
+                    <td><span style="color:var(--danger)">${escapeHTML(q.score)}</span></td>
+                    <td>${escapeHTML(q.sender)}</td>
+                    <td>${escapeHTML(q.recipient)}</td>
+                    <td>${escapeHTML(q.subject)}</td>
+                    <td class="action-btns">
+                        <button class="btn btn-outline" onclick="viewQuarantineEmail('${escapeHTML(q.uuid)}')">View</button>
+                        <button class="btn btn-primary" onclick="releaseQuarantine('${escapeHTML(q.uuid)}')">Release</button>
+                        <button class="btn btn-danger" onclick="deleteQuarantine('${escapeHTML(q.uuid)}')">Delete</button>
+                    </td>
+                </tr>`;
+            });
+        }
+        html += `</tbody></table>`;
+        viewContent.innerHTML = html;
+    }
+
+    window.viewQuarantineEmail = async (uuid) => {
+        const res = await apiCall('view_quarantine', { uuid });
+        if(!res.success) return alert(res.error);
+        
+        let modal = document.createElement('div');
+        modal.className = 'modal-backdrop';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 800px; width: 90%;">
+                <h3>Raw Email Viewer</h3>
+                <pre style="background:var(--bg-dark); padding:15px; border-radius:8px; overflow:auto; max-height:60vh; font-size:12px; color:#fff; white-space:pre-wrap;">${escapeHTML(res.content)}</pre>
+                <div class="form-actions" style="margin-top:20px;">
+                    <button class="btn btn-outline" onclick="this.closest('.modal-backdrop').remove()">Close</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+
+    window.releaseQuarantine = async (uuid) => {
+        if(!confirm("Are you sure you want to release this email to the recipient's inbox?")) return;
+        const res = await apiCall('release_quarantine', { uuid });
+        if(res.success) renderQuarantine();
+        else alert(res.error);
+    }
+
+    window.deleteQuarantine = async (uuid) => {
+        if(!confirm("Are you sure you want to permanently delete this email?")) return;
+        const res = await apiCall('delete_quarantine', { uuid });
+        if(res.success) renderQuarantine();
+        else alert(res.error);
+    }
+
+    async function renderSpamPolicies() {
+        viewContent.innerHTML = '<div class="loader">Loading Policies...</div>';
+        
+        let html = `
+            <div class="form-card" style="margin-bottom: 20px;">
+                <h3 style="margin-bottom: 10px;">Global & Domain Spam Policies</h3>
+                <p style="color:var(--text-secondary); margin-bottom:15px; font-size:0.95rem;">
+                    Edit the hierarchical JSON rules used by Rspamd. Supported keys: <br>
+                    <code>whitelisted_senders</code>, <code>blacklisted_senders</code>, <code>banned_ips</code>, <code>banned_extensions</code>.
+                </p>
+                <div style="display:flex; gap:20px; align-items:flex-start;">
+                    <div style="flex:1;">
+                        <label>Select Scope:</label>
+                        <select id="policy-domain" class="input-group input" style="width:100%; padding: 10px; margin-bottom:10px; border-radius:8px;" onchange="loadPolicyScope()">
+                            <option value="GLOBAL">GLOBAL (Server-Wide)</option>
+                        </select>
+                        <textarea id="policy-json" style="width:100%; height:300px; background:var(--bg-dark); color:#fff; border:1px solid var(--border-glass); border-radius:8px; padding:15px; font-family:monospace;"></textarea>
+                        <br><br>
+                        <button class="btn btn-primary" onclick="savePolicyScope()">Save Policies</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        viewContent.innerHTML = html;
+        
+        const dRes = await apiCall('get_domains');
+        if(dRes.success) {
+            const select = document.getElementById('policy-domain');
+            dRes.data.forEach(d => {
+                if (d.domain !== 'ALL') {
+                    const opt = document.createElement('option');
+                    opt.value = d.domain;
+                    opt.textContent = d.domain;
+                    select.appendChild(opt);
+                }
+            });
+        }
+        
+        window.loadPolicyScope = async () => {
+            const domain = document.getElementById('policy-domain').value;
+            const res = await apiCall('get_spam_policies', { domain });
+            const rules = (res.success && res.rules) ? res.rules : {
+                whitelisted_senders: [],
+                blacklisted_senders: [],
+                banned_ips: [],
+                banned_extensions: []
+            };
+            document.getElementById('policy-json').value = JSON.stringify(rules, null, 4);
+        }
+        
+        window.savePolicyScope = async () => {
+            const domain = document.getElementById('policy-domain').value;
+            const rules = document.getElementById('policy-json').value;
+            const res = await apiCall('set_spam_policies', { domain, rules });
+            if(res.success) alert("Policies saved and immediately active!");
+            else alert(res.error);
+        }
+        
+        await loadPolicyScope();
     }
 
     async function renderSpam() {

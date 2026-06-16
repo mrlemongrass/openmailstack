@@ -101,7 +101,7 @@ else
 fi
 
 # Hash the setup password and apply it to the Web UI
-RSPAMD_PASSWORD=$(printf '%s\n' "${POSTFIXADMIN_SETUP_PASSWORD}" | rspamadm pw -e)
+RSPAMD_PASSWORD=$(rspamadm pw -p "${POSTFIXADMIN_SETUP_PASSWORD}")
 cat <<EOF > /etc/rspamd/local.d/worker-controller.inc
 password = "${RSPAMD_PASSWORD}";
 EOF

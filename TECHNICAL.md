@@ -57,6 +57,13 @@ The pride and joy of the stack is the custom Admin Portal (`admin_portal_src`). 
 - **Security:**
   - Prepared SQL statements are strictly enforced to prevent SQL Injection.
   - User privilege elevation is handled seamlessly. When a regular mailbox user is promoted to an Administrator, `api.php` duplicates their hashed Dovecot password into the `admin` table, ensuring their credentials remain in sync without storing plaintext.
+  - **Role-Based Access Control (RBAC):** `api.php` distinguishes between `superadmin` (can view/modify all domains) and normal domain admins (restricted via the `domain_admins` table boundaries). Standard mailbox users can also authenticate to access a self-service view, modifying only their own row in the `mailbox` and `user_spam_rules` tables.
+
+### 3.2 RESTful Integration API (`api_v1.php`)
+For external automated provisioning (e.g. WHMCS or custom billing software), we engineered a completely stateless JSON API endpoint at `/api_v1.php`.
+- **Authentication:** Validates requests using an `Authorization: Bearer sk_...` header.
+- **Key Generation:** API Keys are generated in the Admin Portal, securely hashed using PHP's native algorithms (like Bcrypt), and stored in the `api_keys` table. The plaintext `sk_...` key is only shown to the admin exactly once during generation.
+- **Capabilities:** Allows external systems to execute atomic Create, Read, Update, and Delete (CRUD) operations on Domains, Mailboxes, and Aliases, bypassing CSRF/Cookie requirements while maintaining Audit Log traceability (keys are tagged to logs).
 
 ### 3.2 Frontend (`app.js` & `index.js`)
 - **Framework:** Vanilla JavaScript & CSS. No React, no Vue, no bloated Node_Modules. 
@@ -86,3 +93,15 @@ Enterprise security requires accountability. We implemented an `audit_log` SQL t
 ### 4.4 Automated DKIM & Rspamd Proxy
 Rspamd's UI runs locally on port `11334`. To expose it securely to the admin without opening extra firewall ports, Nginx Reverse Proxies `/rspamd/` directly to localhost, passing the `RSPAMD_PASS` via headers securely generated during `setup_config.sh`.
 DKIM records are managed by the `05_rspamd_clamav.sh` script, which installs a systemd timer (`openmailstack-dkim-sync.timer`) to ensure newly created domains in the database have their cryptographic keys generated automatically every hour without manual CLI intervention.
+
+### 4.5 Domain Ownership Verification
+To prevent malicious domain hijacking in a multi-tenant environment, OpenMailStack enforces DNS TXT verification for non-superadmins:
+1. When a normal domain admin adds a domain, it is inserted into the MariaDB `domain` table with `active = 0` (Pending) and linked to their account in the `domain_admins` table.
+2. A cryptographic nonce is generated and saved in the `domain_verification` table.
+3. The Admin Portal instructs the user to create a DNS TXT record (`_openmailstack.domain.com IN TXT openmailstack-verify=<nonce>`).
+4. Upon clicking "Verify", `api.php` triggers a native PHP `dns_get_record()` lookup. If the token is found, the domain activates immediately.
+
+### 4.6 Per-User Spam Rules (Rspamd Multimap)
+Standard users can log into their Self-Service Portal to define personal email/domain Whitelists and Blacklists. 
+- The frontend saves these lists as a serialized JSON object inside the MariaDB `user_spam_rules` table.
+- Rspamd is configured with a dynamic `multimap.conf` module that queries MariaDB in real-time. It uses MariaDB's `JSON_EXTRACT()` function to evaluate whether the incoming sender `From:` address matches an entry in the recipient's personal whitelist or blacklist, bypassing global rules cleanly.

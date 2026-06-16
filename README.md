@@ -19,6 +19,9 @@ Stop wrestling with cryptic config files and manual database queries. OpenMailSt
   * 🛡️ **Embedded Security:** Direct single-sign-on access into the Rspamd WebUI.
   * 📜 **Audit Logs:** Track exactly *who* modified *what* account and *when*.
   * ✏️ **Intuitive Editing:** Beautiful popup modals for managing user aliases, quotas, and account suspensions.
+  * 🧩 **RESTful API v1:** Generate secure API tokens and easily connect external billing platforms (like WHMCS) to automate provisioning.
+  * 🌐 **Self-Service User Portal:** End users can securely log in to change their Dovecot passwords, manage mail-forwarding aliases, and configure personal Rspamd Spam Whitelists/Blacklists.
+  * 🏰 **Multi-Tenant Domain Verification:** Domain admins are strictly bounded to their own domains, and can securely add new domains utilizing automated DNS TXT record ownership verification.
 * 📧 **Webmail:** Roundcube with a modern, responsive Elastic Theme.
 * 🛑 **Security & Anti-Spam:** Rspamd (DKIM/ARC signing), ClamAV (Anti-virus), Fail2ban, UFW Firewall, and automated Let's Encrypt SSL.
 * 🤖 **Automation & Guardrails:** Intelligent state detection, automated pre-flight safety snapshots, interactive point-in-time rollbacks, and hourly automated DKIM domain synchronization.

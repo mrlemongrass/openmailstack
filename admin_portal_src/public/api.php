@@ -234,12 +234,18 @@ try {
             break;
 
         case 'edit_mailbox':
-            $username = $_POST['username'] ?? '';
+            $old_username = $_POST['old_username'] ?? '';
+            $new_username = $_POST['new_username'] ?? '';
             $name = $_POST['name'] ?? '';
             $quota = isset($_POST['quota']) ? (int)$_POST['quota'] : -1;
+            $active = isset($_POST['active']) ? (int)$_POST['active'] : 1;
             
-            if (empty($username)) throw new Exception('Missing username');
-            $domain = explode('@', $username)[1] ?? '';
+            if (empty($old_username) || empty($new_username)) throw new Exception('Missing username');
+            $domain = explode('@', $old_username)[1] ?? '';
+            $new_domain = explode('@', $new_username)[1] ?? '';
+            
+            if ($domain !== $new_domain) throw new Exception('Cannot move mailbox to a different domain');
+            $new_local_part = explode('@', $new_username)[0];
             
             // If quota is -1, inherit from domain.quota
             if ($quota === -1) {
@@ -250,10 +256,17 @@ try {
                 $quota_bytes = $quota > 0 ? $quota * 1048576 : 0;
             }
             
-            $stmt = $pdo->prepare("UPDATE mailbox SET name = ?, quota = ?, modified = NOW() WHERE username = ?");
-            $stmt->execute([$name, $quota_bytes, $username]);
+            $pdo->beginTransaction();
+            // Keep the same maildir so existing emails aren't orphaned
+            $stmt = $pdo->prepare("UPDATE mailbox SET username = ?, local_part = ?, name = ?, quota = ?, active = ?, modified = NOW() WHERE username = ?");
+            $stmt->execute([$new_username, $new_local_part, $name, $quota_bytes, $active, $old_username]);
             
-            audit_log($pdo, $_SESSION['admin_username'], $domain, 'edit_mailbox', "Edited mailbox $username");
+            // Update self alias
+            $stmt = $pdo->prepare("UPDATE alias SET address = ?, goto = ?, active = ?, modified = NOW() WHERE address = ? AND goto = ?");
+            $stmt->execute([$new_username, $new_username, $active, $old_username, $old_username]);
+            $pdo->commit();
+            
+            audit_log($pdo, $_SESSION['admin_username'], $domain, 'edit_mailbox', "Edited mailbox $old_username -> $new_username (active=$active)");
             echo json_encode(['success' => true]);
             break;
 
@@ -312,17 +325,17 @@ try {
             break;
             
         case 'edit_alias':
-            $address = $_POST['address'] ?? '';
-            $old_goto = $_POST['old_goto'] ?? '';
-            $new_goto = $_POST['goto'] ?? '';
+            $old_address = $_POST['old_address'] ?? '';
+            $new_address = $_POST['new_address'] ?? '';
+            $goto = $_POST['goto'] ?? '';
             
-            if (empty($address) || empty($old_goto) || empty($new_goto)) throw new Exception('Missing fields');
-            $domain = explode('@', $address)[1] ?? '';
+            if (empty($old_address) || empty($new_address) || empty($goto)) throw new Exception('Missing fields');
+            $domain = explode('@', $old_address)[1] ?? '';
             
-            $stmt = $pdo->prepare("UPDATE alias SET goto = ?, modified = NOW() WHERE address = ? AND goto = ?");
-            $stmt->execute([$new_goto, $address, $old_goto]);
+            $stmt = $pdo->prepare("UPDATE alias SET address = ?, goto = ?, modified = NOW() WHERE address = ?");
+            $stmt->execute([$new_address, $goto, $old_address]);
             
-            audit_log($pdo, $_SESSION['admin_username'], $domain, 'edit_alias', "Edited alias $address (goto=$new_goto)");
+            audit_log($pdo, $_SESSION['admin_username'], $domain, 'edit_alias', "Edited alias $old_address -> $new_address (goto updated)");
             echo json_encode(['success' => true]);
             break;
 

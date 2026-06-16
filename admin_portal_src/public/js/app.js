@@ -355,10 +355,10 @@ document.addEventListener('DOMContentLoaded', () => {
             html += `<tr>
                 <td>${escapeHTML(m.username)}</td>
                 <td>${escapeHTML(m.name || '-')}</td>
-                <td><span style="color:var(--success)">Active</span></td>
+                <td><span style="color:${m.active == 1 ? 'var(--success)' : 'var(--danger)'}">${m.active == 1 ? 'Active' : 'Suspended'}</span></td>
                 <td><small style="color:var(--text-secondary)">${q}</small></td>
                 <td class="action-btns">
-                    <button class="btn btn-outline" onclick="editMailbox('${escapeHTML(m.username)}', '${escapeHTML(m.name || '')}', ${m.quota == 0 ? 0 : m.quota / 1048576})">Edit Info</button>
+                    <button class="btn btn-outline" onclick="editMailbox('${escapeHTML(m.username)}', '${escapeHTML(m.name || '')}', ${m.quota == 0 ? 0 : m.quota / 1048576}, ${m.active})">Edit Info</button>
                     <button class="btn btn-outline" onclick="changePassword('${escapeHTML(m.username)}')">Reset Password</button>
                     <button class="btn btn-danger" onclick="deleteMailbox('${escapeHTML(m.username)}')">Delete</button>
                 </td>
@@ -381,16 +381,56 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    window.editMailbox = async (username, currentName, currentQuota) => {
-        const newName = prompt(`Edit Full Name for ${username}:`, currentName);
-        if (newName === null) return;
-        
-        const newQuota = prompt(`Edit Quota for ${username} (in MB, 0 = Unlimited, -1 = Inherit Domain Default):`, currentQuota);
-        if (newQuota === null) return;
+    window.editMailbox = async (username, currentName, currentQuota, currentActive) => {
+        let modal = document.createElement('div');
+        modal.className = 'modal-backdrop';
+        modal.innerHTML = `
+            <div class="form-card glass" style="width: 500px; max-width: 90%; background:var(--bg-dark); margin: 10vh auto;">
+                <h3 style="margin-top:0;">Edit Mailbox</h3>
+                <form id="edit-mailbox-form">
+                    <div class="input-group" style="margin-top: 15px;">
+                        <label>Email Address</label>
+                        <input type="text" id="edit-mb-user" value="${escapeHTML(username)}" required>
+                    </div>
+                    <div class="input-group">
+                        <label>Full Name</label>
+                        <input type="text" id="edit-mb-name" value="${escapeHTML(currentName)}">
+                    </div>
+                    <div class="input-group">
+                        <label>Quota (MB) [0 = Unlimited, -1 = Domain Default]</label>
+                        <input type="number" id="edit-mb-quota" value="${currentQuota}" min="-1">
+                    </div>
+                    <div class="input-group">
+                        <label>Status</label>
+                        <select id="edit-mb-active">
+                            <option value="1" ${currentActive == 1 ? 'selected' : ''}>Active</option>
+                            <option value="0" ${currentActive == 0 ? 'selected' : ''}>Suspended</option>
+                        </select>
+                    </div>
+                    <div class="form-actions" style="margin-top: 20px; display: flex; justify-content: space-between;">
+                        <button type="button" class="btn btn-outline" onclick="this.closest('.modal-backdrop').remove()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(modal);
 
-        const res = await apiCall('edit_mailbox', { username, name: newName, quota: newQuota });
-        if(res.success) renderMailboxes();
-        else alert(res.error);
+        document.getElementById('edit-mailbox-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const new_username = document.getElementById('edit-mb-user').value;
+            const name = document.getElementById('edit-mb-name').value;
+            const quota = document.getElementById('edit-mb-quota').value;
+            const active = document.getElementById('edit-mb-active').value;
+
+            const res = await apiCall('edit_mailbox', { old_username: username, new_username, name, quota, active });
+            if(res.success) {
+                modal.remove();
+                renderMailboxes();
+            } else {
+                alert(res.error);
+            }
+        });
     }
 
     window.deleteMailbox = async (email) => {
@@ -480,12 +520,83 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.editAlias = async (address, currentGoto) => {
-        const newGoto = prompt(`Edit Target(s) for ${address} (comma separated):`, currentGoto);
-        if (newGoto && newGoto !== currentGoto) {
-            const res = await apiCall('edit_alias', { address, goto: newGoto, old_goto: currentGoto });
-            if (res.success) renderAliases();
-            else alert(res.error);
-        }
+        let targets = currentGoto.split(',').map(t => t.trim()).filter(t => t);
+        
+        let modal = document.createElement('div');
+        modal.className = 'modal-backdrop';
+        modal.innerHTML = `
+            <div class="form-card glass" style="width: 600px; max-width: 90%; background:var(--bg-dark); margin: 10vh auto; max-height: 80vh; overflow-y:auto;">
+                <h3 style="margin-top:0;">Edit Alias / Group</h3>
+                <form id="edit-alias-form">
+                    <div class="input-group" style="margin-top: 15px;">
+                        <label>Alias Address</label>
+                        <input type="text" id="edit-al-addr" value="${escapeHTML(address)}" required>
+                    </div>
+                    
+                    <div style="margin-top: 20px; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <label style="margin:0;">Current Targets</label>
+                            <button type="button" class="btn btn-outline" style="padding: 2px 8px; font-size:0.8rem;" onclick="document.querySelectorAll('.target-cb').forEach(cb => cb.checked = true)">Select All</button>
+                        </div>
+                        <div id="target-list" style="max-height: 200px; overflow-y:auto;">
+                            ${targets.map((t, i) => `
+                                <div style="display:flex; align-items:center; margin-bottom: 5px;">
+                                    <input type="checkbox" class="target-cb" id="tgt-${i}" value="${escapeHTML(t)}">
+                                    <label for="tgt-${i}" style="margin-left:8px; margin-bottom:0; flex-grow:1; cursor:pointer;">${escapeHTML(t)}</label>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <button type="button" class="btn btn-danger" style="margin-top:10px; font-size:0.8rem; padding:4px 10px;" id="btn-remove-selected">Remove Selected</button>
+                    </div>
+
+                    <div class="input-group" style="margin-top: 20px;">
+                        <label>Add New Targets (one per line or comma separated)</label>
+                        <textarea id="edit-al-new" rows="3" placeholder="user1@domain.com\nuser2@domain.com"></textarea>
+                    </div>
+
+                    <div class="form-actions" style="margin-top: 25px; display: flex; justify-content: space-between;">
+                        <button type="button" class="btn btn-outline" onclick="this.closest('.modal-backdrop').remove()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        document.getElementById('btn-remove-selected').addEventListener('click', () => {
+            document.querySelectorAll('.target-cb:checked').forEach(cb => cb.parentElement.remove());
+        });
+
+        document.getElementById('edit-alias-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const new_address = document.getElementById('edit-al-addr').value;
+            
+            // Collect remaining targets
+            let finalTargets = [];
+            document.querySelectorAll('.target-cb').forEach(cb => finalTargets.push(cb.value));
+            
+            // Add new targets
+            let newLines = document.getElementById('edit-al-new').value.split(/[\n,]+/);
+            newLines.forEach(line => {
+                let trimmed = line.trim();
+                if(trimmed) finalTargets.push(trimmed);
+            });
+
+            if (finalTargets.length === 0) {
+                alert("You must have at least one target for an alias.");
+                return;
+            }
+
+            const gotoString = finalTargets.join(',');
+
+            const res = await apiCall('edit_alias', { old_address: address, new_address, goto: gotoString });
+            if (res.success) {
+                modal.remove();
+                renderAliases();
+            } else {
+                alert(res.error);
+            }
+        });
     }
 
     window.deleteAlias = async (address, goto) => {

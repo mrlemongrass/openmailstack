@@ -66,9 +66,10 @@ echo -e "${GREEN}FQDN validation passed: $CURRENT_FQDN${NC}"
 
 # 5. Update System and Install Base Dependencies
 echo -e "${YELLOW}Updating package lists and installing base tools...${NC}"
+
 export DEBIAN_FRONTEND=noninteractive
 while true; do
-    if apt-get update -qq; then
+    if openmailstack_update_repos; then
         break
     fi
     echo -e "\n${RED}Error: Package update failed. An external repository may be temporarily down.${NC}" >&2
@@ -82,14 +83,14 @@ while true; do
     read -p "Select option [1-3] (default: 3): " APT_OPT
     APT_OPT=${APT_OPT:-3}
     if [[ "$APT_OPT" == "2" ]]; then
-        echo -e "${YELLOW}Warning: Proceeding despite apt-get update failure.${NC}"
+        echo -e "${YELLOW}Warning: Proceeding despite package update failure.${NC}"
         break
     elif [[ "$APT_OPT" == "3" ]]; then
         echo "Aborting."
         exit 1
     fi
 done
-apt-get upgrade -y -qq || openmailstack_record_soft_error "Package upgrade had non-fatal issues"
+openmailstack_upgrade_packages || openmailstack_record_soft_error "Package upgrade had non-fatal issues"
 
 # Verify essential tools are working
 for tool in curl wget lsb-release openssl; do

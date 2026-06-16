@@ -144,7 +144,16 @@ if [[ "$ADMIN_OPT" == "1" ]]; then
         ADMIN_HASH=$(ADMIN_PASSWORD="$ADMIN_PASSWORD" php -r 'echo password_hash(getenv("ADMIN_PASSWORD"), PASSWORD_DEFAULT);')
     fi
     
-    mysql -u "$POSTFIXADMIN_DB_USER" -p"$POSTFIXADMIN_DB_PASSWORD" "$POSTFIXADMIN_DB_NAME" -e "INSERT IGNORE INTO admin (username, password, superadmin, active) VALUES ('$ADMIN_USER_SQL', '$ADMIN_HASH', 1, 1);"
+    mysql -u "$POSTFIXADMIN_DB_USER" -p"$POSTFIXADMIN_DB_PASSWORD" "$POSTFIXADMIN_DB_NAME" -e "
+        INSERT IGNORE INTO admin (username, password, superadmin, active) VALUES ('$ADMIN_USER_SQL', '$ADMIN_HASH', 1, 1);
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            description VARCHAR(255) NOT NULL,
+            key_hash VARCHAR(255) NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_used DATETIME NULL
+        );
+    "
     echo -e "${GREEN}New Admin account '$ADMIN_USER' created successfully!${NC}"
 fi
 

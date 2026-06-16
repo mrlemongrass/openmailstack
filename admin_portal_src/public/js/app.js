@@ -43,6 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
         routing: renderRouting,
         spam: renderSpam,
         admins: renderAdmins,
+        apikeys: renderApiKeys,
         logs: renderLogs,
         updates: renderUpdates
     };
@@ -265,6 +266,61 @@ document.addEventListener('DOMContentLoaded', () => {
         viewContent.innerHTML = html;
         viewContent.style.display = 'flex';
         viewContent.style.flexDirection = 'column';
+    }
+
+    async function renderApiKeys() {
+        viewTitle.textContent = 'API Keys';
+        viewContent.innerHTML = '<div class="loader">Loading...</div>';
+        
+        const res = await apiCall('get_api_keys');
+        if(!res.success) {
+            viewContent.innerHTML = `<div class="error-msg">${escapeHTML(res.error)}</div>`;
+            return;
+        }
+
+        let html = '';
+        res.data.forEach(k => {
+            html += `<tr>
+                <td>${escapeHTML(k.description)}</td>
+                <td>${escapeHTML(k.created_at)}</td>
+                <td>${escapeHTML(k.last_used || 'Never')}</td>
+                <td class="action-btns">
+                    <button class="btn btn-danger" onclick="deleteApiKey(${k.id})">Revoke</button>
+                </td>
+            </tr>`;
+        });
+
+        viewContent.innerHTML = `
+            <div class="top-actions">
+                <button class="btn btn-primary" onclick="createApiKey()">+ Generate New API Key</button>
+            </div>
+            <div class="card glass">
+                <table class="data-table">
+                    <thead><tr><th>Description</th><th>Created At</th><th>Last Used</th><th>Actions</th></tr></thead>
+                    <tbody>${html || '<tr><td colspan="4" style="text-align:center;">No API Keys generated yet.</td></tr>'}</tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    window.createApiKey = async () => {
+        const desc = prompt("Enter a description for this API key (e.g. WHMCS Billing System):");
+        if(!desc) return;
+        
+        const res = await apiCall('create_api_key', { description: desc });
+        if(res.success) {
+            alert("SUCCESS! Please copy this API Key now. It will NEVER be shown again:\n\n" + res.raw_key);
+            renderApiKeys();
+        } else {
+            alert(res.error);
+        }
+    }
+
+    window.deleteApiKey = async (id) => {
+        if(!confirm("Are you sure you want to revoke this API key? External systems using it will immediately lose access.")) return;
+        const res = await apiCall('delete_api_key', { id });
+        if(res.success) renderApiKeys();
+        else alert(res.error);
     }
 
     async function renderLogs() {

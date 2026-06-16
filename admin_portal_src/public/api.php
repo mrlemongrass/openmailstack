@@ -436,6 +436,40 @@ try {
             echo json_encode(['success' => true]);
             break;
 
+        // --- API Keys ---
+        case 'get_api_keys':
+            $stmt = $pdo->query("SELECT id, description, created_at, last_used FROM api_keys ORDER BY created_at DESC");
+            echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
+            break;
+
+        case 'create_api_key':
+            $description = $_POST['description'] ?? '';
+            if (empty($description)) throw new Exception('Missing description');
+            
+            // Generate a secure random API key
+            $raw_key = 'sk_' . bin2hex(random_bytes(32));
+            $key_hash = password_hash($raw_key, PASSWORD_DEFAULT);
+            
+            $stmt = $pdo->prepare("INSERT INTO api_keys (description, key_hash, created_at) VALUES (?, ?, NOW())");
+            $stmt->execute([$description, $key_hash]);
+            
+            audit_log($pdo, $_SESSION['admin_username'], 'ALL', 'create_api_key', "Created API key: $description");
+            
+            // Return the raw key ONLY once
+            echo json_encode(['success' => true, 'raw_key' => $raw_key]);
+            break;
+
+        case 'delete_api_key':
+            $id = $_POST['id'] ?? '';
+            if (empty($id)) throw new Exception('Missing ID');
+            
+            $stmt = $pdo->prepare("DELETE FROM api_keys WHERE id = ?");
+            $stmt->execute([$id]);
+            
+            audit_log($pdo, $_SESSION['admin_username'], 'ALL', 'delete_api_key', "Deleted API key ID: $id");
+            echo json_encode(['success' => true]);
+            break;
+
         // --- System & Updates ---
         case 'check_updates':
             $current_version = file_exists('/var/www/openmailstack-admin/VERSION') 

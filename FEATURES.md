@@ -1,6 +1,6 @@
 # 🚀 OpenMailStack Features
 
-**The definitive, zero-paywall, open-source mail server stack for Debian and Ubuntu.**
+**The definitive, zero-paywall, open-source mail server stack for Linux (Debian, Ubuntu, RHEL, Alma, Rocky, CentOS).**
 
 Welcome to the feature sheet of OpenMailStack. If you are a sysadmin, a DevOps engineer, or a security researcher who is tired of bloated corporate mail servers locked behind enterprise licenses, you are in the right place. 
 
@@ -33,7 +33,7 @@ We fundamentally re-engineered how Rspamd interacts with a mail stack.
   3. A lightning-fast PHP CLI filter extracts the raw `.eml`, saves it to an unindexed folder, and inserts the metadata into MariaDB.
   4. Admins can view the raw email in the UI, and click **Release** to force local `sendmail` delivery, bypassing all filters directly into the user's inbox.
 * **Automated DKIM & ARC Signing:** Cryptographic keys are automatically generated via an hourly Systemd timer for all newly registered domains.
-* **Fail2Ban & UFW:** The stack automatically jails IPs that fail SSH or IMAP auth, and strictly whitelists only necessary mail ports (25, 80, 443, 587, 993).
+* **Fail2Ban, UFW & Firewalld:** The stack automatically jails IPs that fail SSH or IMAP auth, and strictly whitelists only necessary mail ports (25, 80, 443, 587, 993) using native OS firewalls.
 
 ## 🔌 API & Automation
 

@@ -9,9 +9,7 @@ Here is the roadmap for upcoming features and enhancements to OpenMailStack.
 
 - **Spam Quarantining**: Intercepts high-scoring spam at the MTA level, logs it to SQL, and provides an admin interface to review, release, or delete the quarantined emails.
 - **Hierarchical Ban Rules**: Supports granular JSON-based spam policies (Emails, IPs, Extensions) managed globally, per-domain, or per-user, directly evaluated by Rspamd.
-
-## 🐧 OS Support
-- **RedHat / RHEL Variants**: Compatibility updates and package management support for RedHat, AlmaLinux, and Rocky Linux.
+- **RedHat / RHEL OS Compatibility**: Natively supports RedHat 8/9, AlmaLinux, Rocky Linux, and CentOS Stream via an intelligent package management abstraction layer.
 
 ## 🛡️ Deliverability & Security
 - **Outbound IP Reputation**: When paying Google, you get their pristine IPs. If a user on our stack is compromised, they can send 10,000 spam emails and blacklist our VPS IP on Spamhaus. We should eventually implement strict outbound rate limiting in Rspamd to protect the IP.

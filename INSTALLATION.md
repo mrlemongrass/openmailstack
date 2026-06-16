@@ -10,7 +10,7 @@ Before running the installation script, there are several strict requirements yo
 
 ### 1. A Fresh Operating System
 You **must** use a brand new, completely clean server. If your server already has Apache, Nginx, MySQL, or a control panel (like cPanel or CyberPanel) installed, this script will clash with them and break your system.
-* Supported OS: **Debian 11 / 12 / 13** or **Ubuntu 22.04 / 24.04 / 25.04**
+* Supported OS: **Debian 11 / 12 / 13**, **Ubuntu 22.04 / 24.04 / 25.04**, or **RHEL / AlmaLinux / Rocky Linux / CentOS Stream 8 / 9**
 
 ### 2. Check Port 25 (Crucial Step)
 Almost all major cloud providers (AWS, Google Cloud, DigitalOcean, Vultr, Linode) block outbound Port 25 by default. This is to stop malicious users from creating spam bots. **If Port 25 is blocked, you can receive emails, but you cannot send them.**
@@ -166,4 +166,4 @@ Once your installation is complete and your DNS records have propagated, you can
 * **I can receive emails, but I can't send them!** -> Your hosting provider has blocked outbound Port 25. Open a support ticket with them.
 * **My emails are going to Spam!** -> DNS changes can take up to 24 hours to propagate across the globe. Wait a bit, and test your spam score using [Mail-Tester.com](https://www.mail-tester.com/). Ensure your Reverse DNS (PTR) is set properly.
 * **The installation crashed randomly!** -> You likely ran out of RAM. Ensure you have 2GB, or edit `config.conf` to set `CLAMAV_ENABLED="0"` and re-run `./install.sh`.
-* **Installer says my OS is unsupported!** -> Ensure you are running a fresh install of Debian 11/12/13 or Ubuntu 22.04/24.04/25.04. You can run `bash ./install.sh --dry-run` to see what the script detects.
+* **Installer says my OS is unsupported!** -> Ensure you are running a fresh install of Debian 11/12/13, Ubuntu 22.04/24.04/25.04, or RHEL/Alma/Rocky/CentOS 8/9. You can run `bash ./install.sh --dry-run` to see what the script detects.

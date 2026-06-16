@@ -1,6 +1,6 @@
 # 🚀 OpenMailStack
 
-**The definitive, zero-paywall, open-source mail server stack for Debian and Ubuntu.**
+**The definitive, zero-paywall, open-source mail server stack for Linux (Debian, Ubuntu, RHEL, Alma, Rocky, CentOS).**
 
 Welcome to OpenMailStack! We transform a fresh Linux server into a beautiful, production-ready, enterprise-grade mail platform in minutes—without the subscription licensing fees. 
 
@@ -56,7 +56,7 @@ Are you a sysadmin, a security researcher, or just an unapologetic nerd? We love
 
 If you are a sysadmin familiar with unblocking Port 25, setting up reverse DNS (PTR), and managing DNS records, here is the fast track:
 
-1. Use a fresh instance of Debian 11/12/13 or Ubuntu 22.04/24.04/25.04.
+1. Use a fresh instance of Debian 11/12/13, Ubuntu 22.04/24.04/25.04, or RHEL/Alma/Rocky/CentOS 8/9.
 2. Point an A Record for `mail.yourdomain.com` to your server's IP.
 3. Run the following commands as `root`:
 

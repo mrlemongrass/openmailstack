@@ -148,4 +148,12 @@ if [[ "$ADMIN_OPT" == "1" ]]; then
     echo -e "${GREEN}New Admin account '$ADMIN_USER' created successfully!${NC}"
 fi
 
+# Build Sudoers Bridge for Upgrade System
+echo -e "Configuring secure upgrade bridge..."
+cp "${SCRIPT_DIR}/../upgrade.sh" /usr/local/bin/openmailstack-upgrade.sh
+chmod +x /usr/local/bin/openmailstack-upgrade.sh
+echo "www-data ALL=(root) NOPASSWD: /usr/local/bin/openmailstack-upgrade.sh" > /etc/sudoers.d/openmailstack-upgrade
+chmod 0440 /etc/sudoers.d/openmailstack-upgrade
+cp "${SCRIPT_DIR}/../VERSION" /var/www/openmailstack-admin/VERSION
+
 echo -e "\n${GREEN}Admin Portal setup complete!${NC}"

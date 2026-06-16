@@ -16,47 +16,53 @@ if (empty($_SESSION['csrf_token'])) {
 </head>
 <body>
     <div id="app">
-        <?php if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true): ?>
+        <?php if (!isset($_SESSION['role'])): ?>
             <div class="login-container glass">
                 <div class="brand">
                     <div class="logo-icon"></div>
                     <h1>OpenMailStack</h1>
                 </div>
-                <h2>Admin Login</h2>
+                <h2>Login</h2>
                 <form id="login-form">
                     <div class="input-group">
-                        <label for="username">Username</label>
-                        <input type="text" id="username" name="username" required placeholder="admin@domain.com">
+                        <label for="username">Email Address</label>
+                        <input type="text" id="username" name="username" required placeholder="user@domain.com">
                     </div>
                     <div class="input-group">
                         <label for="password">Password</label>
-                        <input type="password" id="password" name="password" required placeholder="Enter password">
+                        <input type="password" id="password" name="password" required>
                     </div>
                     <button type="submit" class="btn btn-primary">Login</button>
                     <div id="login-error" class="error-msg"></div>
                 </form>
             </div>
         <?php else: ?>
-            <nav class="sidebar glass">
+            <nav class="sidebar glass" data-role="<?php echo htmlspecialchars($_SESSION['role']); ?>">
                 <div class="brand">
                     <div class="logo-icon small"></div>
-                    <h2>OMS Admin</h2>
+                    <h2>OMS <?php echo $_SESSION['role'] === 'admin' ? 'Admin' : 'Portal'; ?></h2>
                 </div>
                 <ul class="nav-links">
-                    <li class="active" data-view="dashboard">Dashboard</li>
-                    <li data-view="domains">Domains</li>
-                    <li data-view="mailboxes">Mailboxes</li>
-                    <li data-view="aliases">Aliases & Groups</li>
-                    <li data-view="routing">Cross-Domain Routing</li>
-                    <li data-view="spam">Spam & Security</li>
-                    <li data-view="admins">Administrators</li>
-                    <li data-view="logs">Audit Logs</li>
-                    <li data-view="apikeys">API Keys</li>
-                    <li data-view="updates">System Updates</li>
+                    <?php if ($_SESSION['role'] === 'admin'): ?>
+                        <li class="active" data-view="dashboard">Dashboard</li>
+                        <li data-view="domains">Domains</li>
+                        <li data-view="mailboxes">Mailboxes</li>
+                        <li data-view="aliases">Aliases & Groups</li>
+                        <li data-view="routing">Cross-Domain Routing</li>
+                        <li data-view="spam">Spam & Security</li>
+                        <li data-view="admins">Administrators</li>
+                        <li data-view="logs">Audit Logs</li>
+                        <li data-view="apikeys">API Keys</li>
+                        <li data-view="updates">System Updates</li>
+                    <?php else: ?>
+                        <li class="active" data-view="user_profile">My Account</li>
+                        <li data-view="user_forwarding">Mail Forwarding</li>
+                        <li data-view="user_spam">Spam Rules</li>
+                    <?php endif; ?>
                 </ul>
                 <div class="user-info" style="margin-top:auto; padding:15px; font-size:0.85rem; color:var(--text-secondary); text-align:center;">
                     Logged in as:<br>
-                    <strong style="color:var(--text-primary); word-break: break-all;"><?php echo htmlspecialchars($_SESSION['admin_username'] ?? ''); ?></strong>
+                    <strong style="color:var(--text-primary); word-break: break-all;"><?php echo htmlspecialchars($_SESSION['username'] ?? ''); ?></strong>
                 </div>
                 <button id="logout-btn" class="btn btn-outline" style="margin: 0 15px 15px 15px;">Logout</button>
             </nav>

@@ -153,6 +153,10 @@ if [[ "$ADMIN_OPT" == "1" ]]; then
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             last_used DATETIME NULL
         );
+        CREATE TABLE IF NOT EXISTS user_spam_rules (
+            username VARCHAR(255) PRIMARY KEY,
+            rules_json TEXT
+        );
     "
     echo -e "${GREEN}New Admin account '$ADMIN_USER' created successfully!${NC}"
 fi

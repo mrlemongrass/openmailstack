@@ -45,7 +45,10 @@ document.addEventListener('DOMContentLoaded', () => {
         admins: renderAdmins,
         apikeys: renderApiKeys,
         logs: renderLogs,
-        updates: renderUpdates
+        updates: renderUpdates,
+        user_profile: renderUserProfile,
+        user_forwarding: renderUserForwarding,
+        user_spam: renderUserSpam
     };
 
     async function renderUpdates() {
@@ -156,7 +159,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Initial load
-    views.dashboard();
+    const sidebar = document.querySelector('.sidebar');
+    const role = sidebar ? sidebar.getAttribute('data-role') : 'admin';
+    if (role === 'admin') {
+        views.dashboard();
+    } else {
+        views.user_profile();
+    }
 
     // Helper: Escape HTML
     function escapeHTML(str) {
@@ -321,6 +330,114 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await apiCall('delete_api_key', { id });
         if(res.success) renderApiKeys();
         else alert(res.error);
+    }
+
+    // --- End User Views ---
+    async function renderUserProfile() {
+        viewTitle.textContent = 'My Account';
+        const res = await apiCall('user_get_profile');
+        if(!res.success) return;
+        
+        viewContent.innerHTML = `
+            <div class="card glass" style="max-width: 500px;">
+                <h3>Change Password</h3><br>
+                <form id="user-password-form">
+                    <div class="input-group">
+                        <label>Email Address</label>
+                        <input type="text" value="${escapeHTML(res.username)}" disabled>
+                    </div>
+                    <div class="input-group">
+                        <label>New Password</label>
+                        <input type="password" id="user-new-pwd" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Update Password</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.getElementById('user-password-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const pwd = document.getElementById('user-new-pwd').value;
+            const updateRes = await apiCall('user_change_password', { password: pwd });
+            if(updateRes.success) {
+                alert('Password updated successfully! Please use your new password next time you login.');
+                document.getElementById('user-new-pwd').value = '';
+            } else alert(updateRes.error);
+        };
+    }
+
+    async function renderUserForwarding() {
+        viewTitle.textContent = 'Mail Forwarding';
+        const res = await apiCall('user_get_forwarding');
+        if(!res.success) return;
+        
+        viewContent.innerHTML = `
+            <div class="card glass" style="max-width: 600px;">
+                <p style="color:var(--text-secondary); margin-bottom: 20px;">
+                    Enter an email address where you want all your incoming mail to be delivered. 
+                    If you want to keep a copy in your own inbox as well, include your own email address separated by a comma.
+                </p>
+                <form id="user-forward-form">
+                    <div class="input-group">
+                        <label>Forward To (Comma Separated)</label>
+                        <input type="text" id="user-goto" value="${escapeHTML(res.goto)}" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Save Forwarding</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.getElementById('user-forward-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const goto = document.getElementById('user-goto').value;
+            const updateRes = await apiCall('user_set_forwarding', { goto });
+            if(updateRes.success) alert('Forwarding updated successfully!');
+            else alert(updateRes.error);
+        };
+    }
+
+    async function renderUserSpam() {
+        viewTitle.textContent = 'Spam Rules';
+        const res = await apiCall('user_get_spam_rules');
+        if(!res.success) return;
+        
+        const rules = res.rules || { whitelist: '', blacklist: '' };
+        
+        viewContent.innerHTML = `
+            <div class="card glass">
+                <p style="color:var(--text-secondary); margin-bottom: 20px;">
+                    Define custom email addresses or domains you want to explicitly allow (whitelist) or block (blacklist). 
+                    Use one entry per line. You can use wildcards like <code>*@marketing.com</code>.
+                </p>
+                <form id="user-spam-form">
+                    <div style="display:flex; gap: 20px;">
+                        <div class="input-group" style="flex: 1;">
+                            <label>Whitelist (Never mark as spam)</label>
+                            <textarea id="user-whitelist" rows="10" placeholder="friend@example.com&#10;*@trusted-domain.com">${escapeHTML(rules.whitelist || '')}</textarea>
+                        </div>
+                        <div class="input-group" style="flex: 1;">
+                            <label>Blacklist (Always mark as spam)</label>
+                            <textarea id="user-blacklist" rows="10" placeholder="spammer@bad.com&#10;*@annoying.com">${escapeHTML(rules.blacklist || '')}</textarea>
+                        </div>
+                    </div>
+                    <div class="form-actions" style="margin-top:20px;">
+                        <button type="submit" class="btn btn-primary">Save Spam Rules</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.getElementById('user-spam-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const wl = document.getElementById('user-whitelist').value;
+            const bl = document.getElementById('user-blacklist').value;
+            const updateRes = await apiCall('user_set_spam_rules', { 
+                rules: JSON.stringify({ whitelist: wl, blacklist: bl }) 
+            });
+            if(updateRes.success) alert('Spam rules updated successfully!');
+            else alert(updateRes.error);
+        };
     }
 
     async function renderLogs() {

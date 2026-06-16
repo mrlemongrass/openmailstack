@@ -19,14 +19,23 @@ if ($action === 'login') {
     $username = $_POST['username'] ?? '';
     $password = $_POST['password'] ?? '';
     
+    // Check Admin First
     $stmt = $pdo->prepare("SELECT password FROM admin WHERE username = ? AND active = 1");
     $stmt->execute([$username]);
     $hash = $stmt->fetchColumn();
+    $role = 'admin';
+    
+    // If not admin, check Mailbox
+    if (!$hash) {
+        $stmt = $pdo->prepare("SELECT password FROM mailbox WHERE username = ? AND active = 1");
+        $stmt->execute([$username]);
+        $hash = $stmt->fetchColumn();
+        $role = 'user';
+    }
     
     $success = false;
     if ($hash) {
         if (strpos($hash, '{') === 0) {
-            // Dovecot hash format (e.g. {SHA512-CRYPT}...)
             $escaped_pwd = escapeshellarg($password);
             $escaped_hash = escapeshellarg($hash);
             $verify = trim(shell_exec("PATH=/usr/bin:/bin doveadm pw -t $escaped_hash -p $escaped_pwd 2>/dev/null"));
@@ -34,7 +43,6 @@ if ($action === 'login') {
                 $success = true;
             }
         } else {
-            // Native PHP hash (bcrypt/argon2)
             if (password_verify($password, $hash)) {
                 $success = true;
             }
@@ -42,9 +50,13 @@ if ($action === 'login') {
     }
     
     if ($success) {
-        $_SESSION['admin_logged_in'] = true;
-        $_SESSION['admin_username'] = $username;
-        echo json_encode(['success' => true]);
+        $_SESSION['role'] = $role;
+        $_SESSION['username'] = $username;
+        if ($role === 'admin') {
+            $_SESSION['admin_logged_in'] = true;
+            $_SESSION['admin_username'] = $username;
+        }
+        echo json_encode(['success' => true, 'role' => $role]);
     } else {
         echo json_encode(['success' => false, 'error' => 'Invalid username or password']);
     }
@@ -57,11 +69,16 @@ if ($action === 'logout') {
     exit;
 }
 
-if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
+// Session check
+$role = $_SESSION['role'] ?? null;
+if (!$role) {
     http_response_code(401);
     echo json_encode(['error' => 'Unauthorized']);
     exit;
 }
+
+// Enforce admin-only for existing actions
+$is_admin = ($role === 'admin');
 
 function hash_password($password) {
     // Handling the necessary doveadm hashing
@@ -84,9 +101,69 @@ function audit_log($pdo, $admin, $domain, $action, $data) {
 }
 
 try {
+    $user_actions = ['user_get_profile', 'user_change_password', 'user_get_forwarding', 'user_set_forwarding', 'user_get_spam_rules', 'user_set_spam_rules'];
+    if (!$is_admin && !in_array($action, $user_actions)) {
+        http_response_code(403);
+        throw new Exception('Unauthorized action for standard user');
+    }
+
     switch ($action) {
-        // --- Dashboard / System Health ---
+        // --- End User Portal Actions ---
+        case 'user_get_profile':
+            echo json_encode(['success' => true, 'username' => $_SESSION['username'], 'role' => $role]);
+            break;
+            
+        case 'user_change_password':
+            $password = $_POST['password'] ?? '';
+            if (empty($password)) throw new Exception('Missing password');
+            $hashed = hash_password($password);
+            $stmt = $pdo->prepare("UPDATE mailbox SET password = ?, modified = NOW() WHERE username = ?");
+            $stmt->execute([$hashed, $_SESSION['username']]);
+            if ($is_admin) {
+                $stmt = $pdo->prepare("UPDATE admin SET password = ?, modified = NOW() WHERE username = ?");
+                $stmt->execute([$hashed, $_SESSION['username']]);
+            }
+            audit_log($pdo, $_SESSION['username'], 'USER', 'change_password', "User changed their own password");
+            echo json_encode(['success' => true]);
+            break;
+            
+        case 'user_get_forwarding':
+            $stmt = $pdo->prepare("SELECT goto FROM alias WHERE address = ?");
+            $stmt->execute([$_SESSION['username']]);
+            $goto = $stmt->fetchColumn() ?: $_SESSION['username'];
+            echo json_encode(['success' => true, 'goto' => $goto]);
+            break;
+            
+        case 'user_set_forwarding':
+            $goto = $_POST['goto'] ?? $_SESSION['username'];
+            if (empty($goto)) $goto = $_SESSION['username'];
+            $stmt = $pdo->prepare("UPDATE alias SET goto = ?, modified = NOW() WHERE address = ?");
+            $stmt->execute([$goto, $_SESSION['username']]);
+            audit_log($pdo, $_SESSION['username'], 'USER', 'set_forwarding', "User changed forwarding to $goto");
+            echo json_encode(['success' => true]);
+            break;
+            
+        case 'user_get_spam_rules':
+            $stmt = $pdo->prepare("SELECT rules_json FROM user_spam_rules WHERE username = ?");
+            $stmt->execute([$_SESSION['username']]);
+            $rules = $stmt->fetchColumn();
+            echo json_encode(['success' => true, 'rules' => $rules ? json_decode($rules, true) : []]);
+            break;
+            
+        case 'user_set_spam_rules':
+            $rules = $_POST['rules'] ?? '[]';
+            if (!json_decode($rules)) throw new Exception('Invalid JSON rules');
+            $stmt = $pdo->prepare("INSERT INTO user_spam_rules (username, rules_json) VALUES (?, ?) ON DUPLICATE KEY UPDATE rules_json = ?");
+            $stmt->execute([$_SESSION['username'], $rules, $rules]);
+            audit_log($pdo, $_SESSION['username'], 'USER', 'set_spam_rules', "User updated their spam rules");
+            echo json_encode(['success' => true]);
+            break;
+
+        // ==========================================
+        // ADMIN ONLY ENDPOINTS BELOW
+        // ==========================================
         case 'get_system_health':
+            if (!$is_admin) throw new Exception('Unauthorized');
             $services = ['nginx', 'postfix', 'dovecot', 'mariadb', 'rspamd', 'redis-server', 'clamav-daemon'];
             $status = [];
             foreach ($services as $srv) {
@@ -119,17 +196,26 @@ try {
             break;
 
         case 'get_audit_logs':
+            if (!$is_admin) throw new Exception('Unauthorized');
             $stmt = $pdo->query("SELECT timestamp, username, domain, action, data FROM log ORDER BY timestamp DESC LIMIT 500");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
 
         case 'get_rspamd_password':
+            if (!$is_admin) throw new Exception('Unauthorized');
             $pass = defined('RSPAMD_PASS') ? RSPAMD_PASS : 'Unknown';
             echo json_encode(['success' => true, 'password' => $pass]);
             break;
 
         // --- Domains ---
+        case 'get_routing':
+            if (!$is_admin) throw new Exception('Unauthorized');
+            $stmt = $pdo->query("SELECT * FROM domain ORDER BY domain ASC");
+            echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
+            break;
+
         case 'get_domains':
+            if (!$is_admin) throw new Exception('Unauthorized');
             $stmt = $pdo->query("SELECT * FROM domain ORDER BY domain ASC");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
@@ -190,6 +276,7 @@ try {
 
         // --- Mailboxes ---
         case 'get_mailboxes':
+            if (!$is_admin) throw new Exception('Unauthorized');
             $stmt = $pdo->query("SELECT username, name, domain, active, quota FROM mailbox ORDER BY domain ASC, username ASC");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
@@ -304,6 +391,7 @@ try {
 
         // --- Aliases & Groups ---
         case 'get_aliases':
+            if (!$is_admin) throw new Exception('Unauthorized');
             // Fetch all aliases that are not just self-aliases for mailboxes
             $stmt = $pdo->query("SELECT address, goto, domain FROM alias WHERE address != goto ORDER BY domain ASC, address ASC");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
@@ -390,6 +478,7 @@ try {
 
         // --- Admins ---
         case 'get_admins':
+            if (!$is_admin) throw new Exception('Unauthorized');
             $stmt = $pdo->query("SELECT username, active, modified FROM admin ORDER BY username ASC");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
@@ -438,6 +527,7 @@ try {
 
         // --- API Keys ---
         case 'get_api_keys':
+            if (!$is_admin) throw new Exception('Unauthorized');
             $stmt = $pdo->query("SELECT id, description, created_at, last_used FROM api_keys ORDER BY created_at DESC");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
@@ -472,6 +562,7 @@ try {
 
         // --- System & Updates ---
         case 'check_updates':
+            if (!$is_admin) throw new Exception('Unauthorized');
             $current_version = file_exists('/var/www/openmailstack-admin/VERSION') 
                 ? trim(file_get_contents('/var/www/openmailstack-admin/VERSION')) 
                 : '0.1.0';

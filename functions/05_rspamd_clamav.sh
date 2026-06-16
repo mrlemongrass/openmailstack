@@ -87,6 +87,25 @@ cat <<EOF > /etc/rspamd/local.d/redis.conf
 servers = "127.0.0.1";
 EOF
 
+cat <<EOF > /etc/rspamd/local.d/multimap.conf
+USER_WHITELIST {
+    type = "from";
+    filter = "email";
+    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
+    query = "SELECT 1 FROM user_spam_rules WHERE username = '%r' AND JSON_EXTRACT(rules_json, '$.whitelist') LIKE CONCAT('%', '%s', '%')";
+    action = "accept";
+    description = "User personal whitelist";
+}
+USER_BLACKLIST {
+    type = "from";
+    filter = "email";
+    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
+    query = "SELECT 1 FROM user_spam_rules WHERE username = '%r' AND JSON_EXTRACT(rules_json, '$.blacklist') LIKE CONCAT('%', '%s', '%')";
+    action = "reject";
+    description = "User personal blacklist";
+}
+EOF
+
 if [[ "${CLAMAV_ENABLED}" -eq 1 ]]; then
 cat <<EOF > /etc/rspamd/local.d/antivirus.conf
 clamav {

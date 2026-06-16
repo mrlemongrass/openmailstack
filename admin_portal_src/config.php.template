@@ -4,6 +4,7 @@ define('DB_USER', '{{DB_USER}}');
 define('DB_PASS', '{{DB_PASS}}');
 define('DB_NAME', '{{DB_NAME}}');
 define('ADMIN_PASS', '{{ADMIN_PASS}}');
+define('RSPAMD_PASS', '{{RSPAMD_PASS}}');
 
 try {
     $pdo = new PDO("mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=utf8mb4", DB_USER, DB_PASS);

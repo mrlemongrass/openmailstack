@@ -32,6 +32,7 @@ DB_USER_PHP=$(printf '%s\n' "$POSTFIXADMIN_DB_USER" | sed -e 's/\\/\\\\/g' -e "s
 DB_PASS_PHP=$(printf '%s\n' "$POSTFIXADMIN_DB_PASSWORD" | sed -e 's/\\/\\\\/g' -e "s/'/\\\'/g" -e 's/[\/&]/\\&/g')
 DB_NAME_PHP=$(printf '%s\n' "$POSTFIXADMIN_DB_NAME" | sed -e 's/\\/\\\\/g' -e "s/'/\\\'/g" -e 's/[\/&]/\\&/g')
 ADMIN_PASS_PHP=$(printf '%s\n' "${ADMIN_PORTAL_PASSWORD:-ChangeMe}" | sed -e 's/\\/\\\\/g' -e "s/'/\\\'/g" -e 's/[\/&]/\\&/g')
+RSPAMD_PASS_PHP=$(printf '%s\n' "${POSTFIXADMIN_SETUP_PASSWORD:-Unknown}" | sed -e 's/\\/\\\\/g' -e "s/'/\\\'/g" -e 's/[\/&]/\\&/g')
 
 # Only generate config if it doesn't already exist to preserve customizations
 if [[ ! -f /var/www/openmailstack-admin/config.php ]]; then
@@ -40,6 +41,7 @@ if [[ ! -f /var/www/openmailstack-admin/config.php ]]; then
     sed -i "s/{{DB_PASS}}/${DB_PASS_PHP}/g" /var/www/openmailstack-admin/config.php
     sed -i "s/{{DB_NAME}}/${DB_NAME_PHP}/g" /var/www/openmailstack-admin/config.php
     sed -i "s/{{ADMIN_PASS}}/${ADMIN_PASS_PHP}/g" /var/www/openmailstack-admin/config.php
+    sed -i "s/{{RSPAMD_PASS}}/${RSPAMD_PASS_PHP}/g" /var/www/openmailstack-admin/config.php
 else
     rm -f /var/www/openmailstack-admin/config.php.template
 fi

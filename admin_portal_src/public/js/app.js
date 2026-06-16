@@ -541,10 +541,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         <label>Existing Mailbox</label>
                         <select id="admin-user">${mailboxesOpt}</select>
                     </div>
-                    <div class="input-group">
-                        <label>New Admin Password</label>
-                        <input type="password" id="admin-pass" placeholder="Password for Admin Panel" required>
-                    </div>
                     <div class="form-actions" style="margin-top: 28px;">
                         <button type="submit" class="btn btn-primary">Promote to Admin</button>
                     </div>
@@ -570,9 +566,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('add-admin-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const username = document.getElementById('admin-user').value;
-            const password = document.getElementById('admin-pass').value;
-            
-            const res = await apiCall('add_admin', { username, password });
+            const res = await apiCall('add_admin', { username });
             if(res.success) renderAdmins();
             else alert(res.error);
         });

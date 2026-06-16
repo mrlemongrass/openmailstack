@@ -124,15 +124,7 @@ try {
             break;
 
         case 'get_rspamd_password':
-            $pass = '';
-            if (file_exists('/etc/openmailstack/config.env')) {
-                $env = file_get_contents('/etc/openmailstack/config.env');
-                if (preg_match('/^POSTFIXADMIN_SETUP_PASSWORD="([^"]+)"/m', $env, $m)) {
-                    $pass = $m[1];
-                } elseif (preg_match('/^POSTFIXADMIN_SETUP_PASSWORD=(\S+)/m', $env, $m)) {
-                    $pass = $m[1];
-                }
-            }
+            $pass = defined('RSPAMD_PASS') ? RSPAMD_PASS : 'Unknown';
             echo json_encode(['success' => true, 'password' => $pass]);
             break;
 
@@ -259,8 +251,16 @@ try {
             $domain = explode('@', $email)[1] ?? '';
             if (empty($email) || empty($password)) throw new Exception('Missing fields');
             $hashed = hash_password($password);
+            
+            $pdo->beginTransaction();
             $stmt = $pdo->prepare("UPDATE mailbox SET password = ? WHERE username = ?");
             $stmt->execute([$hashed, $email]);
+            
+            // Sync to admin table if they are an admin
+            $stmt = $pdo->prepare("UPDATE admin SET password = ?, modified = NOW() WHERE username = ?");
+            $stmt->execute([$hashed, $email]);
+            $pdo->commit();
+
             audit_log($pdo, $_SESSION['admin_username'], $domain, 'change_password', "Changed password for $email");
             echo json_encode(['success' => true]);
             break;
@@ -336,19 +336,23 @@ try {
             echo json_encode(['success' => true]);
             break;
 
-        // --- Administrators ---
+        // --- Admins ---
         case 'get_admins':
-            $stmt = $pdo->query("SELECT username, active FROM admin ORDER BY username ASC");
+            $stmt = $pdo->query("SELECT username, active, modified FROM admin ORDER BY username ASC");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
 
         case 'add_admin':
             $username = $_POST['username'] ?? '';
-            $password = $_POST['password'] ?? '';
-            if (empty($username) || empty($password)) throw new Exception('Missing fields');
+            if (empty($username)) throw new Exception('Missing fields');
             if (!filter_var($username, FILTER_VALIDATE_EMAIL)) throw new Exception('Invalid email format');
             
-            $hashed = hash_password($password);
+            $stmt = $pdo->prepare("SELECT password FROM mailbox WHERE username = ?");
+            $stmt->execute([$username]);
+            $hashed = $stmt->fetchColumn();
+            
+            if (!$hashed) throw new Exception('User is not a valid mailbox. Please create a mailbox first.');
+
             $stmt = $pdo->prepare("INSERT INTO admin (username, password, created, modified, active) VALUES (?, ?, NOW(), NOW(), 1) ON DUPLICATE KEY UPDATE password = ?, modified = NOW(), active = 1");
             $stmt->execute([$username, $hashed, $hashed]);
             audit_log($pdo, $_SESSION['admin_username'], 'ALL', 'add_admin', "Created or updated admin $username");

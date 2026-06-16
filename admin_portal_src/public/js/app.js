@@ -358,7 +358,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td><span style="color:var(--success)">Active</span></td>
                 <td><small style="color:var(--text-secondary)">${q}</small></td>
                 <td class="action-btns">
-                    <button class="btn btn-outline" onclick="changePassword('${escapeHTML(m.username)}')">Change Password</button>
+                    <button class="btn btn-outline" onclick="editMailbox('${escapeHTML(m.username)}', '${escapeHTML(m.name || '')}', ${m.quota == 0 ? 0 : m.quota / 1048576})">Edit Info</button>
+                    <button class="btn btn-outline" onclick="changePassword('${escapeHTML(m.username)}')">Reset Password</button>
                     <button class="btn btn-danger" onclick="deleteMailbox('${escapeHTML(m.username)}')">Delete</button>
                 </td>
             </tr>`;
@@ -378,6 +379,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if(res.success) renderMailboxes();
             else alert(res.error);
         });
+    }
+
+    window.editMailbox = async (username, currentName, currentQuota) => {
+        const newName = prompt(`Edit Full Name for ${username}:`, currentName);
+        if (newName === null) return;
+        
+        const newQuota = prompt(`Edit Quota for ${username} (in MB, 0 = Unlimited, -1 = Inherit Domain Default):`, currentQuota);
+        if (newQuota === null) return;
+
+        const res = await apiCall('edit_mailbox', { username, name: newName, quota: newQuota });
+        if(res.success) renderMailboxes();
+        else alert(res.error);
     }
 
     window.deleteMailbox = async (email) => {
@@ -436,6 +449,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${escapeHTML(a.address)}</td>
                 <td>${escapeHTML(a.goto)}</td>
                 <td class="action-btns">
+                    <button class="btn btn-outline" onclick="editAlias('${escapeHTML(a.address)}', '${escapeHTML(a.goto)}')">Edit</button>
                     <button class="btn btn-danger" onclick="deleteAlias('${escapeHTML(a.address)}', '${escapeHTML(a.goto)}')">Delete</button>
                 </td>
             </tr>`;
@@ -449,12 +463,29 @@ document.addEventListener('DOMContentLoaded', () => {
             const domain = document.getElementById('alias-domain').value;
             const goto = document.getElementById('alias-goto').value;
             
-            let action = address.startsWith('@') ? 'add_catchall' : 'add_alias';
+            let finalAddress = address;
+            let action = 'add_alias';
             
-            const res = await apiCall(action, { address, domain, goto });
+            if(address.startsWith('@')) {
+                action = 'add_catchall';
+                finalAddress = domain;
+            } else if(!address.includes('@')) {
+                finalAddress = address + '@' + domain;
+            }
+            
+            const res = await apiCall(action, { address: finalAddress, domain, goto });
             if(res.success) renderAliases();
             else alert(res.error);
         });
+    }
+
+    window.editAlias = async (address, currentGoto) => {
+        const newGoto = prompt(`Edit Target(s) for ${address} (comma separated):`, currentGoto);
+        if (newGoto && newGoto !== currentGoto) {
+            const res = await apiCall('edit_alias', { address, goto: newGoto, old_goto: currentGoto });
+            if (res.success) renderAliases();
+            else alert(res.error);
+        }
     }
 
     window.deleteAlias = async (address, goto) => {

@@ -233,6 +233,30 @@ try {
             echo json_encode(['success' => true]);
             break;
 
+        case 'edit_mailbox':
+            $username = $_POST['username'] ?? '';
+            $name = $_POST['name'] ?? '';
+            $quota = isset($_POST['quota']) ? (int)$_POST['quota'] : -1;
+            
+            if (empty($username)) throw new Exception('Missing username');
+            $domain = explode('@', $username)[1] ?? '';
+            
+            // If quota is -1, inherit from domain.quota
+            if ($quota === -1) {
+                $stmt = $pdo->prepare("SELECT quota FROM domain WHERE domain = ?");
+                $stmt->execute([$domain]);
+                $quota_bytes = (int) $stmt->fetchColumn();
+            } else {
+                $quota_bytes = $quota > 0 ? $quota * 1048576 : 0;
+            }
+            
+            $stmt = $pdo->prepare("UPDATE mailbox SET name = ?, quota = ?, modified = NOW() WHERE username = ?");
+            $stmt->execute([$name, $quota_bytes, $username]);
+            
+            audit_log($pdo, $_SESSION['admin_username'], $domain, 'edit_mailbox', "Edited mailbox $username");
+            echo json_encode(['success' => true]);
+            break;
+
         case 'delete_mailbox':
             $email = $_POST['email'] ?? '';
             $domain = explode('@', $email)[1] ?? '';
@@ -287,6 +311,21 @@ try {
             echo json_encode(['success' => true]);
             break;
             
+        case 'edit_alias':
+            $address = $_POST['address'] ?? '';
+            $old_goto = $_POST['old_goto'] ?? '';
+            $new_goto = $_POST['goto'] ?? '';
+            
+            if (empty($address) || empty($old_goto) || empty($new_goto)) throw new Exception('Missing fields');
+            $domain = explode('@', $address)[1] ?? '';
+            
+            $stmt = $pdo->prepare("UPDATE alias SET goto = ?, modified = NOW() WHERE address = ? AND goto = ?");
+            $stmt->execute([$new_goto, $address, $old_goto]);
+            
+            audit_log($pdo, $_SESSION['admin_username'], $domain, 'edit_alias', "Edited alias $address (goto=$new_goto)");
+            echo json_encode(['success' => true]);
+            break;
+
         case 'delete_alias':
             $address = $_POST['address'] ?? '';
             $goto = $_POST['goto'] ?? '';

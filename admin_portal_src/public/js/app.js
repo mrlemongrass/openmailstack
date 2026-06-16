@@ -57,7 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         let html = `
-            <div class="form-card" style="text-align:center; padding: 40px;">
+            <div class="form-card" style="text-align:center; padding: 40px; margin-bottom: 20px;">
                 <div style="font-size: 3rem; margin-bottom:20px;">📦</div>
                 <h2>System Updates</h2>
                 <p style="margin-top:20px; font-size:1.1rem;">Current Version: <strong>v${res.current_version}</strong></p>
@@ -91,6 +91,36 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         html += `</div>`;
+        
+        // Add component versions table
+        html += `
+            <div class="form-card" style="margin-top: 20px;">
+                <h3 style="margin-bottom: 15px;">Component Versions</h3>
+                <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+                            <th style="padding: 10px;">Component</th>
+                            <th style="padding: 10px;">Version</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        for (const [comp, ver] of Object.entries(res.components || {})) {
+            html += `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td style="padding: 10px; font-weight: 500;">${escapeHTML(comp)}</td>
+                    <td style="padding: 10px; font-family: monospace; color: var(--text-secondary);">${escapeHTML(ver)}</td>
+                </tr>
+            `;
+        }
+        
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+        
         viewContent.innerHTML = html;
         
         const btnUpgrade = document.getElementById('btn-run-upgrade');

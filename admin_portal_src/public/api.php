@@ -444,25 +444,47 @@ try {
             
             $context = stream_context_create([
                 'http' => [
-                    'header' => "User-Agent: OpenMailStack-Admin\r\n"
+                    'header' => "User-Agent: OpenMailStack-Admin\r\n",
+                    'ignore_errors' => true
                 ]
             ]);
             $response = @file_get_contents('https://api.github.com/repos/mrlemongrass/openmailstack/releases/latest', false, $context);
-            if (!$response) {
-                echo json_encode(['success' => false, 'error' => 'Failed to check GitHub API']);
+            $data = $response ? json_decode($response, true) : null;
+            
+            if (isset($data['message']) && $data['message'] === 'Not Found') {
+                $latest_version = $current_version;
+                $has_update = false;
+                $release_notes = "No public releases have been published to GitHub yet. Once you create a Release on GitHub, it will appear here.";
+            } else if ($data && isset($data['tag_name'])) {
+                $latest_version = str_replace('v', '', $data['tag_name']);
+                $has_update = version_compare($latest_version, $current_version, '>');
+                $release_notes = $data['body'] ?? '';
+            } else {
+                echo json_encode(['success' => false, 'error' => 'Failed to check GitHub API. Rate limit exceeded or network error.']);
                 exit;
             }
-            $data = json_decode($response, true);
-            $latest_version = str_replace('v', '', $data['tag_name'] ?? $current_version);
+
+            $components = [
+                'Nginx' => trim(shell_exec("nginx -v 2>&1 | awk -F/ '{print $2}' | awk '{print $1}'")),
+                'Postfix' => trim(shell_exec("postconf -h mail_version 2>/dev/null")),
+                'Dovecot' => trim(shell_exec("dovecot --version 2>/dev/null | awk '{print $1}'")),
+                'MariaDB' => trim(shell_exec("mysql -V 2>/dev/null | awk '{print $5}' | cut -d- -f1")),
+                'Rspamd' => trim(shell_exec("rspamd --version 2>/dev/null | awk '{print $4}'")),
+                'Redis' => trim(shell_exec("redis-server --version 2>/dev/null | awk '{print $3}' | cut -d= -f2")),
+                'ClamAV' => trim(shell_exec("clamd --version 2>/dev/null | awk '{print $2}' | cut -d/ -f1"))
+            ];
             
-            $has_update = version_compare($latest_version, $current_version, '>');
+            foreach ($components as $k => $v) {
+                if (empty($v)) $components[$k] = 'Not Installed';
+            }
             
             echo json_encode([
                 'success' => true,
                 'current_version' => $current_version,
                 'latest_version' => $latest_version,
                 'has_update' => $has_update,
-                'release_notes' => $data['body'] ?? ''
+                'release_notes' => $release_notes,
+                'components' => $components
             ]);
             break;
             

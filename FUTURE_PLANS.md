@@ -12,3 +12,9 @@ Here is the roadmap for upcoming features and enhancements to OpenMailStack.
 
 ## 🐧 OS Support
 - **RedHat / RHEL Variants**: Compatibility updates and package management support for RedHat, AlmaLinux, and Rocky Linux.
+
+## 🛡️ Deliverability & Security
+- **Outbound IP Reputation**: When paying Google, you get their pristine IPs. If a user on our stack is compromised, they can send 10,000 spam emails and blacklist our VPS IP on Spamhaus. We should eventually implement strict outbound rate limiting in Rspamd to protect the IP.
+
+## 🎨 SOGo Webmail UX Reskin
+- **Modernizing the Frontend**: SOGo's backend (C++) is a powerhouse, but its web UI is built on AngularJS (Angular 1.x) which is aging. While it functions perfectly, the UI paradigm lacks the fluid, modern React/Vue SPA feel of Gmail. A future project to build a modern frontend wrapper that simply queries SOGo's robust backend APIs would make this stack unstoppable.

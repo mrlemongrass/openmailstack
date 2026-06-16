@@ -143,7 +143,9 @@ Once your installation is complete and your DNS records have propagated, you can
   * Create domains, mailboxes, aliases, and manage cross-domain routing.
   * Enforce strict disk storage quotas for domains and individual users.
   * Generate and instantly copy required DNS/DKIM records.
-  * Access the embedded Rspamd WebUI to manage spam filtering and security. *(Note: Rspamd requires its own master password. The portal automatically extracts this from your server config and displays it above the embedded view so you can easily copy/paste it to log in).*
+  * Review the SQL Spam Quarantine to safely release or delete intercepted emails.
+  * Configure Hierarchical JSON Spam Policies to block specific IPs, domains, or attachments.
+  * Access the embedded Rspamd WebUI to monitor live spam scoring. *(Note: Rspamd requires its own master password. The portal automatically extracts this from your server config and displays it above the embedded view so you can easily copy/paste it to log in).*
   * Review comprehensive Audit Logs of all administrative actions.
 
 ### 2. Webmail

@@ -101,7 +101,15 @@ To prevent malicious domain hijacking in a multi-tenant environment, OpenMailSta
 3. The Admin Portal instructs the user to create a DNS TXT record (`_openmailstack.domain.com IN TXT openmailstack-verify=<nonce>`).
 4. Upon clicking "Verify", `api.php` triggers a native PHP `dns_get_record()` lookup. If the token is found, the domain activates immediately.
 
-### 4.6 Per-User Spam Rules (Rspamd Multimap)
-Standard users can log into their Self-Service Portal to define personal email/domain Whitelists and Blacklists. 
-- The frontend saves these lists as a serialized JSON object inside the MariaDB `user_spam_rules` table.
-- Rspamd is configured with a dynamic `multimap.conf` module that queries MariaDB in real-time. It uses MariaDB's `JSON_EXTRACT()` function to evaluate whether the incoming sender `From:` address matches an entry in the recipient's personal whitelist or blacklist, bypassing global rules cleanly.
+### 4.6 Hierarchical JSON Spam Policies (Rspamd Multimap)
+OpenMailStack supports granular, multi-tenant spam policies allowing Administrators and Users to define exact Whitelists, Blacklists, and Banned IPs.
+- **The Storage Strategy:** Policies are stored in MariaDB as raw JSON objects across three tables: `global_spam_rules`, `domain_spam_rules`, and `user_spam_rules`. 
+- **The Execution Layer:** We completely re-engineered Rspamd's `multimap.conf` module to bypass standard flat-file checks. When an email arrives, Rspamd dynamically executes SQL queries against MariaDB in real-time, utilizing MariaDB's strict native `JSON_CONTAINS()` function to see if the sender's IP or Domain exists in the specific policy array.
+- **The Hierarchy:** Rspamd evaluates rules in a strict hierarchy. A User's personal whitelist will override a Domain-level blacklist, ensuring maximum flexibility.
+
+### 4.7 SQL Spam Quarantining & Interception
+Rather than silently dropping emails that score highly on Rspamd (which leads to false positives and missing critical business communications), OpenMailStack intercepts and stores them securely.
+1. **Rspamd Flagging:** A custom Lua post-filter script (`/etc/rspamd/rspamd.local.lua`) is registered inside Rspamd. If an email scores `>= 15.0`, rather than rejecting it, Rspamd stamps it with a hidden header: `X-OMS-Quarantine: YES`.
+2. **Postfix Header Routing:** Postfix's `header_checks` map scans every incoming email. Upon detecting `X-OMS-Quarantine`, Postfix strips the email from standard Dovecot LMTP delivery and pipes it to a custom `quarantine` transport queue.
+3. **The PHP CLI Interceptor:** Postfix pipes the raw email `STDIN` into `/usr/local/bin/quarantine_filter.php`. This high-speed script parses the metadata, saves the raw `.eml` file to an unindexed, secure disk folder (`/var/vmail/quarantine/`), and logs the metadata to the `quarantine_log` SQL table.
+4. **The Release Mechanism:** In the Admin UI, clicking "Release" triggers the API to locate the raw `.eml` file on disk and pipe it directly into `/usr/sbin/sendmail -t`, forcing Postfix to immediately deliver the mail to the user's inbox, bypassing the Rspamd filters entirely.

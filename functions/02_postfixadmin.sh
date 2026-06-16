@@ -54,7 +54,8 @@ rm -rf /var/www/postfixadmin
 mv postfixadmin-postfixadmin-${PFA_VERSION} /var/www/postfixadmin
 
 mkdir -p /var/www/postfixadmin/templates_c
-chown -R www-data:www-data /var/www/postfixadmin
+# Set permissions
+chown -R ${WEB_USER}:${WEB_GROUP} /var/www/postfixadmin
 chmod -R 755 /var/www/postfixadmin
 
 # 2. Generate Setup Password Hash
@@ -116,7 +117,7 @@ cat <<EOF > /var/www/postfixadmin/config.local.php
 \$CONF['domain_quota_default'] = '10000';
 EOF
 
-chown www-data:www-data /var/www/postfixadmin/config.local.php
+chown ${WEB_USER}:${WEB_GROUP} /var/www/postfixadmin/config.local.php
 chmod 640 /var/www/postfixadmin/config.local.php
 
 # 4. Configure Nginx
@@ -156,7 +157,8 @@ ln -sf /etc/nginx/sites-available/mailserver.conf /etc/nginx/sites-enabled/mails
 systemctl restart nginx
 
 # 5. Initialize the Database
-echo -e "Initializing PostfixAdmin Database tables..."
-sudo -u www-data php /var/www/postfixadmin/public/upgrade.php
+# Trigger PostfixAdmin Upgrade script to create tables
+echo -e "Creating PostfixAdmin database tables..."
+sudo -u ${WEB_USER} php /var/www/postfixadmin/public/upgrade.php
 
 echo -e "${GREEN}PostfixAdmin setup complete!${NC}"

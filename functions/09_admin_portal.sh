@@ -46,11 +46,27 @@ else
     rm -f /var/www/openmailstack-admin/config.php.template
 fi
 
-chown -R root:www-data /var/www/openmailstack-admin
+chown -R root:${WEB_GROUP} /var/www/openmailstack-admin
 find /var/www/openmailstack-admin -type d -exec chmod 750 {} \;
 find /var/www/openmailstack-admin -type f -exec chmod 640 {} \;
 
-# 3. Update Nginx Configuration
+# 3. Apply SELinux Contexts (if enforcing)
+if command -v getenforce >/dev/null 2>&1 && [[ "$(getenforce)" == "Enforcing" ]]; then
+    echo -e "Applying SELinux security contexts..."
+    # Allow Nginx to proxy to Rspamd and PHP-FPM
+    setsebool -P httpd_can_network_connect 1
+    # Allow web content to be read by Nginx
+    semanage fcontext -a -t httpd_sys_rw_content_t "/var/www(/.*)?" || true
+    restorecon -R /var/www || true
+    # Allow Dovecot and Postfix to read/write vmail
+    semanage fcontext -a -t mail_spool_t "/var/vmail(/.*)?" || true
+    restorecon -R /var/vmail || true
+    # Allow Postfix to execute the quarantine interceptor
+    semanage fcontext -a -t postfix_pipe_exec_t "/usr/local/bin/quarantine_filter.php" || true
+    restorecon -v /usr/local/bin/quarantine_filter.php || true
+fi
+
+# 4. Update Nginx Configuration
 echo -e "Configuring Nginx for Admin Portal..."
 PHP_SOCK=$(openmailstack_php_fpm_socket || true)
 if [[ -z "${PHP_SOCK}" ]]; then
@@ -187,7 +203,7 @@ fi
 echo -e "Configuring secure upgrade bridge..."
 cp "${SCRIPT_DIR}/../upgrade.sh" /usr/local/bin/openmailstack-upgrade.sh
 chmod +x /usr/local/bin/openmailstack-upgrade.sh
-echo "www-data ALL=(root) NOPASSWD: /usr/local/bin/openmailstack-upgrade.sh" > /etc/sudoers.d/openmailstack-upgrade
+echo "${WEB_USER} ALL=(root) NOPASSWD: /usr/local/bin/openmailstack-upgrade.sh" > /etc/sudoers.d/openmailstack-upgrade
 chmod 0440 /etc/sudoers.d/openmailstack-upgrade
 cp "${SCRIPT_DIR}/../VERSION" /var/www/openmailstack-admin/VERSION
 

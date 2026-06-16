@@ -23,8 +23,10 @@ export DEBIAN_FRONTEND=noninteractive
 
 # 1. Pre-seed Postfix installation answers
 echo -e "Pre-configuring Postfix installation answers..."
-echo "postfix postfix/main_mailer_type string 'Internet Site'" | debconf-set-selections
-echo "postfix postfix/mailname string ${MAIL_HOSTNAME}" | debconf-set-selections
+if [[ "${PKG_MANAGER}" == "apt" ]]; then
+    debconf-set-selections <<< "postfix postfix/mailname string ${MAIL_HOSTNAME}"
+    debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'"
+fi
 
 # 2. Install Postfix and the MySQL plugin
 echo -e "Installing Postfix and postfix-mysql..."

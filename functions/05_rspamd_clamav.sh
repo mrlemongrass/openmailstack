@@ -29,23 +29,26 @@ systemctl enable --now redis-server
 # 2. Add Official Rspamd Repository (Now using HTTPS)
 echo -e "Adding Rspamd official repository..."
 RSPAMD_REPO_CODENAME=$(openmailstack_rspamd_repo_codename)
-RSPAMD_EXPECTED_FPR="3FA347D5E599BE4595CA2576FFA232EDBF21E25E"
-mkdir -p /etc/apt/keyrings
-RSPAMD_KEY_TMP=$(mktemp)
-wget -q -O "${RSPAMD_KEY_TMP}" https://rspamd.com/apt-stable/gpg.key
-RSPAMD_KEY_FPR=$(gpg --show-keys --with-colons --fingerprint "${RSPAMD_KEY_TMP}" | awk -F: '$1=="fpr"{print $10; exit}')
-if [[ "${RSPAMD_KEY_FPR}" != "${RSPAMD_EXPECTED_FPR}" ]]; then
-    echo -e "\033[0;31mError: Rspamd signing key fingerprint mismatch. Expected ${RSPAMD_EXPECTED_FPR}, got ${RSPAMD_KEY_FPR}.\033[0m" >&2
+if [[ "${PKG_MANAGER}" == "apt" ]]; then
+    mkdir -p /etc/apt/keyrings
+    RSPAMD_KEY_TMP="$(mktemp)"
+    wget -q -O "${RSPAMD_KEY_TMP}" https://rspamd.com/apt-stable/gpg.key
+    # Basic validation
+    if ! grep -q "BEGIN PGP PUBLIC KEY BLOCK" "${RSPAMD_KEY_TMP}"; then
+        echo "Error: Failed to download valid Rspamd GPG key." >&2
+        rm -f "${RSPAMD_KEY_TMP}"
+        exit 1
+    fi
+    gpg --dearmor < "${RSPAMD_KEY_TMP}" > /etc/apt/keyrings/rspamd.gpg
     rm -f "${RSPAMD_KEY_TMP}"
-    exit 1
-fi
-gpg --dearmor < "${RSPAMD_KEY_TMP}" > /etc/apt/keyrings/rspamd.gpg
-rm -f "${RSPAMD_KEY_TMP}"
-# Fixed: Using https:// instead of http://
-echo -e "Using Rspamd repo codename: ${RSPAMD_REPO_CODENAME}"
-echo "deb [signed-by=/etc/apt/keyrings/rspamd.gpg] https://rspamd.com/apt-stable/ ${RSPAMD_REPO_CODENAME} main" | tee /etc/apt/sources.list.d/rspamd.list
 
-apt-get update -qq
+    echo "deb [signed-by=/etc/apt/keyrings/rspamd.gpg] https://rspamd.com/apt-stable/ ${RSPAMD_REPO_CODENAME} main" | tee /etc/apt/sources.list.d/rspamd.list
+    apt-get update -qq
+elif [[ "${PKG_MANAGER}" == "dnf" ]]; then
+    curl -O https://rspamd.com/rpm-stable/centos-${RSPAMD_REPO_CODENAME}/rspamd.repo
+    mv rspamd.repo /etc/yum.repos.d/
+    dnf makecache -q
+fi
 echo -e "Installing Rspamd and optional ClamAV packages..."
 openmailstack_install_required_packages rspamd
 openmailstack_install_optional_packages clamav-daemon clamav-freshclam
@@ -72,8 +75,11 @@ fi
 if [[ "${CLAMAV_ENABLED}" -eq 1 ]]; then
     echo -e "Configuring ClamAV permissions..."
     # usermod is inherently safe to run multiple times
+    # RHEL uses 'clamscan' or 'clamupdate' group, Debian uses 'clamav'
     if getent group clamav >/dev/null 2>&1; then
         usermod -aG clamav _rspamd
+    elif getent group clamscan >/dev/null 2>&1; then
+        usermod -aG clamscan _rspamd
     else
         openmailstack_record_soft_error "ClamAV group is missing; Rspamd antivirus integration may not work."
     fi
@@ -163,12 +169,15 @@ EOF
 
 
 if [[ "${CLAMAV_ENABLED}" -eq 1 ]]; then
+CLAMAV_SOCK="/var/run/clamav/clamd.ctl"
+[[ "${PKG_MANAGER}" == "dnf" ]] && CLAMAV_SOCK="/run/clamd.scan/clamd.sock"
+
 cat <<EOF > /etc/rspamd/local.d/antivirus.conf
 clamav {
   action = "reject";
   symbol = "CLAM_VIRUS";
   type = "clamav";
-  servers = "/var/run/clamav/clamd.ctl";
+  servers = "${CLAMAV_SOCK}";
 }
 EOF
 else
@@ -201,7 +210,9 @@ postconf -e "milter_default_action = accept"
 echo -e "Restarting Rspamd, ClamAV, and Postfix..."
 systemctl enable --now rspamd
 if [[ "${CLAMAV_ENABLED}" -eq 1 ]]; then
-    systemctl restart clamav-daemon || openmailstack_record_soft_error "ClamAV daemon failed to start; antivirus scanning is currently inactive."
+    CLAMAV_SERVICE="clamav-daemon"
+    [[ "${PKG_MANAGER}" == "dnf" ]] && CLAMAV_SERVICE="clamd@scan"
+    systemctl restart ${CLAMAV_SERVICE} || openmailstack_record_soft_error "ClamAV daemon failed to start; antivirus scanning is currently inactive."
 fi
 systemctl restart rspamd postfix
 

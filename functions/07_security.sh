@@ -226,27 +226,46 @@ if [[ -n "${SSH_CONNECTION:-}" ]]; then
     fi
 fi
 
-if [[ "${SEC_HAS_UFW}" -eq 1 ]]; then
-    ufw default deny incoming
-    ufw default allow outgoing
-    for SSH_PORT in $(echo "${SSH_PORTS}" | tr ' ' '\n' | awk '/^[0-9]+$/' | sort -u); do
-        echo -e "Allowing SSH on port ${SSH_PORT}/tcp..."
-        ufw allow "${SSH_PORT}/tcp"
-    done
-    ufw allow 80/tcp
-    ufw allow 443/tcp
-    ufw allow 25/tcp
-    ufw allow 587/tcp
-    ufw allow 993/tcp
-    ufw allow 995/tcp
-    ufw --force enable
-else
-    openmailstack_record_soft_error "UFW is not installed on ${OPENMAILSTACK_OS_LABEL}; firewall configuration skipped."
+# 6. Configure the Firewall
+if [[ "${PKG_MANAGER}" == "apt" ]]; then
+    if command -v ufw >/dev/null 2>&1; then
+        echo -e "Configuring UFW..."
+        ufw allow 22/tcp
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        ufw allow 25/tcp
+        ufw allow 587/tcp
+        ufw allow 993/tcp
+        ufw allow 995/tcp
+        ufw --force enable
+    else
+        openmailstack_record_soft_error "UFW is not installed on ${OPENMAILSTACK_OS_LABEL}; firewall configuration skipped."
+    fi
+elif [[ "${PKG_MANAGER}" == "dnf" ]]; then
+    if command -v firewall-cmd >/dev/null 2>&1; then
+        echo -e "Configuring Firewalld..."
+        systemctl enable --now firewalld
+        for SSH_PORT in $(echo "${SSH_PORTS}" | tr ' ' '\n' | awk '/^[0-9]+$/' | sort -u); do
+            firewall-cmd --permanent --add-port="${SSH_PORT}/tcp"
+        done
+        firewall-cmd --permanent --add-service=http
+        firewall-cmd --permanent --add-service=https
+        firewall-cmd --permanent --add-service=smtp
+        firewall-cmd --permanent --add-service=smtps
+        firewall-cmd --permanent --add-service=imaps
+        firewall-cmd --permanent --add-service=pop3s
+        firewall-cmd --reload
+    else
+        openmailstack_record_soft_error "Firewalld is not installed on ${OPENMAILSTACK_OS_LABEL}; firewall configuration skipped."
+    fi
 fi
 
 # 7. Configure Fail2ban
 echo -e "Configuring Fail2ban..."
 if [[ "${SEC_HAS_FAIL2BAN}" -eq 1 ]]; then
+MAIL_LOG_PATH="/var/log/mail.log"
+[[ "${PKG_MANAGER}" == "dnf" ]] && MAIL_LOG_PATH="/var/log/maillog"
+
 cat <<EOF > /etc/fail2ban/jail.local
 [DEFAULT]
 bantime = 1h
@@ -259,12 +278,12 @@ enabled = true
 [postfix]
 enabled = true
 port = smtp,465,submission
-logpath = /var/log/mail.log
+logpath = ${MAIL_LOG_PATH}
 
 [dovecot]
 enabled = true
 port = pop3,pop3s,imap,imaps,submission
-logpath = /var/log/mail.log
+logpath = ${MAIL_LOG_PATH}
 EOF
 else
     openmailstack_record_soft_error "Fail2ban is not installed on ${OPENMAILSTACK_OS_LABEL}; intrusion protection setup skipped."

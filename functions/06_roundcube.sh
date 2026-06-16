@@ -42,7 +42,7 @@ tar -xzf "${RC_TARBALL}"
 # Removing the directory first ensures a clean, idempotent overwrite
 rm -rf /var/www/roundcube
 mv roundcubemail-${RC_VERSION} /var/www/roundcube
-chown -R www-data:www-data /var/www/roundcube
+chown -R ${WEB_USER}:${WEB_GROUP} /var/www/roundcube
 chmod -R 755 /var/www/roundcube
 
 # 2. Initialize the Roundcube Database (Guarded)
@@ -84,7 +84,7 @@ cat <<EOF > /var/www/roundcube/config/config.inc.php
 \$config['auto_create_user'] = true;
 EOF
 
-chown www-data:www-data /var/www/roundcube/config/config.inc.php
+chown ${WEB_USER}:${WEB_GROUP} /var/www/roundcube/config/config.inc.php
 chmod 640 /var/www/roundcube/config/config.inc.php
 rm -rf /var/www/roundcube/installer
 

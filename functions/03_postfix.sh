@@ -40,6 +40,7 @@ if ! getent passwd vmail > /dev/null; then
 fi
 # Ensure permissions are always correct
 mkdir -p /var/vmail
+mkdir -p /var/vmail/quarantine
 chown -R vmail:vmail /var/vmail
 chmod -R 770 /var/vmail
 
@@ -88,6 +89,13 @@ postconf -e "smtpd_sasl_path = private/auth"
 postconf -e "smtpd_sasl_auth_enable = yes"
 postconf -e "smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination"
 
+# Configure Spam Quarantine header checks
+echo -e "Configuring Quarantine Header Checks..."
+postconf -e "header_checks = regexp:/etc/postfix/header_checks"
+cat <<EOF > /etc/postfix/header_checks
+/^X-OMS-Quarantine: YES/ FILTER quarantine:
+EOF
+
 # 6. Enable Submission port (587) in master.cf (Guarded by marker)
 echo -e "Enabling Submission (port 587) in master.cf..."
 
@@ -101,6 +109,16 @@ submission inet n       -       y       -       -       smtpd
   -o smtpd_tls_security_level=encrypt
   -o smtpd_sasl_auth_enable=yes
   -o smtpd_reject_unlisted_recipient=no
+# --------------------------------
+EOF
+fi
+
+if ! grep -q "# --- OpenMailStack Quarantine ---" /etc/postfix/master.cf; then
+cat <<EOF >> /etc/postfix/master.cf
+
+# --- OpenMailStack Quarantine ---
+quarantine unix - n n - - pipe
+  flags=Fq user=vmail argv=/usr/local/bin/quarantine_filter.php \${sender} \${recipient}
 # --------------------------------
 EOF
 fi

@@ -87,24 +87,80 @@ cat <<EOF > /etc/rspamd/local.d/redis.conf
 servers = "127.0.0.1";
 EOF
 
+cat <<EOF > /etc/rspamd/local.d/actions.conf
+reject = 9999;
+add_header = 6;
+greylist = 4;
+EOF
+
+cat <<EOF > /etc/rspamd/rspamd.local.lua
+rspamd_config:add_on_load(function(cfg, ev_base, worker)
+    rspamd_config:register_symbol({
+        name = 'OMS_QUARANTINE_CHECK',
+        type = 'postfilter',
+        callback = function(task)
+            local score = task:get_metric_score('default')[1]
+            if score >= 15.0 then
+                task:set_milter_reply({
+                    add_headers = {['X-OMS-Quarantine'] = 'YES'}
+                })
+            end
+        end
+    })
+end)
+EOF
+
 cat <<EOF > /etc/rspamd/local.d/multimap.conf
 USER_WHITELIST {
-    type = "from";
-    filter = "email";
+    type = "from"; filter = "email";
     map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
-    query = "SELECT 1 FROM user_spam_rules WHERE username = '%r' AND JSON_EXTRACT(rules_json, '$.whitelist') LIKE CONCAT('%', '%s', '%')";
+    query = "SELECT 1 FROM user_spam_rules WHERE username = '%r' AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.whitelisted_senders') = 1";
     action = "accept";
-    description = "User personal whitelist";
 }
 USER_BLACKLIST {
-    type = "from";
-    filter = "email";
+    type = "from"; filter = "email";
     map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
-    query = "SELECT 1 FROM user_spam_rules WHERE username = '%r' AND JSON_EXTRACT(rules_json, '$.blacklist') LIKE CONCAT('%', '%s', '%')";
+    query = "SELECT 1 FROM user_spam_rules WHERE username = '%r' AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.blacklisted_senders') = 1";
     action = "reject";
-    description = "User personal blacklist";
+}
+DOMAIN_WHITELIST_SENDER {
+    type = "from"; filter = "email";
+    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
+    query = "SELECT 1 FROM domain_spam_rules WHERE domain = '%r_domain' AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.whitelisted_senders') = 1";
+    action = "accept";
+}
+DOMAIN_BLACKLIST_SENDER {
+    type = "from"; filter = "email";
+    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
+    query = "SELECT 1 FROM domain_spam_rules WHERE domain = '%r_domain' AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.blacklisted_senders') = 1";
+    action = "reject";
+}
+DOMAIN_BLACKLIST_IP {
+    type = "ip";
+    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
+    query = "SELECT 1 FROM domain_spam_rules WHERE domain = '%r_domain' AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.banned_ips') = 1";
+    action = "reject";
+}
+GLOBAL_WHITELIST_SENDER {
+    type = "from"; filter = "email";
+    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
+    query = "SELECT 1 FROM global_spam_rules WHERE id = 1 AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.whitelisted_senders') = 1";
+    action = "accept";
+}
+GLOBAL_BLACKLIST_SENDER {
+    type = "from"; filter = "email";
+    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
+    query = "SELECT 1 FROM global_spam_rules WHERE id = 1 AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.blacklisted_senders') = 1";
+    action = "reject";
+}
+GLOBAL_BLACKLIST_IP {
+    type = "ip";
+    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
+    query = "SELECT 1 FROM global_spam_rules WHERE id = 1 AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.banned_ips') = 1";
+    action = "reject";
 }
 EOF
+
 
 if [[ "${CLAMAV_ENABLED}" -eq 1 ]]; then
 cat <<EOF > /etc/rspamd/local.d/antivirus.conf

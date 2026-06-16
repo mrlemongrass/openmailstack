@@ -191,4 +191,10 @@ echo "www-data ALL=(root) NOPASSWD: /usr/local/bin/openmailstack-upgrade.sh" > /
 chmod 0440 /etc/sudoers.d/openmailstack-upgrade
 cp "${SCRIPT_DIR}/../VERSION" /var/www/openmailstack-admin/VERSION
 
+# Set up quarantine filter
+echo -e "Configuring Quarantine Interceptor..."
+cp "${SCRIPT_DIR}/../admin_portal_src/quarantine_filter.php" /usr/local/bin/quarantine_filter.php
+chmod +x /usr/local/bin/quarantine_filter.php
+chown vmail:vmail /usr/local/bin/quarantine_filter.php
+
 echo -e "\n${GREEN}Admin Portal setup complete!${NC}"

@@ -79,6 +79,12 @@ if (!$role) {
 
 // Enforce admin-only for existing actions
 $is_admin = ($role === 'admin');
+$is_superadmin = false;
+if ($is_admin) {
+    $stmt = $pdo->prepare("SELECT superadmin FROM admin WHERE username = ? AND active = 1");
+    $stmt->execute([$_SESSION['username']]);
+    $is_superadmin = (bool)$stmt->fetchColumn();
+}
 
 function hash_password($password) {
     // Handling the necessary doveadm hashing
@@ -210,19 +216,44 @@ try {
         // --- Domains ---
         case 'get_routing':
             if (!$is_admin) throw new Exception('Unauthorized');
-            $stmt = $pdo->query("SELECT * FROM domain ORDER BY domain ASC");
+            if ($is_superadmin) {
+                $stmt = $pdo->query("SELECT domain, transport FROM domain WHERE transport != 'virtual' ORDER BY domain ASC");
+            } else {
+                $stmt = $pdo->prepare("SELECT domain, transport FROM domain WHERE transport != 'virtual' AND domain IN (SELECT domain FROM domain_admins WHERE username = ?) ORDER BY domain ASC");
+                $stmt->execute([$_SESSION['username']]);
+            }
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
 
         case 'get_domains':
             if (!$is_admin) throw new Exception('Unauthorized');
-            $stmt = $pdo->query("SELECT * FROM domain ORDER BY domain ASC");
-            echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
+            if ($is_superadmin) {
+                $stmt = $pdo->query("SELECT * FROM domain ORDER BY domain ASC");
+            } else {
+                $stmt = $pdo->prepare("SELECT d.* FROM domain d JOIN domain_admins da ON d.domain = da.domain WHERE da.username = ? ORDER BY d.domain ASC");
+                $stmt->execute([$_SESSION['username']]);
+            }
+            $domains = $stmt->fetchAll();
+            
+            // Fetch verification tokens
+            $tokens = $pdo->query("SELECT domain, token FROM domain_verification")->fetchAll(PDO::FETCH_KEY_PAIR);
+            foreach ($domains as &$d) {
+                $d['verify_token'] = $tokens[$d['domain']] ?? null;
+            }
+            
+            echo json_encode(['success' => true, 'data' => $domains, 'is_superadmin' => $is_superadmin]);
             break;
 
         case 'get_dns_records':
             $domain = $_POST['domain'] ?? '';
             if (empty($domain)) throw new Exception('Domain cannot be empty');
+            
+            // Security check for non-superadmins
+            if (!$is_superadmin) {
+                $stmt = $pdo->prepare("SELECT 1 FROM domain_admins WHERE username = ? AND domain = ?");
+                $stmt->execute([$_SESSION['username'], $domain]);
+                if (!$stmt->fetch()) throw new Exception('Unauthorized to view this domain');
+            }
             
             $hostname = gethostname();
             $records = [];
@@ -251,33 +282,97 @@ try {
             if (empty($domain)) throw new Exception('Domain cannot be empty');
             if (!preg_match('/^[a-zA-Z0-9.-]+$/', $domain)) throw new Exception('Invalid domain format');
             
-            // Convert MB to bytes for storage
             $quota_bytes = $quota > 0 ? $quota * 1048576 : 0;
             $maxquota_bytes = $maxquota > 0 ? $maxquota * 1048576 : 0;
+            $is_active = $is_superadmin ? 1 : 0;
             
-            $stmt = $pdo->prepare("INSERT INTO domain (domain, description, maxquota, quota, transport, active, created, modified) VALUES (?, '', ?, ?, 'virtual', 1, NOW(), NOW())");
-            $stmt->execute([$domain, $maxquota_bytes, $quota_bytes]);
-            audit_log($pdo, $_SESSION['admin_username'], $domain, 'add_domain', "Created domain $domain with maxquota=$maxquota MB, quota=$quota MB");
-            echo json_encode(['success' => true]);
+            $pdo->beginTransaction();
+            $stmt = $pdo->prepare("INSERT INTO domain (domain, description, maxquota, quota, transport, active, created, modified) VALUES (?, '', ?, ?, 'virtual', ?, NOW(), NOW())");
+            $stmt->execute([$domain, $maxquota_bytes, $quota_bytes, $is_active]);
+            
+            if (!$is_superadmin) {
+                $stmt = $pdo->prepare("INSERT INTO domain_admins (username, domain, created, active) VALUES (?, ?, NOW(), 1)");
+                $stmt->execute([$_SESSION['username'], $domain]);
+                
+                $token = bin2hex(random_bytes(16));
+                $stmt = $pdo->prepare("INSERT INTO domain_verification (domain, token) VALUES (?, ?)");
+                $stmt->execute([$domain, $token]);
+            }
+            $pdo->commit();
+            
+            audit_log($pdo, $_SESSION['username'], $domain, 'add_domain', "Created domain $domain with active=$is_active");
+            echo json_encode(['success' => true, 'needs_verification' => !$is_superadmin]);
+            break;
+            
+        case 'verify_domain':
+            $domain = $_POST['domain'] ?? '';
+            if (empty($domain)) throw new Exception('Domain cannot be empty');
+            
+            if (!$is_superadmin) {
+                $stmt = $pdo->prepare("SELECT 1 FROM domain_admins WHERE username = ? AND domain = ?");
+                $stmt->execute([$_SESSION['username'], $domain]);
+                if (!$stmt->fetch()) throw new Exception('Unauthorized');
+            }
+            
+            $stmt = $pdo->prepare("SELECT token FROM domain_verification WHERE domain = ?");
+            $stmt->execute([$domain]);
+            $token = $stmt->fetchColumn();
+            
+            if (!$token) throw new Exception('Domain does not require verification or does not exist');
+            
+            $dns_records = dns_get_record("_openmailstack.$domain", DNS_TXT);
+            $verified = false;
+            foreach ($dns_records as $rec) {
+                if (isset($rec['txt']) && strpos($rec['txt'], "openmailstack-verify=$token") !== false) {
+                    $verified = true;
+                    break;
+                }
+            }
+            
+            if ($verified) {
+                $pdo->beginTransaction();
+                $stmt = $pdo->prepare("UPDATE domain SET active = 1, modified = NOW() WHERE domain = ?");
+                $stmt->execute([$domain]);
+                $stmt = $pdo->prepare("DELETE FROM domain_verification WHERE domain = ?");
+                $stmt->execute([$domain]);
+                $pdo->commit();
+                audit_log($pdo, $_SESSION['username'], $domain, 'verify_domain', "Successfully verified ownership via DNS");
+                echo json_encode(['success' => true]);
+            } else {
+                echo json_encode(['success' => false, 'error' => "DNS TXT record not found yet. It may take some time for DNS to propagate. Keep checking: _openmailstack.$domain -> openmailstack-verify=$token"]);
+            }
             break;
 
         case 'delete_domain':
             $domain = $_POST['domain'] ?? '';
-            // Ensure not ALL
             if ($domain === 'ALL') throw new Exception('Cannot delete ALL domain placeholder');
+            
+            if (!$is_superadmin) {
+                $stmt = $pdo->prepare("SELECT 1 FROM domain_admins WHERE username = ? AND domain = ?");
+                $stmt->execute([$_SESSION['username'], $domain]);
+                if (!$stmt->fetch()) throw new Exception('Unauthorized to delete this domain');
+            }
+            
             $pdo->beginTransaction();
             $pdo->prepare("DELETE FROM mailbox WHERE domain = ?")->execute([$domain]);
             $pdo->prepare("DELETE FROM alias WHERE domain = ?")->execute([$domain]);
+            $pdo->prepare("DELETE FROM domain_admins WHERE domain = ?")->execute([$domain]);
+            $pdo->prepare("DELETE FROM domain_verification WHERE domain = ?")->execute([$domain]);
             $pdo->prepare("DELETE FROM domain WHERE domain = ?")->execute([$domain]);
             $pdo->commit();
-            audit_log($pdo, $_SESSION['admin_username'], $domain, 'delete_domain', "Deleted domain $domain and its contents");
+            audit_log($pdo, $_SESSION['username'], $domain, 'delete_domain', "Deleted domain $domain and its contents");
             echo json_encode(['success' => true]);
             break;
 
         // --- Mailboxes ---
         case 'get_mailboxes':
             if (!$is_admin) throw new Exception('Unauthorized');
-            $stmt = $pdo->query("SELECT username, name, domain, active, quota FROM mailbox ORDER BY domain ASC, username ASC");
+            if ($is_superadmin) {
+                $stmt = $pdo->query("SELECT username, name, domain, active, quota FROM mailbox ORDER BY domain ASC, username ASC");
+            } else {
+                $stmt = $pdo->prepare("SELECT username, name, domain, active, quota FROM mailbox WHERE domain IN (SELECT domain FROM domain_admins WHERE username = ?) ORDER BY domain ASC, username ASC");
+                $stmt->execute([$_SESSION['username']]);
+            }
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
 
@@ -392,8 +487,12 @@ try {
         // --- Aliases & Groups ---
         case 'get_aliases':
             if (!$is_admin) throw new Exception('Unauthorized');
-            // Fetch all aliases that are not just self-aliases for mailboxes
-            $stmt = $pdo->query("SELECT address, goto, domain FROM alias WHERE address != goto ORDER BY domain ASC, address ASC");
+            if ($is_superadmin) {
+                $stmt = $pdo->query("SELECT address, goto, domain FROM alias WHERE address != goto ORDER BY domain ASC, address ASC");
+            } else {
+                $stmt = $pdo->prepare("SELECT address, goto, domain FROM alias WHERE address != goto AND domain IN (SELECT domain FROM domain_admins WHERE username = ?) ORDER BY domain ASC, address ASC");
+                $stmt->execute([$_SESSION['username']]);
+            }
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
 

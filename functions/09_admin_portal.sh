@@ -157,6 +157,10 @@ if [[ "$ADMIN_OPT" == "1" ]]; then
             username VARCHAR(255) PRIMARY KEY,
             rules_json TEXT
         );
+        CREATE TABLE IF NOT EXISTS domain_verification (
+            domain VARCHAR(255) PRIMARY KEY,
+            token VARCHAR(255) NOT NULL
+        );
     "
     echo -e "${GREEN}New Admin account '$ADMIN_USER' created successfully!${NC}"
 fi

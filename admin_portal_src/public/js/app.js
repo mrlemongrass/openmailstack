@@ -518,15 +518,28 @@ document.addEventListener('DOMContentLoaded', () => {
             if(d.domain === 'ALL') return;
             const mQ = d.maxquota == 0 ? 'Unlimited' : (d.maxquota/1048576) + ' MB';
             const uQ = d.quota == 0 ? 'Unlimited' : (d.quota/1048576) + ' MB';
-            html += `<tr>
-                <td>${escapeHTML(d.domain)}</td>
-                <td><span style="color:var(--success)">Active</span></td>
-                <td><small style="color:var(--text-secondary)">Max: ${mQ}<br>Def Mbox: ${uQ}</small></td>
-                <td class="action-btns">
-                    <button class="btn btn-outline" onclick="viewDNS('${escapeHTML(d.domain)}')">DNS</button>
-                    <button class="btn btn-danger" onclick="deleteDomain('${escapeHTML(d.domain)}')">Delete</button>
-                </td>
-            </tr>`;
+            
+            if (d.active == 0 && d.verify_token) {
+                html += `<tr>
+                    <td>${escapeHTML(d.domain)}</td>
+                    <td><span style="color:var(--danger)">Pending Verification</span></td>
+                    <td><small style="color:var(--text-secondary)">Max: ${mQ}<br>Def Mbox: ${uQ}</small></td>
+                    <td class="action-btns">
+                        <button class="btn btn-primary" onclick="verifyDomain('${escapeHTML(d.domain)}', '${escapeHTML(d.verify_token)}')">Verify</button>
+                        <button class="btn btn-danger" onclick="deleteDomain('${escapeHTML(d.domain)}')">Delete</button>
+                    </td>
+                </tr>`;
+            } else {
+                html += `<tr>
+                    <td>${escapeHTML(d.domain)}</td>
+                    <td><span style="color:var(--success)">Active</span></td>
+                    <td><small style="color:var(--text-secondary)">Max: ${mQ}<br>Def Mbox: ${uQ}</small></td>
+                    <td class="action-btns">
+                        <button class="btn btn-outline" onclick="viewDNS('${escapeHTML(d.domain)}')">DNS</button>
+                        <button class="btn btn-danger" onclick="deleteDomain('${escapeHTML(d.domain)}')">Delete</button>
+                    </td>
+                </tr>`;
+            }
         });
         html += '</tbody></table>';
         viewContent.innerHTML = html;
@@ -537,9 +550,28 @@ document.addEventListener('DOMContentLoaded', () => {
             const maxquota = document.getElementById('domain-maxquota').value;
             const quota = document.getElementById('domain-quota').value;
             const res = await apiCall('add_domain', { domain, maxquota, quota });
-            if(res.success) renderDomains();
+            if(res.success) {
+                if(res.needs_verification) alert("Domain added. It must be verified via DNS before it becomes active.");
+                renderDomains();
+            }
             else alert(res.error);
         });
+    }
+
+    window.verifyDomain = async (domain, token) => {
+        const confirmMsg = `To verify ownership of ${domain}, please add the following DNS TXT record:\n\n` +
+                           `Host: _openmailstack.${domain}\n` +
+                           `Value: openmailstack-verify=${token}\n\n` +
+                           `Have you added this record and do you want to verify it now?`;
+        if (confirm(confirmMsg)) {
+            const res = await apiCall('verify_domain', { domain });
+            if(res.success) {
+                alert("Domain ownership verified successfully!");
+                renderDomains();
+            } else {
+                alert(res.error);
+            }
+        }
     }
 
     window.viewDNS = async (domain) => {

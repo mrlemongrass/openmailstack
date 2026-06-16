@@ -3,3 +3,13 @@ config.conf
 *.log
 .DS_Store
 scratch/
+2ndpass_actions.md
+3rdpass_actions*
+CODEREVIEW.md
+IMPLEMENTATION_GUIDE.md
+REVIEWER.md
+findings.md
+findings_2ndpass.md
+findings_3rdpass.md
+llm_security_training_cases.md
+tests/

@@ -436,6 +436,44 @@ try {
             echo json_encode(['success' => true]);
             break;
 
+        // --- System & Updates ---
+        case 'check_updates':
+            $current_version = file_exists('/var/www/openmailstack-admin/VERSION') 
+                ? trim(file_get_contents('/var/www/openmailstack-admin/VERSION')) 
+                : '0.1.0';
+            
+            $context = stream_context_create([
+                'http' => [
+                    'header' => "User-Agent: OpenMailStack-Admin\r\n"
+                ]
+            ]);
+            $response = @file_get_contents('https://api.github.com/repos/mrlemongrass/openmailstack/releases/latest', false, $context);
+            if (!$response) {
+                echo json_encode(['success' => false, 'error' => 'Failed to check GitHub API']);
+                exit;
+            }
+            $data = json_decode($response, true);
+            $latest_version = str_replace('v', '', $data['tag_name'] ?? $current_version);
+            
+            $has_update = version_compare($latest_version, $current_version, '>');
+            
+            echo json_encode([
+                'success' => true,
+                'current_version' => $current_version,
+                'latest_version' => $latest_version,
+                'has_update' => $has_update,
+                'release_notes' => $data['body'] ?? ''
+            ]);
+            break;
+            
+        case 'run_upgrade':
+            audit_log($pdo, $_SESSION['admin_username'], 'ALL', 'system_upgrade', "Triggered system upgrade via Web Panel");
+            
+            $output = shell_exec('sudo /usr/local/bin/openmailstack-upgrade.sh 2>&1');
+            
+            echo json_encode(['success' => true, 'output' => $output]);
+            break;
+
         default:
             echo json_encode(['error' => 'Invalid action']);
             break;

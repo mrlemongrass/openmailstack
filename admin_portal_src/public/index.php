@@ -51,6 +51,7 @@ if (empty($_SESSION['csrf_token'])) {
                     <li data-view="spam">Spam & Security</li>
                     <li data-view="admins">Administrators</li>
                     <li data-view="logs">Audit Logs</li>
+                    <li data-view="updates">System Updates</li>
                 </ul>
                 <div class="user-info" style="margin-top:auto; padding:15px; font-size:0.85rem; color:var(--text-secondary); text-align:center;">
                     Logged in as:<br>

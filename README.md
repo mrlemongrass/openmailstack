@@ -1,15 +1,27 @@
-# OpenMailStack
-**Open-source, no-paywall mail server stack for Debian and Ubuntu.**
+# 🚀 OpenMailStack
 
-OpenMailStack is an automated Bash deployment script that transforms a fresh Linux server into a full mail platform, without subscription licensing.
+**The definitive, zero-paywall, open-source mail server stack for Debian and Ubuntu.**
 
-**What's included in the box?**
-* **MTA & Delivery:** Postfix & Dovecot (LMTP)
-* **Databases & Web:** MariaDB, Nginx, PHP-FPM
-* **Admin GUI:** Custom OpenMailStack Admin Portal (Unified modern UI accessible via `/SOGo/admin` featuring a System Health Dashboard, DNS/DKIM Generator, Quota Management, Audit Logs, and Embedded Rspamd UI) & PostfixAdmin (Advanced config)
-* **Webmail:** Roundcube (Modern Elastic Theme)
-* **Security & Anti-Spam:** Rspamd (DKIM/ARC signing), ClamAV (Anti-virus), Fail2ban, UFW Firewall, and automated SSL (Let's Encrypt with self-signed fallback).
-* **Automation & Guardrails:** Intelligent state detection, automated pre-flight safety snapshots, interactive point-in-time rollbacks, and an hourly DKIM domain sync.
+Welcome to OpenMailStack! We transform a fresh Linux server into a beautiful, production-ready, enterprise-grade mail platform in minutes—without the subscription licensing fees. 
+
+Stop wrestling with cryptic config files and manual database queries. OpenMailStack gives you complete sovereignty over your email infrastructure, paired with a gorgeous custom Admin Portal designed for humans.
+
+---
+
+## ✨ What's in the Box?
+
+* 📨 **MTA & Delivery:** Rock-solid Postfix & Dovecot (LMTP) routing.
+* 🗄️ **Databases & Web:** MariaDB, Nginx, and PHP-FPM.
+* 🎨 **Gorgeous Admin GUI:** The completely custom OpenMailStack Admin Portal (accessible via `/SOGo/admin`).
+  * 📊 **Live System Health:** Real-time dashboards monitoring RAM, Disk, and service states.
+  * 🔄 **1-Click GitHub Upgrades:** In-place, secure semantic versioning upgrades straight from the GitHub API.
+  * 🔑 **DNS & DKIM Generator:** Stop guessing. We generate the exact TXT records you need to copy/paste.
+  * 🛡️ **Embedded Security:** Direct single-sign-on access into the Rspamd WebUI.
+  * 📜 **Audit Logs:** Track exactly *who* modified *what* account and *when*.
+  * ✏️ **Intuitive Editing:** Beautiful popup modals for managing user aliases, quotas, and account suspensions.
+* 📧 **Webmail:** Roundcube with a modern, responsive Elastic Theme.
+* 🛑 **Security & Anti-Spam:** Rspamd (DKIM/ARC signing), ClamAV (Anti-virus), Fail2ban, UFW Firewall, and automated Let's Encrypt SSL.
+* 🤖 **Automation & Guardrails:** Intelligent state detection, automated pre-flight safety snapshots, interactive point-in-time rollbacks, and hourly automated DKIM domain synchronization.
 
 ---
 
@@ -27,7 +39,15 @@ The Installation Guide provides a highly detailed, lay-person friendly walkthrou
 
 ---
 
-## 🚀 Quick Start (For Advanced Users)
+## 🤓 Technical Deep Dive
+
+Are you a sysadmin, a security researcher, or just an unapologetic nerd? We love transparency. We documented *every single detail* of how OpenMailStack works under the hood.
+
+👉 **[Read the TECHNICAL.md Architecture Guide](TECHNICAL.md)** 👈
+
+---
+
+## ⚡ Quick Start (For Advanced Users)
 
 If you are a sysadmin familiar with unblocking Port 25, setting up reverse DNS (PTR), and managing DNS records, here is the fast track:
 
@@ -58,15 +78,11 @@ Once installation is complete, you can find your automatically generated passwor
 
 * **OpenMailStack Admin Portal (Manage Domains & Mailboxes):**
   * **URL:** `https://mail.example.com/SOGo/admin`
-  * **Password:** `ADMIN_PORTAL_PASSWORD`
+  * **Password:** Check `config.conf` or your SSH terminal output!
 
 * **Webmail (Read & Send Emails):**
   * **URL:** `https://mail.example.com/webmail`
   * **Login:** The email address you created in the Admin Portal.
-
-* **PostfixAdmin (Legacy / Advanced Config):**
-  * **URL:** `https://mail.example.com/postfixadmin`
-  * **Setup Password:** `POSTFIXADMIN_SETUP_PASSWORD`
 
 ---
 
@@ -97,5 +113,3 @@ Run staging smoke tests on a deployed host (as `root`):
 ```bash
 ./tests/integration/staging_smoke.sh ./config.conf
 ```
-
-GitHub Actions CI runs automatically on push and pull request via `.github/workflows/ci.yml`.

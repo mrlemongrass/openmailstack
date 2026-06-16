@@ -32,7 +32,11 @@ if openmailstack_package_installed "dovecot-pop3d"; then
 fi
 
 # Determine Dovecot Version (e.g., 2.3 or 2.4)
-DOVECOT_VERSION=$(dovecot --version | grep -oE '^[0-9]+\.[0-9]+')
+DOVECOT_VERSION=$(dovecot --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || echo "unknown")
+if [[ "$DOVECOT_VERSION" == "unknown" ]]; then
+    echo -e "${YELLOW}Warning: Could not dynamically parse Dovecot version. Defaulting to 2.3 logic.${NC}"
+    DOVECOT_VERSION="2.3"
+fi
 echo -e "Detected Dovecot Version: ${DOVECOT_VERSION}"
 
 # 2. Configure the SQL Connection & Local Overrides

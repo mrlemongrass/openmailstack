@@ -22,7 +22,7 @@ detect_openmailstack_os
 export DEBIAN_FRONTEND=noninteractive
 
 escape_sql_literal() {
-    printf "%s" "$1" | sed "s/'/''/g"
+    printf "%s" "$1" | sed -e 's/\\/\\\\/g' -e "s/'/''/g"
 }
 
 escape_mysql_identifier() {

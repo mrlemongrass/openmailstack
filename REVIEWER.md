@@ -18,6 +18,8 @@ functions/
 ├── 06_roundcube.sh       - Webmail interface
 ├── 07_security.sh        - SSL/TLS, firewall, fail2ban
 ├── 08_dkim_sync_timer.sh - Automated DKIM key management
+├── 09_admin_portal.sh    - Custom unified admin portal deployment
+├── backup_restore.sh     - Safety snapshots, rollbacks, and interactive cleanup
 ├── dkim_sync.sh          - DKIM key generation
 └── lib_os.sh             - OS detection and package helpers
 ```
@@ -99,9 +101,11 @@ backup_config() {
 1. **Strict Mode**: All scripts use `set -euo pipefail`
 2. **Error Trapping**: Comprehensive error reporting with line numbers
 3. **Idempotency**: Most operations use `IF NOT EXISTS` or file existence checks
-4. **Modularity**: Clean separation of concerns between modules
-5. **Documentation**: Excellent inline comments and README
-6. **Version Management**: SHA256 checksums for all downloads
+4. **Intelligent State Detection**: Script automatically detects existing components and offers granular interactive installation.
+5. **Safety Guardrails**: Automated pre-flight backups with interactive point-in-time rollbacks.
+6. **Modularity**: Clean separation of concerns between modules
+7. **Documentation**: Excellent inline comments and README
+8. **Version Management**: SHA256 checksums for all downloads
 
 ### Areas for Improvement
 
@@ -161,7 +165,7 @@ apt-get update
 # Then install packages in parallel where possible
 ```
 
-#### 2. Caching Strategy
+#### 3. Caching Strategy
 ```bash
 # Cache downloaded files
 CACHE_DIR="/var/cache/openmailstack"
@@ -172,15 +176,6 @@ else
     wget -O "/tmp/$TARBALL" "$URL"
     cp "/tmp/$TARBALL" "$CACHE_DIR/"
 fi
-```
-
-#### 3. Rollback Support
-```bash
-# Add rollback checkpoints
-create_checkpoint() {
-    echo "$(date): $1" >> /var/log/openmailstack/checkpoints.log
-    # Snapshot filesystem if using btrfs/zfs
-}
 ```
 
 ## Memory Optimization
@@ -312,10 +307,10 @@ cp /etc/postfix/main.cf /backup/postfix_$(date +%Y%m%d).cf
 
 ## Future Enhancement Suggestions
 
-### Phase 2 Features
-1. **Webhook Integration**: Send notifications to Slack/Discord
-2. **API Endpoint**: REST API for programmatic management
-3. **Multi-domain Support**: Better handling of multiple domains
+### Phase 2 Features (Partially Implemented via Admin Portal)
+1. **API Endpoint**: REST API for programmatic management (Implemented via `api.php` in Admin Portal)
+2. **Multi-domain Support**: Better handling of multiple domains and routing (Implemented via Admin Portal cross-domain routing)
+3. **Webhook Integration**: Send notifications to Slack/Discord
 4. **Migration Tools**: Import from existing mail servers
 5. **CI/CD Integration**: Automated testing and deployment
 

@@ -132,6 +132,7 @@ sed -i "s/LETSENCRYPT_EMAIL=\"admin@\${FIRST_DOMAIN}\"/LETSENCRYPT_EMAIL=\"${ESC
 sed -i "s/ChangeMe_Vmail_Pass/$(gen_pass)/" ./config.conf
 sed -i "s/ChangeMe_PFA_Pass/$(gen_pass)/" ./config.conf
 sed -i "s/ChangeMe_Setup_Pass/$(gen_pass)/" ./config.conf
+sed -i "s/ChangeMe_Admin_Pass/$(gen_pass)/" ./config.conf
 sed -i "s/ChangeMe_RC_Pass/$(gen_pass)/" ./config.conf
 
 # Secure the file so only root can read it

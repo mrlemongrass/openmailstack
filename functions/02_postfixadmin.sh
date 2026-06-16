@@ -73,14 +73,18 @@ PHP
 
 # 3. Create config.local.php
 echo -e "Configuring PostfixAdmin database connections and encryption..."
+DB_USER_PHP=$(printf '%s' "$POSTFIXADMIN_DB_USER" | sed -e "s/'/\\\'/g")
+DB_PASS_PHP=$(printf '%s' "$POSTFIXADMIN_DB_PASSWORD" | sed -e "s/'/\\\'/g")
+DB_NAME_PHP=$(printf '%s' "$POSTFIXADMIN_DB_NAME" | sed -e "s/'/\\\'/g")
+
 cat <<EOF > /var/www/postfixadmin/config.local.php
 <?php
 \$CONF['configured'] = true;
 \$CONF['database_type'] = 'mysqli';
 \$CONF['database_host'] = 'localhost';
-\$CONF['database_user'] = '${POSTFIXADMIN_DB_USER}';
-\$CONF['database_password'] = '${POSTFIXADMIN_DB_PASSWORD}';
-\$CONF['database_name'] = '${POSTFIXADMIN_DB_NAME}';
+\$CONF['database_user'] = '${DB_USER_PHP}';
+\$CONF['database_password'] = '${DB_PASS_PHP}';
+\$CONF['database_name'] = '${DB_NAME_PHP}';
 \$CONF['setup_password'] = '${SETUP_HASH}';
 
 // --- OpenMailStack Modern Security ---

@@ -67,7 +67,28 @@ echo -e "${GREEN}FQDN validation passed: $CURRENT_FQDN${NC}"
 # 5. Update System and Install Base Dependencies
 echo -e "${YELLOW}Updating package lists and installing base tools...${NC}"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
+while true; do
+    if apt-get update -qq; then
+        break
+    fi
+    echo -e "\n${RED}Error: Package update failed. An external repository may be temporarily down.${NC}" >&2
+    if [[ ! -t 0 ]]; then
+        echo -e "Non-interactive environment detected. Aborting." >&2
+        exit 1
+    fi
+    echo "1) Retry"
+    echo "2) Ignore and continue (may cause installation issues)"
+    echo "3) Abort"
+    read -p "Select option [1-3] (default: 3): " APT_OPT
+    APT_OPT=${APT_OPT:-3}
+    if [[ "$APT_OPT" == "2" ]]; then
+        echo -e "${YELLOW}Warning: Proceeding despite apt-get update failure.${NC}"
+        break
+    elif [[ "$APT_OPT" == "3" ]]; then
+        echo "Aborting."
+        exit 1
+    fi
+done
 apt-get upgrade -y -qq || openmailstack_record_soft_error "Package upgrade had non-fatal issues"
 
 # Verify essential tools are working

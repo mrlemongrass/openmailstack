@@ -65,10 +65,12 @@ echo -e "Generating Roundcube configuration..."
 # This avoids the SIGPIPE error caused by cat /dev/urandom.
 DES_KEY=$(openssl rand -hex 12)
 
+DSN=$(ROUNDCUBE_DB_USER="${ROUNDCUBE_DB_USER}" ROUNDCUBE_DB_PASSWORD="${ROUNDCUBE_DB_PASSWORD}" ROUNDCUBE_DB_NAME="${ROUNDCUBE_DB_NAME}" php -r 'echo "mysql://" . rawurlencode(getenv("ROUNDCUBE_DB_USER")) . ":" . rawurlencode(getenv("ROUNDCUBE_DB_PASSWORD")) . "@localhost/" . rawurlencode(getenv("ROUNDCUBE_DB_NAME"));')
+
 cat <<EOF > /var/www/roundcube/config/config.inc.php
 <?php
 \$config = [];
-\$config['db_dsnw'] = 'mysql://${ROUNDCUBE_DB_USER}:${ROUNDCUBE_DB_PASSWORD}@localhost/${ROUNDCUBE_DB_NAME}';
+\$config['db_dsnw'] = '${DSN}';
 \$config['imap_host'] = 'localhost:143';
 \$config['imap_auth_type'] = 'PLAIN';
 \$config['smtp_host'] = 'localhost:587';

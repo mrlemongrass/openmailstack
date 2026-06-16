@@ -174,7 +174,11 @@ postconf -e "smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1"
 
 # 5. Apply SSL to Dovecot (Clean replacement strategy)
 echo -e "Securing Dovecot with SSL/TLS..."
-DOVECOT_VERSION=$(dovecot --version | grep -oE '^[0-9]+\.[0-9]+')
+DOVECOT_VERSION=$(dovecot --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || echo "unknown")
+if [[ "$DOVECOT_VERSION" == "unknown" ]]; then
+    echo -e "${YELLOW}Warning: Could not dynamically parse Dovecot version. Defaulting to 2.3 logic.${NC}"
+    DOVECOT_VERSION="2.3"
+fi
 
 # Scrub any previous OpenMailStack SSL configs to stay idempotent
 sed -i '/^# --- OpenMailStack SSL ---/d' /etc/dovecot/local.conf || true

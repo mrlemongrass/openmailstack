@@ -132,13 +132,54 @@ async function handlePropfind(req: Request, res: Response, user: string) {
     </D:propstat>
   </D:response>
 </D:multistatus>`;
+    } else if (path === `/calendars/${user}/` || path === `/calendars/${user}`) {
+        // List all calendars
+        try {
+            const rows = await getVisibleCalendars(user);
+            
+            let responses = rows.map((cal: any) => `
+  <D:response>
+    <D:href>/caldav/calendars/${user}/${cal.dav_slug || cal.id}/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
+        <D:displayname>${cal.name}</D:displayname>
+        <CS:getctag>"${cal.sync_token}"</CS:getctag>
+        <D:sync-token>http://sabre.io/ns/sync/${cal.sync_token}</D:sync-token>
+        <C:supported-calendar-component-set>
+          <C:comp name="VEVENT"/>
+        </C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>`).join('');
+
+            const homeSetCtag = rows.reduce((acc: number, cal: any) => acc + (cal.sync_token || 0), 0) + rows.length;
+            xml = `<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/">
+  <D:response>
+    <D:href>/caldav/calendars/${user}/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/></D:resourcetype>
+        <CS:getctag>"${homeSetCtag}"</CS:getctag>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  ${responses}
+</D:multistatus>`;
+        } catch(e) {
+            console.error(e);
+            return res.status(500).send('DB Error');
+        }
     } else if (path.includes('/calendars/') || path.match(/\/[^\/]+\/[^\/]+\/$/)) {
         // Match /caldav/calendars/user/1/ after the /caldav mount, or legacy /user/Calendar/.
         let calendarId = '1';
         let isLegacy = false;
         
         const calMatch = calendarCollectionMatch(path);
-        const legacyMatch = path.match(/^\/([^\/]+)\/([^\/]+)\/$/);
+        const legacyMatch = path.match(/^\/([^\/]+)\/Calendar\/?$/i);
         let cal: any = null;
         
         if (calMatch) {
@@ -196,47 +237,6 @@ async function handlePropfind(req: Request, res: Response, user: string) {
     </D:propstat>
   </D:response>
   ${eventResponses}
-</D:multistatus>`;
-            } catch(e) {
-                console.error(e);
-                return res.status(500).send('DB Error');
-            }
-        } else {
-            // List all calendars
-            try {
-                const rows = await getVisibleCalendars(user);
-                
-                let responses = rows.map((cal: any) => `
-  <D:response>
-    <D:href>/caldav/calendars/${user}/${cal.dav_slug || cal.id}/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
-        <D:displayname>${cal.name}</D:displayname>
-        <CS:getctag>"${cal.sync_token}"</CS:getctag>
-        <D:sync-token>http://sabre.io/ns/sync/${cal.sync_token}</D:sync-token>
-        <C:supported-calendar-component-set>
-          <C:comp name="VEVENT"/>
-        </C:supported-calendar-component-set>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>`).join('');
-
-                const homeSetCtag = rows.reduce((acc: number, cal: any) => acc + (cal.sync_token || 0), 0) + rows.length;
-                xml = `<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/">
-  <D:response>
-    <D:href>/caldav/calendars/${user}/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:resourcetype><D:collection/></D:resourcetype>
-        <CS:getctag>"${homeSetCtag}"</CS:getctag>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-  ${responses}
 </D:multistatus>`;
             } catch(e) {
                 console.error(e);

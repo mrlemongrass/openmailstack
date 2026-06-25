@@ -76,6 +76,7 @@ check_service_active mariadb
 check_service_active postfix
 check_service_active dovecot
 check_service_active rspamd
+check_service_active openmailstack
 check_service_active redis-server
 
 if [[ "${CLAMAV_ENABLED:-1}" -eq 1 ]]; then
@@ -86,6 +87,7 @@ echo "Checking key listeners..."
 for port in 25 80 443 587 993; do
     check_listen_port "${port}"
 done
+check_listen_port "${OMS_WEBMAIL_PORT:-20000}"
 
 if ss -ltn | awk '{print $4}' | grep -Eq '(^|:)995$'; then
     pass "Optional port listening: 995"
@@ -104,8 +106,16 @@ check_tls_endpoint "127.0.0.1:443" "${MAIL_HOSTNAME}"
 check_tls_endpoint "127.0.0.1:587" "${MAIL_HOSTNAME}"
 
 echo "Checking web endpoints..."
+curl -kfsS --resolve "${MAIL_HOSTNAME}:443:127.0.0.1" "https://${MAIL_HOSTNAME}/" >/dev/null
+pass "Modern webmail endpoint reachable"
 curl -kfsS --resolve "${MAIL_HOSTNAME}:443:127.0.0.1" "https://${MAIL_HOSTNAME}/webmail/" >/dev/null
-pass "Webmail endpoint reachable"
+pass "Legacy Roundcube fallback reachable"
+API_STATUS=$(curl -ksS -o /dev/null -w "%{http_code}" --resolve "${MAIL_HOSTNAME}:443:127.0.0.1" "https://${MAIL_HOSTNAME}/api/auth/me")
+if [[ "${API_STATUS}" != "401" ]]; then
+    fail "Expected unauthenticated API to return 401, got ${API_STATUS}"
+else
+    pass "Unauthenticated API rejects requests with 401"
+fi
 curl -kfsS --resolve "${MAIL_HOSTNAME}:443:127.0.0.1" "https://${MAIL_HOSTNAME}/postfixadmin/" >/dev/null
 pass "PostfixAdmin endpoint reachable"
 

@@ -116,56 +116,14 @@ rspamd_config:add_on_load(function(cfg, ev_base, worker)
 end)
 EOF
 
-cat <<EOF > /etc/rspamd/local.d/multimap.conf
-USER_WHITELIST {
-    type = "from"; filter = "email";
-    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
-    query = "SELECT 1 FROM user_spam_rules WHERE username = '%r' AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.whitelisted_senders') = 1";
-    action = "accept";
-}
-USER_BLACKLIST {
-    type = "from"; filter = "email";
-    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
-    query = "SELECT 1 FROM user_spam_rules WHERE username = '%r' AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.blacklisted_senders') = 1";
-    action = "reject";
-}
-DOMAIN_WHITELIST_SENDER {
-    type = "from"; filter = "email";
-    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
-    query = "SELECT 1 FROM domain_spam_rules WHERE domain = '%r_domain' AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.whitelisted_senders') = 1";
-    action = "accept";
-}
-DOMAIN_BLACKLIST_SENDER {
-    type = "from"; filter = "email";
-    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
-    query = "SELECT 1 FROM domain_spam_rules WHERE domain = '%r_domain' AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.blacklisted_senders') = 1";
-    action = "reject";
-}
-DOMAIN_BLACKLIST_IP {
-    type = "ip";
-    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
-    query = "SELECT 1 FROM domain_spam_rules WHERE domain = '%r_domain' AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.banned_ips') = 1";
-    action = "reject";
-}
-GLOBAL_WHITELIST_SENDER {
-    type = "from"; filter = "email";
-    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
-    query = "SELECT 1 FROM global_spam_rules WHERE id = 1 AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.whitelisted_senders') = 1";
-    action = "accept";
-}
-GLOBAL_BLACKLIST_SENDER {
-    type = "from"; filter = "email";
-    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
-    query = "SELECT 1 FROM global_spam_rules WHERE id = 1 AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.blacklisted_senders') = 1";
-    action = "reject";
-}
-GLOBAL_BLACKLIST_IP {
-    type = "ip";
-    map = "mysql://${POSTFIXADMIN_DB_USER}:${POSTFIXADMIN_DB_PASSWORD}@localhost/${POSTFIXADMIN_DB_NAME}";
-    query = "SELECT 1 FROM global_spam_rules WHERE id = 1 AND JSON_CONTAINS(rules_json, JSON_QUOTE('%s'), '$.banned_ips') = 1";
-    action = "reject";
-}
-EOF
+install -m 0755 "${SCRIPT_DIR}/rspamd_spam_maps_sync.sh" /usr/local/sbin/openmailstack-spam-map-sync
+/usr/local/sbin/openmailstack-spam-map-sync
+if [[ -f "${SCRIPT_DIR}/../packaging/systemd/openmailstack-spam-map-sync.service" ]]; then
+    install -m 0644 "${SCRIPT_DIR}/../packaging/systemd/openmailstack-spam-map-sync.service" /etc/systemd/system/openmailstack-spam-map-sync.service
+    install -m 0644 "${SCRIPT_DIR}/../packaging/systemd/openmailstack-spam-map-sync.timer" /etc/systemd/system/openmailstack-spam-map-sync.timer
+    systemctl daemon-reload
+    systemctl enable --now openmailstack-spam-map-sync.timer
+fi
 
 
 if [[ "${CLAMAV_ENABLED}" -eq 1 ]]; then
@@ -184,8 +142,8 @@ else
     rm -f /etc/rspamd/local.d/antivirus.conf
 fi
 
-# Hash the setup password and apply it to the Web UI
-RSPAMD_PASSWORD=$(rspamadm pw -p "${POSTFIXADMIN_SETUP_PASSWORD}")
+# Hash the setup password and apply it to the Web UI without exposing it in argv.
+RSPAMD_PASSWORD=$(printf '%s\n' "${POSTFIXADMIN_SETUP_PASSWORD}" | rspamadm pw -e)
 cat <<EOF > /etc/rspamd/local.d/worker-controller.inc
 password = "${RSPAMD_PASSWORD}";
 EOF
@@ -205,6 +163,8 @@ postconf -e "non_smtpd_milters = inet:127.0.0.1:11332"
 postconf -e "milter_protocol = 6"
 postconf -e "milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}"
 postconf -e "milter_default_action = accept"
+postconf -e "milter_connect_timeout = 5s"
+postconf -e "milter_command_timeout = 5s"
 
 # 7. Restart Services
 echo -e "Restarting Rspamd, ClamAV, and Postfix..."

@@ -24,6 +24,7 @@ detect_openmailstack_os
 echo -e "Deploying files to /var/www/openmailstack-admin..."
 mkdir -p /var/www/openmailstack-admin
 cp -r "${SCRIPT_DIR}/../admin_portal_src/"* /var/www/openmailstack-admin/
+rm -f /var/www/openmailstack-admin/public/test_pw.php
 
 # 2. Configure credentials
 echo -e "Configuring Admin Portal..."
@@ -206,6 +207,7 @@ chmod +x /usr/local/bin/openmailstack-upgrade.sh
 echo "${WEB_USER} ALL=(root) NOPASSWD: /usr/local/bin/openmailstack-upgrade.sh" > /etc/sudoers.d/openmailstack-upgrade
 chmod 0440 /etc/sudoers.d/openmailstack-upgrade
 cp "${SCRIPT_DIR}/../VERSION" /var/www/openmailstack-admin/VERSION
+rm -f /var/www/openmailstack-admin/public/test_pw.php
 
 # Set up quarantine filter
 echo -e "Configuring Quarantine Interceptor..."

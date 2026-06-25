@@ -1,6 +1,10 @@
 config.conf
 *.env
 *.log
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
 .DS_Store
 scratch/
 2ndpass_actions.md
@@ -12,4 +16,4 @@ findings.md
 findings_2ndpass.md
 findings_3rdpass.md
 llm_security_training_cases.md
-tests/
+v0.1.5_review.md

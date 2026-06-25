@@ -21,10 +21,11 @@ The user generates a `config.conf` file via `setup_config.sh`. This configuratio
 4. `03_postfixadmin.sh`: Installs the legacy PostfixAdmin interface (to generate the underlying database schema).
 5. `04_postfix_dovecot.sh`: The heavy lifting. Configures Postfix (MTA) and Dovecot (IMAP/POP3) and links them to MariaDB via SQL lookup tables (e.g. `mysql_virtual_mailbox_maps.cf`).
 6. `05_rspamd_clamav.sh`: Installs the Rspamd anti-spam engine and ClamAV. It also configures automated DKIM key generation.
-7. `06_roundcube.sh`: Installs the Roundcube Webmail client.
+7. `06_roundcube.sh`: Installs the legacy Roundcube fallback mail client.
 8. `07_fail2ban.sh`: Sets up Fail2ban jails to block brute-force SSH and IMAP attempts.
 9. `08_ufw_ssl.sh`: Locks down the firewall using UFW (allowing only 22, 25, 80, 443, 587, 993) and acquires Let's Encrypt certificates.
 10. `09_admin_portal.sh`: Deploys our custom OpenMailStack PHP/JS Admin Portal and secures the `www-data` sudoers bridge.
+11. `10_webmail.sh`: Builds and deploys the modern React webmail frontend, installs the Node/Express backend, renders `/etc/openmailstack/webmail-backend.env`, installs `openmailstack.service`, and wires Nginx routes for `/`, `/api`, `/caldav`, `/carddav`, autodiscover, and ActiveSync.
 
 ---
 
@@ -70,44 +71,55 @@ For external automated provisioning (e.g. WHMCS or custom billing software), we 
 - **Design:** Implements a modern "glassmorphism" aesthetic with responsive sidebar navigation and asynchronous DOM updates.
 - **Interaction:** Uses standard browser `fetch()` API to communicate with `api.php`. Forms are presented via cleanly injected dynamic HTML modals (DOM manipulation).
 
+## 4. Modern Webmail, Calendar, Contacts, And Sync Proxy
+
+The modern end-user product surface lives in `webmail-frontend/` and `webmail-backend/`.
+
+- **Frontend:** `webmail-frontend` is a React/Vite single-page app served from `/`. It provides Mail, Calendar, Contacts, Sync Info, Settings, and admin-facing controls.
+- **Backend:** `webmail-backend` is a Node/Express service listening on `127.0.0.1:20000` by default. Nginx proxies `/api`, `/api/apps`, `/caldav`, `/carddav`, autodiscover, and `/Microsoft-Server-ActiveSync` to it.
+- **Mail:** The backend talks to Dovecot IMAP, Postfix SMTP, and ManageSieve to list, read, search, send, filter, and organize mail.
+- **Calendar:** CalDAV, ActiveSync calendar sync, and the webapp share the `calendars` and `events` tables.
+- **Contacts:** CardDAV, ActiveSync contacts, and the webapp share the `contacts` table.
+- **Sessions:** Browser login uses HttpOnly cookie sessions persisted in the database. The backend still needs delegated credential hardening before it should be called enterprise-grade.
+
 ---
 
-## 4. Specific Feature Implementations
+## 5. Specific Feature Implementations
 
-### 4.1 System Health Monitoring
+### 5.1 System Health Monitoring
 The Admin Portal displays real-time server health. When `api.php` receives a `get_system_health` request, it:
 1. Executes `systemctl is-active <service>` via PHP's `shell_exec()` to check the live status of Nginx, Postfix, Dovecot, MariaDB, and Rspamd.
 2. Parses `/proc/meminfo` (via `free -m`) and disk usage (`df -h /`) to render the usage bars in the UI.
 
-### 4.2 In-Place Secure GitHub Upgrades
+### 5.2 In-Place Secure GitHub Upgrades
 We designed an automated upgrade bridge that allows the web interface to pull updates from GitHub without compromising server security.
 - **Version Check:** The web panel hits the `https://api.github.com/repos/mrlemongrass/openmailstack/releases/latest` endpoint to compare SemVer strings. It also pulls live local component versions (e.g. `postconf -h mail_version`).
 - **The Sudoers Bridge:** The portal runs as the restricted `www-data` user. We created `/etc/sudoers.d/openmailstack-upgrade` which explicitly allows `www-data` to execute **only** `/usr/local/bin/openmailstack-upgrade.sh` as root, with no password.
 - **The Upgrade Script:** When triggered, the `upgrade.sh` script executes a `git pull` in `/root/openmailstack/`, copies the newly updated web interface files to `/var/www/openmailstack-admin/`, restarts `php-fpm`, and updates the local version tracker, all while preserving user state.
 
-### 4.3 Audit Logs
+### 5.3 Audit Logs
 Enterprise security requires accountability. We implemented an `audit_log` SQL table.
 - Every mutating action in `api.php` (creating a user, deleting a domain, editing an alias) triggers a secondary `INSERT` into the `audit_log` table.
 - The log records the `admin_username`, the target `domain`, the exact `action`, a detailed `description`, and a `timestamp`.
 
-### 4.4 Automated DKIM & Rspamd Proxy
+### 5.4 Automated DKIM & Rspamd Proxy
 Rspamd's UI runs locally on port `11334`. To expose it securely to the admin without opening extra firewall ports, Nginx Reverse Proxies `/rspamd/` directly to localhost, passing the `RSPAMD_PASS` via headers securely generated during `setup_config.sh`.
 DKIM records are managed by the `05_rspamd_clamav.sh` script, which installs a systemd timer (`openmailstack-dkim-sync.timer`) to ensure newly created domains in the database have their cryptographic keys generated automatically every hour without manual CLI intervention.
 
-### 4.5 Domain Ownership Verification
+### 5.5 Domain Ownership Verification
 To prevent malicious domain hijacking in a multi-tenant environment, OpenMailStack enforces DNS TXT verification for non-superadmins:
 1. When a normal domain admin adds a domain, it is inserted into the MariaDB `domain` table with `active = 0` (Pending) and linked to their account in the `domain_admins` table.
 2. A cryptographic nonce is generated and saved in the `domain_verification` table.
 3. The Admin Portal instructs the user to create a DNS TXT record (`_openmailstack.domain.com IN TXT openmailstack-verify=<nonce>`).
 4. Upon clicking "Verify", `api.php` triggers a native PHP `dns_get_record()` lookup. If the token is found, the domain activates immediately.
 
-### 4.6 Hierarchical JSON Spam Policies (Rspamd Multimap)
+### 5.6 Hierarchical JSON Spam Policies (Rspamd Multimap)
 OpenMailStack supports granular, multi-tenant spam policies allowing Administrators and Users to define exact Whitelists, Blacklists, and Banned IPs.
 - **The Storage Strategy:** Policies are stored in MariaDB as raw JSON objects across three tables: `global_spam_rules`, `domain_spam_rules`, and `user_spam_rules`. 
 - **The Execution Layer:** We completely re-engineered Rspamd's `multimap.conf` module to bypass standard flat-file checks. When an email arrives, Rspamd dynamically executes SQL queries against MariaDB in real-time, utilizing MariaDB's strict native `JSON_CONTAINS()` function to see if the sender's IP or Domain exists in the specific policy array.
 - **The Hierarchy:** Rspamd evaluates rules in a strict hierarchy. A User's personal whitelist will override a Domain-level blacklist, ensuring maximum flexibility.
 
-### 4.7 SQL Spam Quarantining & Interception
+### 5.7 SQL Spam Quarantining & Interception
 Rather than silently dropping emails that score highly on Rspamd (which leads to false positives and missing critical business communications), OpenMailStack intercepts and stores them securely.
 1. **Rspamd Flagging:** A custom Lua post-filter script (`/etc/rspamd/rspamd.local.lua`) is registered inside Rspamd. If an email scores `>= 15.0`, rather than rejecting it, Rspamd stamps it with a hidden header: `X-OMS-Quarantine: YES`.
 2. **Postfix Header Routing:** Postfix's `header_checks` map scans every incoming email. Upon detecting `X-OMS-Quarantine`, Postfix strips the email from standard Dovecot LMTP delivery and pipes it to a custom `quarantine` transport queue.

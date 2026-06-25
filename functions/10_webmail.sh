@@ -263,7 +263,7 @@ configure_nginx() {
 
     location / {
         if ($request_method ~ ^(PROPFIND|OPTIONS)$) {
-            rewrite ^ /caldav/ last;
+            return 301 /caldav/;
         }
         root ${FRONTEND_DIR};
         try_files \$uri \$uri/ /index.html;

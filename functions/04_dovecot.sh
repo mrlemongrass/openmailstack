@@ -26,9 +26,9 @@ echo -e "Installing Dovecot and MySQL modules..."
 openmailstack_install_required_packages dovecot-core dovecot-imapd dovecot-lmtpd dovecot-mysql
 openmailstack_install_optional_packages dovecot-pop3d
 
-DOVECOT_PROTOCOLS="imap lmtp"
+DOVECOT_PROTOCOLS="imap lmtp sieve"
 if openmailstack_package_installed "dovecot-pop3d"; then
-    DOVECOT_PROTOCOLS="imap pop3 lmtp"
+    DOVECOT_PROTOCOLS="imap pop3 lmtp sieve"
 fi
 
 # Determine Dovecot Version (e.g., 2.3 or 2.4)
@@ -51,9 +51,6 @@ if [[ "$DOVECOT_VERSION" == "2.4" ]]; then
     rm -f /etc/dovecot/dovecot-sql.conf.ext
 
     cat <<EOF > /etc/dovecot/local.conf
-dovecot_config_version = 2.4.0
-dovecot_storage_version = 2.4.0
-
 protocols = ${DOVECOT_PROTOCOLS}
 
 # disable_plaintext_auth was removed in 2.4. auth_allow_cleartext = no is the new default.
@@ -102,6 +99,77 @@ service auth {
     user = vmail
   }
 }
+
+namespace inbox {
+  mailbox Drafts {
+    auto = subscribe
+    special_use = \Drafts
+  }
+  mailbox Draft {
+    auto = no
+    special_use = \Drafts
+  }
+  mailbox Junk {
+    auto = subscribe
+    special_use = \Junk
+  }
+  mailbox "Junk E-mail" {
+    auto = no
+    special_use = \Junk
+  }
+  mailbox Spam {
+    auto = no
+    special_use = \Junk
+  }
+  mailbox "Bulk Mail" {
+    auto = no
+    special_use = \Junk
+  }
+  mailbox Trash {
+    auto = subscribe
+    special_use = \Trash
+  }
+  mailbox "Deleted Messages" {
+    auto = no
+    special_use = \Trash
+  }
+  mailbox "Deleted Items" {
+    auto = no
+    special_use = \Trash
+  }
+  mailbox Bin {
+    auto = no
+    special_use = \Trash
+  }
+  mailbox Deleted {
+    auto = no
+    special_use = \Trash
+  }
+  mailbox Archive {
+    auto = subscribe
+    special_use = \Archive
+  }
+  mailbox Archives {
+    auto = no
+    special_use = \Archive
+  }
+  mailbox Sent {
+    auto = subscribe
+    special_use = \Sent
+  }
+  mailbox "Sent Messages" {
+    auto = no
+    special_use = \Sent
+  }
+  mailbox "Sent Items" {
+    auto = no
+    special_use = \Sent
+  }
+  mailbox "Sent Mail" {
+    auto = no
+    special_use = \Sent
+  }
+}
 EOF
 
 else
@@ -132,6 +200,8 @@ mail_gid = 5000
 first_valid_uid = 5000
 last_valid_uid = 5000
 
+mail_home = /var/vmail/%{user | domain}/%{user | username}
+
 passdb {
   driver = sql
   args = /etc/dovecot/dovecot-sql.conf.ext
@@ -157,6 +227,77 @@ service auth {
   unix_listener auth-userdb {
     mode = 0600
     user = vmail
+  }
+}
+
+namespace inbox {
+  mailbox Drafts {
+    auto = subscribe
+    special_use = \Drafts
+  }
+  mailbox Draft {
+    auto = no
+    special_use = \Drafts
+  }
+  mailbox Junk {
+    auto = subscribe
+    special_use = \Junk
+  }
+  mailbox "Junk E-mail" {
+    auto = no
+    special_use = \Junk
+  }
+  mailbox Spam {
+    auto = no
+    special_use = \Junk
+  }
+  mailbox "Bulk Mail" {
+    auto = no
+    special_use = \Junk
+  }
+  mailbox Trash {
+    auto = subscribe
+    special_use = \Trash
+  }
+  mailbox "Deleted Messages" {
+    auto = no
+    special_use = \Trash
+  }
+  mailbox "Deleted Items" {
+    auto = no
+    special_use = \Trash
+  }
+  mailbox Bin {
+    auto = no
+    special_use = \Trash
+  }
+  mailbox Deleted {
+    auto = no
+    special_use = \Trash
+  }
+  mailbox Archive {
+    auto = subscribe
+    special_use = \Archive
+  }
+  mailbox Archives {
+    auto = no
+    special_use = \Archive
+  }
+  mailbox Sent {
+    auto = subscribe
+    special_use = \Sent
+  }
+  mailbox "Sent Messages" {
+    auto = no
+    special_use = \Sent
+  }
+  mailbox "Sent Items" {
+    auto = no
+    special_use = \Sent
+  }
+  mailbox "Sent Mail" {
+    auto = no
+    special_use = \Sent
   }
 }
 EOF

@@ -31,6 +31,15 @@ ROUNDCUBE_DB_NAME="roundcube"
 ROUNDCUBE_DB_USER="roundcube"
 ROUNDCUBE_DB_PASSWORD="ChangeMe_RC_Pass"
 
+# Modern Webmail Settings
+# The current React/Vite stack requires Node.js >= 20.19.0 when building.
+OMS_WEBMAIL_HOST="127.0.0.1"
+OMS_WEBMAIL_PORT="20000"
+OMS_PUBLIC_BASE_URL="https://${MAIL_HOSTNAME}"
+OMS_DEFAULT_DOMAIN="${FIRST_DOMAIN}"
+OMS_COOKIE_SECURE="true"
+OMS_UPLOAD_LIMIT_BYTES="26214400"
+
 # Let's Encrypt Email (for expiry notifications)
 LETSENCRYPT_EMAIL="admin@${FIRST_DOMAIN}"
 
@@ -44,5 +53,5 @@ SSL_CERT_MODE="auto"
 CLAMAV_ENABLED="1"
 
 # System Monitoring (optional)
-# ENABLE_MONIT="false"  # Enable monit for process monitoring
+ENABLE_MONIT="true"  # Enable monit for process monitoring
 # MONIT_EMAIL="admin@${FIRST_DOMAIN}"

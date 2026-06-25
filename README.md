@@ -24,7 +24,7 @@ Stop wrestling with cryptic config files and manual database queries. OpenMailSt
   * 🏰 **Multi-Tenant Domain Verification:** Domain admins are strictly bounded to their own domains, and can securely add new domains utilizing automated DNS TXT record ownership verification.
   * 🛑 **SQL Spam Quarantining:** High-scoring spam is automatically intercepted at the Postfix MTA level, saved to disk, and logged to MariaDB where admins can securely review, delete, or release it to users' inboxes directly from the UI.
   * 🚫 **Hierarchical JSON Ban Policies:** Configure granular domain or server-wide blocklists for specific IPs, wildcard domains, or file extensions, parsed dynamically by Rspamd.
-* 📧 **Webmail:** Roundcube with a modern, responsive Elastic Theme.
+* 📧 **Mail, Calendar & Contacts:** The primary end-user experience is the React/Vite app in `webmail-frontend`, backed by the Node/Express mail and sync proxy in `webmail-backend`. Roundcube remains available as a legacy mail fallback while the modern suite continues to mature.
 * 🛑 **Security & Anti-Spam:** Rspamd (DKIM/ARC signing), ClamAV (Anti-virus), Fail2ban, UFW Firewall, and automated Let's Encrypt SSL.
 * 🤖 **Automation & Guardrails:** Intelligent state detection, automated pre-flight safety snapshots, interactive point-in-time rollbacks, and hourly automated DKIM domain synchronization.
 
@@ -49,6 +49,10 @@ The Installation Guide provides a highly detailed, lay-person friendly walkthrou
 Are you a sysadmin, a security researcher, or just an unapologetic nerd? We love transparency. We documented *every single detail* of how OpenMailStack works under the hood.
 
 👉 **[Read the TECHNICAL.md Architecture Guide](TECHNICAL.md)** 👈
+
+## 🗺️ Roadmap
+
+The modern React webmail, calendar, contacts, and sync stack is under active development. Current product and release priorities live in **[ROADMAP.md](ROADMAP.md)**.
 
 ---
 
@@ -85,9 +89,12 @@ Once installation is complete, you can find your automatically generated passwor
   * **URL:** `https://mail.example.com/SOGo/admin`
   * **Password:** Check `config.conf` or your SSH terminal output!
 
-* **Webmail (Read & Send Emails):**
-  * **URL:** `https://mail.example.com/webmail`
+* **Modern Webmail (Read & Send Emails):**
+  * **URL:** `https://mail.example.com/`
   * **Login:** The email address you created in the Admin Portal.
+
+* **Legacy Roundcube Fallback:**
+  * **URL:** `https://mail.example.com/webmail`
 
 ---
 

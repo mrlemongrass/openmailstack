@@ -64,6 +64,10 @@ configure_nginx_tls() {
         return 0
     fi
 
+    if grep -Eq '^[[:space:]]*listen[[:space:]]+443[[:space:]]+ssl;' "${nginx_conf}"; then
+        return 0
+    fi
+
     tmp_conf=$(mktemp)
     if ! awk -v cert="${CERT_FILE}" -v key="${KEY_FILE}" '
         BEGIN { inserted=0; skip=0; }

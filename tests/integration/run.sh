@@ -41,7 +41,9 @@ test_config_defaults() {
     assert_contains "${file}" 'SSL_CERT_MODE="auto"'
     assert_contains "${file}" 'CLAMAV_ENABLED="1"'
     assert_contains "${file}" 'POSTFIXADMIN_ALLOW_LAB_DOMAINS="0"'
-    pass "Config defaults include SSL_CERT_MODE and CLAMAV_ENABLED"
+    assert_contains "${file}" 'OMS_WEBMAIL_HOST="127.0.0.1"'
+    assert_contains "${file}" 'OMS_WEBMAIL_PORT="20000"'
+    pass "Config defaults include SSL_CERT_MODE, CLAMAV_ENABLED, and modern webmail settings"
 }
 
 test_cert_host_validation_target() {
@@ -70,6 +72,15 @@ test_secret_handling_guards() {
     pass "Secrets are not passed on command arguments in hashing paths"
 }
 
+test_rspamd_milter_timeout_guards() {
+    local rspamd_file="${PROJECT_ROOT}/functions/05_rspamd_clamav.sh"
+
+    assert_contains "${rspamd_file}" 'postconf -e "milter_default_action = accept"'
+    assert_contains "${rspamd_file}" 'postconf -e "milter_connect_timeout = 5s"'
+    assert_contains "${rspamd_file}" 'postconf -e "milter_command_timeout = 5s"'
+    pass "Rspamd milter failures do not block SMTP greetings for default timeouts"
+}
+
 test_mysql_e_reduction_guards() {
     local rc_file="${PROJECT_ROOT}/functions/06_roundcube.sh"
     local dkim_file="${PROJECT_ROOT}/functions/dkim_sync.sh"
@@ -79,6 +90,37 @@ test_mysql_e_reduction_guards() {
     assert_contains "${dkim_file}" "mysql -N -B <<SQL"
     assert_not_contains "${dkim_file}" "mysql -N -B -e"
     pass "Roundcube and DKIM sync use stdin SQL queries"
+}
+
+test_modern_webmail_deployment_guards() {
+    local install_file="${PROJECT_ROOT}/install.sh"
+    local webmail_file="${PROJECT_ROOT}/functions/10_webmail.sh"
+    local service_file="${PROJECT_ROOT}/packaging/systemd/openmailstack.service"
+
+    assert_contains "${install_file}" 'INSTALLED_COMPONENTS["modern_webmail"]'
+    assert_contains "${install_file}" '"functions/10_webmail.sh"'
+    assert_contains "${webmail_file}" 'Node.js >= 20.19.0'
+    assert_contains "${webmail_file}" 'write_env_line "OMS_DB_PASSWORD"'
+    assert_contains "${webmail_file}" 'location ^~ /api/'
+    assert_contains "${webmail_file}" 'location ^~ /carddav'
+    assert_contains "${webmail_file}" 'location = /Microsoft-Server-ActiveSync'
+    assert_contains "${webmail_file}" 'nginx -t'
+    assert_contains "${service_file}" 'EnvironmentFile=/etc/openmailstack/webmail-backend.env'
+    pass "Modern webmail deployment guards"
+}
+
+test_authenticated_smoke_guards() {
+    local mail_smoke="${PROJECT_ROOT}/tests/integration/mail_sync_smoke.sh"
+    local calendar_smoke="${PROJECT_ROOT}/tests/integration/calendar_sync_smoke.sh"
+    local carddav_smoke="${PROJECT_ROOT}/tests/integration/carddav_sync_smoke.sh"
+    local eas_contacts_smoke="${PROJECT_ROOT}/tests/integration/activesync_contacts_smoke.sh"
+
+    assert_contains "${mail_smoke}" 'SKIP: set OMS_SMOKE_USER and OMS_SMOKE_PASSWORD'
+    assert_contains "${mail_smoke}" 'PASS: mail sync smoke completed'
+    assert_contains "${calendar_smoke}" 'PASS: calendar sync smoke completed'
+    assert_contains "${carddav_smoke}" 'PASS: CardDAV sync smoke completed'
+    assert_contains "${eas_contacts_smoke}" 'PASS: ActiveSync contacts smoke completed'
+    pass "Authenticated smoke scripts are credential-gated and present"
 }
 
 test_dry_run_local() {
@@ -112,7 +154,10 @@ test_config_defaults
 test_cert_host_validation_target
 test_postfixadmin_dns_guard_defaults
 test_secret_handling_guards
+test_rspamd_milter_timeout_guards
 test_mysql_e_reduction_guards
+test_modern_webmail_deployment_guards
+test_authenticated_smoke_guards
 test_dry_run_local
 
 echo "[ok] Integration checks completed."

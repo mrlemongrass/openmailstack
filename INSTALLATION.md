@@ -68,7 +68,7 @@ nano config.conf
 ```bash
 ./install.sh
 ```
-Grab a coffee! The script will take 5 to 10 minutes to download, install, and configure MariaDB, Nginx, PHP, Postfix, Dovecot, Rspamd, ClamAV, the OpenMailStack Admin Portal, and Roundcube Webmail. 
+Grab a coffee. The script will take 5 to 10 minutes to download, install, and configure MariaDB, Nginx, PHP, Postfix, Dovecot, Rspamd, ClamAV, the OpenMailStack Admin Portal, the modern OpenMailStack webmail frontend/backend, and the legacy Roundcube fallback.
 
 ---
 
@@ -148,13 +148,18 @@ Once your installation is complete and your DNS records have propagated, you can
   * Access the embedded Rspamd WebUI to monitor live spam scoring. *(Note: Rspamd requires its own master password. The portal automatically extracts this from your server config and displays it above the embedded view so you can easily copy/paste it to log in).*
   * Review comprehensive Audit Logs of all administrative actions.
 
-### 2. Webmail
-* **URL:** `https://mail.example.com/webmail`
+### 2. Modern Mail, Calendar, And Contacts
+* **URL:** `https://mail.example.com/`
 * **Login:** The full email address you just created in the Admin Portal (e.g., `you@example.com`).
 * **Password:** The password you assigned to that user in the Admin Portal.
-* **Usage:** Send and receive emails through the modern Roundcube Elastic interface.
+* **Usage:** Use the React webapp for Mail, Calendar, Contacts, and Sync Info. Roundcube remains available as a legacy fallback.
 
-### 3. PostfixAdmin (Advanced/Legacy)
+### 3. Legacy Roundcube Fallback
+* **URL:** `https://mail.example.com/webmail`
+* **Login:** The full email address you just created in the Admin Portal.
+* **Usage:** Use only if you need the legacy Roundcube mail interface while the modern webmail continues to mature.
+
+### 4. PostfixAdmin (Advanced/Legacy)
 * **URL:** `https://mail.example.com/postfixadmin`
 * **Setup Password:** Use the `POSTFIXADMIN_SETUP_PASSWORD` from your config file.
 * **Usage:** Only required if you need to access advanced legacy features not currently covered by the new OpenMailStack Admin Portal.

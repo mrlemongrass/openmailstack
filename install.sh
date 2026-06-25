@@ -157,6 +157,8 @@ INSTALLED_COMPONENTS["rspamd"]=$(systemctl is-active rspamd >/dev/null 2>&1 && e
 INSTALLED_COMPONENTS["postfixadmin"]=$([ -d /var/www/postfixadmin ] && echo "yes" || echo "no")
 INSTALLED_COMPONENTS["roundcube"]=$([ -d /var/www/roundcube ] && echo "yes" || echo "no")
 INSTALLED_COMPONENTS["admin_portal"]=$([ -d /var/www/openmailstack-admin ] && echo "yes" || echo "no")
+INSTALLED_COMPONENTS["modern_webmail"]=$(systemctl is-active openmailstack.service >/dev/null 2>&1 && [ -d /var/www/openmailstack ] && echo "yes" || echo "no")
+INSTALLED_COMPONENTS["monit"]=$(command -v monit >/dev/null 2>&1 && echo "yes" || echo "no")
 
 ANY_INSTALLED="no"
 for state in "${INSTALLED_COMPONENTS[@]}"; do
@@ -176,6 +178,8 @@ if [[ "$ANY_INSTALLED" == "yes" && "$DRY_RUN" -eq 0 ]]; then
     echo -e "Dovecot IMAP:          $([[ ${INSTALLED_COMPONENTS["dovecot"]} == "yes" ]] && echo -e "${GREEN}[Installed]${NC}" || echo -e "${YELLOW}[Missing]${NC}")"
     echo -e "Rspamd & ClamAV:       $([[ ${INSTALLED_COMPONENTS["rspamd"]} == "yes" ]] && echo -e "${GREEN}[Installed]${NC}" || echo -e "${YELLOW}[Missing]${NC}")"
     echo -e "Webmail (Roundcube):   $([[ ${INSTALLED_COMPONENTS["roundcube"]} == "yes" ]] && echo -e "${GREEN}[Installed]${NC}" || echo -e "${YELLOW}[Missing]${NC}")"
+    echo -e "Modern Webmail:        $([[ ${INSTALLED_COMPONENTS["modern_webmail"]} == "yes" ]] && echo -e "${GREEN}[Installed]${NC}" || echo -e "${YELLOW}[Missing]${NC}")"
+    echo -e "Monitoring (Monit):    $([[ ${INSTALLED_COMPONENTS["monit"]} == "yes" ]] && echo -e "${GREEN}[Installed]${NC}" || echo -e "${YELLOW}[Missing]${NC}")"
     echo -e "PostfixAdmin (Legacy): $([[ ${INSTALLED_COMPONENTS["postfixadmin"]} == "yes" ]] && echo -e "${GREEN}[Installed]${NC}" || echo -e "${YELLOW}[Missing]${NC}")"
     echo -e "Admin Portal:          $([[ ${INSTALLED_COMPONENTS["admin_portal"]} == "yes" ]] && echo -e "${GREEN}[Installed]${NC}" || echo -e "${YELLOW}[Missing]${NC}")"
     echo ""
@@ -218,6 +222,8 @@ if [[ "$ANY_INSTALLED" == "yes" && "$DRY_RUN" -eq 0 ]]; then
         # Security and DKIM should probably be re-run if missing components are installed
         MODULES_TO_RUN+=("functions/07_security.sh" "functions/08_dkim_sync_timer.sh")
         [[ ${INSTALLED_COMPONENTS["admin_portal"]} == "no" ]] && MODULES_TO_RUN+=("functions/09_admin_portal.sh")
+        [[ ${INSTALLED_COMPONENTS["modern_webmail"]} == "no" ]] && MODULES_TO_RUN+=("functions/10_webmail.sh")
+        [[ ${INSTALLED_COMPONENTS["monit"]} == "no" ]] && MODULES_TO_RUN+=("functions/11_monitoring.sh")
     else
         # Option 2: Reinstall everything
         MODULES_TO_RUN=(
@@ -231,6 +237,8 @@ if [[ "$ANY_INSTALLED" == "yes" && "$DRY_RUN" -eq 0 ]]; then
             "functions/07_security.sh"
             "functions/08_dkim_sync_timer.sh"
             "functions/09_admin_portal.sh"
+            "functions/10_webmail.sh"
+            "functions/11_monitoring.sh"
         )
     fi
 else
@@ -246,6 +254,8 @@ else
         "functions/07_security.sh"
         "functions/08_dkim_sync_timer.sh"
         "functions/09_admin_portal.sh"
+        "functions/10_webmail.sh"
+        "functions/11_monitoring.sh"
     )
 fi
 
@@ -267,6 +277,7 @@ done
 echo -e "\n${GREEN}==============================================${NC}"
 echo -e "${GREEN} OpenMailStack Installation Complete!         ${NC}"
 echo -e "${GREEN}==============================================${NC}"
-echo -e "Webmail:      ${CYAN}https://mail.${FIRST_DOMAIN}/webmail${NC}"
+echo -e "Webmail:      ${CYAN}https://mail.${FIRST_DOMAIN}/${NC}"
+echo -e "Legacy Mail:  ${CYAN}https://mail.${FIRST_DOMAIN}/webmail${NC}"
 echo -e "Admin Portal: ${CYAN}https://mail.${FIRST_DOMAIN}/SOGo/admin${NC}"
 echo -e "Run ${YELLOW}cat ${SCRIPT_DIR}/config.conf${NC} to view your generated passwords."

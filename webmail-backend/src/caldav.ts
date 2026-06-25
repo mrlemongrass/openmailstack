@@ -106,7 +106,7 @@ async function handlePropfind(req: Request, res: Response, user: string) {
         xml = `<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/">
   <D:response>
-    <D:href>/caldav/${user}/</D:href>
+    <D:href>${req.originalUrl}</D:href>
     <D:propstat>
       <D:prop>
         <D:current-user-principal><D:href>/caldav/principals/${user}/</D:href></D:current-user-principal>

@@ -51,7 +51,7 @@ export interface CalendarSettings {
 
 export interface ContactsSettings {
     nameFormat: 'firstLast' | 'lastFirst';
-    sortBy: 'name' | 'email';
+    sortBy: 'firstName' | 'lastName' | 'email';
     listDensity: 'comfortable' | 'cozy' | 'compact';
     autoCreateFromSent: boolean;
 }
@@ -108,7 +108,7 @@ export const settingsDefaults = {
     } satisfies CalendarSettings,
     contacts: {
         nameFormat: 'firstLast',
-        sortBy: 'name',
+        sortBy: 'firstName',
         listDensity: 'cozy',
         autoCreateFromSent: true,
     } satisfies ContactsSettings,
@@ -278,7 +278,7 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
     if (namespace === 'contacts') {
         return {
             nameFormat: stringOption(source.nameFormat, ['firstLast', 'lastFirst'], settingsDefaults.contacts.nameFormat),
-            sortBy: stringOption(source.sortBy, ['name', 'email'], settingsDefaults.contacts.sortBy),
+            sortBy: stringOption(source.sortBy, ['firstName', 'lastName', 'email'], settingsDefaults.contacts.sortBy),
             listDensity: stringOption(source.listDensity, ['comfortable', 'cozy', 'compact'], settingsDefaults.contacts.listDensity),
             autoCreateFromSent: booleanValue(source.autoCreateFromSent, settingsDefaults.contacts.autoCreateFromSent),
         };

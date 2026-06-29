@@ -60,6 +60,13 @@ test('normalizeSettings bounds calendar settings', () => {
   assert.equal(normalized.timeZone, 'America/Phoenix');
 });
 
+test('normalizeSettings accepts firstName and lastName sortBy for contacts', () => {
+  assert.equal(normalizeSettings('contacts', { sortBy: 'firstName' }).sortBy, 'firstName');
+  assert.equal(normalizeSettings('contacts', { sortBy: 'lastName' }).sortBy, 'lastName');
+  assert.equal(normalizeSettings('contacts', { sortBy: 'email' }).sortBy, 'email');
+  assert.equal(normalizeSettings('contacts', { sortBy: 'name' }).sortBy, settingsDefaults.contacts.sortBy);
+});
+
 test('normalizeSettings accepts contacts display settings', () => {
   const normalized = normalizeSettings('contacts', {
     nameFormat: 'lastFirst',

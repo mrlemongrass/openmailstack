@@ -46,7 +46,7 @@ export interface CalendarSettings {
 }
 export interface ContactsSettings {
     nameFormat: 'firstLast' | 'lastFirst';
-    sortBy: 'name' | 'email';
+    sortBy: 'firstName' | 'lastName' | 'email';
     listDensity: 'comfortable' | 'cozy' | 'compact';
     autoCreateFromSent: boolean;
 }
@@ -100,7 +100,7 @@ export declare const settingsDefaults: {
     };
     contacts: {
         nameFormat: "firstLast";
-        sortBy: "name";
+        sortBy: "firstName";
         listDensity: "cozy";
         autoCreateFromSent: true;
     };

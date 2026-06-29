@@ -48,7 +48,7 @@ exports.settingsDefaults = {
     },
     contacts: {
         nameFormat: 'firstLast',
-        sortBy: 'name',
+        sortBy: 'firstName',
         listDensity: 'cozy',
         autoCreateFromSent: true,
     },
@@ -195,7 +195,7 @@ function normalizeSettings(namespace, value) {
     if (namespace === 'contacts') {
         return {
             nameFormat: stringOption(source.nameFormat, ['firstLast', 'lastFirst'], exports.settingsDefaults.contacts.nameFormat),
-            sortBy: stringOption(source.sortBy, ['name', 'email'], exports.settingsDefaults.contacts.sortBy),
+            sortBy: stringOption(source.sortBy, ['firstName', 'lastName', 'email'], exports.settingsDefaults.contacts.sortBy),
             listDensity: stringOption(source.listDensity, ['comfortable', 'cozy', 'compact'], exports.settingsDefaults.contacts.listDensity),
             autoCreateFromSent: booleanValue(source.autoCreateFromSent, exports.settingsDefaults.contacts.autoCreateFromSent),
         };

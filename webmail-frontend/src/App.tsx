@@ -806,6 +806,12 @@ function App() {
   const [composeMode, setComposeMode] = useState<'rich' | 'plain'>(defaultMailSettings.compose.defaultMode);
   const [calendarSettings, setCalendarSettings] = useState<CalendarUserSettings>(() => defaultCalendarSettings);
   const [contactsSettings, setContactsSettings] = useState<ContactsUserSettings>(() => defaultContactsSettings);
+  const contactDensityPresets = {
+    cozy:        { minCardWidth: 280, gap: 20, cardPadding: 24, nameSize: '1.15rem', emailSize: '0.9rem', detailSize: '0.85rem', avatarSize: 56, avatarFontSize: '1.4rem' },
+    compact:     { minCardWidth: 220, gap: 12, cardPadding: 14, nameSize: '1rem',    emailSize: '0.8rem',  detailSize: '0.8rem',  avatarSize: 42, avatarFontSize: '1.1rem' },
+    comfortable: { minCardWidth: 340, gap: 28, cardPadding: 32, nameSize: '1.25rem', emailSize: '1rem',    detailSize: '0.9rem',  avatarSize: 64, avatarFontSize: '1.6rem' },
+  } as const;
+  const contactDensity = contactDensityPresets[contactsSettings.listDensity];
   const settingsSaveTimer = useRef<number | null>(null);
   const settingsSaveSnapshot = useRef('');
   const mailUndoTimer = useRef<number | null>(null);
@@ -1155,46 +1161,45 @@ function App() {
     return Array.from(new Set(candidates));
   }, [currentUsername, userIdentities.address, userIdentities.aliases]);
 
-  const displayContacts = useMemo((): DisplayContact[] => {
-    const parseName = (contact: Contact) => {
-      let firstName = '', lastName = '', middleName = '', prefix = '', suffix = '';
-      if (contact.vcard_data) {
-        const nLine = contact.vcard_data.split('\\n').find((l: string) => l.toUpperCase().startsWith('N:') || l.toUpperCase().startsWith('N;'));
-        if (nLine) {
-          const val = nLine.slice(nLine.indexOf(':') + 1).trim();
-          const parts = val.split(/(?<!\\\\);/).map((s: string) => s.replace(/\\\\;/g, ';').replace(/\\\\,/g, ',').replace(/\\\\\\\\/g, '\\\\'));
-          lastName = parts[0] || '';
-          firstName = parts[1] || '';
-          middleName = parts[2] || '';
-          prefix = parts[3] || '';
-          suffix = parts[4] || '';
-        }
+  const parseContactName = (contact: Contact) => {
+    let firstName = '', lastName = '', middleName = '', prefix = '', suffix = '';
+    if (contact.vcard_data) {
+      const nLine = contact.vcard_data.split('\\n').find((l: string) => l.toUpperCase().startsWith('N:') || l.toUpperCase().startsWith('N;'));
+      if (nLine) {
+        const val = nLine.slice(nLine.indexOf(':') + 1).trim();
+        const parts = val.split(/(?<!\\\\);/).map((s: string) => s.replace(/\\\\;/g, ';').replace(/\\\\,/g, ',').replace(/\\\\\\\\/g, '\\\\'));
+        lastName = parts[0] || '';
+        firstName = parts[1] || '';
+        middleName = parts[2] || '';
+        prefix = parts[3] || '';
+        suffix = parts[4] || '';
       }
-      if (!firstName && !lastName) {
-        const rawParts = (contact.name || '').trim().split(/\\s+/);
-        if (rawParts.length > 1) {
-          lastName = rawParts.pop() || '';
-          firstName = rawParts.join(' ');
-        } else {
-          firstName = rawParts[0] || '';
-        }
-      }
-      return { firstName, lastName, middleName, prefix, suffix };
-    };
-
-    const formatContactName = (contact: Contact, parsed: ReturnType<typeof parseName>) => {
-      if (!parsed.firstName && !parsed.lastName) return contact.email || 'Unknown Contact';
-      
-      const { firstName, lastName, middleName, prefix, suffix } = parsed;
-      let display = '';
-      if (contactsSettings.nameFormat === 'lastFirst' && lastName) {
-        display = `${lastName}, ${[prefix, firstName, middleName, suffix].filter(Boolean).join(' ')}`;
+    }
+    if (!firstName && !lastName) {
+      const rawParts = (contact.name || '').trim().split(/\\s+/);
+      if (rawParts.length > 1) {
+        lastName = rawParts.pop() || '';
+        firstName = rawParts.join(' ');
       } else {
-        display = [prefix, firstName, middleName, lastName, suffix].filter(Boolean).join(' ');
+        firstName = rawParts[0] || '';
       }
-      return display.trim() || 'Unknown Contact';
-    };
+    }
+    return { firstName, lastName, middleName, prefix, suffix };
+  };
 
+  const formatContactName = (contact: Contact, parsed: ReturnType<typeof parseContactName>, nameFormat: 'firstLast' | 'lastFirst') => {
+    if (!parsed.firstName && !parsed.lastName) return contact.email || 'Unknown Contact';
+    const { firstName, lastName, middleName, prefix, suffix } = parsed;
+    let display = '';
+    if (nameFormat === 'lastFirst' && lastName) {
+      display = `${lastName}, ${[prefix, firstName, middleName, suffix].filter(Boolean).join(' ')}`;
+    } else {
+      display = [prefix, firstName, middleName, lastName, suffix].filter(Boolean).join(' ');
+    }
+    return display.trim() || 'Unknown Contact';
+  };
+
+  const displayContacts = useMemo((): DisplayContact[] => {
     const sourceContacts = contactsView === 'directory' ? directoryContacts : contacts;
     const filteredContacts = selectedLabel && contactsView === 'personal' 
       ? sourceContacts.filter(c => c.labels_json?.includes(selectedLabel))
@@ -1202,10 +1207,10 @@ function App() {
 
     return [...filteredContacts]
       .map(contact => {
-        const parsed = parseName(contact);
-        return { 
-          ...contact, 
-          displayName: formatContactName(contact, parsed),
+        const parsed = parseContactName(contact);
+        return {
+          ...contact,
+          displayName: formatContactName(contact, parsed, contactsSettings.nameFormat),
           _parsedName: parsed
         };
       })
@@ -1231,18 +1236,38 @@ function App() {
 
   const recipientContacts = useMemo(() => {
     const seen = new Set<string>();
-    const combined: Contact[] = [];
+    const combined: DisplayContact[] = [];
     for (const contact of [...contacts, ...directoryContacts]) {
       const email = contact.email.trim().toLowerCase();
       if (!email || seen.has(email)) continue;
       seen.add(email);
-      combined.push(contact);
+      const parsed = parseContactName(contact);
+      combined.push({
+        ...contact,
+        displayName: formatContactName(contact, parsed, contactsSettings.nameFormat),
+        _parsedName: parsed
+      });
     }
-    return combined.sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email, undefined, { sensitivity: 'base' }));
-  }, [contacts, directoryContacts]);
+    return combined.sort((a, b) => {
+      if (contactsSettings.sortBy === 'email') {
+        return a.email.localeCompare(b.email, undefined, { sensitivity: 'base' });
+      }
+      let aValue = '', bValue = '';
+      if (contactsSettings.sortBy === 'lastName') {
+        aValue = a._parsedName.lastName || a._parsedName.firstName || a.email;
+        bValue = b._parsedName.lastName || b._parsedName.firstName || b.email;
+      } else {
+        aValue = a._parsedName.firstName || a._parsedName.lastName || a.email;
+        bValue = b._parsedName.firstName || b._parsedName.lastName || b.email;
+      }
+      const cmp = aValue.localeCompare(bValue, undefined, { sensitivity: 'base' });
+      if (cmp !== 0) return cmp;
+      return a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
+    });
+  }, [contacts, directoryContacts, contactsSettings.nameFormat, contactsSettings.sortBy]);
 
-  const contactOptionValue = (contact: Contact) => {
-    const name = contact.name.trim();
+  const contactOptionValue = (contact: Contact | DisplayContact) => {
+    const name = ((contact as DisplayContact).displayName || contact.name).trim();
     return name ? `"${name.replace(/"/g, '')}" <${contact.email}>` : contact.email;
   };
 
@@ -5123,23 +5148,23 @@ function App() {
                       <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.85rem' }} onClick={() => setIsDuplicateModalOpen(true)}>Review & Merge</button>
                     </div>
                   )}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px', overflowY: 'auto', padding: '4px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${contactDensity.minCardWidth}px, 1fr))`, gap: `${contactDensity.gap}px`, overflowY: 'auto', padding: '4px' }}>
                     {displayContacts.length === 0 ? (
                       <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '60px 40px', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px dashed rgba(255,255,255,0.1)' }}>
                         {contactsView === 'directory' ? 'No directory entries are visible.' : 'No contacts found. Click "Add Contact" to create one, or "Import" to upload a vCard or CSV.'}
                       </div>
                     ) : (
                       displayContacts.map((contact, index) => (
-                        <div key={contact.id || contact.email || index} className="contact-card" style={{ 
-                          position: 'relative', display: 'flex', flexDirection: 'column', gap: '16px', padding: '24px', 
+                        <div key={contact.id || contact.email || index} className="contact-card" style={{
+                          position: 'relative', display: 'flex', flexDirection: 'column', gap: `${Math.round(contactDensity.cardPadding * 0.67)}px`, padding: `${contactDensity.cardPadding}px`,
                           background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', 
                           border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px',
                           boxShadow: '0 4px 20px rgba(0,0,0,0.1)', transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)'
                         }}>
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
-                            <div style={{ 
-                              width: '56px', height: '56px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, #3b82f6) 100%)', 
-                              display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.4rem', flexShrink: 0,
+                            <div style={{
+                              width: `${contactDensity.avatarSize}px`, height: `${contactDensity.avatarSize}px`, borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, #3b82f6) 100%)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: contactDensity.avatarFontSize, flexShrink: 0,
                               boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                               overflow: 'hidden'
                             }}>
@@ -5150,32 +5175,32 @@ function App() {
                               )}
                             </div>
                             <div style={{ flex: 1, minWidth: 0, marginTop: '2px' }}>
-                              <div style={{ fontWeight: 'bold', fontSize: '1.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{contact.displayName}</div>
-                              <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{contact.email}</div>
+                              <div style={{ fontWeight: 'bold', fontSize: contactDensity.nameSize, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{contact.displayName}</div>
+                              <div style={{ color: 'var(--text-secondary)', fontSize: contactDensity.emailSize, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{contact.email}</div>
                             </div>
                           </div>
                           
                           {(contact.phone || contact.organization || contact.company || contact.jobTitle || contact.address || (contact.emails_json && contact.emails_json.length > 0) || (contact.phones_json && contact.phones_json.length > 0) || (contact.addresses_json && contact.addresses_json.length > 0)) && (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                               {(contact.emails_json || []).map((em, idx) => (
-                                <div key={`em-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                <div key={`em-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: contactDensity.detailSize }}>
                                   <Mail size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>{em.label}:</span> {em.value}
                                 </div>
                               ))}
-                              {contact.phone && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}><Phone size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>Primary:</span> {contact.phone}</div>}
+                              {contact.phone && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: contactDensity.detailSize }}><Phone size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>Primary:</span> {contact.phone}</div>}
                               {(contact.phones_json || []).map((ph, idx) => (
-                                <div key={`ph-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                <div key={`ph-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: contactDensity.detailSize }}>
                                   <Phone size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>{ph.label}:</span> {ph.value}
                                 </div>
                               ))}
                               {(contact.jobTitle || contact.organization || contact.company) && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: contactDensity.detailSize }}>
                                   <Briefcase size={14} /> {[contact.jobTitle, contact.organization || contact.company].filter(Boolean).join(' at ')}
                                 </div>
                               )}
-                              {contact.address && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}><MapPin size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>Primary:</span> {contact.address}</div>}
+                              {contact.address && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: contactDensity.detailSize }}><MapPin size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>Primary:</span> {contact.address}</div>}
                               {(contact.addresses_json || []).map((addr, idx) => (
-                                <div key={`addr-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                <div key={`addr-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: contactDensity.detailSize }}>
                                   <MapPin size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>{addr.label}:</span> {addr.value}
                                 </div>
                               ))}

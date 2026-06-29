@@ -27,6 +27,7 @@ const LiveNoteEditor = lazy(() => import('./LiveNoteEditor').then(m => ({ defaul
 interface Rule {
   id: string;
   name: string;
+  enabled: boolean;
   condition: 'any' | 'all';
   criteria: { id: string; field: string; operator: string; value: string }[];
   actions: { id: string; type: string; folder?: string }[];
@@ -794,6 +795,7 @@ function App() {
   const [userIdentities, setUserIdentities] = useState<UserIdentities>({ name: '', address: '', aliases: [] });
   const [syncGuideOpen, setSyncGuideOpen] = useState<'calendar' | 'contacts' | null>(null);
   const [copiedSetupField, setCopiedSetupField] = useState<string | null>(null);
+  const [loadedImagesForMsg, setLoadedImagesForMsg] = useState<Set<string>>(new Set());
   const [appearance, setAppearance] = useState<AppearancePreferences>(() => loadAppearancePreferences());
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [settingsHydratedFor, setSettingsHydratedFor] = useState('');
@@ -801,11 +803,13 @@ function App() {
   const [isThreaded, setIsThreaded] = useState(() => loadLocalThreaded());
   const [signatures, setSignatures] = useState<Signature[]>(() => loadLocalSignatures());
   const [mailSettings, setMailSettings] = useState<MailUserSettings>(() => defaultMailSettings);
+  const [composeMode, setComposeMode] = useState<'rich' | 'plain'>(defaultMailSettings.compose.defaultMode);
   const [calendarSettings, setCalendarSettings] = useState<CalendarUserSettings>(() => defaultCalendarSettings);
   const [contactsSettings, setContactsSettings] = useState<ContactsUserSettings>(() => defaultContactsSettings);
   const settingsSaveTimer = useRef<number | null>(null);
   const settingsSaveSnapshot = useRef('');
   const mailUndoTimer = useRef<number | null>(null);
+  const markReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mailKeyboardAction = useRef<((action: 'delete' | 'archive' | 'spam' | 'read' | 'unread' | 'star' | 'unstar') => Promise<void>) | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [duplicateGroups, setDuplicateGroups] = useState<Contact[][]>([]);
@@ -917,6 +921,7 @@ function App() {
   const [mailboxEditor, setMailboxEditor] = useState<AdminMailbox | null>(null);
   const [mailboxEditorDraft, setMailboxEditorDraft] = useState<MailboxEditorDraft | null>(null);
   const [forwardingGoto, setForwardingGoto] = useState('');
+  const [keepCopy, setKeepCopy] = useState(false);
   const [branding, setBranding] = useState<BrandingSettings>(() => defaultBranding);
   const [brandingDraft, setBrandingDraft] = useState<BrandingSettings>(() => defaultBranding);
   const [brandingSaving, setBrandingSaving] = useState(false);
@@ -1661,7 +1666,18 @@ function App() {
       fetch(`/api/quota`, { headers: getHeaders() }).then(res => res.json())
         .then(data => { if (data.success && data.quota) setUserQuota(data.quota); });
       fetch(`/api/settings/forwarding`, { headers: getHeaders() }).then(res => res.json())
-        .then(data => { if (data.success) setForwardingGoto(data.goto); });
+        .then(data => {
+          if (data.success) {
+            const externalTargets = (data.goto || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+            if (externalTargets.includes(currentUsername)) {
+              setKeepCopy(true);
+              setForwardingGoto(externalTargets.filter((t: string) => t !== currentUsername).join(', '));
+            } else {
+              setKeepCopy(false);
+              setForwardingGoto(data.goto || '');
+            }
+          }
+        });
       fetch(`/api/user/identities`, { headers: getHeaders() }).then(res => res.json())
         .then(data => { 
           if (data.success) {
@@ -2039,19 +2055,58 @@ function App() {
     if (unreadUids.length > 0) {
       updateMessageFlags(folderPath, unreadUids, { isRead: true });
       updateFolderUnread(folderPath, -unreadUids.length);
-      try {
-        await fetch('/api/messages/action', {
-          method: 'POST',
-          headers: getHeaders(),
-          body: JSON.stringify({ folder: folderPath, uids: unreadUids, action: 'read' })
-        });
-        void refreshFolders();
-      } catch (err) {
-        console.error(err);
-        void refreshFolders();
+
+      // Clear any pending mark-read timer
+      if (markReadTimerRef.current) {
+        clearTimeout(markReadTimerRef.current);
+        markReadTimerRef.current = null;
+      }
+
+      const markAsRead = async () => {
+        try {
+          await fetch('/api/messages/action', {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ folder: folderPath, uids: unreadUids, action: 'read' })
+          });
+          void refreshFolders();
+        } catch (err) {
+          console.error(err);
+          void refreshFolders();
+        }
+      };
+
+      if (mailSettings.reading.markReadDelaySeconds === 0) {
+        await markAsRead();
+      } else {
+        const uidsToMark = [...unreadUids];
+        const folder = folderPath;
+        markReadTimerRef.current = setTimeout(async () => {
+          try {
+            await fetch('/api/messages/action', {
+              method: 'POST',
+              headers: getHeaders(),
+              body: JSON.stringify({ folder, uids: uidsToMark, action: 'read' })
+            });
+            void refreshFolders();
+          } catch (err) {
+            console.error(err);
+            void refreshFolders();
+          }
+        }, mailSettings.reading.markReadDelaySeconds * 1000);
       }
     }
   };
+
+  // Clear mark-read timer when navigating away from the current message
+  useEffect(() => {
+    return () => {
+      if (markReadTimerRef.current) {
+        clearTimeout(markReadTimerRef.current);
+        markReadTimerRef.current = null;
+      }
+    };
+  }, [viewingThread]);
 
   // --- Notes State ---
   const [notes, setNotes] = useState<Note[]>([]);
@@ -2663,6 +2718,7 @@ function App() {
     const defaultSig = signatures.find(s => s.defaultForReply) || signatures.find(s => s.isDefault);
     setComposeSignature(defaultSig?.id || 'none');
     setComposeBody(buildSignatureHtml(defaultSig) + quotedHtml);
+    setComposeMode(mailSettings.compose.defaultMode);
   };
 
   const handleEditDraft = (msg: Message) => {
@@ -2685,6 +2741,7 @@ function App() {
     // In a real app, we might need a way to keep existing attachments.
     setComposeAttachments([]);
     setComposeSignature('none'); // Assume signature is already in the draft
+    setComposeMode(mailSettings.compose.defaultMode);
   };
 
   const handleCompose = () => {
@@ -2707,6 +2764,7 @@ function App() {
     setComposeAttachments([]);
     setDraftUid(null);
     setDraftId(crypto.randomUUID());
+    setComposeMode(mailSettings.compose.defaultMode);
     setIsComposing(true);
   };
 
@@ -3136,10 +3194,17 @@ function App() {
 
   const handleSaveForwarding = () => {
     setSaving(true);
+    let targets = forwardingGoto.split(',').map((s: string) => s.trim()).filter(Boolean);
+    if (keepCopy && !targets.includes(currentUsername)) {
+      targets = [currentUsername, ...targets];
+    } else if (!keepCopy) {
+      targets = targets.filter((t: string) => t !== currentUsername);
+    }
+    const goto = targets.join(', ');
     fetch(`/api/settings/forwarding`, {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ goto: forwardingGoto })
+      body: JSON.stringify({ goto })
     })
     .then(() => setSaving(false))
     .catch(() => setSaving(false));
@@ -3149,6 +3214,7 @@ function App() {
     const newRule: Rule = {
       id: Math.random().toString(36).substr(2, 9),
       name: 'New Filter Rule',
+      enabled: true,
       condition: 'any',
       criteria: [{ id: Math.random().toString(36), field: 'subject', operator: 'contains', value: '' }],
       actions: [{ id: Math.random().toString(36), type: 'move', folder: folders[0]?.path || 'INBOX' }]
@@ -4111,8 +4177,9 @@ function App() {
                             e.dataTransfer.setData('application/json', JSON.stringify(draggedUids));
                             e.dataTransfer.effectAllowed = 'move';
                           }}
-                          style={{ 
-                            padding: '12px 16px', 
+                          style={{
+                            padding: mailSettings.reading.density === 'compact' ? '6px 10px' : mailSettings.reading.density === 'comfortable' ? '16px 20px' : '12px 16px',
+                            fontSize: mailSettings.reading.density === 'compact' ? '0.85rem' : undefined,
                             borderBottom: '1px solid rgba(255,255,255,0.05)',
                             display: 'flex', gap: '12px', alignItems: 'flex-start',
                             cursor: 'pointer',
@@ -4149,9 +4216,11 @@ function App() {
                               {msg.hasAttachments && <Paperclip size={13} style={{ marginRight: '6px', verticalAlign: '-2px', color: 'var(--text-secondary)' }} />}
                               {isSearchActive ? highlightSearchTerms(msg.subject, searchQuery) : msg.subject}
                             </div>
-                            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {isSearchActive ? highlightSearchTerms(msg.preview || '', searchQuery) : msg.preview}
-                            </div>
+                            {mailSettings.reading.snippets !== false && (
+                              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {isSearchActive ? highlightSearchTerms(msg.preview || '', searchQuery) : msg.preview}
+                              </div>
+                            )}
                             {isSearchActive && searchScope === 'all' && msg.folder && (
                               <div style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--accent-primary)' }}>{msg.folder}</div>
                             )}
@@ -4221,10 +4290,24 @@ function App() {
                               )}
                             </div>
                           </div>
-                          <div 
-                            style={{ background: '#fff', color: '#000', padding: '20px', borderRadius: '8px', overflowX: 'auto' }} 
-                            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(msg.html || `<pre>${msg.text}</pre>`) }} 
-                          />
+                          <div
+                            style={{ background: '#fff', color: '#000', padding: '20px', borderRadius: '8px', overflowX: 'auto' }}
+                          >
+                            {mailSettings.reading.externalImages === 'ask' && !loadedImagesForMsg.has(msg.uid.toString()) ? (
+                              <>
+                                <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(msg.html || `<pre>${msg.text}</pre>`, { FORBID_TAGS: ['img'] }) }} />
+                                <button
+                                  className="btn btn-ghost"
+                                  style={{ marginTop: '12px', padding: '8px 16px' }}
+                                  onClick={() => setLoadedImagesForMsg(prev => new Set(prev).add(msg.uid.toString()))}
+                                >
+                                  📷 Load images
+                                </button>
+                              </>
+                            ) : (
+                              <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(msg.html || `<pre>${msg.text}</pre>`) }} />
+                            )}
+                          </div>
                           {(msg.attachments || []).length > 0 && (
                             <div style={{ marginTop: '16px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                               {(msg.attachments || []).map((attachment) => {
@@ -4556,6 +4639,8 @@ function App() {
               availableSenders={availableSenders}
               calendars={calendars.map(calendar => ({ id: calendar.id, name: calendar.name }))}
               forwardingGoto={forwardingGoto}
+              keepCopy={keepCopy}
+              onKeepCopyChange={setKeepCopy}
               passwords={passwords}
               appearance={appearance}
               copiedSetupField={copiedSetupField}
@@ -5925,6 +6010,26 @@ function App() {
                 )}
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  className="btn btn-ghost"
+                  style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                  title={composeMode === 'rich' ? 'Switch to plain text' : 'Switch to rich text'}
+                  onClick={() => {
+                    const nextMode = composeMode === 'rich' ? 'plain' : 'rich';
+                    if (composeMode === 'rich' && composeBody) {
+                      // Extract text from HTML
+                      const tmp = document.createElement('div');
+                      tmp.innerHTML = composeBody;
+                      setComposeBody(tmp.textContent || composeBody);
+                    } else if (composeMode === 'plain' && composeBody) {
+                      // Wrap plain text in paragraphs
+                      setComposeBody(composeBody.split('\n').map(l => `<p>${l || '<br>'}</p>`).join('\n'));
+                    }
+                    setComposeMode(nextMode as 'rich' | 'plain');
+                  }}
+                >
+                  {composeMode === 'rich' ? 'Plain Text' : 'Rich Text'}
+                </button>
                 <button className="btn btn-ghost" style={{ padding: '4px' }} onClick={() => setComposeDocked(!composeDocked)}>
                   {composeDocked ? <Maximize2 size={18} /> : <Minimize2 size={18} />}
                 </button>
@@ -5972,24 +6077,47 @@ function App() {
                 <label style={{ width: '40px', color: 'var(--text-secondary)' }}>Subj:</label>
                 <input className="glass-input" style={{ flex: 1 }} value={composeSubject} onChange={e => setComposeSubject(e.target.value)} />
               </div>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#fff', borderRadius: '4px', marginTop: '12px', color: '#000' }}>
-                <Suspense fallback={<div style={{ padding: '16px', color: '#333' }}>Loading editor...</div>}>
-                  <ReactQuill 
-                    theme="snow"
-                    value={composeBody}
-                    onChange={setComposeBody}
-                    style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
-                    modules={{
-                      toolbar: [
-                        [{ 'header': [1, 2, 3, false] }],
-                        ['bold', 'italic', 'underline', 'strike', 'blockquote'],
-                        [{'list': 'ordered'}, {'list': 'bullet'}, {'indent': '-1'}, {'indent': '+1'}],
-                        ['link', 'image'],
-                        ['clean']
-                      ]
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: '4px', marginTop: '12px', color: '#000' }}>
+                {composeMode === 'plain' ? (
+                  <textarea
+                    className="glass-input"
+                    value={composeBody.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '')}
+                    onChange={e => setComposeBody(e.target.value.split('\n').map(l => `<p>${l || '<br>'}</p>`).join(''))}
+                    style={{
+                      flex: 1,
+                      resize: 'vertical',
+                      fontFamily: mailSettings.compose.defaultFont === 'serif' ? 'Georgia, "Times New Roman", serif' : mailSettings.compose.defaultFont === 'mono' ? '"Fira Code", "Cascadia Code", "JetBrains Mono", Consolas, monospace' : 'system-ui, -apple-system, sans-serif',
+                      fontSize: '14px',
+                      lineHeight: '1.6',
+                      padding: '16px',
+                      border: 'none',
+                      borderRadius: '4px',
+                      background: '#fff',
+                      color: '#000',
                     }}
+                    placeholder="Write your message..."
                   />
-                </Suspense>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#fff' }}>
+                    <Suspense fallback={<div style={{ padding: '16px', color: '#333' }}>Loading editor...</div>}>
+                      <ReactQuill
+                        theme="snow"
+                        value={composeBody}
+                        onChange={setComposeBody}
+                        style={{ height: '100%', display: 'flex', flexDirection: 'column', fontFamily: mailSettings.compose.defaultFont === 'serif' ? 'Georgia, "Times New Roman", serif' : mailSettings.compose.defaultFont === 'mono' ? '"Fira Code", "Cascadia Code", "JetBrains Mono", Consolas, monospace' : 'system-ui, -apple-system, sans-serif' }}
+                        modules={{
+                          toolbar: [
+                            [{ 'header': [1, 2, 3, false] }],
+                            ['bold', 'italic', 'underline', 'strike', 'blockquote'],
+                            [{'list': 'ordered'}, {'list': 'bullet'}, {'indent': '-1'}, {'indent': '+1'}],
+                            ['link', 'image'],
+                            ['clean']
+                          ]
+                        }}
+                      />
+                    </Suspense>
+                  </div>
+                )}
               </div>
               <div style={{ padding: '8px 0', borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
                 <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', display: 'block', marginBottom: '8px' }}>Attachments:</span>

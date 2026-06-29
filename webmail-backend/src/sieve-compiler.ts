@@ -14,6 +14,7 @@ export interface SieveAction {
 export interface SieveRule {
     id?: string;
     name?: string;
+    enabled?: boolean;
     condition?: 'any' | 'all' | string;
     criteria?: SieveCriterion[];
     actions?: SieveAction[];
@@ -101,6 +102,7 @@ export function compileSieve(jsonData: SieveRulesDocument): string {
     script += `/* JSON_DATA_BASE64: ${encodedJson} */\n\n`;
 
     for (const rule of jsonData.rules || []) {
+        if (rule.enabled === false) continue;
         const criteriaStrings = (rule.criteria || [])
             .map(compileCriterion)
             .filter((criterion): criterion is string => Boolean(criterion));

@@ -67,6 +67,8 @@ function compileSieve(jsonData) {
     const encodedJson = Buffer.from(JSON.stringify(jsonData || { rules: [] }), 'utf8').toString('base64url');
     script += `/* JSON_DATA_BASE64: ${encodedJson} */\n\n`;
     for (const rule of jsonData.rules || []) {
+        if (rule.enabled === false)
+            continue;
         const criteriaStrings = (rule.criteria || [])
             .map(compileCriterion)
             .filter((criterion) => Boolean(criterion));

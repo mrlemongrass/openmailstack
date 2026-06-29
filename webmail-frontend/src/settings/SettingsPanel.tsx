@@ -9,6 +9,7 @@ import type { CalendarUserSettings, ContactsUserSettings, MailUserSettings } fro
 interface Rule {
   id: string;
   name: string;
+  enabled: boolean;
   condition: 'any' | 'all';
   criteria: { id: string; field: string; operator: string; value: string }[];
   actions: { id: string; type: string; folder?: string }[];
@@ -52,6 +53,8 @@ interface SettingsContentProps {
   availableSenders: string[];
   calendars: CalendarOption[];
   forwardingGoto: string;
+  keepCopy: boolean;
+  onKeepCopyChange: (value: boolean) => void;
   passwords: { current: string; new: string; confirm: string };
   appearance: AppearancePreferences;
   copiedSetupField: string | null;
@@ -589,7 +592,7 @@ function MailReadingPane({ mailSettings, onMailSettingsChange }: SettingsContent
   );
 }
 
-function ForwardingPane({ forwardingGoto, saving, onForwardingChange, onSaveForwarding }: SettingsContentProps) {
+function ForwardingPane({ forwardingGoto, keepCopy, saving, onForwardingChange, onKeepCopyChange, onSaveForwarding }: SettingsContentProps) {
   return (
     <div className="settings-page">
       <SettingsHeader
@@ -607,6 +610,19 @@ function ForwardingPane({ forwardingGoto, saving, onForwardingChange, onSaveForw
             onChange={event => onForwardingChange(event.target.value)}
           />
         </label>
+        <label className="settings-field" style={{ marginTop: '16px' }}>
+          <input
+            type="checkbox"
+            checked={keepCopy}
+            onChange={event => onKeepCopyChange(event.target.checked)}
+          />
+          <span>Keep a copy of forwarded messages in my inbox</span>
+        </label>
+        {keepCopy && (
+          <div className="settings-disabled-note" style={{ marginTop: '8px' }}>
+            When enabled, forwarded messages will also be delivered to your mailbox so you can read them here.
+          </div>
+        )}
       </section>
     </div>
   );
@@ -705,8 +721,10 @@ function FiltersPane({ loading, saving, rules, folders, onAddRule, onUpdateRule,
                 type="button"
                 className={`settings-list-item ${activeRule?.id === rule.id ? 'active' : ''}`}
                 onClick={() => setActiveRuleId(rule.id)}
+                style={{ opacity: rule.enabled === false ? 0.5 : 1 }}
               >
                 {rule.name || 'Untitled Rule'}
+                {rule.enabled === false && <span style={{ fontSize: '0.7rem', marginLeft: '8px', color: 'var(--text-secondary)' }}>(disabled)</span>}
               </button>
             ))}
           </div>
@@ -780,6 +798,9 @@ function MailSpamPane({ mailSettings, onMailSettingsChange }: SettingsContentPro
         <section className="settings-section">
           <h3>Blocked Senders</h3>
           <p className="settings-description">Messages from these addresses will be automatically moved to Spam.</p>
+          <div className="settings-disabled-note" style={{ marginBottom: '16px', padding: '12px', background: 'rgba(255,193,7,0.08)', border: '1px solid rgba(255,193,7,0.15)', borderRadius: '8px', fontSize: '0.85rem' }}>
+            <strong>Note:</strong> These lists are stored with your account but are not yet actively enforced by the mail server. They will be applied to incoming mail in a future update.
+          </div>
           <form onSubmit={addBlocked} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
             <input 
               className="glass-input" 
@@ -807,6 +828,9 @@ function MailSpamPane({ mailSettings, onMailSettingsChange }: SettingsContentPro
         <section className="settings-section">
           <h3>Safe Senders</h3>
           <p className="settings-description">Messages from these addresses will never be marked as Spam.</p>
+          <div className="settings-disabled-note" style={{ marginBottom: '16px', padding: '12px', background: 'rgba(255,193,7,0.08)', border: '1px solid rgba(255,193,7,0.15)', borderRadius: '8px', fontSize: '0.85rem' }}>
+            <strong>Note:</strong> These lists are stored with your account but are not yet actively enforced by the mail server. They will be applied to incoming mail in a future update.
+          </div>
           <form onSubmit={addSafe} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
             <input 
               className="glass-input" 
@@ -1325,7 +1349,17 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
   return (
     <div className="rule-card glass-panel">
       <div className="rule-header">
-        <input className="rule-name-input" value={rule.name} onChange={event => onUpdate({ name: event.target.value })} placeholder="Rule Name" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+          <input className="rule-name-input" value={rule.name} onChange={event => onUpdate({ name: event.target.value })} placeholder="Rule Name" style={{ flex: 1 }} />
+          <label className="settings-field" style={{ margin: 0, flexShrink: 0 }}>
+            <input
+              type="checkbox"
+              checked={rule.enabled}
+              onChange={event => onUpdate({ enabled: event.target.checked })}
+            />
+            <span style={{ fontSize: '0.85rem' }}>Enabled</span>
+          </label>
+        </div>
         <button className="btn btn-danger" type="button" onClick={onDelete} title="Delete Rule">
           <Trash2 size={16} />
         </button>

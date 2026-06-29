@@ -1,6 +1,6 @@
 import { pool } from './db';
 
-export type AdminSettingsNamespace = 'organization' | 'publicUrls' | 'security' | 'mailPolicy' | 'system';
+export type AdminSettingsNamespace = 'organization' | 'publicUrls' | 'security' | 'mailPolicy' | 'system' | 'webhooks';
 
 export interface OrganizationAdminSettings {
     organizationName: string;
@@ -39,12 +39,18 @@ export interface SystemAdminSettings {
     adminNotice: string;
 }
 
+export interface WebhooksAdminSettings {
+    endpoints: string[];
+    events: string[];
+}
+
 export type AdminSettings =
     | OrganizationAdminSettings
     | PublicUrlsAdminSettings
     | SecurityAdminSettings
     | MailPolicyAdminSettings
-    | SystemAdminSettings;
+    | SystemAdminSettings
+    | WebhooksAdminSettings;
 
 export const adminSettingsDefaults = {
     organization: {
@@ -79,6 +85,10 @@ export const adminSettingsDefaults = {
         telemetryMode: 'off',
         adminNotice: '',
     } satisfies SystemAdminSettings,
+    webhooks: {
+        endpoints: [],
+        events: [],
+    } satisfies WebhooksAdminSettings,
 };
 
 const namespaces = Object.keys(adminSettingsDefaults) as AdminSettingsNamespace[];

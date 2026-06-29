@@ -52,7 +52,13 @@ This roadmap tracks the remaining product and release work for the modern OpenMa
 - Harden ActiveSync contact photos, conflict handling, tombstones, and long-running incremental sync.
 - Revisit ManageSieve response parsing before treating complex filter editing as enterprise-grade.
 
-## 7. Installer, Release, And Operations
+## 7. Admin Dashboard Overhaul & Telemetry
+
+- **Phase 1: Admin CRUD Modernization**: Replace all `window.prompt()` calls for Domain, Mailbox, Alias, and API Key creation with polished React Modals. Add form-level validation.
+- **Phase 2: Live Telemetry**: Add a "Telemetry & Logs" tab. Implement a backend SSE endpoint to stream live `journald` logs to a terminal UI. Add a Prometheus `/metrics` endpoint and OpenTelemetry tracing to the Node server.
+- **Phase 3: Event-Driven Webhooks**: Add a "Webhooks" configuration tab and wire the backend to fire HTTP webhooks on key lifecycle events (user created, spam detected, etc).
+
+## 8. Installer, Release, And Operations
 
 - Validate the modern webmail installer path on a clean VM.
 - Make Nginx route injection idempotent and safe on already-migrated hosts.

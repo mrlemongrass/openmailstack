@@ -20,6 +20,7 @@
     "react-dom": "^19.2.6",
     "react-quill-new": "^3.8.3",
     "react-resizable-panels": "^4.11.2",
+    "recharts": "^3.9.0",
     "socket.io-client": "^4.8.3",
     "turndown": "^7.2.4",
     "y-quill": "^1.0.0",

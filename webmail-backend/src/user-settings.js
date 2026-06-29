@@ -29,6 +29,10 @@ exports.settingsDefaults = {
             externalImages: 'ask',
             markReadDelaySeconds: 1,
         },
+        spam: {
+            blockedSenders: [],
+            safeSenders: [],
+        },
     },
     calendar: {
         defaultCalendarId: null,
@@ -38,6 +42,9 @@ exports.settingsDefaults = {
         weekStartsOn: 0,
         timeZone: 'UTC',
         clockFormat: '12h',
+        workingHoursStart: '09:00',
+        workingHoursEnd: '17:00',
+        visibleDays: [0, 1, 2, 3, 4, 5, 6],
     },
     contacts: {
         nameFormat: 'firstLast',
@@ -99,6 +106,13 @@ const optionalPositiveInteger = (value) => {
     return Math.round(value);
 };
 const textValue = (value, maxLength) => (typeof value === 'string' ? value.trim().slice(0, maxLength) : '');
+const stringArray = (value, maxItems, maxLength) => {
+    if (!Array.isArray(value))
+        return [];
+    return [...new Set(value
+            .map(v => typeof v === 'string' ? v.trim().toLowerCase().slice(0, maxLength) : '')
+            .filter(v => v !== ''))].slice(0, maxItems);
+};
 function normalizeSignatures(value) {
     if (!Array.isArray(value))
         return [];
@@ -158,6 +172,10 @@ function normalizeSettings(namespace, value) {
                 externalImages: stringOption(reading.externalImages, ['ask', 'trusted', 'always'], exports.settingsDefaults.mail.reading.externalImages),
                 markReadDelaySeconds: numberOption(reading.markReadDelaySeconds, [0, 1, 3, 5], exports.settingsDefaults.mail.reading.markReadDelaySeconds),
             },
+            spam: {
+                blockedSenders: stringArray(isObject(source.spam) ? source.spam.blockedSenders : undefined, 500, 255),
+                safeSenders: stringArray(isObject(source.spam) ? source.spam.safeSenders : undefined, 500, 255),
+            },
         };
     }
     if (namespace === 'calendar') {
@@ -169,6 +187,9 @@ function normalizeSettings(namespace, value) {
             weekStartsOn: weekStartValue(source.weekStartsOn, exports.settingsDefaults.calendar.weekStartsOn),
             timeZone: typeof source.timeZone === 'string' && source.timeZone.trim() ? source.timeZone.trim().slice(0, 80) : exports.settingsDefaults.calendar.timeZone,
             clockFormat: stringOption(source.clockFormat, ['12h', '24h'], exports.settingsDefaults.calendar.clockFormat),
+            workingHoursStart: typeof source.workingHoursStart === 'string' && /^\d{2}:\d{2}$/.test(source.workingHoursStart) ? source.workingHoursStart : exports.settingsDefaults.calendar.workingHoursStart,
+            workingHoursEnd: typeof source.workingHoursEnd === 'string' && /^\d{2}:\d{2}$/.test(source.workingHoursEnd) ? source.workingHoursEnd : exports.settingsDefaults.calendar.workingHoursEnd,
+            visibleDays: Array.isArray(source.visibleDays) && source.visibleDays.every(d => typeof d === 'number' && d >= 0 && d <= 6) ? Array.from(new Set(source.visibleDays)).sort() : exports.settingsDefaults.calendar.visibleDays,
         };
     }
     if (namespace === 'contacts') {

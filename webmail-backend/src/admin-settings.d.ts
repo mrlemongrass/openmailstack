@@ -1,4 +1,4 @@
-export type AdminSettingsNamespace = 'organization' | 'publicUrls' | 'security' | 'mailPolicy' | 'system';
+export type AdminSettingsNamespace = 'organization' | 'publicUrls' | 'security' | 'mailPolicy' | 'system' | 'webhooks';
 export interface OrganizationAdminSettings {
     organizationName: string;
     supportEmail: string;
@@ -31,7 +31,11 @@ export interface SystemAdminSettings {
     telemetryMode: 'off' | 'basic';
     adminNotice: string;
 }
-export type AdminSettings = OrganizationAdminSettings | PublicUrlsAdminSettings | SecurityAdminSettings | MailPolicyAdminSettings | SystemAdminSettings;
+export interface WebhooksAdminSettings {
+    endpoints: string[];
+    events: string[];
+}
+export type AdminSettings = OrganizationAdminSettings | PublicUrlsAdminSettings | SecurityAdminSettings | MailPolicyAdminSettings | SystemAdminSettings | WebhooksAdminSettings;
 export declare const adminSettingsDefaults: {
     organization: {
         organizationName: string;
@@ -64,6 +68,10 @@ export declare const adminSettingsDefaults: {
         maintenanceWindow: string;
         telemetryMode: "off";
         adminNotice: string;
+    };
+    webhooks: {
+        endpoints: any[];
+        events: any[];
     };
 };
 export declare function isAdminSettingsNamespace(value: string): value is AdminSettingsNamespace;

@@ -1,5 +1,7 @@
-import { useState, type ReactNode } from 'react';
+import React, { useState, lazy, Suspense, type ReactNode } from 'react';
 import { CalendarDays, Check, Copy, Filter, Lock, Mail, Palette, PenTool, Plus, Send, ShieldAlert, SlidersHorizontal, Smartphone, Trash2, Users } from 'lucide-react';
+
+const ReactQuill = lazy(() => import('react-quill-new'));
 import type { AppearancePreferences, AccentColor, DensityMode, FontScale, RadiusMode, ThemeMode } from './appearance';
 import { normalizeSettingsTab, type SettingsTab } from './tabs';
 import type { CalendarUserSettings, ContactsUserSettings, MailUserSettings } from './settingsApi';
@@ -112,7 +114,7 @@ const navGroups: { title: string; items: { tab: SettingsTab; label: string; icon
   {
     title: 'Account',
     items: [
-      { tab: 'account_password', label: 'Password', icon: Lock },
+      { tab: 'account_password', label: 'Security', icon: Lock },
       { tab: 'advanced', label: 'Advanced', icon: SlidersHorizontal },
     ],
   },
@@ -213,11 +215,11 @@ export function SettingsContent(props: SettingsContentProps) {
   else if (activeTab === 'mail_forwarding') content = <ForwardingPane {...props} />;
   else if (activeTab === 'mail_vacation') content = <VacationPane {...props} />;
   else if (activeTab === 'mail_filters') content = <FiltersPane {...props} />;
-  else if (activeTab === 'mail_spam') content = <MailSpamPane />;
+  else if (activeTab === 'mail_spam') content = <MailSpamPane {...props} />;
   else if (activeTab === 'calendar_defaults') content = <CalendarPane {...props} />;
   else if (activeTab === 'contacts_display') content = <ContactsPane {...props} />;
   else if (activeTab === 'sync_devices') content = <SyncDevicesPane {...props} />;
-  else if (activeTab === 'account_password') content = <AccountPasswordPane {...props} />;
+  else if (activeTab === 'account_password') content = <AccountSecurityPane {...props} />;
   else content = <AdvancedPane />;
 
   return (
@@ -225,6 +227,12 @@ export function SettingsContent(props: SettingsContentProps) {
       {props.settingsSyncError && (
         <div className="settings-error-banner" role="status">
           {props.settingsSyncError}
+        </div>
+      )}
+      {props.saving && (
+        <div className="settings-saving-banner" style={{ background: 'var(--accent-primary)', color: '#fff', padding: '8px 16px', borderRadius: '4px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div className="spinner" style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <span>Saving changes...</span>
         </div>
       )}
       {content}
@@ -477,14 +485,30 @@ function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: Sett
                     </button>
                   </div>
                 </div>
-                <textarea
-                  className="glass-input"
-                  placeholder="--&#10;Name&#10;Title"
-                  value={sig.content}
-                  onChange={event => {
-                    onUpdateSignatures(signatures.map(item => item.id === sig.id ? { ...item, content: event.target.value } : item));
-                  }}
-                />
+                <div style={{ background: 'var(--bg-primary)' }}>
+                  <Suspense fallback={<div style={{ padding: '16px', color: 'var(--text-secondary)' }}>Loading editor...</div>}>
+                    <ReactQuill 
+                      theme="snow"
+                      value={sig.content}
+                      onChange={content => onUpdateSignatures(signatures.map(item => item.id === sig.id ? { ...item, content } : item))}
+                      modules={{
+                        toolbar: [
+                          [{ 'font': [] }],
+                          ['bold', 'italic', 'underline', 'strike'],
+                          [{ 'color': [] }, { 'background': [] }],
+                          [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                          ['link', 'image'],
+                          ['clean']
+                        ]
+                      }}
+                      style={{ 
+                        borderBottomLeftRadius: '12px', 
+                        borderBottomRightRadius: '12px',
+                        overflow: 'hidden'
+                      }}
+                    />
+                  </Suspense>
+                </div>
               </div>
             ))}
           </div>
@@ -706,18 +730,107 @@ function FiltersPane({ loading, saving, rules, folders, onAddRule, onUpdateRule,
   );
 }
 
-function MailSpamPane() {
+function MailSpamPane({ mailSettings, onMailSettingsChange }: SettingsContentProps) {
+  const [newBlocked, setNewBlocked] = React.useState('');
+  const [newSafe, setNewSafe] = React.useState('');
+
+  const updateSpam = (updates: Partial<MailUserSettings['spam']>) => {
+    onMailSettingsChange({
+      ...mailSettings,
+      spam: {
+        ...mailSettings.spam,
+        ...updates
+      }
+    });
+  };
+
+  const addBlocked = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBlocked.trim() || !newBlocked.includes('@')) return;
+    const list = [...(mailSettings.spam?.blockedSenders || [])];
+    if (!list.includes(newBlocked.trim().toLowerCase())) {
+      updateSpam({ blockedSenders: [...list, newBlocked.trim().toLowerCase()] });
+    }
+    setNewBlocked('');
+  };
+
+  const removeBlocked = (email: string) => {
+    updateSpam({ blockedSenders: (mailSettings.spam?.blockedSenders || []).filter(e => e !== email) });
+  };
+
+  const addSafe = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSafe.trim() || !newSafe.includes('@')) return;
+    const list = [...(mailSettings.spam?.safeSenders || [])];
+    if (!list.includes(newSafe.trim().toLowerCase())) {
+      updateSpam({ safeSenders: [...list, newSafe.trim().toLowerCase()] });
+    }
+    setNewSafe('');
+  };
+
+  const removeSafe = (email: string) => {
+    updateSpam({ safeSenders: (mailSettings.spam?.safeSenders || []).filter(e => e !== email) });
+  };
+
   return (
     <div className="settings-page">
       <SettingsHeader title="Spam & Senders" eyebrow="Mail" />
-      <section className="settings-section">
-        <h3>User Sender Lists</h3>
-        <div className="settings-readonly-grid">
-          <ReadonlySetting label="Blocked senders" value="Planned" />
-          <ReadonlySetting label="Safe senders" value="Planned" />
-          <ReadonlySetting label="Strict filtering" value="Admin policy" />
-        </div>
-      </section>
+      
+      <div className="settings-grid">
+        <section className="settings-section">
+          <h3>Blocked Senders</h3>
+          <p className="settings-description">Messages from these addresses will be automatically moved to Spam.</p>
+          <form onSubmit={addBlocked} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <input 
+              className="glass-input" 
+              style={{ flex: 1 }} 
+              placeholder="user@example.com or @domain.com" 
+              value={newBlocked} 
+              onChange={e => setNewBlocked(e.target.value)} 
+            />
+            <button className="btn btn-primary" type="submit">Add</button>
+          </form>
+          <div className="rules-list">
+            {(mailSettings.spam?.blockedSenders || []).length === 0 ? (
+              <div className="empty-state" style={{ padding: '20px' }}>No blocked senders.</div>
+            ) : (
+              (mailSettings.spam?.blockedSenders || []).map(email => (
+                <div key={email} className="condition-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>{email}</span>
+                  <button className="btn btn-ghost" type="button" onClick={() => removeBlocked(email)}><Trash2 size={16} /></button>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <h3>Safe Senders</h3>
+          <p className="settings-description">Messages from these addresses will never be marked as Spam.</p>
+          <form onSubmit={addSafe} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <input 
+              className="glass-input" 
+              style={{ flex: 1 }} 
+              placeholder="user@example.com or @domain.com" 
+              value={newSafe} 
+              onChange={e => setNewSafe(e.target.value)} 
+            />
+            <button className="btn btn-primary" type="submit">Add</button>
+          </form>
+          <div className="rules-list">
+            {(mailSettings.spam?.safeSenders || []).length === 0 ? (
+              <div className="empty-state" style={{ padding: '20px' }}>No safe senders.</div>
+            ) : (
+              (mailSettings.spam?.safeSenders || []).map(email => (
+                <div key={email} className="condition-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>{email}</span>
+                  <button className="btn btn-ghost" type="button" onClick={() => removeSafe(email)}><Trash2 size={16} /></button>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -801,11 +914,56 @@ function CalendarPane({ setupValues, calendarSettings, calendars, onCalendarSett
             </select>
           </label>
         </section>
+
+        <section className="settings-section">
+          <h3>Working Hours & Days</h3>
+          <label className="settings-field">
+            <span>Working Hours Start</span>
+            <input className="glass-input" type="time" value={calendarSettings.workingHoursStart || '09:00'} onChange={event => updateCalendar({ workingHoursStart: event.target.value })} />
+          </label>
+          <label className="settings-field">
+            <span>Working Hours End</span>
+            <input className="glass-input" type="time" value={calendarSettings.workingHoursEnd || '17:00'} onChange={event => updateCalendar({ workingHoursEnd: event.target.value })} />
+          </label>
+          <label className="settings-field" style={{ alignItems: 'flex-start' }}>
+            <span style={{ paddingTop: '8px' }}>Visible Days</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', flex: 1, paddingLeft: '16px' }}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, index) => (
+                <label key={day} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={(calendarSettings.visibleDays || [0, 1, 2, 3, 4, 5, 6]).includes(index)} 
+                    onChange={e => {
+                      const current = calendarSettings.visibleDays || [0, 1, 2, 3, 4, 5, 6];
+                      if (e.target.checked) {
+                        updateCalendar({ visibleDays: [...current, index].sort() });
+                      } else if (current.length > 1) { // Prevent unchecking all days
+                        updateCalendar({ visibleDays: current.filter(d => d !== index) });
+                      }
+                    }} 
+                  />
+                  {day}
+                </label>
+              ))}
+            </div>
+          </label>
+        </section>
+        
+        <section className="settings-section">
+          <h3>CalDAV Sync</h3>
+          <code className="settings-code-row">{setupValues.caldavDiscoveryUrl}</code>
+          <p className="settings-description" style={{ marginTop: '8px' }}>Use this URL to sync calendars with macOS, iOS, or Thunderbird.</p>
+        </section>
+
+        <section className="settings-section">
+          <h3>Data Management</h3>
+          <div className="settings-readonly-grid">
+            <ReadonlySetting label="Import from .ics" value="Planned" />
+            <ReadonlySetting label="Export to .ics" value="Planned" />
+            <ReadonlySetting label="Calendar Sharing" value="Planned" />
+          </div>
+        </section>
       </div>
-      <section className="settings-section">
-        <h3>CalDAV</h3>
-        <code className="settings-code-row">{setupValues.caldavDiscoveryUrl}</code>
-      </section>
     </div>
   );
 }
@@ -860,12 +1018,61 @@ function ContactsPane({ setupValues, contactsSettings, onContactsSettingsChange 
             <span>Auto-create contacts from sent mail</span>
             <input type="checkbox" checked={contactsSettings.autoCreateFromSent} onChange={event => updateContacts({ autoCreateFromSent: event.target.checked })} />
           </label>
-          <div className="settings-disabled-note">Auto-create is stored now; send-flow contact collection needs a later backend pass.</div>
+        </section>
+
+        <section className="settings-section">
+          <h3>Data Management</h3>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <a href="/api/apps/contacts-export?format=vcard" className="btn btn-secondary">Export vCard</a>
+            <a href="/api/apps/contacts-export?format=csv" className="btn btn-secondary">Export CSV</a>
+            <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+              Import vCard
+              <input type="file" accept=".vcf,text/vcard" style={{ display: 'none' }} onChange={async e => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const text = await file.text();
+                const res = await fetch('/api/apps/contacts-import', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ format: 'vcard', data: text })
+                }).then(r => r.json());
+                if (res.success) {
+                  alert(`Successfully imported ${res.count} contacts!`);
+                  window.location.reload();
+                } else {
+                  alert(`Import failed: ${res.error}`);
+                }
+                e.target.value = '';
+              }} />
+            </label>
+            <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+              Import CSV
+              <input type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={async e => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const text = await file.text();
+                const res = await fetch('/api/apps/contacts-import', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ format: 'csv', data: text })
+                }).then(r => r.json());
+                if (res.success) {
+                  alert(`Successfully imported ${res.count} contacts!`);
+                  window.location.reload();
+                } else {
+                  alert(`Import failed: ${res.error}`);
+                }
+                e.target.value = '';
+              }} />
+            </label>
+          </div>
         </section>
       </div>
+
       <section className="settings-section">
-        <h3>CardDAV</h3>
+        <h3>CardDAV Sync</h3>
         <code className="settings-code-row">{setupValues.carddavDiscoveryUrl}</code>
+        <p className="settings-description" style={{ marginTop: '8px' }}>Use this URL to sync contacts with macOS, iOS, or Thunderbird.</p>
       </section>
     </div>
   );
@@ -909,31 +1116,132 @@ function SyncDevicesPane({ setupValues, setupMailboxAddress, copiedSetupField, o
   );
 }
 
-function AccountPasswordPane({ passwords, onPasswordChange }: SettingsContentProps) {
+function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentProps) {
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState('');
+  const [pwSuccess, setPwSuccess] = useState(false);
+
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+
+  React.useEffect(() => {
+    fetch('/api/account/sessions').then(r => r.json()).then(data => {
+      if (data.success) setSessions(data.sessions);
+      setSessionsLoading(false);
+    });
+  }, []);
+
   const mismatch = passwords.new && passwords.confirm && passwords.new !== passwords.confirm;
+  const canSavePw = passwords.current && passwords.new && passwords.confirm && !mismatch && !pwSaving;
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSavePw) return;
+    setPwSaving(true);
+    setPwError('');
+    setPwSuccess(false);
+
+    try {
+      const res = await fetch('/api/account/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current: passwords.current, new: passwords.new })
+      }).then(r => r.json());
+
+      if (res.success) {
+        setPwSuccess(true);
+        onPasswordChange({ current: '', new: '', confirm: '' });
+        alert(res.message);
+        window.location.reload();
+      } else {
+        setPwError(res.error || 'Failed to change password');
+      }
+    } catch (err: any) {
+      setPwError(err.message || 'Network error');
+    } finally {
+      setPwSaving(false);
+    }
+  };
+
+  const handleRevokeSession = async (id: string) => {
+    if (!confirm('Are you sure you want to revoke this session? The device will be logged out immediately.')) return;
+    const res = await fetch(`/api/account/sessions/${id}`, { method: 'DELETE' }).then(r => r.json());
+    if (res.success) {
+      setSessions(s => s.filter(x => x.id !== id));
+    } else {
+      alert(res.error || 'Failed to revoke session');
+    }
+  };
 
   return (
     <div className="settings-page">
-      <SettingsHeader title="Password" eyebrow="Account & Security" />
+      <SettingsHeader title="Account Security" eyebrow="Account" />
+      
       <section className="settings-section">
-        <div className="settings-disabled-note">
-          Password changes need a backend endpoint before this control can be enabled.
-        </div>
-        <div className="settings-form-grid">
+        <h3>Change Password</h3>
+        <form onSubmit={handlePasswordSubmit} className="settings-form-grid" style={{ marginTop: '16px' }}>
           <label className="settings-field">
             <span>Current Password</span>
-            <input type="password" className="glass-input" value={passwords.current} onChange={event => onPasswordChange({ ...passwords, current: event.target.value })} disabled />
+            <input type="password" required className="glass-input" value={passwords.current} onChange={event => onPasswordChange({ ...passwords, current: event.target.value })} disabled={pwSaving} />
           </label>
           <label className="settings-field">
             <span>New Password</span>
-            <input type="password" className="glass-input" value={passwords.new} onChange={event => onPasswordChange({ ...passwords, new: event.target.value })} disabled />
+            <input type="password" required className="glass-input" value={passwords.new} onChange={event => onPasswordChange({ ...passwords, new: event.target.value })} disabled={pwSaving} />
           </label>
           <label className="settings-field">
             <span>Confirm New Password</span>
-            <input type="password" className="glass-input" value={passwords.confirm} onChange={event => onPasswordChange({ ...passwords, confirm: event.target.value })} disabled />
-            {mismatch && <small>Passwords do not match.</small>}
+            <input type="password" required className="glass-input" value={passwords.confirm} onChange={event => onPasswordChange({ ...passwords, confirm: event.target.value })} disabled={pwSaving} />
+            {mismatch && <small style={{ color: 'var(--danger-color)' }}>Passwords do not match.</small>}
           </label>
-        </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <button type="submit" className="btn btn-primary" disabled={!canSavePw}>
+              {pwSaving ? 'Saving...' : 'Change Password'}
+            </button>
+            {pwError && <span style={{ color: 'var(--danger-color)' }}>{pwError}</span>}
+            {pwSuccess && <span style={{ color: 'var(--success-color)' }}>Password changed!</span>}
+          </div>
+        </form>
+      </section>
+
+      <section className="settings-section">
+        <h3>Active Sessions</h3>
+        {sessionsLoading ? (
+          <div style={{ opacity: 0.5, marginTop: '16px' }}>Loading sessions...</div>
+        ) : (
+          <div className="table-responsive" style={{ marginTop: '16px' }}>
+            <table className="rules-table">
+              <thead>
+                <tr>
+                  <th>Started</th>
+                  <th>Last Active</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.map(s => (
+                  <tr key={s.id}>
+                    <td>{new Date(s.created_at).toLocaleString()}</td>
+                    <td>{new Date(s.updated_at).toLocaleString()}</td>
+                    <td>{s.isCurrent ? <strong style={{ color: 'var(--accent-primary)' }}>Current Session</strong> : 'Active'}</td>
+                    <td>
+                      {!s.isCurrent && (
+                        <button type="button" className="btn-icon" onClick={() => handleRevokeSession(s.id)} title="Revoke Session">
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {sessions.length === 0 && (
+                  <tr>
+                    <td colSpan={4} style={{ textAlign: 'center', opacity: 0.5 }}>No active sessions found.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </div>
   );

@@ -28,6 +28,10 @@ async function ensureCalendarSchema() {
             if (componentsColumn.length === 0) {
                 await db_1.pool.query("ALTER TABLE calendars ADD COLUMN components VARCHAR(255) NOT NULL DEFAULT 'VEVENT,VTODO' AFTER dav_slug");
             }
+            const [subscribedUrlColumn] = await db_1.pool.query("SHOW COLUMNS FROM calendars LIKE 'subscribed_url'");
+            if (subscribedUrlColumn.length === 0) {
+                await db_1.pool.query('ALTER TABLE calendars ADD COLUMN subscribed_url TEXT NULL AFTER components');
+            }
             const [slugIndex] = await db_1.pool.query("SHOW INDEX FROM calendars WHERE Key_name = 'idx_calendars_user_dav_slug'");
             if (slugIndex.length === 0) {
                 await db_1.pool.query('ALTER TABLE calendars ADD KEY idx_calendars_user_dav_slug (user_id, dav_slug)');
@@ -127,7 +131,7 @@ async function createCalendar(user, name, options = {}) {
     await ensureCalendarSchema();
     const cleanName = name.trim() || 'New Calendar';
     const slug = await uniqueCalendarSlug(user, options.slug || cleanName);
-    const [result] = await db_1.pool.query('INSERT INTO calendars (user_id, name, dav_slug, color, components, sync_token) VALUES (?, ?, ?, ?, ?, 1)', [user, cleanName, slug, options.color || '#3498db', options.components || 'VEVENT,VTODO']);
+    const [result] = await db_1.pool.query('INSERT INTO calendars (user_id, name, dav_slug, color, components, subscribed_url, sync_token) VALUES (?, ?, ?, ?, ?, ?, 1)', [user, cleanName, slug, options.color || '#3498db', options.components || 'VEVENT,VTODO', options.subscribed_url || null]);
     const [created] = await db_1.pool.query('SELECT * FROM calendars WHERE id = ?', [result.insertId]);
     return created[0];
 }

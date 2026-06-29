@@ -40,6 +40,10 @@ exports.adminSettingsDefaults = {
         telemetryMode: 'off',
         adminNotice: '',
     },
+    webhooks: {
+        endpoints: [],
+        events: [],
+    },
 };
 const namespaces = Object.keys(exports.adminSettingsDefaults);
 let schemaPromise = null;

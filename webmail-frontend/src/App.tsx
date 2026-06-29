@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import { io } from 'socket.io-client';
-import { Mail, MailOpen, Users, Settings, X, Plus, Filter, Search, Star, Trash2, Maximize2, Minimize2, Send, Reply, ReplyAll, Forward, Inbox, ChevronRight, ChevronLeft, ChevronDown, ShieldAlert, Edit, Edit2, Share2, Save, Lock, User, UserPlus, RefreshCw, Paperclip, Eye, Download, Upload, Copy, Check, Smartphone, Monitor, Link2, Image, SlidersHorizontal, Undo2, Phone, Briefcase, MapPin, StickyNote, Clock, HelpCircle } from 'lucide-react';
+import { Activity, Mail, MailOpen, Users, Settings, X, Plus, Filter, Search, Star, Trash2, Maximize2, Minimize2, Send, Reply, ReplyAll, Forward, Inbox, ChevronRight, ChevronLeft, ChevronDown, ShieldAlert, Edit, Edit2, Share2, Save, Lock, User, UserPlus, RefreshCw, Paperclip, Eye, Download, Upload, Copy, Check, Smartphone, Monitor, Link2, Image, SlidersHorizontal, Undo2, Phone, Briefcase, MapPin, StickyNote, Clock, HelpCircle, Zap, FileText, Calendar, HardDrive, FolderOpen } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultLayout } from 'react-resizable-panels';
 import DOMPurify from 'dompurify';
 import 'react-quill-new/dist/quill.snow.css';
@@ -12,6 +12,8 @@ import { applyAppearancePreferences, loadAppearancePreferences, saveAppearancePr
 import { defaultCalendarSettings, defaultContactsSettings, defaultMailSettings, getUserSettings, saveUserSettings, type CalendarUserSettings, type ContactsUserSettings, type MailUserSettings } from './settings/settingsApi';
 import { BrandingPanel } from './admin/BrandingPanel';
 import { AdminSettingsPanel } from './admin/AdminSettingsPanel';
+import { TelemetryPanel } from './admin/TelemetryPanel';
+import { CreateDomainModal, CreateMailboxModal, CreateAliasModal, CreateApiKeyModal, ChangePasswordModal, CreateRoutingModal, PromoteAdminModal } from './admin/AdminModals';
 import { defaultAdminSettings, getAdminSettings, saveAdminSettings, type AdminSettingsMap } from './admin/adminSettingsApi';
 import { applyBrandingToDocument, defaultBranding, fetchBranding, saveAdminBranding, type BrandingSettings } from './branding';
 
@@ -148,6 +150,7 @@ interface Calendar {
   color: string;
   isVisible?: boolean;
   access_role?: string;
+  subscribed_url?: string;
   events: CalendarEvent[];
 }
 
@@ -224,8 +227,78 @@ interface SearchIndexRefreshResponse {
   error?: string;
 }
 
+interface SearchWorkerStatusResponse {
+  success: boolean;
+  totalUsers?: number;
+  totalFolders?: number;
+  totalIndexed?: number;
+  lastRunAt?: string | null;
+  isRunning?: boolean;
+  error?: string;
+}
+
 type SearchField = 'all' | 'from' | 'to' | 'subject' | 'body' | 'attachments' | 'unread' | 'starred';
 type SearchScope = 'folder' | 'all';
+
+const SEARCH_OPERATOR_HINTS = [
+  { category: 'People', icon: 'Users', items: [
+    { operator: 'from:', description: 'Sender name or email', example: 'from:alice' },
+    { operator: 'to:', description: 'Recipient name or email', example: 'to:bob@acme.com' },
+  ]},
+  { category: 'Content', icon: 'FileText', items: [
+    { operator: 'subject:', description: 'Subject line text', example: 'subject:invoice' },
+    { operator: 'filename:', description: 'Attachment filename', example: 'filename:report.pdf' },
+  ]},
+  { category: 'Status', icon: 'Filter', items: [
+    { operator: 'is:unread', description: 'Unread messages', example: 'is:unread' },
+    { operator: 'is:read', description: 'Read messages', example: 'is:read' },
+    { operator: 'is:starred', description: 'Starred messages', example: 'is:starred' },
+    { operator: 'has:attachment', description: 'Has attachments', example: 'has:attachment' },
+  ]},
+  { category: 'Date', icon: 'Calendar', items: [
+    { operator: 'before:', description: 'Before date', example: 'before:2024-06-01' },
+    { operator: 'after:', description: 'After date', example: 'after:2024-01-01' },
+    { operator: 'older_than:', description: 'Older than period', example: 'older_than:7d' },
+    { operator: 'newer_than:', description: 'Newer than period', example: 'newer_than:1m' },
+  ]},
+  { category: 'Size', icon: 'HardDrive', items: [
+    { operator: 'larger:', description: 'Larger than size', example: 'larger:5m' },
+    { operator: 'smaller:', description: 'Smaller than size', example: 'smaller:100k' },
+  ]},
+  { category: 'Location', icon: 'FolderOpen', items: [
+    { operator: 'in:', description: 'Specific folder', example: 'in:sent' },
+  ]},
+];
+
+const SEARCH_PLACEHOLDER_EXAMPLES = [
+  'Search mail...',
+  'Try: from:alice has:attachment',
+  'Try: is:unread newer_than:7d',
+  'Try: subject:invoice larger:1m',
+  'Try: filename:report.pdf in:inbox',
+  'Try: to:team after:2024-01-01',
+  'Try: is:starred older_than:30d',
+];
+
+const highlightSearchTerms = (text: string, query: string): React.ReactNode => {
+  if (!query || !text) return text;
+  // Extract free-text terms (skip operators)
+  const terms = query.split(/\s+/).filter(t => !t.includes(':') && t.length >= 2);
+  if (terms.length === 0) return text;
+  const pattern = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  try {
+    const regex = new RegExp(`(${pattern})`, 'gi');
+    const parts = text.split(regex);
+    if (parts.length <= 1) return text;
+    return parts.map((part, i) =>
+      regex.test(part)
+        ? React.createElement('mark', { key: i, style: { background: 'rgba(99, 102, 241, 0.35)', color: 'inherit', borderRadius: '2px', padding: '0 1px' } }, part)
+        : part
+    );
+  } catch {
+    return text;
+  }
+};
 type AppMode = 'webmail' | 'settings' | 'admin' | 'calendar' | 'contacts' | 'notes' | 'sync';
 
 const CALENDAR_COLOR_OPTIONS = ['#3498db', '#e74c3c', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22', '#1abc9c', '#e91e63', '#607d8b'];
@@ -686,6 +759,12 @@ function App() {
   const [indexLoading, setIndexLoading] = useState(false);
   const [searchIndexStatus, setSearchIndexStatus] = useState<SearchIndexStatusResponse | null>(null);
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [searchWorkerStatus, setSearchWorkerStatus] = useState<SearchWorkerStatusResponse | null>(null);
+  const [showSearchHints, setShowSearchHints] = useState(false);
+  const [placeholderIndex, setPlaceholderIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchHintsRef = useRef<HTMLDivElement>(null);
+  const searchHintsBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<{[key: string]: boolean}>(() => {
     try {
       const saved = localStorage.getItem('oms_expanded_folders');
@@ -695,6 +774,7 @@ function App() {
   });
   const [isComposing, setIsComposing] = useState(false);
   const [composeDocked, setComposeDocked] = useState(false);
+  const [draftSaveStatus, setDraftSaveStatus] = useState<'saving' | 'saved' | 'error' | null>(null);
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
   const [composeTo, setComposeTo] = useState('');
@@ -771,7 +851,8 @@ function App() {
   // Password state
   const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' });
 
-  const [calendarView, setCalendarView] = useState<'day' | 'week' | 'month' | 'year'>('month');
+  const [calendarView, setCalendarView] = useState<'day' | 'week' | 'month' | 'year' | 'agenda'>('month');
+  const [calendarSearchQuery, setCalendarSearchQuery] = useState('');
   const [currentDate, setCurrentDate] = useState(new Date(2026, 5, 20)); // June 20, 2026
 
   const [calendars, setCalendars] = useState<Calendar[]>([]);
@@ -782,7 +863,7 @@ function App() {
   const [selectedCalendarEvent, setSelectedCalendarEvent] = useState<CalendarEvent | null>(null);
   const [editingCalendarEvent, setEditingCalendarEvent] = useState<CalendarEvent | null>(null);
   const [editingCalendar, setEditingCalendar] = useState<Calendar | null>(null);
-  const [calendarEditorData, setCalendarEditorData] = useState({ name: '', color: '#3498db' });
+  const [calendarEditorData, setCalendarEditorData] = useState({ name: '', color: '#3498db', subscribed_url: '' });
   const [calendarEditorSaving, setCalendarEditorSaving] = useState(false);
   const [calendarEditorError, setCalendarEditorError] = useState('');
   const [deletingCalendarId, setDeletingCalendarId] = useState<number | null>(null);
@@ -824,6 +905,7 @@ function App() {
   const [routingAliasDomain, setRoutingAliasDomain] = useState('');
   const [routingTargetDomain, setRoutingTargetDomain] = useState('');
   const [dnsRecordsModal, setDnsRecordsModal] = useState<{ domain: string; records: DnsRecord[] } | null>(null);
+  const [adminModal, setAdminModal] = useState<{ type: 'createDomain' | 'createMailbox' | 'createAlias' | 'createApiKey' | 'changePassword' | 'createRouting' | 'promoteAdmin', data?: any } | null>(null);
   const [aliasEditor, setAliasEditor] = useState<AdminAlias | null>(null);
   const [aliasEditorAddress, setAliasEditorAddress] = useState('');
   const [aliasEditorMembers, setAliasEditorMembers] = useState<string[]>([]);
@@ -868,10 +950,11 @@ function App() {
       getAdminSettings('security'),
       getAdminSettings('mailPolicy'),
       getAdminSettings('system'),
+      getAdminSettings('webhooks'),
     ])
-      .then(([organization, publicUrls, security, mailPolicy, system]) => {
+      .then(([organization, publicUrls, security, mailPolicy, system, webhooks]) => {
         if (cancelled) return;
-        setAdminSettings({ organization, publicUrls, security, mailPolicy, system });
+        setAdminSettings({ organization, publicUrls, security, mailPolicy, system, webhooks });
       })
       .catch(() => {
         if (!cancelled) setAdminSettingsStatus('Admin settings could not be loaded.');
@@ -1214,14 +1297,15 @@ function App() {
     setAdminSettingsSaving(true);
     setAdminSettingsStatus('');
     try {
-      const [organization, publicUrls, security, mailPolicy, system] = await Promise.all([
+      const [organization, publicUrls, security, mailPolicy, system, webhooks] = await Promise.all([
         saveAdminSettings('organization', adminSettings.organization),
         saveAdminSettings('publicUrls', adminSettings.publicUrls),
         saveAdminSettings('security', adminSettings.security),
         saveAdminSettings('mailPolicy', adminSettings.mailPolicy),
         saveAdminSettings('system', adminSettings.system),
+        saveAdminSettings('webhooks', adminSettings.webhooks),
       ]);
-      setAdminSettings({ organization, publicUrls, security, mailPolicy, system });
+      setAdminSettings({ organization, publicUrls, security, mailPolicy, system, webhooks });
       setAdminSettingsStatus('Admin settings saved.');
     } catch (err) {
       setAdminSettingsStatus(err instanceof Error ? err.message : 'Failed to save admin settings.');
@@ -1284,20 +1368,8 @@ function App() {
     }
   };
 
-  const handleAddDomain = async () => {
-    const domain = window.prompt('Domain name');
-    if (!domain) return;
-    const maxquota = window.prompt('Maximum domain quota in MB (0 for unlimited)', '0');
-    if (maxquota === null) return;
-    const quota = window.prompt('Default mailbox quota in MB (0 for unlimited)', '0');
-    if (quota === null) return;
-
-    await runAdminAction(`Domain ${domain.trim()} added.`, async () => {
-      await adminFetch('/api/admin/domains', {
-        method: 'POST',
-        body: JSON.stringify({ domain, maxquota, quota })
-      });
-    });
+  const handleAddDomain = () => {
+    setAdminModal({ type: 'createDomain' });
   };
 
   const handleShowDnsRecords = async (domain: string) => {
@@ -1320,22 +1392,8 @@ function App() {
     });
   };
 
-  const handleAddRouting = async () => {
-    const aliasDomain = routingAliasDomain.trim() || window.prompt('Alias domain to route');
-    if (!aliasDomain) return;
-    const targetDomain = routingTargetDomain || adminDomains[0]?.domain || '';
-    if (!targetDomain) {
-      setAdminActionError('Add a target domain before creating routing.');
-      return;
-    }
-
-    await runAdminAction(`Routing added for ${aliasDomain.trim()}.`, async () => {
-      await adminFetch('/api/admin/routing', {
-        method: 'POST',
-        body: JSON.stringify({ alias_domain: aliasDomain, target_domain: targetDomain })
-      });
-      setRoutingAliasDomain('');
-    });
+  const handleAddRouting = () => {
+    setAdminModal({ type: 'createRouting' });
   };
 
   const handleDeleteRouting = async (aliasDomain: string) => {
@@ -1345,23 +1403,8 @@ function App() {
     });
   };
 
-  const handleAddMailbox = async () => {
-    const domain = window.prompt('Mailbox domain', adminDomains[0]?.domain || '');
-    if (!domain) return;
-    const username = window.prompt('Mailbox username before @');
-    if (!username) return;
-    const name = window.prompt('Display name', username) || '';
-    const password = window.prompt('Temporary mailbox password');
-    if (!password) return;
-    const quota = window.prompt('Quota in MB (-1 uses the domain default, 0 is unlimited)', '-1');
-    if (quota === null) return;
-
-    await runAdminAction(`Mailbox ${username.trim()}@${domain.trim()} created.`, async () => {
-      await adminFetch('/api/admin/mailboxes', {
-        method: 'POST',
-        body: JSON.stringify({ domain, username, name, password, quota })
-      });
-    });
+  const handleAddMailbox = () => {
+    setAdminModal({ type: 'createMailbox' });
   };
 
   const openMailboxEditor = (mailbox: AdminMailbox) => {
@@ -1402,15 +1445,8 @@ function App() {
     }
   };
 
-  const handleResetMailboxPassword = async (username: string) => {
-    const password = window.prompt(`New password for ${username}`);
-    if (!password) return;
-    await runAdminAction(`Password reset for ${username}.`, async () => {
-      await adminFetch(`/api/admin/mailboxes/${encodeURIComponent(username)}/password`, {
-        method: 'POST',
-        body: JSON.stringify({ password })
-      });
-    });
+  const handleResetMailboxPassword = (username: string) => {
+    setAdminModal({ type: 'changePassword', data: { username } });
   };
 
   const handleToggleMailboxActive = async (mailbox: AdminMailbox) => {
@@ -1438,20 +1474,8 @@ function App() {
     });
   };
 
-  const handleAddAlias = async () => {
-    const domain = window.prompt('Alias domain', adminDomains[0]?.domain || '');
-    if (!domain) return;
-    const address = window.prompt('Alias address (sales, sales@example.com, or @example.com)');
-    if (!address) return;
-    const goto = window.prompt('Target addresses, comma-separated');
-    if (!goto) return;
-
-    await runAdminAction(`Alias ${address.trim()} added.`, async () => {
-      await adminFetch('/api/admin/aliases', {
-        method: 'POST',
-        body: JSON.stringify({ domain, address, goto })
-      });
-    });
+  const handleAddAlias = () => {
+    setAdminModal({ type: 'createAlias' });
   };
 
   const openAliasEditor = (alias: AdminAlias) => {
@@ -1514,15 +1538,8 @@ function App() {
     });
   };
 
-  const handlePromoteAdmin = async () => {
-    const username = window.prompt('Full mailbox address to promote');
-    if (!username) return;
-    await runAdminAction(`${username.trim()} promoted to admin.`, async () => {
-      await adminFetch('/api/admin/admins', {
-        method: 'POST',
-        body: JSON.stringify({ username })
-      });
-    });
+  const handlePromoteAdmin = () => {
+    setAdminModal({ type: 'promoteAdmin' });
   };
 
   const handleDemoteAdmin = async (username: string) => {
@@ -1532,18 +1549,8 @@ function App() {
     });
   };
 
-  const handleCreateApiKey = async () => {
-    const description = window.prompt('API key description');
-    if (!description) return;
-    await runAdminAction('API key generated.', async () => {
-      const response = await adminFetch<AdminApiKeyCreateResponse>('/api/admin/apikeys', {
-        method: 'POST',
-        body: JSON.stringify({ description })
-      });
-      if (response.raw_key) {
-        window.alert(`Your new API key is: ${response.raw_key}\n\nCopy this now. It will not be shown again.`);
-      }
-    });
+  const handleCreateApiKey = () => {
+    setAdminModal({ type: 'createApiKey' });
   };
 
   const handleDeleteApiKey = async (id: number | string) => {
@@ -1677,6 +1684,35 @@ function App() {
       .catch(() => undefined);
   }, []);
 
+  const refreshWorkerStatus = useCallback(() => {
+    return fetch('/api/messages/search/worker/status', { headers: getHeaders() })
+      .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+      .then((data: SearchWorkerStatusResponse) => {
+        if (data.success) setSearchWorkerStatus(data);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  // Rotate search placeholder
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPlaceholderIndex(prev => (prev + 1) % SEARCH_PLACEHOLDER_EXAMPLES.length);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Close search hints on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchHintsRef.current && !searchHintsRef.current.contains(e.target as Node) &&
+          searchInputRef.current && !searchInputRef.current.contains(e.target as Node)) {
+        setShowSearchHints(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const refreshSavedSearches = useCallback(() => {
     return fetch('/api/messages/search/saved', { headers: getHeaders() })
       .then(res => res.json())
@@ -1690,8 +1726,9 @@ function App() {
     if (isAuthenticated) {
       void refreshSearchIndexStatus();
       void refreshSavedSearches();
+      void refreshWorkerStatus();
     }
-  }, [isAuthenticated, refreshSearchIndexStatus, refreshSavedSearches]);
+  }, [isAuthenticated, refreshSearchIndexStatus, refreshSavedSearches, refreshWorkerStatus]);
 
   const updateFolderUnread = useCallback((folderPath: string, delta: number) => {
     if (delta === 0) return;
@@ -2572,11 +2609,11 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [appMode, canBulkAct, isComposing, selectedMessages, viewingThread, messages]);
 
-  const buildSignatureHtml = (signature?: Signature) => (
-    signature
-      ? '<br><br>' + signature.content.replace(/\n/g, '<br>') + '<br>' + (userIdentities.name || 'OpenMailStack User')
-      : ''
-  );
+  const buildSignatureHtml = (signature?: Signature) => {
+    if (!signature) return '';
+    const safeHtml = DOMPurify.sanitize(signature.content);
+    return `<br><br>${safeHtml}<br>${userIdentities.name || 'OpenMailStack User'}`;
+  };
 
   const getPreferredComposeFrom = () => mailSettings.identity.defaultFrom || userIdentities.address || currentUsername;
 
@@ -2669,6 +2706,7 @@ function App() {
     if (currentDraftContent === lastSavedDraftRef.current) return;
     
     const timeout = setTimeout(() => {
+      setDraftSaveStatus('saving');
       const formData = new FormData();
       formData.append('from', composeFrom);
       formData.append('to', composeTo);
@@ -2697,8 +2735,12 @@ function App() {
         if (data.success && data.draftUid) {
           lastSavedDraftRef.current = currentDraftContent;
           setDraftUid(data.draftUid.toString());
+          setDraftSaveStatus('saved');
+        } else {
+          setDraftSaveStatus('error');
         }
       }).catch(() => {
+        setDraftSaveStatus('error');
         return;
       });
     }, 5000); // Save draft after 5 seconds of inactivity
@@ -3163,21 +3205,29 @@ function App() {
     : [isSearchActive ? searchInfo : '', isSearchActive && searchScope === 'all' ? 'All folders' : '', searchIndexStatus?.indexedCount ? `${searchIndexStatus.indexedCount} indexed` : ''].filter(Boolean).join(' | ');
 
   const calendarDays = useMemo(() => {
-    const start = startOfWeek(startOfMonth(currentDate));
-    const end = endOfWeek(endOfMonth(currentDate));
+    const start = startOfWeek(startOfMonth(currentDate), { weekStartsOn: calendarSettings.weekStartsOn as any });
+    const end = endOfWeek(endOfMonth(currentDate), { weekStartsOn: calendarSettings.weekStartsOn as any });
     const days = [];
     let day = start;
+    const visibleDays = calendarSettings.visibleDays || [0, 1, 2, 3, 4, 5, 6];
     while (day <= end) {
-      days.push(day);
+      if (visibleDays.includes(day.getDay())) {
+        days.push(day);
+      }
       day = addDays(day, 1);
     }
     return days;
-  }, [currentDate]);
+  }, [currentDate, calendarSettings.weekStartsOn, calendarSettings.visibleDays]);
 
   const weekDays = useMemo(() => {
-    const start = startOfWeek(currentDate);
-    return Array.from({length: 7}, (_, i) => addDays(start, i));
-  }, [currentDate]);
+    const start = startOfWeek(currentDate, { weekStartsOn: calendarSettings.weekStartsOn as any });
+    const visibleDays = calendarSettings.visibleDays || [0, 1, 2, 3, 4, 5, 6];
+    return Array.from({length: 7}, (_, i) => addDays(start, i)).filter(day => visibleDays.includes(day.getDay()));
+  }, [currentDate, calendarSettings.weekStartsOn, calendarSettings.visibleDays]);
+
+  const startHour = useMemo(() => parseInt((calendarSettings.workingHoursStart || '09:00').split(':')[0], 10), [calendarSettings.workingHoursStart]);
+  const endHour = useMemo(() => parseInt((calendarSettings.workingHoursEnd || '17:00').split(':')[0], 10), [calendarSettings.workingHoursEnd]);
+  const displayHours = useMemo(() => Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour + i), [startHour, endHour]);
 
   const setupMailboxAddress = userIdentities.address || currentUsername || 'your-email@example.com';
   const setupOrigin = useMemo(() => {
@@ -3280,7 +3330,15 @@ function App() {
   const openCalendarEditor = (calendar: Calendar) => {
     const validColor = /^#[0-9a-fA-F]{6}$/.test(calendar.color) ? calendar.color : '#3498db';
     setEditingCalendar(calendar);
-    setCalendarEditorData({ name: calendar.name, color: validColor });
+    setCalendarEditorData({ name: calendar.name, color: validColor, subscribed_url: calendar.subscribed_url || '' });
+    setCalendarEditorError('');
+  };
+
+  const openNewCalendarEditor = () => {
+    const colors = ['#3498db', '#e74c3c', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22'];
+    const color = colors[calendars.length % colors.length];
+    setEditingCalendar({ id: -1, name: '', color, events: [] });
+    setCalendarEditorData({ name: '', color, subscribed_url: '' });
     setCalendarEditorError('');
   };
 
@@ -3297,26 +3355,26 @@ function App() {
     setCalendarEditorError('');
 
     try {
-      const res = await fetch(`/api/apps/calendars/${editingCalendar.id}`, {
-        method: 'PUT',
+      const isNew = editingCalendar.id === -1;
+      const url = isNew ? `/api/apps/calendars` : `/api/apps/calendars/${editingCalendar.id}`;
+      const method = isNew ? 'POST' : 'PUT';
+
+      const res = await fetch(url, {
+        method,
         headers: getHeaders(),
         body: JSON.stringify({ name, color: calendarEditorData.color })
       });
       const data = await res.json() as CalendarUpdateResponse;
 
       if (!res.ok || !data.success) {
-        setCalendarEditorError(data.error || 'Failed to update calendar.');
+        setCalendarEditorError(data.error || 'Failed to save calendar.');
         return;
       }
 
-      setCalendars((currentCalendars) => currentCalendars.map((calendar) => (
-        calendar.id === editingCalendar.id
-          ? { ...calendar, name, color: calendarEditorData.color }
-          : calendar
-      )));
+      await refreshCalendars();
       setEditingCalendar(null);
     } catch {
-      setCalendarEditorError('Failed to update calendar.');
+      setCalendarEditorError('Failed to save calendar.');
     } finally {
       setCalendarEditorSaving(false);
     }
@@ -3681,6 +3739,9 @@ function App() {
               <div className={`nav-item ${activeTab === 'admin_logs' ? 'active' : ''}`} onClick={() => setActiveTab('admin_logs')}>
                 <Settings size={18} /> Audit Logs
               </div>
+              <div className={`nav-item ${activeTab === 'admin_telemetry' ? 'active' : ''}`} onClick={() => setActiveTab('admin_telemetry')}>
+                <Activity size={18} /> Telemetry & Logs
+              </div>
               <div className={`nav-item ${activeTab === 'admin_apikeys' ? 'active' : ''}`} onClick={() => setActiveTab('admin_apikeys')}>
                 <Lock size={18} /> API Keys
               </div>
@@ -3758,16 +3819,91 @@ function App() {
                 <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                   <form onSubmit={handleSearch} style={{ padding: '12px 16px', borderBottom: savedSearches.length > 0 ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(255,255,255,0.1)', display: 'grid', gridTemplateColumns: 'minmax(160px, 1fr) auto auto auto auto auto auto', gap: '8px', alignItems: 'center', background: 'rgba(255,255,255,0.03)' }}>
                     <div style={{ position: 'relative', minWidth: 0 }}>
-                      <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+                      <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', zIndex: 1 }} />
                       <input
+                        ref={searchInputRef}
                         className="glass-input"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search mail"
+                        onFocus={() => { if (searchHintsBlurTimer.current) clearTimeout(searchHintsBlurTimer.current); setShowSearchHints(true); }}
+                        onBlur={() => { searchHintsBlurTimer.current = setTimeout(() => setShowSearchHints(false), 200); }}
+                        placeholder={SEARCH_PLACEHOLDER_EXAMPLES[placeholderIndex]}
                         aria-label="Search mail"
                         aria-keyshortcuts="/"
                         style={{ width: '100%', paddingLeft: '36px' }}
                       />
+                      {showSearchHints && (
+                        <div
+                          ref={searchHintsRef}
+                          onMouseDown={(e) => e.preventDefault()}
+                          style={{
+                            position: 'absolute', top: 'calc(100% + 8px)', left: 0, right: '-200px',
+                            zIndex: 999, padding: '16px',
+                            background: 'rgba(20, 20, 30, 0.95)',
+                            backdropFilter: 'blur(20px) saturate(180%)',
+                            border: '1px solid rgba(255,255,255,0.12)',
+                            borderRadius: '12px',
+                            boxShadow: '0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2)',
+                            animation: 'searchHintsIn 0.15s ease-out',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                            <Zap size={13} />
+                            <span>Search operators — click to insert</span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                            {SEARCH_OPERATOR_HINTS.map((group) => {
+                              const IconComponent = group.icon === 'Users' ? Users : group.icon === 'FileText' ? FileText : group.icon === 'Filter' ? Filter : group.icon === 'Calendar' ? Calendar : group.icon === 'HardDrive' ? HardDrive : FolderOpen;
+                              return (
+                                <div key={group.category}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '6px', color: 'var(--accent-primary)', fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    <IconComponent size={12} />
+                                    {group.category}
+                                  </div>
+                                  {group.items.map((item) => (
+                                    <button
+                                      key={item.operator}
+                                      type="button"
+                                      className="btn btn-ghost"
+                                      onClick={() => {
+                                        const currentVal = searchQuery;
+                                        const needsSpace = currentVal.length > 0 && !currentVal.endsWith(' ');
+                                        setSearchQuery(currentVal + (needsSpace ? ' ' : '') + item.operator);
+                                        setShowSearchHints(false);
+                                        setTimeout(() => searchInputRef.current?.focus(), 50);
+                                      }}
+                                      style={{
+                                        display: 'flex', alignItems: 'baseline', gap: '6px', width: '100%',
+                                        padding: '4px 6px', fontSize: '0.82rem', textAlign: 'left', borderRadius: '6px',
+                                      }}
+                                    >
+                                      <code style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace', fontSize: '0.78rem', color: 'var(--accent-primary)', background: 'rgba(99, 102, 241, 0.12)', padding: '1px 5px', borderRadius: '4px', flexShrink: 0 }}>
+                                        {item.operator}
+                                      </code>
+                                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {item.description}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {(searchWorkerStatus || searchIndexStatus) && (
+                            <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                              <div style={{
+                                width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0,
+                                background: searchWorkerStatus?.isRunning ? 'var(--accent-primary)' : 'rgba(255,255,255,0.3)',
+                                animation: searchWorkerStatus?.isRunning ? 'pulse 1.5s ease-in-out infinite' : 'none',
+                              }} />
+                              <span>
+                                {searchIndexStatus?.indexedCount ? `${searchIndexStatus.indexedCount.toLocaleString()} messages indexed` : 'Index building...'}
+                                {searchWorkerStatus?.lastRunAt ? ` · Last sync ${new Date(searchWorkerStatus.lastRunAt).toLocaleTimeString()}` : ''}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <select className="glass-input glass-select" value={searchField} onChange={(e) => setSearchField(e.target.value as SearchField)} style={{ width: '118px' }}>
                       <option value="all">All</option>
@@ -3908,16 +4044,16 @@ function App() {
                           </button>
                           <div style={{ flex: 1, overflow: 'hidden' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                              <strong style={{ color: msg.isRead ? 'var(--text-primary)' : 'var(--accent-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{msg.from}</strong>
+                              <strong style={{ color: msg.isRead ? 'var(--text-primary)' : 'var(--accent-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{isSearchActive ? highlightSearchTerms(msg.from, searchQuery) : msg.from}</strong>
                               <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '8px', flexShrink: 0 }}>{new Date(msg.date).toLocaleDateString()}</span>
                             </div>
                             <div style={{ fontWeight: msg.isRead ? 'normal' : 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {(msg.threadCount || 0) > 1 && <span style={{ marginRight: '6px', fontSize: '0.8rem', background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '10px' }}>{msg.threadCount}</span>}
                               {msg.hasAttachments && <Paperclip size={13} style={{ marginRight: '6px', verticalAlign: '-2px', color: 'var(--text-secondary)' }} />}
-                              {msg.subject}
+                              {isSearchActive ? highlightSearchTerms(msg.subject, searchQuery) : msg.subject}
                             </div>
                             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {msg.preview}
+                              {isSearchActive ? highlightSearchTerms(msg.preview || '', searchQuery) : msg.preview}
                             </div>
                             {isSearchActive && searchScope === 'all' && msg.folder && (
                               <div style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--accent-primary)' }}>{msg.folder}</div>
@@ -4279,6 +4415,8 @@ function App() {
             </div>
           )}
 
+          {activeTab === 'admin_telemetry' && <TelemetryPanel />}
+
           {activeTab === 'admin_apikeys' && (
             <div className="glass-panel" style={{ padding: '30px' }}>
               <div className="content-header" style={{ marginBottom: '20px' }}>
@@ -4435,6 +4573,42 @@ function App() {
                             }}><Edit2 size={12} /></button>
                           )}
                           {(!cal.access_role || cal.access_role === 'owner') && (
+                            <button className="btn btn-ghost" style={{ padding: '2px' }} title="Import calendar (.ics)" aria-label={`Import ${cal.name}`} onClick={(e) => {
+                               e.stopPropagation();
+                               const input = document.createElement('input');
+                               input.type = 'file';
+                               input.accept = '.ics';
+                               input.onchange = (ev) => {
+                                 const file = (ev.target as HTMLInputElement).files?.[0];
+                                 if (!file) return;
+                                 const reader = new FileReader();
+                                 reader.onload = async (re) => {
+                                   try {
+                                     const res = await fetch(`/api/apps/calendars/${cal.id}/import`, {
+                                       method: 'POST',
+                                       headers: getHeaders(),
+                                       body: JSON.stringify({ ics_data: re.target?.result as string })
+                                     });
+                                     const data = await res.json();
+                                     if (data.success) {
+                                       window.alert(`Successfully imported ${data.count} events.`);
+                                       refreshCalendars();
+                                     } else {
+                                       window.alert('Import failed: ' + data.error);
+                                     }
+                                   } catch (err) {
+                                     window.alert('Import failed.');
+                                   }
+                                 };
+                                 reader.readAsText(file);
+                               };
+                               input.click();
+                            }}><Upload size={12} /></button>
+                          )}
+                          <a href={`/api/apps/calendars/${cal.id}/export`} className="btn btn-ghost" style={{ padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Export calendar (.ics)" aria-label={`Export ${cal.name}`} onClick={e => e.stopPropagation()}>
+                            <Download size={12} />
+                          </a>
+                          {(!cal.access_role || cal.access_role === 'owner') && (
                             <button className="btn btn-ghost" style={{ padding: '2px' }} title="Delete calendar" aria-label={`Delete ${cal.name}`} onClick={(e) => {
                                e.stopPropagation();
                                deleteCalendar(cal);
@@ -4443,20 +4617,7 @@ function App() {
                         </div>
                       </div>
                     ))}
-                    <div className="nav-item" style={{ marginTop: '16px', color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={() => {
-                       const name = window.prompt("New calendar name:");
-                       if (name) {
-                         const colors = ['#3498db', '#e74c3c', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22'];
-                         const color = colors[calendars.length % colors.length];
-                         fetch('/api/apps/calendars', {
-                             method: 'POST',
-                             headers: getHeaders(),
-                             body: JSON.stringify({ name, color })
-                         }).then(r => r.json()).then(d => {
-                             if (d.success) refreshCalendars();
-                         });
-                       }
-                    }}>
+                    <div className="nav-item" style={{ marginTop: '16px', color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={openNewCalendarEditor}>
                       <Plus size={16} style={{ marginRight: '8px' }} /> Add Calendar
                     </div>
                   </div>
@@ -4469,14 +4630,19 @@ function App() {
                 <div className="glass-panel" style={{ padding: '30px', height: '100%', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <h2 style={{ margin: 0 }}>{format(currentDate, calendarView === 'day' ? 'MMMM d, yyyy' : calendarView === 'year' ? 'yyyy' : 'MMMM yyyy')}</h2>
+                      <h2 style={{ margin: 0 }}>{format(currentDate, (calendarView === 'day' || calendarView === 'agenda') ? 'MMMM d, yyyy' : calendarView === 'year' ? 'yyyy' : 'MMMM yyyy')}</h2>
                       <button className="btn btn-ghost" onClick={() => setCurrentDate(new Date())}>Today</button>
                       <button className="btn btn-ghost" onClick={() => navigateApp('sync')} title="Calendar sync information" aria-label="Calendar sync information">
                         <Link2 size={18} /> Sync Info
                       </button>
+                      <div className="search-bar" style={{ marginLeft: '16px', width: '250px' }}>
+                        <Search size={16} />
+                        <input type="text" placeholder="Search events..." value={calendarSearchQuery} onChange={e => setCalendarSearchQuery(e.target.value)} />
+                      </div>
                     </div>
                     <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
                       <div style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', padding: '2px' }}>
+                        <button className={`btn ${calendarView === 'agenda' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => setCalendarView('agenda')}>Agenda</button>
                         <button className={`btn ${calendarView === 'day' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => setCalendarView('day')}>Day</button>
                         <button className={`btn ${calendarView === 'week' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => setCalendarView('week')}>Week</button>
                         <button className={`btn ${calendarView === 'month' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => setCalendarView('month')}>Month</button>
@@ -4489,7 +4655,11 @@ function App() {
                     </div>
                   </div>
                   
-                  {calendarView === 'year' ? (
+                  {(() => {
+                    const filteredEvents = calendarSearchQuery.trim() ? events.filter(e => e.title.toLowerCase().includes(calendarSearchQuery.toLowerCase()) || (e.description || '').toLowerCase().includes(calendarSearchQuery.toLowerCase())) : events;
+                    return (
+                      <>
+                        {calendarView === 'year' ? (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', flex: 1, overflowY: 'auto' }}>
                       {Array.from({length: 12}).map((_, m) => {
                          const monthDate = new Date(currentDate.getFullYear(), m, 1);
@@ -4518,15 +4688,50 @@ function App() {
                          );
                       })}
                     </div>
+                  ) : calendarView === 'agenda' ? (
+                    <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '24px', padding: '16px' }}>
+                      {Array.from({length: 30}).map((_, i) => {
+                        const day = addDays(currentDate, i);
+                        const dayEvents = filteredEvents.filter(e => isSameDay(e.start, day) && calendars.find(c => c.id === e.calendarId)?.isVisible !== false).sort((a,b) => a.start.getTime() - b.start.getTime());
+                        if (dayEvents.length === 0) return null;
+                        const isTodayDate = isSameDay(day, new Date());
+                        
+                        return (
+                          <div key={i} style={{ display: 'flex', gap: '24px' }}>
+                            <div style={{ width: '80px', flexShrink: 0, textAlign: 'right' }}>
+                              <div style={{ fontSize: '1.2rem', fontWeight: isTodayDate ? 'bold' : 'normal', color: isTodayDate ? 'var(--accent-primary)' : 'inherit' }}>{format(day, 'MMM d')}</div>
+                              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{format(day, 'EEEE')}</div>
+                            </div>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                              {dayEvents.map(e => {
+                                const cal = calendars.find(c => c.id === e.calendarId);
+                                return (
+                                  <div key={`${e.id}:${e.occurrenceId || e.start.toISOString()}`} onClick={() => openCalendarEvent(e)} style={{ display: 'flex', gap: '16px', padding: '12px 16px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', cursor: 'pointer', alignItems: 'center' }}>
+                                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: cal?.color || 'white' }}></div>
+                                    <div style={{ width: '120px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                      {e.isAllDay ? 'All day' : `${format(e.start, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')} - ${format(e.end, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')}`}
+                                    </div>
+                                    <div style={{ flex: 1, fontWeight: 'bold' }}>{e.title}</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {filteredEvents.filter(e => e.start >= currentDate && calendars.find(c => c.id === e.calendarId)?.isVisible !== false).length === 0 && (
+                        <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '40px' }}>No upcoming events.</div>
+                      )}
+                    </div>
                   ) : calendarView === 'month' ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '8px', flex: 1, minHeight: 0 }}>
-                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                        <div key={day} style={{ textAlign: 'center', fontWeight: 'bold', padding: '10px 0', color: 'var(--text-secondary)' }}>{day}</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${calendarSettings.visibleDays?.length || 7}, minmax(0, 1fr))`, gap: '8px', flex: 1, minHeight: 0 }}>
+                      {calendarDays.slice(0, calendarSettings.visibleDays?.length || 7).map(day => (
+                        <div key={day.toISOString()} style={{ textAlign: 'center', fontWeight: 'bold', padding: '10px 0', color: 'var(--text-secondary)' }}>{format(day, 'EEE')}</div>
                       ))}
                       {calendarDays.map((day, i) => {
                         const isCurrentMonth = isSameMonth(day, currentDate);
                         const isTodayDate = isSameDay(day, new Date());
-                        const dayEvents = events.filter(e => isSameDay(e.start, day) && calendars.find(c => c.id === e.calendarId)?.isVisible !== false);
+                        const dayEvents = filteredEvents.filter(e => isSameDay(e.start, day) && calendars.find(c => c.id === e.calendarId)?.isVisible !== false);
                         
                         return (
                           <div key={i} onClick={() => {
@@ -4579,7 +4784,7 @@ function App() {
                       </div>
                       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', position: 'relative' }}>
                         <div style={{ width: '60px', flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.05)' }}>
-                          {Array.from({length: 24}).map((_, h) => (
+                          {displayHours.map(h => (
                             <div key={h} style={{ height: '60px', position: 'relative' }}>
                               <span style={{ position: 'absolute', top: '-10px', right: '8px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                                 {h === 0 ? '' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h-12} PM`}
@@ -4588,14 +4793,14 @@ function App() {
                           ))}
                         </div>
                         <div style={{ flex: 1, position: 'relative', display: 'flex' }}>
-                          {Array.from({length: 24}).map((_, h) => (
-                            <div key={h} style={{ position: 'absolute', top: `${h * 60}px`, left: 0, right: 0, height: '1px', background: 'rgba(255,255,255,0.05)' }}></div>
+                          {displayHours.map((h, idx) => (
+                            <div key={h} style={{ position: 'absolute', top: `${idx * 60}px`, left: 0, right: 0, height: '1px', background: 'rgba(255,255,255,0.05)' }}></div>
                           ))}
                           {(calendarView === 'week' ? weekDays : [currentDate]).map((day, i) => {
-                             const dayEvents = events.filter(e => isSameDay(e.start, day) && !e.isAllDay && calendars.find(c => c.id === e.calendarId)?.isVisible !== false);
+                             const dayEvents = filteredEvents.filter(e => isSameDay(e.start, day) && !e.isAllDay && calendars.find(c => c.id === e.calendarId)?.isVisible !== false);
                              return (
                                <div key={i} style={{ flex: 1, borderLeft: i > 0 ? '1px solid rgba(255,255,255,0.05)' : 'none', position: 'relative' }}>
-                                 {Array.from({length: 24}).map((_, h) => (
+                                 {displayHours.map((h, idx) => (
                                    <div key={`click-${h}`} onClick={() => {
                                      const clickedDate = new Date(day);
                                      clickedDate.setHours(h, 0, 0, 0);
@@ -4603,13 +4808,14 @@ function App() {
                                      setNewEventData(createDefaultEventDraft(clickedDate));
                                      setIsEventModalOpen(true);
                                      setIsAdvancedEventMode(false);
-                                   }} style={{ position: 'absolute', top: `${h * 60}px`, height: '60px', left: 0, right: 0, cursor: 'pointer' }} />
+                                   }} style={{ position: 'absolute', top: `${idx * 60}px`, height: '60px', left: 0, right: 0, cursor: 'pointer' }} />
                                  ))}
                                  {dayEvents.map(e => {
                                     const cal = calendars.find(c => c.id === e.calendarId);
-                                    const startMinutes = e.start.getHours() * 60 + e.start.getMinutes();
-                                    const endMinutes = e.end.getHours() * 60 + e.end.getMinutes();
+                                    const startMinutes = (e.start.getHours() - startHour) * 60 + e.start.getMinutes();
+                                    const endMinutes = (e.end.getHours() - startHour) * 60 + e.end.getMinutes();
                                     const duration = Math.max(endMinutes - startMinutes, 30);
+                                    if (startMinutes < 0 || startMinutes >= displayHours.length * 60) return null; // Outside working hours
                                     return (
                                       <div key={`${e.id}:${e.occurrenceId || e.start.toISOString()}`} onClick={(ev) => { ev.stopPropagation(); openCalendarEvent(e); }} title={e.title} style={{ position: 'absolute', top: `${startMinutes}px`, height: `${duration}px`, left: '4px', right: '4px', background: cal ? `${cal.color}33` : 'rgba(255,255,255,0.1)', color: cal ? cal.color : 'white', borderRadius: '4px', padding: '4px 8px', fontSize: '0.8rem', cursor: 'pointer', overflow: 'hidden', borderLeft: `3px solid ${cal?.color || 'white'}` }}>
                                         <div style={{ fontWeight: 'bold' }}>{e.title}</div>
@@ -4624,6 +4830,9 @@ function App() {
                       </div>
                     </div>
                   )}
+                  </>
+                  );
+                  })()}
                 </div>
               </Panel>
             </PanelGroup>
@@ -4766,9 +4975,14 @@ function App() {
                             <div style={{ 
                               width: '56px', height: '56px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, #3b82f6) 100%)', 
                               display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.4rem', flexShrink: 0,
-                              boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                              overflow: 'hidden'
                             }}>
-                              {contact.displayName !== 'Unknown Name' ? contact.displayName.charAt(0).toUpperCase() : contact.email.charAt(0).toUpperCase()}
+                              {(contact as any).photo_url ? (
+                                <img src={(contact as any).photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              ) : (
+                                contact.displayName !== 'Unknown Name' ? contact.displayName.charAt(0).toUpperCase() : contact.email.charAt(0).toUpperCase()
+                              )}
                             </div>
                             <div style={{ flex: 1, minWidth: 0, marginTop: '2px' }}>
                               <div style={{ fontWeight: 'bold', fontSize: '1.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{contact.displayName}</div>
@@ -5119,6 +5333,113 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {adminModal?.type === 'createDomain' && (
+        <CreateDomainModal
+          onClose={() => setAdminModal(null)}
+          onSubmit={async (data) => {
+            await runAdminAction(`Domain ${data.domain.trim()} added.`, async () => {
+              await adminFetch('/api/admin/domains', {
+                method: 'POST',
+                body: JSON.stringify(data)
+              });
+            });
+            setAdminModal(null);
+          }}
+        />
+      )}
+      {adminModal?.type === 'createMailbox' && (
+        <CreateMailboxModal
+          domains={adminDomains}
+          onClose={() => setAdminModal(null)}
+          onSubmit={async (data) => {
+            await runAdminAction(`Mailbox ${data.username.trim()}@${data.domain.trim()} created.`, async () => {
+              await adminFetch('/api/admin/mailboxes', {
+                method: 'POST',
+                body: JSON.stringify(data)
+              });
+            });
+            setAdminModal(null);
+          }}
+        />
+      )}
+      {adminModal?.type === 'changePassword' && (
+        <ChangePasswordModal
+          username={adminModal.data.username}
+          onClose={() => setAdminModal(null)}
+          onSubmit={async (data) => {
+            await runAdminAction(`Password reset for ${adminModal.data.username}.`, async () => {
+              await adminFetch(`/api/admin/mailboxes/${encodeURIComponent(adminModal.data.username)}/password`, {
+                method: 'POST',
+                body: JSON.stringify({ password: data.password })
+              });
+            });
+            setAdminModal(null);
+          }}
+        />
+      )}
+      {adminModal?.type === 'createAlias' && (
+        <CreateAliasModal
+          domains={adminDomains}
+          onClose={() => setAdminModal(null)}
+          onSubmit={async (data) => {
+            await runAdminAction(`Alias ${data.address.trim()} added.`, async () => {
+              await adminFetch('/api/admin/aliases', {
+                method: 'POST',
+                body: JSON.stringify(data)
+              });
+            });
+            setAdminModal(null);
+          }}
+        />
+      )}
+      {adminModal?.type === 'createApiKey' && (
+        <CreateApiKeyModal
+          onClose={() => setAdminModal(null)}
+          onSubmit={async (data) => {
+            await runAdminAction(`API key generated.`, async () => {
+              const response = await adminFetch<AdminApiKeyCreateResponse>('/api/admin/apikeys', {
+                method: 'POST',
+                body: JSON.stringify({ description: data.description })
+              });
+              if (response.raw_key) {
+                window.prompt('Copy your new API key now. It will not be shown again:', response.raw_key);
+              }
+            });
+            setAdminModal(null);
+          }}
+        />
+      )}
+
+      {adminModal?.type === 'createRouting' && (
+        <CreateRoutingModal
+          onClose={() => setAdminModal(null)}
+          onSubmit={async (data) => {
+            await runAdminAction(`Routing added for ${data.aliasDomain.trim()}.`, async () => {
+              await adminFetch('/api/admin/routing', {
+                method: 'POST',
+                body: JSON.stringify({ alias_domain: data.aliasDomain, target_domain: adminDomains[0]?.domain || '' })
+              });
+              setRoutingAliasDomain('');
+            });
+            setAdminModal(null);
+          }}
+        />
+      )}
+      {adminModal?.type === 'promoteAdmin' && (
+        <PromoteAdminModal
+          onClose={() => setAdminModal(null)}
+          onSubmit={async (data) => {
+            await runAdminAction(`${data.username.trim()} promoted to admin.`, async () => {
+              await adminFetch('/api/admin/admins', {
+                method: 'POST',
+                body: JSON.stringify({ username: data.username })
+              });
+            });
+            setAdminModal(null);
+          }}
+        />
       )}
 
       {mailboxEditor && mailboxEditorDraft && (
@@ -5516,7 +5837,14 @@ function App() {
                 : { resize: 'both', overflow: 'hidden', minWidth: '400px', minHeight: '400px', maxWidth: '95vw', maxHeight: '95vh' })
           }}>
             <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)' }}>
-              <h3 style={{ margin: 0 }}>New Message</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <h3 style={{ margin: 0 }}>New Message</h3>
+                {draftSaveStatus && (
+                  <span style={{ fontSize: '0.8rem', color: draftSaveStatus === 'error' ? 'var(--accent-error)' : 'var(--text-secondary)' }}>
+                    {draftSaveStatus === 'saving' ? 'Saving draft...' : draftSaveStatus === 'saved' ? 'Draft saved' : 'Failed to save draft'}
+                  </span>
+                )}
+              </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="btn btn-ghost" style={{ padding: '4px' }} onClick={() => setComposeDocked(!composeDocked)}>
                   {composeDocked ? <Maximize2 size={18} /> : <Minimize2 size={18} />}
@@ -5716,6 +6044,14 @@ function App() {
                     </div>
                   </div>
                 </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Calendar</label>
+                  <select className="glass-input glass-select" value={newEventData.calendarId} onChange={e => setNewEventData({...newEventData, calendarId: Number(e.target.value)})}>
+                    {calendars.map(cal => (
+                      <option key={cal.id} value={cal.id}>{cal.name}</option>
+                    ))}
+                  </select>
+                </div>
 
                 {isAdvancedEventMode && (
                   <>
@@ -5743,15 +6079,6 @@ function App() {
                         <span style={{ fontSize: '0.85rem' }}>minutes</span>
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                        <div>
-                          <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Calendar</label>
-                          <select className="glass-input glass-select" value={newEventData.calendarId} onChange={e => setNewEventData({...newEventData, calendarId: Number(e.target.value)})}>
-                            {calendars.map(cal => (
-                              <option key={cal.id} value={cal.id}>{cal.name}</option>
-                            ))}
-                          </select>
-                        </div>
                         <div>
                           <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Show as</label>
                           <select className="glass-input glass-select" value={newEventData.busyStatus} onChange={e => setNewEventData({...newEventData, busyStatus: e.target.value})}>
@@ -5759,7 +6086,6 @@ function App() {
                             <option value="free">Free</option>
                           </select>
                         </div>
-                      </div>
 
                       <div>
                         <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Visibility</label>
@@ -5829,6 +6155,15 @@ function App() {
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button className="btn btn-ghost" onClick={() => { setIsEventModalOpen(false); setEditingCalendarEvent(null); }}>Cancel</button>
                 <button className="btn btn-primary" onClick={() => {
+                  if (!newEventData.title.trim()) {
+                    window.alert('Event title is required.');
+                    return;
+                  }
+                  if (newEventData.start > newEventData.end && !newEventData.isAllDay) {
+                    window.alert('Start time must be before end time.');
+                    return;
+                  }
+
                   const uid = editingCalendarEvent?.id || Math.random().toString(36).substring(2) + "@openmailstack";
                   
                   const formatIcalDate = (d: Date, isAllDay: boolean) => {
@@ -5879,11 +6214,38 @@ function App() {
           <div className="glass-panel sync-setup-modal" style={{ width: 'min(600px, 95vw)' }} onClick={e => e.stopPropagation()}>
             <div className="sync-setup-header" style={{ alignItems: 'flex-start', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '20px', marginBottom: '20px' }}>
               <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-                <div style={{ 
-                  width: '56px', height: '56px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, #3b82f6) 100%)', 
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.4rem', boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
-                }}>
-                  {editingContact.name ? editingContact.name.charAt(0).toUpperCase() : editingContact.email ? editingContact.email.charAt(0).toUpperCase() : <UserPlus size={24} />}
+                <div 
+                  style={{ 
+                    width: '64px', height: '64px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, #3b82f6) 100%)', 
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.4rem', boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                    cursor: 'pointer', overflow: 'hidden', position: 'relative'
+                  }}
+                  title="Upload Contact Photo"
+                  onClick={() => document.getElementById('contact-photo-upload')?.click()}
+                >
+                  {(editingContact as any).photo_url ? (
+                    <img src={(editingContact as any).photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    editingContact.name ? editingContact.name.charAt(0).toUpperCase() : editingContact.email ? editingContact.email.charAt(0).toUpperCase() : <UserPlus size={24} />
+                  )}
+                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '20px', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                    <Upload size={12} color="#fff" />
+                  </div>
+                  <input 
+                    type="file" 
+                    id="contact-photo-upload" 
+                    style={{ display: 'none' }} 
+                    accept="image/*" 
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (evt) => {
+                        setEditingContact({ ...editingContact, photo_url: evt.target?.result as string } as any);
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
                 </div>
                 <div>
                   <div className="sync-setup-eyebrow" style={{ marginBottom: '4px' }}>Contact</div>

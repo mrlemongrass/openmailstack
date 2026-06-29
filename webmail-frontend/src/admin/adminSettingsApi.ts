@@ -1,4 +1,4 @@
-export type AdminSettingsNamespace = 'organization' | 'publicUrls' | 'security' | 'mailPolicy' | 'system';
+export type AdminSettingsNamespace = 'organization' | 'publicUrls' | 'security' | 'mailPolicy' | 'system' | 'webhooks';
 
 export interface OrganizationAdminSettings {
   organizationName: string;
@@ -37,12 +37,18 @@ export interface SystemAdminSettings {
   adminNotice: string;
 }
 
+export interface WebhooksAdminSettings {
+  endpoints: string[];
+  events: string[];
+}
+
 export interface AdminSettingsMap {
   organization: OrganizationAdminSettings;
   publicUrls: PublicUrlsAdminSettings;
   security: SecurityAdminSettings;
   mailPolicy: MailPolicyAdminSettings;
   system: SystemAdminSettings;
+  webhooks: WebhooksAdminSettings;
 }
 
 export const defaultAdminSettings: AdminSettingsMap = {
@@ -51,7 +57,7 @@ export const defaultAdminSettings: AdminSettingsMap = {
     supportEmail: '',
     supportUrl: '',
     defaultLocale: 'en-US',
-    defaultTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    defaultTimeZone: 'UTC',
   },
   publicUrls: {
     webmailUrl: '',
@@ -78,7 +84,12 @@ export const defaultAdminSettings: AdminSettingsMap = {
     telemetryMode: 'off',
     adminNotice: '',
   },
+  webhooks: {
+    endpoints: [],
+    events: [],
+  }
 };
+
 
 interface AdminSettingsResponse<T extends AdminSettingsNamespace> {
   success: boolean;

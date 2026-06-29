@@ -40,6 +40,7 @@ export function AdminSettingsPanel({ settings, saving, status, onChange, onSave 
         <SecuritySection settings={settings.security} onChange={updates => update('security', updates)} />
         <MailPolicySection settings={settings.mailPolicy} onChange={updates => update('mailPolicy', updates)} />
         <SystemSection settings={settings.system} onChange={updates => update('system', updates)} />
+        <WebhooksSection settings={settings.webhooks} onChange={updates => update('webhooks', updates)} />
       </div>
     </div>
   );
@@ -189,5 +190,34 @@ function ToggleRow({ label, checked, onChange }: { label: string; checked: boole
       <span>{label}</span>
       <input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} />
     </label>
+  );
+}
+
+function WebhooksSection({ settings, onChange }: { settings: import('./adminSettingsApi').WebhooksAdminSettings; onChange: (updates: Partial<import('./adminSettingsApi').WebhooksAdminSettings>) => void }) {
+  return (
+    <section className="settings-section" style={{ gridColumn: '1 / -1' }}>
+      <h3>Event Webhooks</h3>
+      <label className="settings-field">
+        <span>Webhook Endpoints (one URL per line)</span>
+        <textarea 
+          className="glass-input" 
+          value={settings?.endpoints?.join('\n') || ''} 
+          onChange={event => onChange({ endpoints: event.target.value.split('\n').map(s => s.trim()).filter(Boolean) })} 
+          rows={3} 
+          placeholder="https://my-service.com/webhook"
+        />
+      </label>
+      <label className="settings-field">
+        <span>Subscribed Actions (one per line, leave blank for all)</span>
+        <textarea 
+          className="glass-input" 
+          value={settings?.events?.join('\n') || ''} 
+          onChange={event => onChange({ events: event.target.value.split('\n').map(s => s.trim()).filter(Boolean) })} 
+          rows={3} 
+          placeholder="e.g. Mailbox test@test.com created."
+        />
+      </label>
+      <div className="settings-disabled-note">Webhooks are fired automatically on matching admin actions.</div>
+    </section>
   );
 }

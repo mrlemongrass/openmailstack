@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -20,10 +53,73 @@ const search_index_1 = require("./search-index");
 const user_settings_1 = require("./user-settings");
 const admin_settings_1 = require("./admin-settings");
 const branding_1 = require("./branding");
+const search_worker_1 = require("./search-worker");
 exports.apiRouter = (0, express_1.Router)();
 const requireAuth = auth_1.requireSession;
 const requireAdmin = auth_1.requireAdminSession;
 const execPromise = util_1.default.promisify(child_process_1.exec);
+const promClient = __importStar(require("prom-client"));
+promClient.collectDefaultMetrics({ prefix: 'openmailstack_' });
+const apiRequestsCounter = new promClient.Counter({
+    name: 'openmailstack_api_requests_total',
+    help: 'Total number of API requests',
+    labelNames: ['method', 'status']
+});
+const mailQueueGauge = new promClient.Gauge({ name: 'openmailstack_mail_queue_size', help: 'Number of emails currently queued in Postfix' });
+const imapConnectionsGauge = new promClient.Gauge({ name: 'openmailstack_network_connections_imap', help: 'Active IMAP connections' });
+const smtpConnectionsGauge = new promClient.Gauge({ name: 'openmailstack_network_connections_smtp', help: 'Active SMTP connections' });
+const httpConnectionsGauge = new promClient.Gauge({ name: 'openmailstack_network_connections_http', help: 'Active HTTP connections' });
+const rspamdScannedGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_scanned_total', help: 'Total emails scanned by Rspamd' });
+const rspamdSpamGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_spam_total', help: 'Total spam emails detected' });
+const rspamdRejectedGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_rejected_total', help: 'Total emails rejected' });
+setInterval(async () => {
+    try {
+        try {
+            const { stdout } = await execPromise('postqueue -j || true');
+            const lines = stdout.split('\n').filter((l) => l.trim().length > 0).length;
+            mailQueueGauge.set(lines);
+        }
+        catch (e) { }
+        try {
+            const { stdout } = await execPromise('ss -tn state established');
+            let imap = 0, smtp = 0, http = 0;
+            stdout.split('\n').forEach((line) => {
+                if (line.includes(':993 ') || line.includes(':143 '))
+                    imap++;
+                else if (line.includes(':25 ') || line.includes(':465 ') || line.includes(':587 '))
+                    smtp++;
+                else if (line.includes(':80 ') || line.includes(':443 ') || line.includes(':20000 '))
+                    http++;
+            });
+            imapConnectionsGauge.set(imap);
+            smtpConnectionsGauge.set(smtp);
+            httpConnectionsGauge.set(http);
+        }
+        catch (e) { }
+        try {
+            const res = await fetch('http://localhost:11334/stat');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.scanned !== undefined)
+                    rspamdScannedGauge.set(data.scanned);
+                if (data.spam_count !== undefined)
+                    rspamdSpamGauge.set(data.spam_count);
+                if (data.actions && data.actions.reject !== undefined)
+                    rspamdRejectedGauge.set(data.actions.reject);
+            }
+        }
+        catch (e) { }
+    }
+    catch (err) {
+        // Silent catch
+    }
+}, 15000);
+exports.apiRouter.use((req, res, next) => {
+    res.on('finish', () => {
+        apiRequestsCounter.inc({ method: req.method, status: res.statusCode });
+    });
+    next();
+});
 const withTransaction = async (callback) => {
     const connection = await db_1.pool.getConnection();
     try {
@@ -260,6 +356,31 @@ const logAdminAction = async (req, action, targetType, targetId, details = {}) =
             auditDetails(details),
             String(req.ip || req.socket?.remoteAddress || '').slice(0, 64),
         ]);
+        // Fire webhooks
+        (0, admin_settings_1.getAdminSettings)('webhooks').then(settings => {
+            const hookSettings = settings;
+            if (hookSettings.endpoints && hookSettings.endpoints.length > 0) {
+                if (hookSettings.events.length === 0 || hookSettings.events.includes(action)) {
+                    const payload = JSON.stringify({
+                        timestamp: new Date().toISOString(),
+                        actor,
+                        action,
+                        target_type: targetType,
+                        target_id: normalizedTargetId,
+                        target_domain: targetDomain,
+                        details,
+                        ip_address: req.ip || req.socket?.remoteAddress
+                    });
+                    for (const endpoint of hookSettings.endpoints) {
+                        fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: payload
+                        }).catch(e => console.error(`Webhook to ${endpoint} failed:`, e));
+                    }
+                }
+            }
+        }).catch(e => console.error('Failed to get webhook settings:', e));
     }
     catch (err) {
         console.error('Failed to write admin audit log:', err);
@@ -619,6 +740,27 @@ exports.apiRouter.get('/messages/search/index/status', requireAuth, async (req, 
         res.status(500).json({ success: false, error: err.message });
     }
 });
+exports.apiRouter.get('/messages/search/worker/status', requireAuth, async (req, res) => {
+    try {
+        const status = await (0, search_worker_1.getSearchWorkerStatus)();
+        res.json({ success: true, ...status });
+    }
+    catch (err) {
+        console.error('Failed to get search worker status:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.delete('/messages/search/index', requireAuth, async (req, res) => {
+    try {
+        const username = req.user.username;
+        const deletedCount = await (0, search_worker_1.purgeUserSearchIndex)(username);
+        res.json({ success: true, deletedCount, message: `Purged ${deletedCount} index entries. Background worker will re-index automatically.` });
+    }
+    catch (err) {
+        console.error('Failed to purge search index:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 exports.apiRouter.post('/messages/search/index/sync', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -853,23 +995,27 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
             return res.json({ success: true, scheduledId: insertRes.insertId, sendAt, message: 'Message scheduled' });
         }
         const info = await transporter.sendMail(mailOptions);
-        if (to) {
-            const emails = to.split(',').map((e) => e.trim());
-            for (const email of emails) {
-                if (email) {
-                    const match = email.match(/(.*)<(.+)>/);
-                    let contactName = '';
-                    let contactEmail = email;
-                    if (match) {
-                        contactName = match[1].replace(/"/g, '').trim();
-                        contactEmail = match[2].trim();
+        const contactsSettings = await (0, user_settings_1.getUserSettings)(user, 'contacts');
+        if (contactsSettings.autoCreateFromSent !== false) {
+            const allRecipients = [to, cc, bcc].filter(Boolean).join(',');
+            if (allRecipients) {
+                const emails = allRecipients.split(',').map((e) => e.trim());
+                for (const email of emails) {
+                    if (email) {
+                        const match = email.match(/(.*)<(.+)>/);
+                        let contactName = '';
+                        let contactEmail = email;
+                        if (match) {
+                            contactName = match[1].replace(/"/g, '').trim();
+                            contactEmail = match[2].trim();
+                        }
+                        if (!contactName)
+                            contactName = contactEmail.split('@')[0];
+                        try {
+                            await db_1.pool.query('INSERT IGNORE INTO contacts (username, name, email) VALUES (?, ?, ?)', [user, contactName, contactEmail]);
+                        }
+                        catch (e) { }
                     }
-                    if (!contactName)
-                        contactName = contactEmail.split('@')[0];
-                    try {
-                        await db_1.pool.query('INSERT IGNORE INTO contacts (username, name, email) VALUES (?, ?, ?)', [user, contactName, contactEmail]);
-                    }
-                    catch (e) { }
                 }
             }
         }
@@ -1504,6 +1650,38 @@ exports.apiRouter.delete('/admin/admins/:username', requireAuth, requireAdmin, a
     catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
+});
+// Telemetry & Metrics
+exports.apiRouter.get('/admin/telemetry/metrics', requireAuth, requireAdmin, async (req, res) => {
+    try {
+        res.set('Content-Type', promClient.register.contentType);
+        res.end(await promClient.register.metrics());
+    }
+    catch (ex) {
+        res.status(500).end(ex.message);
+    }
+});
+exports.apiRouter.get('/admin/telemetry/logs/live', requireAuth, requireAdmin, (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    const { spawn } = require('child_process');
+    const journalctl = spawn('journalctl', ['-f', '-n', '100', '-u', 'postfix', '-u', 'dovecot', '-u', 'openmailstack']);
+    journalctl.stdout.on('data', (data) => {
+        const lines = data.toString().split('\n');
+        for (const line of lines) {
+            if (line.trim()) {
+                res.write(`data: ${line}\n\n`);
+            }
+        }
+    });
+    journalctl.stderr.on('data', (data) => {
+        console.error(`[Telemetry Logs] journalctl err: ${data}`);
+    });
+    req.on('close', () => {
+        journalctl.kill();
+    });
 });
 // Audit Logs
 exports.apiRouter.get('/admin/logs', requireAuth, requireAdmin, async (req, res) => {

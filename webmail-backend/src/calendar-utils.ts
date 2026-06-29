@@ -13,6 +13,7 @@ export interface CalendarRow {
     sync_token?: number;
     event_count?: number;
     access_role?: string;
+    subscribed_url?: string;
 }
 
 let schemaPromise: Promise<void> | null = null;
@@ -28,6 +29,11 @@ export async function ensureCalendarSchema(): Promise<void> {
             const [componentsColumn]: any = await pool.query("SHOW COLUMNS FROM calendars LIKE 'components'");
             if (componentsColumn.length === 0) {
                 await pool.query("ALTER TABLE calendars ADD COLUMN components VARCHAR(255) NOT NULL DEFAULT 'VEVENT,VTODO' AFTER dav_slug");
+            }
+
+            const [subscribedUrlColumn]: any = await pool.query("SHOW COLUMNS FROM calendars LIKE 'subscribed_url'");
+            if (subscribedUrlColumn.length === 0) {
+                await pool.query('ALTER TABLE calendars ADD COLUMN subscribed_url TEXT NULL AFTER components');
             }
 
             const [slugIndex]: any = await pool.query("SHOW INDEX FROM calendars WHERE Key_name = 'idx_calendars_user_dav_slug'");
@@ -143,13 +149,13 @@ export async function ensureCalendarSlug(calendar: CalendarRow): Promise<string>
     return slug;
 }
 
-export async function createCalendar(user: string, name: string, options: { color?: string; slug?: string; components?: string } = {}): Promise<CalendarRow> {
+export async function createCalendar(user: string, name: string, options: { color?: string; slug?: string; components?: string; subscribed_url?: string } = {}): Promise<CalendarRow> {
     await ensureCalendarSchema();
     const cleanName = name.trim() || 'New Calendar';
     const slug = await uniqueCalendarSlug(user, options.slug || cleanName);
     const [result]: any = await pool.query(
-        'INSERT INTO calendars (user_id, name, dav_slug, color, components, sync_token) VALUES (?, ?, ?, ?, ?, 1)',
-        [user, cleanName, slug, options.color || '#3498db', options.components || 'VEVENT,VTODO']
+        'INSERT INTO calendars (user_id, name, dav_slug, color, components, subscribed_url, sync_token) VALUES (?, ?, ?, ?, ?, ?, 1)',
+        [user, cleanName, slug, options.color || '#3498db', options.components || 'VEVENT,VTODO', options.subscribed_url || null]
     );
     const [created]: any = await pool.query('SELECT * FROM calendars WHERE id = ?', [result.insertId]);
     return created[0];

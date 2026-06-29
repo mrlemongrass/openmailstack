@@ -91,12 +91,41 @@ const parseSize = (val) => {
         return num * 1024 * 1024 * 1024;
     return num;
 };
+const FOLDER_NAME_MAP = {
+    inbox: 'INBOX',
+    sent: 'Sent',
+    trash: 'Trash',
+    drafts: 'Drafts',
+    spam: 'Junk',
+    junk: 'Junk',
+    archive: 'Archive'
+};
+const parseRelativeDate = (val) => {
+    const match = val.match(/^(\d+)([dwmy])$/i);
+    if (!match)
+        return undefined;
+    const amount = parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+    const now = new Date();
+    if (unit === 'd')
+        now.setDate(now.getDate() - amount);
+    else if (unit === 'w')
+        now.setDate(now.getDate() - amount * 7);
+    else if (unit === 'm')
+        now.setMonth(now.getMonth() - amount);
+    else if (unit === 'y')
+        now.setFullYear(now.getFullYear() - amount);
+    else
+        return undefined;
+    return now;
+};
 const parseMailSearchExpression = (query) => {
     const parsed = {
         terms: [],
         from: [],
         to: [],
-        subject: []
+        subject: [],
+        filename: []
     };
     for (const token of tokenize(query)) {
         const normalized = token.toLowerCase();
@@ -134,6 +163,28 @@ const parseMailSearchExpression = (query) => {
             const size = parseSize(cleanTokenValue(token.slice(7)));
             if (size !== undefined)
                 parsed.larger = size;
+        }
+        else if (normalized.startsWith('smaller:') && token.length > 8) {
+            const size = parseSize(cleanTokenValue(token.slice(8)));
+            if (size !== undefined)
+                parsed.smaller = size;
+        }
+        else if (normalized.startsWith('in:') && token.length > 3) {
+            const raw = cleanTokenValue(token.slice(3)).toLowerCase();
+            parsed.inFolder = FOLDER_NAME_MAP[raw] || cleanTokenValue(token.slice(3));
+        }
+        else if (normalized.startsWith('filename:') && token.length > 9) {
+            parsed.filename.push(cleanTokenValue(token.slice(9)));
+        }
+        else if (normalized.startsWith('older_than:') && token.length > 11) {
+            const date = parseRelativeDate(cleanTokenValue(token.slice(11)));
+            if (date)
+                parsed.olderThan = date;
+        }
+        else if (normalized.startsWith('newer_than:') && token.length > 11) {
+            const date = parseRelativeDate(cleanTokenValue(token.slice(11)));
+            if (date)
+                parsed.newerThan = date;
         }
         else {
             const value = cleanTokenValue(token);
@@ -324,6 +375,25 @@ const searchMailIndex = async (username, options) => {
     if (parsed.larger !== undefined) {
         where.push(`message_size > ?`);
         whereParams.push(parsed.larger);
+    }
+    if (parsed.smaller !== undefined) {
+        where.push(`message_size < ?`);
+        whereParams.push(parsed.smaller);
+    }
+    if (parsed.inFolder) {
+        where.push(`folder = ?`);
+        whereParams.push(parsed.inFolder);
+    }
+    for (const fname of parsed.filename) {
+        addLikeCondition(where, whereParams, 'attachment_names', fname);
+    }
+    if (parsed.olderThan) {
+        where.push(`sent_at < ?`);
+        whereParams.push(toMysqlDate(parsed.olderThan));
+    }
+    if (parsed.newerThan) {
+        where.push(`sent_at > ?`);
+        whereParams.push(toMysqlDate(parsed.newerThan));
     }
     for (const value of parsed.from)
         addLikeCondition(where, whereParams, 'sender', value);

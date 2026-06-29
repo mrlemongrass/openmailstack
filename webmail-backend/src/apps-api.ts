@@ -31,7 +31,7 @@ appsApiRouter.get('/contacts', async (req: Request, res: Response) => {
 
 appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json } = req.body;
+    const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url } = req.body;
     try {
         const davUid = `contact-${Date.now()}`;
         const newVcardData = vcard_data || patchVCardData('', davUid, {
@@ -40,8 +40,8 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
 
         const [result]: any = await pool.query(
             `INSERT INTO contacts 
-            (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, sync_token) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+            (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, sync_token) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
             [
                 user, 
                 name || '', 
@@ -55,7 +55,8 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
                 job_title || null,
                 organization || null,
                 notes || null,
-                labels_json ? JSON.stringify(labels_json) : null
+                labels_json ? JSON.stringify(labels_json) : null,
+                photo_url || null
             ]
         );
         res.json({ success: true, id: result.insertId });
@@ -66,7 +67,7 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
 
 appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json } = req.body;
+    const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url } = req.body;
     try {
         const [existing]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=?', [req.params.id as string, user]);
         if (existing.length === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
@@ -80,26 +81,30 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
             });
         }
 
-        await pool.query(
-            `UPDATE contacts 
-             SET name=?, email=?, phone=?, vcard_data=?, emails_json=?, phones_json=?, addresses_json=?, job_title=?, organization=?, notes=?, labels_json=?, sync_token = sync_token + 1
-             WHERE id=? AND username=?`,
-            [
-                name || '', 
-                email || '', 
-                phone || '', 
-                newVcardData || '',
-                emails_json ? JSON.stringify(emails_json) : null,
-                phones_json ? JSON.stringify(phones_json) : null,
-                addresses_json ? JSON.stringify(addresses_json) : null,
-                job_title || null,
-                organization || null,
-                notes || null,
-                labels_json ? JSON.stringify(labels_json) : null,
-                req.params.id as string, 
-                user
-            ]
-        );
+        const queryParams: any[] = [
+            name || '', 
+            email || '', 
+            phone || '', 
+            newVcardData || '',
+            emails_json ? JSON.stringify(emails_json) : null,
+            phones_json ? JSON.stringify(phones_json) : null,
+            addresses_json ? JSON.stringify(addresses_json) : null,
+            job_title || null,
+            organization || null,
+            notes || null,
+            labels_json ? JSON.stringify(labels_json) : null,
+        ];
+        
+        let updateSql = `UPDATE contacts SET name=?, email=?, phone=?, vcard_data=?, emails_json=?, phones_json=?, addresses_json=?, job_title=?, organization=?, notes=?, labels_json=?, sync_token = sync_token + 1`;
+        if (photo_url !== undefined) {
+            updateSql += `, photo_url=?`;
+            queryParams.push(photo_url || null);
+        }
+        
+        updateSql += ` WHERE id=? AND username=?`;
+        queryParams.push(req.params.id as string, user);
+
+        await pool.query(updateSql, queryParams);
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -262,13 +267,16 @@ appsApiRouter.post('/contacts-merge', async (req: Request, res: Response) => {
         
         let { name, email, phone, job_title, organization, notes } = primary;
         
+        let photo_url = primary.photo_url;
+
         for (const dup of dupRows) {
             name = name || dup.name;
             email = email || dup.email;
             phone = phone || dup.phone;
             job_title = job_title || dup.job_title;
             organization = organization || dup.organization;
-            notes = [notes, dup.notes].filter(Boolean).join('\\n\\n');
+            photo_url = photo_url || dup.photo_url;
+            notes = [notes, dup.notes].filter(Boolean).join('\n\n');
             
             const dEmails = dup.emails_json ? (typeof dup.emails_json === 'string' ? JSON.parse(dup.emails_json) : dup.emails_json) : [];
             const dPhones = dup.phones_json ? (typeof dup.phones_json === 'string' ? JSON.parse(dup.phones_json) : dup.phones_json) : [];
@@ -292,8 +300,8 @@ appsApiRouter.post('/contacts-merge', async (req: Request, res: Response) => {
         });
 
         await pool.query(
-            `UPDATE contacts SET name=?, email=?, phone=?, job_title=?, organization=?, notes=?, emails_json=?, phones_json=?, addresses_json=?, labels_json=?, vcard_data=?, sync_token = sync_token + 1 WHERE id=? AND username=?`,
-            [name, email, phone, job_title, organization, notes, JSON.stringify(emails), JSON.stringify(phones), JSON.stringify(addresses), JSON.stringify(labels), newVcardData, primaryId, user]
+            `UPDATE contacts SET name=?, email=?, phone=?, job_title=?, organization=?, notes=?, emails_json=?, phones_json=?, addresses_json=?, labels_json=?, vcard_data=?, photo_url=?, sync_token = sync_token + 1 WHERE id=? AND username=?`,
+            [name, email, phone, job_title, organization, notes, JSON.stringify(emails), JSON.stringify(phones), JSON.stringify(addresses), JSON.stringify(labels), newVcardData, photo_url || null, primaryId, user]
         );
         
         await pool.query('DELETE FROM contacts WHERE id IN (?) AND username=?', [dupRows.map((d: any) => d.id), user]);
@@ -529,9 +537,9 @@ appsApiRouter.get('/calendars', async (req: Request, res: Response) => {
 
 appsApiRouter.post('/calendars', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { name, color } = req.body;
+    const { name, color, subscribed_url } = req.body;
     try {
-        const calendar = await createCalendar(user, name || 'New Calendar', { color });
+        const calendar = await createCalendar(user, name || 'New Calendar', { color, subscribed_url });
         res.json({ success: true, id: calendar.id });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -542,6 +550,7 @@ appsApiRouter.put('/calendars/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     const color = typeof req.body.color === 'string' ? req.body.color.trim() : '';
+    const subscribed_url = typeof req.body.subscribed_url === 'string' ? req.body.subscribed_url.trim() : null;
 
     if (!name) {
         return res.status(400).json({ success: false, error: 'Calendar name is required' });
@@ -553,8 +562,8 @@ appsApiRouter.put('/calendars/:id', async (req: Request, res: Response) => {
 
     try {
         const [result]: any = await pool.query(
-            'UPDATE calendars SET name = ?, color = ?, sync_token = sync_token + 1 WHERE id = ? AND user_id = ?',
-            [name, color, req.params.id as string, user]
+            'UPDATE calendars SET name = ?, color = ?, subscribed_url = ?, sync_token = sync_token + 1 WHERE id = ? AND user_id = ?',
+            [name, color, subscribed_url, req.params.id as string, user]
         );
 
         if (result.affectedRows === 0) {
@@ -572,6 +581,73 @@ appsApiRouter.get('/calendars/:id/shares', async (req: Request, res: Response) =
     try {
         const [rows]: any = await pool.query('SELECT shared_with_user_id, permission FROM calendar_shares WHERE calendar_id = ? AND calendar_id IN (SELECT id FROM calendars WHERE user_id = ?)', [req.params.id as string, user]);
         res.json({ success: true, shares: rows });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+appsApiRouter.get('/calendars/:id/export', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    try {
+        const [calRows]: any = await pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [req.params.id as string, user]);
+        if (calRows.length === 0) return res.status(404).json({ success: false, error: 'Calendar not found' });
+        
+        const [events]: any = await pool.query('SELECT ical_data FROM events WHERE calendar_id = ?', [req.params.id as string]);
+        
+        let icsData = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//OpenMailStack//WebCalendar//EN"
+        ];
+        
+        for (const ev of events) {
+            if (!ev.ical_data) continue;
+            // Extract everything between BEGIN:VEVENT and END:VEVENT
+            const match = ev.ical_data.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/i);
+            if (match) icsData.push(match[0]);
+        }
+        
+        icsData.push("END:VCALENDAR");
+        
+        res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="calendar-${req.params.id}.ics"`);
+        res.send(icsData.join('\r\n'));
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+appsApiRouter.post('/calendars/:id/import', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    const { ics_data } = req.body;
+    try {
+        const [calRows]: any = await pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [req.params.id as string, user]);
+        if (calRows.length === 0) return res.status(404).json({ success: false, error: 'Calendar not found' });
+        
+        const events = ics_data.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/gi) || [];
+        let imported = 0;
+        
+        for (const ev of events) {
+            const uidMatch = ev.match(/UID:(.+)/i);
+            const uid = uidMatch ? uidMatch[1].trim() : `imported-${Math.random().toString(36).substring(2)}@openmailstack`;
+            
+            const icalLine = [
+                "BEGIN:VCALENDAR",
+                "VERSION:2.0",
+                "PRODID:-//OpenMailStack//WebCalendar//EN",
+                ev,
+                "END:VCALENDAR"
+            ].join('\r\n');
+            
+            await pool.query(
+                `INSERT INTO events (calendar_id, uid, ical_data, sync_token) VALUES (?, ?, ?, 1)
+                 ON DUPLICATE KEY UPDATE ical_data=?, sync_token=sync_token+1`,
+                [req.params.id as string, uid, icalLine, icalLine]
+            );
+            imported++;
+        }
+        
+        res.json({ success: true, count: imported });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }

@@ -27,11 +27,70 @@ import {
 import { getUserSettings, isSettingsNamespace, saveUserSettings } from './user-settings';
 import { getAdminSettings, isAdminSettingsNamespace, saveAdminSettings } from './admin-settings';
 import { getBrandingSettings, saveBrandingSettings } from './branding';
+import { getSearchWorkerStatus, purgeUserSearchIndex } from './search-worker';
 
 export const apiRouter = Router();
 const requireAuth = requireSession;
 const requireAdmin = requireAdminSession;
 const execPromise = util.promisify(exec);
+
+import * as promClient from 'prom-client';
+promClient.collectDefaultMetrics({ prefix: 'openmailstack_' });
+const apiRequestsCounter = new promClient.Counter({
+    name: 'openmailstack_api_requests_total',
+    help: 'Total number of API requests',
+    labelNames: ['method', 'status']
+});
+
+const mailQueueGauge = new promClient.Gauge({ name: 'openmailstack_mail_queue_size', help: 'Number of emails currently queued in Postfix' });
+const imapConnectionsGauge = new promClient.Gauge({ name: 'openmailstack_network_connections_imap', help: 'Active IMAP connections' });
+const smtpConnectionsGauge = new promClient.Gauge({ name: 'openmailstack_network_connections_smtp', help: 'Active SMTP connections' });
+const httpConnectionsGauge = new promClient.Gauge({ name: 'openmailstack_network_connections_http', help: 'Active HTTP connections' });
+const rspamdScannedGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_scanned_total', help: 'Total emails scanned by Rspamd' });
+const rspamdSpamGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_spam_total', help: 'Total spam emails detected' });
+const rspamdRejectedGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_rejected_total', help: 'Total emails rejected' });
+
+setInterval(async () => {
+    try {
+        try {
+            const { stdout } = await execPromise('postqueue -j || true');
+            const lines = stdout.split('\n').filter((l: string) => l.trim().length > 0).length;
+            mailQueueGauge.set(lines);
+        } catch (e) {}
+
+        try {
+            const { stdout } = await execPromise('ss -tn state established');
+            let imap = 0, smtp = 0, http = 0;
+            stdout.split('\n').forEach((line: string) => {
+                if (line.includes(':993 ') || line.includes(':143 ')) imap++;
+                else if (line.includes(':25 ') || line.includes(':465 ') || line.includes(':587 ')) smtp++;
+                else if (line.includes(':80 ') || line.includes(':443 ') || line.includes(':20000 ')) http++;
+            });
+            imapConnectionsGauge.set(imap);
+            smtpConnectionsGauge.set(smtp);
+            httpConnectionsGauge.set(http);
+        } catch (e) {}
+
+        try {
+            const res = await fetch('http://localhost:11334/stat');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.scanned !== undefined) rspamdScannedGauge.set(data.scanned);
+                if (data.spam_count !== undefined) rspamdSpamGauge.set(data.spam_count);
+                if (data.actions && data.actions.reject !== undefined) rspamdRejectedGauge.set(data.actions.reject);
+            }
+        } catch (e) {}
+    } catch (err) {
+        // Silent catch
+    }
+}, 15000);
+
+apiRouter.use((req, res, next) => {
+    res.on('finish', () => {
+        apiRequestsCounter.inc({ method: req.method, status: res.statusCode });
+    });
+    next();
+});
 
 const withTransaction = async <T>(callback: (connection: PoolConnection) => Promise<T>): Promise<T> => {
     const connection = await pool.getConnection();
@@ -305,6 +364,32 @@ const logAdminAction = async (
                 String(req.ip || req.socket?.remoteAddress || '').slice(0, 64),
             ]
         );
+
+        // Fire webhooks
+        getAdminSettings('webhooks').then(settings => {
+            const hookSettings = settings as import('./admin-settings').WebhooksAdminSettings;
+            if (hookSettings.endpoints && hookSettings.endpoints.length > 0) {
+                if (hookSettings.events.length === 0 || hookSettings.events.includes(action)) {
+                    const payload = JSON.stringify({
+                        timestamp: new Date().toISOString(),
+                        actor,
+                        action,
+                        target_type: targetType,
+                        target_id: normalizedTargetId,
+                        target_domain: targetDomain,
+                        details,
+                        ip_address: req.ip || req.socket?.remoteAddress
+                    });
+                    for (const endpoint of hookSettings.endpoints) {
+                        fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: payload
+                        }).catch(e => console.error(`Webhook to ${endpoint} failed:`, e));
+                    }
+                }
+            }
+        }).catch(e => console.error('Failed to get webhook settings:', e));
     } catch (err) {
         console.error('Failed to write admin audit log:', err);
     }
@@ -696,6 +781,27 @@ apiRouter.get('/messages/search/index/status', requireAuth, async (req: any, res
     }
 });
 
+apiRouter.get('/messages/search/worker/status', requireAuth, async (req: any, res) => {
+    try {
+        const status = await getSearchWorkerStatus();
+        res.json({ success: true, ...status });
+    } catch (err: any) {
+        console.error('Failed to get search worker status:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+apiRouter.delete('/messages/search/index', requireAuth, async (req: any, res) => {
+    try {
+        const username = req.user.username;
+        const deletedCount = await purgeUserSearchIndex(username);
+        res.json({ success: true, deletedCount, message: `Purged ${deletedCount} index entries. Background worker will re-index automatically.` });
+    } catch (err: any) {
+        console.error('Failed to purge search index:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 apiRouter.post('/messages/search/index/sync', requireAuth, async (req: any, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -949,21 +1055,26 @@ apiRouter.post('/messages/send', requireAuth, upload.array('attachments'), async
 
         const info = await transporter.sendMail(mailOptions);
         
-        if (to) {
-            const emails = to.split(',').map((e: string) => e.trim());
-            for (const email of emails) {
-                if (email) {
-                    const match = email.match(/(.*)<(.+)>/);
-                    let contactName = '';
-                    let contactEmail = email;
-                    if (match) {
-                        contactName = match[1].replace(/"/g, '').trim();
-                        contactEmail = match[2].trim();
+        const contactsSettings = await getUserSettings(user, 'contacts') as any;
+        
+        if (contactsSettings.autoCreateFromSent !== false) {
+            const allRecipients = [to, cc, bcc].filter(Boolean).join(',');
+            if (allRecipients) {
+                const emails = allRecipients.split(',').map((e: string) => e.trim());
+                for (const email of emails) {
+                    if (email) {
+                        const match = email.match(/(.*)<(.+)>/);
+                        let contactName = '';
+                        let contactEmail = email;
+                        if (match) {
+                            contactName = match[1].replace(/"/g, '').trim();
+                            contactEmail = match[2].trim();
+                        }
+                        if (!contactName) contactName = contactEmail.split('@')[0];
+                        try {
+                            await pool.query('INSERT IGNORE INTO contacts (username, name, email) VALUES (?, ?, ?)', [user, contactName, contactEmail]);
+                        } catch(e) {}
                     }
-                    if (!contactName) contactName = contactEmail.split('@')[0];
-                    try {
-                        await pool.query('INSERT IGNORE INTO contacts (username, name, email) VALUES (?, ?, ?)', [user, contactName, contactEmail]);
-                    } catch(e) {}
                 }
             }
         }
@@ -1629,6 +1740,43 @@ apiRouter.delete('/admin/admins/:username', requireAuth, requireAdmin, async (re
     } catch (err: any) {
         res.status(500).json({ success: false, error: err.message });
     }
+});
+
+// Telemetry & Metrics
+apiRouter.get('/admin/telemetry/metrics', requireAuth, requireAdmin, async (req, res) => {
+    try {
+        res.set('Content-Type', promClient.register.contentType);
+        res.end(await promClient.register.metrics());
+    } catch (ex: any) {
+        res.status(500).end(ex.message);
+    }
+});
+
+apiRouter.get('/admin/telemetry/logs/live', requireAuth, requireAdmin, (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const { spawn } = require('child_process');
+    const journalctl = spawn('journalctl', ['-f', '-n', '100', '-u', 'postfix', '-u', 'dovecot', '-u', 'openmailstack']);
+
+    journalctl.stdout.on('data', (data: Buffer) => {
+        const lines = data.toString().split('\n');
+        for (const line of lines) {
+            if (line.trim()) {
+                res.write(`data: ${line}\n\n`);
+            }
+        }
+    });
+
+    journalctl.stderr.on('data', (data: Buffer) => {
+        console.error(`[Telemetry Logs] journalctl err: ${data}`);
+    });
+
+    req.on('close', () => {
+        journalctl.kill();
+    });
 });
 
 // Audit Logs

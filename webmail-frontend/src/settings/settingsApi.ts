@@ -32,6 +32,10 @@ export interface MailUserSettings {
     externalImages: 'ask' | 'trusted' | 'always';
     markReadDelaySeconds: 0 | 1 | 3 | 5;
   };
+  spam: {
+    blockedSenders: string[];
+    safeSenders: string[];
+  };
 }
 
 export interface CalendarUserSettings {
@@ -42,6 +46,9 @@ export interface CalendarUserSettings {
   weekStartsOn: 0 | 1 | 6;
   timeZone: string;
   clockFormat: '12h' | '24h';
+  workingHoursStart: string;
+  workingHoursEnd: string;
+  visibleDays: number[];
 }
 
 export interface ContactsUserSettings {
@@ -72,6 +79,10 @@ export const defaultMailSettings: MailUserSettings = {
     externalImages: 'ask',
     markReadDelaySeconds: 1,
   },
+  spam: {
+    blockedSenders: [],
+    safeSenders: [],
+  },
 };
 
 export const defaultCalendarSettings: CalendarUserSettings = {
@@ -82,6 +93,9 @@ export const defaultCalendarSettings: CalendarUserSettings = {
   weekStartsOn: 0,
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   clockFormat: '12h',
+  workingHoursStart: '09:00',
+  workingHoursEnd: '17:00',
+  visibleDays: [0, 1, 2, 3, 4, 5, 6],
 };
 
 export const defaultContactsSettings: ContactsUserSettings = {

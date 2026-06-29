@@ -30,6 +30,10 @@ export interface MailSettings {
         externalImages: 'ask' | 'trusted' | 'always';
         markReadDelaySeconds: 0 | 1 | 3 | 5;
     };
+    spam: {
+        blockedSenders: string[];
+        safeSenders: string[];
+    };
 }
 
 export interface CalendarSettings {
@@ -40,6 +44,9 @@ export interface CalendarSettings {
     weekStartsOn: 0 | 1 | 6;
     timeZone: string;
     clockFormat: '12h' | '24h';
+    workingHoursStart: string;
+    workingHoursEnd: string;
+    visibleDays: number[];
 }
 
 export interface ContactsSettings {
@@ -82,6 +89,10 @@ export const settingsDefaults = {
             externalImages: 'ask',
             markReadDelaySeconds: 1,
         },
+        spam: {
+            blockedSenders: [],
+            safeSenders: [],
+        },
     } satisfies MailSettings,
     calendar: {
         defaultCalendarId: null,
@@ -91,6 +102,9 @@ export const settingsDefaults = {
         weekStartsOn: 0,
         timeZone: 'UTC',
         clockFormat: '12h',
+        workingHoursStart: '09:00',
+        workingHoursEnd: '17:00',
+        visibleDays: [0, 1, 2, 3, 4, 5, 6],
     } satisfies CalendarSettings,
     contacts: {
         nameFormat: 'firstLast',
@@ -170,6 +184,14 @@ const textValue = (value: unknown, maxLength: number): string => (
     typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
 );
 
+const stringArray = (value: unknown, maxItems: number, maxLength: number): string[] => {
+    if (!Array.isArray(value)) return [];
+    return [...new Set(value
+        .map(v => typeof v === 'string' ? v.trim().toLowerCase().slice(0, maxLength) : '')
+        .filter(v => v !== '')
+    )].slice(0, maxItems);
+};
+
 function normalizeSignatures(value: unknown): MailSettings['signatures'] {
     if (!Array.isArray(value)) return [];
 
@@ -231,6 +253,10 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
                 externalImages: stringOption(reading.externalImages, ['ask', 'trusted', 'always'], settingsDefaults.mail.reading.externalImages),
                 markReadDelaySeconds: numberOption(reading.markReadDelaySeconds, [0, 1, 3, 5], settingsDefaults.mail.reading.markReadDelaySeconds),
             },
+            spam: {
+                blockedSenders: stringArray(isObject(source.spam) ? source.spam.blockedSenders : undefined, 500, 255),
+                safeSenders: stringArray(isObject(source.spam) ? source.spam.safeSenders : undefined, 500, 255),
+            },
         };
     }
 
@@ -243,6 +269,9 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
             weekStartsOn: weekStartValue(source.weekStartsOn, settingsDefaults.calendar.weekStartsOn),
             timeZone: typeof source.timeZone === 'string' && source.timeZone.trim() ? source.timeZone.trim().slice(0, 80) : settingsDefaults.calendar.timeZone,
             clockFormat: stringOption(source.clockFormat, ['12h', '24h'], settingsDefaults.calendar.clockFormat),
+            workingHoursStart: typeof source.workingHoursStart === 'string' && /^\d{2}:\d{2}$/.test(source.workingHoursStart) ? source.workingHoursStart : settingsDefaults.calendar.workingHoursStart,
+            workingHoursEnd: typeof source.workingHoursEnd === 'string' && /^\d{2}:\d{2}$/.test(source.workingHoursEnd) ? source.workingHoursEnd : settingsDefaults.calendar.workingHoursEnd,
+            visibleDays: Array.isArray(source.visibleDays) && source.visibleDays.every(d => typeof d === 'number' && d >= 0 && d <= 6) ? Array.from(new Set(source.visibleDays as number[])).sort() : settingsDefaults.calendar.visibleDays,
         };
     }
 

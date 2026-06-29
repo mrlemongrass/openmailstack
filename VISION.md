@@ -217,6 +217,18 @@ Day-to-day administration happens in a browser, not in a config file or an SSH s
 
 ---
 
+## Migration Engine
+
+**Seamless transition from legacy systems.**
+We know that the biggest barrier to adopting a new mail server is the fear of losing data or disrupting operations during the transition. OpenMailStack will feature a built-in, painless Migration Engine designed to confidently migrate existing mail servers, accounts, messages, calendars, and contacts with zero data loss.
+
+- Live, continuous synchronization from external IMAP/CalDAV/CardDAV servers.
+- Simple, wizard-driven web interface for configuring source credentials and mapping domains.
+- Background task processing for bulk migrations without impacting active server performance.
+- Automated health checks and verification to ensure full data fidelity before cutting over DNS.
+
+---
+
 ## Complete Features Matrix
 
 Here is the comprehensive matrix of features we foresee OpenMailStack delivering, categorized by functional area:
@@ -378,3 +390,9 @@ Here is the comprehensive matrix of features we foresee OpenMailStack delivering
 - AI / LLM spam classifier
 - AI / LLM Sieve scripting
 - Read replicas, sharded blob and in-memory stores
+
+### Migration Engine
+- Live, continuous synchronization from IMAP/CalDAV/CardDAV servers
+- Wizard-driven migration configuration interface
+- Bulk migration task processing
+- Data fidelity verification and health checks

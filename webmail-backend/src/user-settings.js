@@ -181,7 +181,7 @@ function normalizeSettings(namespace, value) {
     if (namespace === 'calendar') {
         return {
             defaultCalendarId: optionalPositiveInteger(source.defaultCalendarId),
-            defaultView: stringOption(source.defaultView, ['day', 'week', 'month', 'year'], exports.settingsDefaults.calendar.defaultView),
+            defaultView: stringOption(source.defaultView, ['day', 'week', 'month', 'year', 'agenda'], exports.settingsDefaults.calendar.defaultView),
             defaultEventDurationMinutes: boundedNumber(source.defaultEventDurationMinutes, exports.settingsDefaults.calendar.defaultEventDurationMinutes, 5, 480),
             defaultReminderMinutes: numberOption(source.defaultReminderMinutes, [0, 5, 10, 15, 30, 60, 1440], exports.settingsDefaults.calendar.defaultReminderMinutes),
             weekStartsOn: weekStartValue(source.weekStartsOn, exports.settingsDefaults.calendar.weekStartsOn),

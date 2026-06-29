@@ -34,7 +34,7 @@ export interface MailSettings {
 }
 export interface CalendarSettings {
     defaultCalendarId: number | null;
-    defaultView: 'day' | 'week' | 'month' | 'year';
+    defaultView: 'day' | 'week' | 'month' | 'year' | 'agenda';
     defaultEventDurationMinutes: number;
     defaultReminderMinutes: 0 | 5 | 10 | 15 | 30 | 60 | 1440;
     weekStartsOn: 0 | 1 | 6;

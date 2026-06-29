@@ -53,7 +53,7 @@ test('normalizeSettings bounds calendar settings', () => {
   });
 
   assert.equal(normalized.defaultCalendarId, 42);
-  assert.equal(normalized.defaultView, settingsDefaults.calendar.defaultView);
+  assert.equal(normalized.defaultView, 'agenda');
   assert.equal(normalized.defaultEventDurationMinutes, 480);
   assert.equal(normalized.defaultReminderMinutes, 1440);
   assert.equal(normalized.weekStartsOn, 6);

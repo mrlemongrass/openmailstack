@@ -881,6 +881,7 @@ function CalendarPane({ setupValues, calendarSettings, calendars, onCalendarSett
             <span>Default View</span>
             <SegmentedControl
               options={[
+                { value: 'agenda', label: 'Agenda' },
                 { value: 'day', label: 'Day' },
                 { value: 'week', label: 'Week' },
                 { value: 'month', label: 'Month' },

@@ -3401,7 +3401,7 @@ function App() {
       guestPermissions: { invite: true, seeList: true },
       location: event.location || '',
       description: event.description || '',
-      notifications: [{id: 1, type: 'notification', time: 10}],
+      notifications: [{id: 1, type: 'notification', time: calendarSettings.defaultReminderMinutes}],
       busyStatus: 'busy',
       visibility: 'default'
     });
@@ -3451,7 +3451,7 @@ function App() {
           busyStatus: 'busy',
           visibility: 'default',
           guests: '',
-          notifications: [{ method: 'popup', time: 10 }],
+          notifications: [{id: 1, type: 'notification', time: calendarSettings.defaultReminderMinutes}],
           guestPermissions: { modify: false, invite: true, seeList: true }
       };
 
@@ -3482,9 +3482,10 @@ function App() {
     }
 
     const sameDay = isSameDay(event.start, event.end);
+    const timeFmt = calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a';
     return sameDay
-      ? `${format(event.start, 'EEEE, MMMM d, yyyy')} | ${format(event.start, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')} - ${format(event.end, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')}`
-      : `${format(event.start, 'MMM d, yyyy h:mm a')} - ${format(event.end, 'MMM d, yyyy h:mm a')}`;
+      ? `${format(event.start, 'EEEE, MMMM d, yyyy')} | ${format(event.start, timeFmt)} - ${format(event.end, timeFmt)}`
+      : `${format(event.start, `MMM d, yyyy ${timeFmt}`)} - ${format(event.end, `MMM d, yyyy ${timeFmt}`)}`;
   };
 
   const openCalendarEditor = (calendar: Calendar) => {
@@ -4799,11 +4800,11 @@ function App() {
                     </div>
                     <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
                       <div style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', padding: '2px' }}>
-                        <button className={`btn ${calendarView === 'agenda' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => setCalendarView('agenda')}>Agenda</button>
-                        <button className={`btn ${calendarView === 'day' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => setCalendarView('day')}>Day</button>
-                        <button className={`btn ${calendarView === 'week' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => setCalendarView('week')}>Week</button>
-                        <button className={`btn ${calendarView === 'month' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => setCalendarView('month')}>Month</button>
-                        <button className={`btn ${calendarView === 'year' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => setCalendarView('year')}>Year</button>
+                        <button className={`btn ${calendarView === 'agenda' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => { setCalendarView('agenda'); setCalendarSettings(prev => ({...prev, defaultView: 'agenda'})); }}>Agenda</button>
+                        <button className={`btn ${calendarView === 'day' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => { setCalendarView('day'); setCalendarSettings(prev => ({...prev, defaultView: 'day'})); }}>Day</button>
+                        <button className={`btn ${calendarView === 'week' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => { setCalendarView('week'); setCalendarSettings(prev => ({...prev, defaultView: 'week'})); }}>Week</button>
+                        <button className={`btn ${calendarView === 'month' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => { setCalendarView('month'); setCalendarSettings(prev => ({...prev, defaultView: 'month'})); }}>Month</button>
+                        <button className={`btn ${calendarView === 'year' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 12px' }} onClick={() => { setCalendarView('year'); setCalendarSettings(prev => ({...prev, defaultView: 'year'})); }}>Year</button>
                       </div>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button className="btn btn-ghost" onClick={() => setCurrentDate(calendarView === 'year' ? subMonths(currentDate, 12) : calendarView === 'month' ? subMonths(currentDate, 1) : calendarView === 'week' ? subWeeks(currentDate, 1) : subDays(currentDate, 1))}><ChevronLeft size={18} /></button>
@@ -4830,13 +4831,13 @@ function App() {
                          }
                          return (
                            <div key={m} style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '8px', padding: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                             <h3 style={{ margin: '0 0 12px 0', fontSize: '1.1rem', textAlign: 'center', cursor: 'pointer' }} onClick={() => { setCurrentDate(monthDate); setCalendarView('month'); }}>{format(monthDate, 'MMMM')}</h3>
+                             <h3 style={{ margin: '0 0 12px 0', fontSize: '1.1rem', textAlign: 'center', cursor: 'pointer' }} onClick={() => { setCurrentDate(monthDate); setCalendarView('month'); setCalendarSettings(prev => ({...prev, defaultView: 'month'})); }}>{format(monthDate, 'MMMM')}</h3>
                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', fontSize: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '8px' }}>
                                {['S','M','T','W','T','F','S'].map((day, i) => <div key={i}>{day}</div>)}
                              </div>
                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
                                {days.map((day, i) => (
-                                  <div key={i} onClick={() => { setCurrentDate(day); setCalendarView('day'); }} style={{ textAlign: 'center', padding: '4px 0', fontSize: '0.8rem', borderRadius: '50%', background: isSameDay(day, new Date()) ? 'var(--accent-primary)' : 'transparent', color: isSameDay(day, new Date()) ? 'var(--bg-dark)' : isSameMonth(day, monthDate) ? 'inherit' : 'rgba(255,255,255,0.2)', cursor: 'pointer' }}>
+                                  <div key={i} onClick={() => { setCurrentDate(day); setCalendarView('day'); setCalendarSettings(prev => ({...prev, defaultView: 'day'})); }} style={{ textAlign: 'center', padding: '4px 0', fontSize: '0.8rem', borderRadius: '50%', background: isSameDay(day, new Date()) ? 'var(--accent-primary)' : 'transparent', color: isSameDay(day, new Date()) ? 'var(--bg-dark)' : isSameMonth(day, monthDate) ? 'inherit' : 'rgba(255,255,255,0.2)', cursor: 'pointer' }}>
                                     {format(day, 'd')}
                                   </div>
                                ))}
@@ -4944,7 +4945,7 @@ function App() {
                           {displayHours.map(h => (
                             <div key={h} style={{ height: '60px', position: 'relative' }}>
                               <span style={{ position: 'absolute', top: '-10px', right: '8px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                {h === 0 ? '' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h-12} PM`}
+                                {h === 0 ? '' : calendarSettings.clockFormat === '24h' ? `${String(h).padStart(2, '0')}:00` : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h-12} PM`}
                               </span>
                             </div>
                           ))}

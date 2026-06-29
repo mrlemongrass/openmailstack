@@ -623,6 +623,10 @@ exports.apiRouter.post('/account/password', requireAuth, async (req, res) => {
     const { current, new: newPassword } = req.body;
     const normalizedUsername = req.user.username;
     try {
+        const securitySettings = await (0, admin_settings_1.getAdminSettings)('security');
+        if (securitySettings?.allowUserPasswordChange === false) {
+            return res.status(403).json({ success: false, error: 'Password changes are disabled by your administrator.' });
+        }
         const [rows] = await db_1.pool.query('SELECT password FROM mailbox WHERE username = ? AND active = 1', [normalizedUsername]);
         if (rows.length === 0) {
             return res.status(401).json({ success: false, error: 'User not found' });
@@ -649,17 +653,49 @@ exports.apiRouter.post('/account/password', requireAuth, async (req, res) => {
     }
 });
 exports.apiRouter.get('/account/sessions', requireAuth, async (req, res) => {
-    res.json({
-        success: true,
-        sessions: [
-            {
-                id: 'current',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                isCurrent: true
-            }
-        ]
-    });
+    try {
+        const db = await db_1.pool.getConnection();
+        try {
+            const [rows] = await db.query(`SELECT id_hash, created_at, updated_at FROM webmail_sessions
+                 WHERE username = ? AND expires_at > NOW() ORDER BY updated_at DESC`, [req.user.username]);
+            const rawId = req.cookies?.oms_session || '';
+            const currentHash = crypto_1.default.createHash('sha256').update(rawId).digest('hex');
+            const sessions = rows.map(r => ({
+                id: r.id_hash.substring(0, 8),
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+                isCurrent: r.id_hash === currentHash
+            }));
+            res.json({ success: true, sessions });
+        }
+        finally {
+            db.release();
+        }
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.delete('/account/sessions/:id', requireAuth, async (req, res) => {
+    try {
+        const rawId = req.cookies?.oms_session || '';
+        const currentHash = crypto_1.default.createHash('sha256').update(rawId).digest('hex');
+        if (currentHash.startsWith(req.params.id)) {
+            return res.status(400).json({ success: false, error: 'Cannot revoke your current session.' });
+        }
+        const db = await db_1.pool.getConnection();
+        try {
+            const [result] = await db.query(`DELETE FROM webmail_sessions WHERE id_hash LIKE ? AND username = ?`, [`${req.params.id}%`, req.user.username]);
+            const affected = result.affectedRows || 0;
+            res.json({ success: true, revoked: affected });
+        }
+        finally {
+            db.release();
+        }
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
 });
 exports.apiRouter.get('/rules', requireAuth, async (req, res) => {
     const user = req.user.username;

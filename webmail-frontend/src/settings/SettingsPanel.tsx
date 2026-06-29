@@ -44,6 +44,7 @@ interface SettingsContentProps {
   loading: boolean;
   saving: boolean;
   settingsSyncError: string;
+  settingsSaveState: 'idle' | 'saving' | 'saved' | 'error';
   rules: Rule[];
   folders: MailFolder[];
   signatures: Signature[];
@@ -230,6 +231,18 @@ export function SettingsContent(props: SettingsContentProps) {
       {props.settingsSyncError && (
         <div className="settings-error-banner" role="status">
           {props.settingsSyncError}
+        </div>
+      )}
+      {props.settingsSaveState === 'saving' && (
+        <div className="settings-saving-banner" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', padding: '6px 12px', borderRadius: '6px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="spinner" style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--text-secondary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <span>Saving...</span>
+        </div>
+      )}
+      {props.settingsSaveState === 'saved' && (
+        <div className="settings-saving-banner" style={{ background: 'rgba(52,211,153,0.12)', color: '#a7f3d0', padding: '6px 12px', borderRadius: '6px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', border: '1px solid rgba(52,211,153,0.2)' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          <span>Saved</span>
         </div>
       )}
       {props.saving && (

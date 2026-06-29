@@ -800,6 +800,7 @@ function App() {
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [settingsHydratedFor, setSettingsHydratedFor] = useState('');
   const [settingsSyncError, setSettingsSyncError] = useState('');
+  const [settingsSaveState, setSettingsSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [isThreaded, setIsThreaded] = useState(() => loadLocalThreaded());
   const [signatures, setSignatures] = useState<Signature[]>(() => loadLocalSignatures());
   const [mailSettings, setMailSettings] = useState<MailUserSettings>(() => defaultMailSettings);
@@ -1117,6 +1118,7 @@ function App() {
         return;
       }
 
+      setSettingsSaveState('saving');
       void Promise.all([
         saveUserSettings('mail', nextMailSettings),
         saveUserSettings('appearance', appearance),
@@ -1127,11 +1129,14 @@ function App() {
           if (!cancelled) {
             settingsSaveSnapshot.current = settingsSnapshot;
             setSettingsSyncError('');
+            setSettingsSaveState('saved');
+            setTimeout(() => setSettingsSaveState(prev => prev === 'saved' ? 'idle' : prev), 2000);
           }
         })
         .catch(() => {
           if (!cancelled) {
             setSettingsSyncError('Settings changes are saved locally, but not synced to the server.');
+            setSettingsSaveState('error');
           }
         });
 
@@ -4655,6 +4660,7 @@ function App() {
               loading={loading}
               saving={saving}
               settingsSyncError={settingsSyncError}
+              settingsSaveState={settingsSaveState}
               rules={rules}
               vacationSettings={vacationSettings}
               folders={folders}

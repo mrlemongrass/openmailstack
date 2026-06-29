@@ -171,15 +171,21 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                 const match = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
                 if (!match) continue;
                 const cols = match.map((c: string) => c.replace(/^"|"$/g, '').trim());
-                
+
                 const name = nameIdx >= 0 ? cols[nameIdx] || '' : '';
                 const email = emailIdx >= 0 ? cols[emailIdx] || '' : '';
                 const phone = phoneIdx >= 0 ? cols[phoneIdx] || '' : '';
-                
+                const jobTitleIdx = headers.findIndex((h: string) => h.includes('job'));
+                const orgIdx = headers.findIndex((h: string) => h.includes('organization'));
+                const notesIdx = headers.findIndex((h: string) => h.includes('notes'));
+                const jobTitle = jobTitleIdx >= 0 ? cols[jobTitleIdx] || '' : '';
+                const organization = orgIdx >= 0 ? cols[orgIdx] || '' : '';
+                const notes = notesIdx >= 0 ? cols[notesIdx] || '' : '';
+
                 if (name || email) {
                     await pool.query(
-                        'INSERT INTO contacts (username, name, email, phone) VALUES (?, ?, ?, ?)',
-                        [user, name, email, phone]
+                        'INSERT INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [user, name, email, phone, jobTitle, organization, notes]
                     );
                     imported++;
                 }
@@ -192,8 +198,8 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                 const parsed = parseVCard(vcard);
                 if (parsed.name || parsed.email) {
                     await pool.query(
-                        'INSERT INTO contacts (username, name, email, phone, vcard_data) VALUES (?, ?, ?, ?, ?)',
-                        [user, parsed.name || '', parsed.email || '', parsed.phone || '', vcard]
+                        'INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, vcard_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                        [user, parsed.name || '', parsed.email || '', parsed.phone || '', parsed.title || '', parsed.organization || '', parsed.note || '', vcard]
                     );
                     imported++;
                 }

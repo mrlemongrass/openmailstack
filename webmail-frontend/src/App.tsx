@@ -826,6 +826,8 @@ function App() {
   const [contactsView, setContactsView] = useState<ContactsView>('personal');
   const [contactsActionStatus, setContactsActionStatus] = useState('');
   const [contactsActionError, setContactsActionError] = useState('');
+  const [calendarActionStatus, setCalendarActionStatus] = useState('');
+  const [calendarActionError, setCalendarActionError] = useState('');
   const [editingContact, setEditingContact] = useState<Partial<Contact> | null>(null);
   const [isContactModalOpen, setIsContactModalOpen] = useState(false);
   const [editingLabel, setEditingLabel] = useState<Partial<ContactLabel> | null>(null);
@@ -2973,7 +2975,8 @@ function App() {
           job_title: contact.jobTitle || '',
           organization: contact.organization || '',
           notes: contact.notes || '',
-          labels_json: contact.labels_json || []
+          labels_json: contact.labels_json || [],
+          photo_url: (contact as any).photo_url || ''
         })
       });
       
@@ -4771,6 +4774,8 @@ function App() {
                                  const file = (ev.target as HTMLInputElement).files?.[0];
                                  if (!file) return;
                                  const reader = new FileReader();
+                                 setCalendarActionStatus('Importing events...');
+                                 setCalendarActionError('');
                                  reader.onload = async (re) => {
                                    try {
                                      const res = await fetch(`/api/apps/calendars/${cal.id}/import`, {
@@ -4780,13 +4785,13 @@ function App() {
                                      });
                                      const data = await res.json();
                                      if (data.success) {
-                                       window.alert(`Successfully imported ${data.count} events.`);
+                                       setCalendarActionStatus(`Successfully imported ${data.count} events.`);
                                        refreshCalendars();
                                      } else {
-                                       window.alert('Import failed: ' + data.error);
+                                       setCalendarActionError('Import failed: ' + data.error);
                                      }
                                    } catch (err) {
-                                     window.alert('Import failed.');
+                                     setCalendarActionError('Import failed.');
                                    }
                                  };
                                  reader.readAsText(file);
@@ -4843,7 +4848,13 @@ function App() {
                       </div>
                     </div>
                   </div>
-                  
+
+                  {(calendarActionError || calendarActionStatus) && (
+                    <div className={calendarActionError ? 'settings-error-banner' : 'settings-status-banner'} role="status" style={{ marginBottom: '12px' }}>
+                      {calendarActionError || calendarActionStatus}
+                    </div>
+                  )}
+
                   {(() => {
                     const filteredEvents = calendarSearchQuery.trim() ? events.filter(e => e.title.toLowerCase().includes(calendarSearchQuery.toLowerCase()) || (e.description || '').toLowerCase().includes(calendarSearchQuery.toLowerCase())) : events;
                     return (
@@ -5875,7 +5886,7 @@ function App() {
             <div className="sync-setup-header">
               <div>
                 <div className="sync-setup-eyebrow">Calendar</div>
-                <h3 id="calendar-editor-title">Edit Calendar</h3>
+                <h3 id="calendar-editor-title">{editingCalendar.id === -1 ? 'New Calendar' : 'Edit Calendar'}</h3>
               </div>
               <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={() => setEditingCalendar(null)} disabled={calendarEditorSaving} title="Close" aria-label="Close calendar editor">
                 <X size={18} />

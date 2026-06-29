@@ -165,8 +165,14 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                 const name = nameIdx >= 0 ? cols[nameIdx] || '' : '';
                 const email = emailIdx >= 0 ? cols[emailIdx] || '' : '';
                 const phone = phoneIdx >= 0 ? cols[phoneIdx] || '' : '';
+                const jobTitleIdx = headers.findIndex((h) => h.includes('job'));
+                const orgIdx = headers.findIndex((h) => h.includes('organization'));
+                const notesIdx = headers.findIndex((h) => h.includes('notes'));
+                const jobTitle = jobTitleIdx >= 0 ? cols[jobTitleIdx] || '' : '';
+                const organization = orgIdx >= 0 ? cols[orgIdx] || '' : '';
+                const notes = notesIdx >= 0 ? cols[notesIdx] || '' : '';
                 if (name || email) {
-                    await db_1.pool.query('INSERT INTO contacts (username, name, email, phone) VALUES (?, ?, ?, ?)', [user, name, email, phone]);
+                    await db_1.pool.query('INSERT INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)', [user, name, email, phone, jobTitle, organization, notes]);
                     imported++;
                 }
             }
@@ -179,7 +185,7 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                     continue;
                 const parsed = (0, contact_utils_1.parseVCard)(vcard);
                 if (parsed.name || parsed.email) {
-                    await db_1.pool.query('INSERT INTO contacts (username, name, email, phone, vcard_data) VALUES (?, ?, ?, ?, ?)', [user, parsed.name || '', parsed.email || '', parsed.phone || '', vcard]);
+                    await db_1.pool.query('INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, vcard_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [user, parsed.name || '', parsed.email || '', parsed.phone || '', parsed.title || '', parsed.organization || '', parsed.note || '', vcard]);
                     imported++;
                 }
             }

@@ -18,6 +18,7 @@ export interface ContactRow {
     organization?: string;
     notes?: string;
     labels_json?: any;
+    photo_url?: string;
 }
 
 export interface ContactLabelRow {
@@ -31,6 +32,10 @@ export interface ParsedVCardContact {
     name: string;
     email: string;
     phone: string;
+    organization?: string;
+    title?: string;
+    note?: string;
+    address?: string;
 }
 
 let schemaPromise: Promise<void> | null = null;
@@ -113,6 +118,9 @@ export async function ensureContactsSchema(): Promise<void> {
             if (!columnNames.has('labels_json')) {
                 await pool.query('ALTER TABLE contacts ADD COLUMN labels_json JSON NULL AFTER notes');
             }
+            if (!columnNames.has('photo_url')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN photo_url MEDIUMTEXT NULL AFTER labels_json');
+            }
 
             const [indexes]: any = await pool.query("SHOW INDEX FROM contacts WHERE Key_name = 'idx_contacts_user_dav_uid'");
             if (indexes.length === 0) {
@@ -174,6 +182,18 @@ function firstVCardValue(lines: string[], propertyName: string): string {
     return vcardUnescape(line.slice(separatorIndex + 1).trim());
 }
 
+function vCardAddress(lines: string[]): string {
+    const vals: string[] = [];
+    for (const line of lines) {
+        const propUpper = line.split(':')[0].split(';')[0].toUpperCase();
+        if (propUpper !== 'ADR') continue;
+        const val = firstVCardValue([line], 'ADR');
+        const parts = val.split(';').filter(Boolean);
+        if (parts.length > 0) vals.push(parts.join(', '));
+    }
+    return vals.join(' | ') || '';
+}
+
 export function parseVCard(vcard: string): ParsedVCardContact {
     const lines = unfoldVCard(vcard);
     const fn = firstVCardValue(lines, 'FN');
@@ -186,7 +206,11 @@ export function parseVCard(vcard: string): ParsedVCardContact {
     return {
         name: fn || n,
         email: firstVCardValue(lines, 'EMAIL'),
-        phone: firstVCardValue(lines, 'TEL')
+        phone: firstVCardValue(lines, 'TEL'),
+        organization: firstVCardValue(lines, 'ORG'),
+        title: firstVCardValue(lines, 'TITLE'),
+        note: firstVCardValue(lines, 'NOTE'),
+        address: vCardAddress(lines)
     };
 }
 
@@ -289,6 +313,7 @@ export function patchVCardData(vcard: string, davUid: string, updates: any): str
     if (updates.organization) newLines.splice(insertAt + 2, 0, `ORG:${vcardEscape(updates.organization)}`);
     if (updates.job_title) newLines.splice(insertAt + 2, 0, `TITLE:${vcardEscape(updates.job_title)}`);
     if (updates.notes) newLines.splice(insertAt + 2, 0, `NOTE:${vcardEscape(updates.notes)}`);
+    if (updates.photo_url && /^data:image\//.test(updates.photo_url)) newLines.splice(insertAt + 2, 0, `PHOTO;ENCODING=BASE64;TYPE=JPEG:${(updates.photo_url as string).replace(/^data:image\/[^;]+;base64,/, '')}`);
 
     if (endIndex < 0) newLines.push('END:VCARD');
     return `${newLines.join('\r\n')}\r\n`;

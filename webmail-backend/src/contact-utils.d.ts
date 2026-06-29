@@ -15,6 +15,7 @@ export interface ContactRow {
     organization?: string;
     notes?: string;
     labels_json?: any;
+    photo_url?: string;
 }
 export interface ContactLabelRow {
     id: number;
@@ -26,6 +27,10 @@ export interface ParsedVCardContact {
     name: string;
     email: string;
     phone: string;
+    organization?: string;
+    title?: string;
+    note?: string;
+    address?: string;
 }
 export declare function ensureContactsSchema(): Promise<void>;
 export declare function xmlEscape(value: string): string;

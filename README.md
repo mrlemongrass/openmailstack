@@ -50,7 +50,9 @@ Are you a sysadmin, a security researcher, or just an unapologetic nerd? We love
 
 👉 **[Read the TECHNICAL.md Architecture Guide](TECHNICAL.md)** 👈
 
-## 🗺️ Roadmap
+## 🗺️ Vision & Roadmap
+
+The overarching goals and future architecture of this project are detailed in our **[VISION.md](VISION.md)** document.
 
 The modern React webmail, calendar, contacts, and sync stack is under active development. Current product and release priorities live in **[ROADMAP.md](ROADMAP.md)**.
 

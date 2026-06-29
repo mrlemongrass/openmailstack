@@ -227,7 +227,14 @@ const getVisibleAttachments = (parsed) => {
 };
 const isPreviewableAttachment = (contentType) => (contentType.startsWith('image/') ||
     contentType.startsWith('text/') ||
-    contentType === 'application/pdf');
+    contentType === 'application/pdf' ||
+    contentType === 'application/msword' ||
+    contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    contentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    contentType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+    contentType === 'application/vnd.oasis.opendocument.text' ||
+    contentType === 'application/vnd.oasis.opendocument.spreadsheet' ||
+    contentType === 'application/rtf');
 const sanitizeAttachmentFilename = (filename) => filename.replace(/[\r\n"]/g, '').trim() || 'attachment';
 const encodeAttachmentFilename = (filename) => {
     const cleaned = sanitizeAttachmentFilename(filename);

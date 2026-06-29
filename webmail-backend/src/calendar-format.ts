@@ -12,6 +12,7 @@ export interface ParsedIcalEvent {
     recurrence: RecurrenceRule | null;
     recurrenceLabel: string;
     occurrenceId?: string;
+    exdates?: Set<string>;
 }
 
 export interface RecurrenceRule {
@@ -175,6 +176,7 @@ export function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & { t
     const start = parseIcalDate(startField?.value || '', allDay);
     const fallbackEnd = new Date(start.getTime() + (allDay ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000));
     const recurrence = parseRrule(firstIcalValue(eventLines, 'RRULE')?.value);
+    const exdates = parseExdates(eventLines);
 
     return {
         uid: firstIcalValue(eventLines, 'UID')?.value || uid,
@@ -188,7 +190,22 @@ export function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & { t
         recurrence,
         recurrenceLabel: recurrenceLabel(recurrence),
         type: isTask ? 'task' : 'event',
+        exdates,
     };
+}
+
+function parseExdates(lines: string[]): Set<string> {
+    const excluded = new Set<string>();
+    for (const line of lines) {
+        const propUpper = line.split(':')[0].split(';')[0].toUpperCase();
+        if (propUpper !== 'EXDATE') continue;
+        const val = line.slice(line.indexOf(':') + 1).trim();
+        for (const dateStr of val.split(',')) {
+            const clean = dateStr.trim().replace(/[^0-9TZ]/g, '');
+            if (clean.length >= 8) excluded.add(clean);
+        }
+    }
+    return excluded;
 }
 
 function addRecurrenceInterval(date: Date, frequency: RecurrenceRule['frequency'], interval: number): Date {
@@ -221,15 +238,18 @@ export function expandRecurringEvent(
         const occurrenceEnd = new Date(occurrenceStart.getTime() + durationMs);
         if (occurrenceEnd >= rangeStart && occurrenceStart <= rangeEnd) {
             const occurrenceKey = formatActiveSyncDate(occurrenceStart);
-            occurrences.push({
-                ...event,
-                start: new Date(occurrenceStart),
-                end: occurrenceEnd,
-                uid: event.uid,
-                title: event.title,
-                recurrenceLabel: event.recurrenceLabel,
-                occurrenceId: occurrenceKey,
-            });
+            const isExcluded = event.exdates && event.exdates.has(occurrenceKey.replace(/Z$/, ''));
+            if (!isExcluded) {
+                occurrences.push({
+                    ...event,
+                    start: new Date(occurrenceStart),
+                    end: occurrenceEnd,
+                    uid: event.uid,
+                    title: event.title,
+                    recurrenceLabel: event.recurrenceLabel,
+                    occurrenceId: occurrenceKey,
+                });
+            }
         }
 
         occurrenceStart = addRecurrenceInterval(occurrenceStart, event.recurrence.frequency, event.recurrence.interval);

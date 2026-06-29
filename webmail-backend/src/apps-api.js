@@ -704,7 +704,24 @@ exports.appsApiRouter.delete('/events/:calendar_id/:uid', async (req, res) => {
         `, [user, calendar_id, user]);
         if (cals.length === 0)
             return res.status(403).json({ success: false, error: 'Unauthorized calendar' });
-        await db_1.pool.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [calendar_id, uid]);
+        const excludeDate = req.query.exclude;
+        if (excludeDate) {
+            const [events] = await db_1.pool.query('SELECT uid, ical_data FROM events WHERE calendar_id=? AND uid=?', [calendar_id, uid]);
+            if (events.length === 0)
+                return res.status(404).json({ success: false, error: 'Event not found' });
+            let icalData = events[0].ical_data || '';
+            const excludeDateClean = excludeDate.replace(/[-:]/g, '').split('.')[0];
+            if (icalData.includes('EXDATE:')) {
+                icalData = icalData.replace(/(EXDATE:.*)/, `$1,${excludeDateClean}Z`);
+            }
+            else {
+                icalData = icalData.replace(/(END:VEVENT)/, `EXDATE:${excludeDateClean}Z\r\n$1`);
+            }
+            await db_1.pool.query('UPDATE events SET ical_data = ? WHERE calendar_id=? AND uid=?', [icalData, calendar_id, uid]);
+        }
+        else {
+            await db_1.pool.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [calendar_id, uid]);
+        }
         await db_1.pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar_id]);
         try {
             const { io } = require('./index');

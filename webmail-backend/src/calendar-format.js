@@ -148,6 +148,7 @@ function parseIcalEvent(uid, ical) {
     const start = parseIcalDate(startField?.value || '', allDay);
     const fallbackEnd = new Date(start.getTime() + (allDay ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000));
     const recurrence = parseRrule(firstIcalValue(eventLines, 'RRULE')?.value);
+    const exdates = parseExdates(eventLines);
     return {
         uid: firstIcalValue(eventLines, 'UID')?.value || uid,
         title: unescapeIcalText(firstIcalValue(eventLines, 'SUMMARY')?.value || 'Untitled'),
@@ -160,7 +161,23 @@ function parseIcalEvent(uid, ical) {
         recurrence,
         recurrenceLabel: recurrenceLabel(recurrence),
         type: isTask ? 'task' : 'event',
+        exdates,
     };
+}
+function parseExdates(lines) {
+    const excluded = new Set();
+    for (const line of lines) {
+        const propUpper = line.split(':')[0].split(';')[0].toUpperCase();
+        if (propUpper !== 'EXDATE')
+            continue;
+        const val = line.slice(line.indexOf(':') + 1).trim();
+        for (const dateStr of val.split(',')) {
+            const clean = dateStr.trim().replace(/[^0-9TZ]/g, '');
+            if (clean.length >= 8)
+                excluded.add(clean);
+        }
+    }
+    return excluded;
 }
 function addRecurrenceInterval(date, frequency, interval) {
     const next = new Date(date);
@@ -191,15 +208,18 @@ function expandRecurringEvent(event, rangeStart, rangeEnd, maxOccurrences = 400)
         const occurrenceEnd = new Date(occurrenceStart.getTime() + durationMs);
         if (occurrenceEnd >= rangeStart && occurrenceStart <= rangeEnd) {
             const occurrenceKey = formatActiveSyncDate(occurrenceStart);
-            occurrences.push({
-                ...event,
-                start: new Date(occurrenceStart),
-                end: occurrenceEnd,
-                uid: event.uid,
-                title: event.title,
-                recurrenceLabel: event.recurrenceLabel,
-                occurrenceId: occurrenceKey,
-            });
+            const isExcluded = event.exdates && event.exdates.has(occurrenceKey.replace(/Z$/, ''));
+            if (!isExcluded) {
+                occurrences.push({
+                    ...event,
+                    start: new Date(occurrenceStart),
+                    end: occurrenceEnd,
+                    uid: event.uid,
+                    title: event.title,
+                    recurrenceLabel: event.recurrenceLabel,
+                    occurrenceId: occurrenceKey,
+                });
+            }
         }
         occurrenceStart = addRecurrenceInterval(occurrenceStart, event.recurrence.frequency, event.recurrence.interval);
         generated += 1;

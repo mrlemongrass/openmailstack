@@ -890,7 +890,7 @@ function App() {
   const [newEventData, setNewEventData] = useState({ 
     title: '', calendarId: 1, start: new Date(), end: new Date(new Date().getTime() + 60*60*1000), 
     isAllDay: false, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    recurrence: 'none', guests: '', guestPermissions: { invite: true, seeList: true },
+    recurrence: 'none', recurrenceId: null as string | null, guests: '', guestPermissions: { invite: true, seeList: true },
     location: '', description: '',
     notifications: [{id: 1, type: 'notification', time: 10}],
     busyStatus: 'busy', visibility: 'default'
@@ -1302,6 +1302,7 @@ function App() {
       location: '',
       description: '',
       notifications: [{ id: 1, type: 'notification', time: calendarSettings.defaultReminderMinutes }],
+      recurrenceId: null as string | null,
       busyStatus: 'busy',
       visibility: 'default'
     };
@@ -2850,6 +2851,19 @@ function App() {
     return () => clearTimeout(timeout);
   }, [composeFrom, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments, draftUid, draftId, isComposing, mailSettings.identity.replyTo]);
 
+  // Warn before leaving page with unsaved draft
+  useEffect(() => {
+    const hasContent = composeTo || composeSubject || composeBody;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isComposing && hasContent) {
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [isComposing, composeTo, composeSubject, composeBody, composeFrom, composeCc, composeBcc]);
+
   const refreshContacts = useCallback(() => {
     return Promise.all([
       fetch(`/api/apps/contacts`, { headers: getHeaders() }).then(r => r.json()),
@@ -3096,6 +3110,9 @@ function App() {
     };
     const recurrenceLine = recurrenceToRrule(eventData.recurrence);
 
+    const recurrenceIdLine = eventData.recurrenceId
+      ? `RECURRENCE-ID${eventData.isAllDay ? ';VALUE=DATE' : ''}:${formatIcalDate(new Date(eventData.recurrenceId), eventData.isAllDay)}`
+      : '';
     const icalLines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -3108,6 +3125,7 @@ function App() {
         `SUMMARY:${escapeIcalText(eventData.title)}`,
         eventData.description ? `DESCRIPTION:${escapeIcalText(eventData.description)}` : '',
         eventData.location ? `LOCATION:${escapeIcalText(eventData.location)}` : '',
+        recurrenceIdLine,
         recurrenceLine,
         "END:VEVENT",
         "END:VCALENDAR"
@@ -3420,6 +3438,14 @@ function App() {
   };
 
   const beginEditCalendarEvent = (event: CalendarEvent) => {
+    const isRecurring = event.recurrence && event.recurrence !== 'none';
+    let recurrenceId: string | null = null;
+    if (isRecurring) {
+      const editSingle = window.confirm(`This is a recurring event. Edit this occurrence only?\n\nOK = This occurrence only\nCancel = All events in the series`);
+      if (editSingle) {
+        recurrenceId = event.start.toISOString();
+      }
+    }
     setEditingCalendarEvent(event);
     setSelectedCalendarEvent(null);
     setNewEventData({
@@ -3429,7 +3455,8 @@ function App() {
       end: new Date(event.end),
       isAllDay: !!event.isAllDay,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      recurrence: recurrenceFromRrule(event.recurrence),
+      recurrence: recurrenceId ? 'none' : recurrenceFromRrule(event.recurrence),
+      recurrenceId,
       guests: '',
       guestPermissions: { invite: true, seeList: true },
       location: event.location || '',
@@ -3494,9 +3521,73 @@ function App() {
     }
   };
 
+  const handleEventResizeStart = (e: React.MouseEvent, event: CalendarEvent, startHourVal: number) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startY = e.clientY;
+    const originalEnd = new Date(event.end);
+    const rowHeight = 60; // matches displayHours row height
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      const deltaMinutes = Math.round(deltaY / (rowHeight / 60) / 15) * 15;
+      const newEnd = new Date(originalEnd.getTime() + deltaMinutes * 60 * 1000);
+      if (newEnd <= event.start) return;
+      // Update the DOM element's height for live preview
+      const el = document.getElementById(`event-resize-${event.id}`);
+      if (el) {
+        const newDuration = Math.max(30, (newEnd.getHours() - startHourVal) * 60 + newEnd.getMinutes() - ((event.start.getHours() - startHourVal) * 60 + event.start.getMinutes()));
+        el.style.height = `${newDuration}px`;
+        const timeLabel = el.querySelector('.resize-time-label');
+        if (timeLabel) {
+          timeLabel.textContent = newEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+      }
+    };
+
+    const onMouseUp = async (upEvent: MouseEvent) => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      const deltaY = upEvent.clientY - startY;
+      const deltaMinutes = Math.round(deltaY / (rowHeight / 60) / 15) * 15;
+      if (deltaMinutes === 0) return;
+      const newEnd = new Date(originalEnd.getTime() + deltaMinutes * 60 * 1000);
+      if (newEnd <= event.start) return;
+      const updatedEventData = {
+        title: event.title,
+        calendarId: event.calendarId,
+        start: event.start,
+        end: newEnd,
+        isAllDay: event.isAllDay,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        location: event.location || '',
+        description: event.description || '',
+        recurrence: event.recurrence || 'none',
+        busyStatus: 'busy',
+        visibility: 'default',
+        guests: '',
+        notifications: [{id: 1, type: 'notification', time: calendarSettings.defaultReminderMinutes}],
+        guestPermissions: { modify: false, invite: true, seeList: true }
+      };
+      await saveEventToBackend(updatedEventData, event.id);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
+
   const deleteCalendarEvent = async (event: CalendarEvent) => {
-    if (!window.confirm(`Delete "${event.title || 'Untitled'}"?`)) return;
-    const res = await fetch(`/api/apps/events/${event.calendarId}/${encodeURIComponent(event.id)}`, {
+    const isRecurring = event.recurrence && event.recurrence !== 'none';
+    let scope: 'single' | 'series' = 'series';
+    if (isRecurring) {
+      scope = window.confirm(`This is a recurring event. Delete this occurrence only?\n\nOK = This occurrence only\nCancel = All events in the series`) ? 'single' : 'series';
+    } else if (!window.confirm(`Delete "${event.title || 'Untitled'}"?`)) {
+      return;
+    }
+    const url = scope === 'single'
+      ? `/api/apps/events/${event.calendarId}/${encodeURIComponent(event.id)}?exclude=${encodeURIComponent(event.start.toISOString())}`
+      : `/api/apps/events/${event.calendarId}/${encodeURIComponent(event.id)}`;
+    const res = await fetch(url, {
       method: 'DELETE',
       headers: getHeaders()
     });
@@ -5020,13 +5111,15 @@ function App() {
                                     const duration = Math.max(endMinutes - startMinutes, 30);
                                     if (startMinutes < 0 || startMinutes >= displayHours.length * 60) return null; // Outside working hours
                                     return (
-                                      <div key={`${e.id}:${e.occurrenceId || e.start.toISOString()}`} 
+                                      <div key={`${e.id}:${e.occurrenceId || e.start.toISOString()}`}
+                                        id={`event-resize-${e.id}`}
                                         draggable
                                         onDragStart={(ev) => handleEventDragStart(ev, e)}
-                                        onClick={(ev) => { ev.stopPropagation(); openCalendarEvent(e); }} 
+                                        onClick={(ev) => { ev.stopPropagation(); openCalendarEvent(e); }}
                                         title={e.title} style={{ position: 'absolute', top: `${startMinutes}px`, height: `${duration}px`, left: '4px', right: '4px', background: cal ? `${cal.color}33` : 'rgba(255,255,255,0.1)', color: cal ? cal.color : 'white', borderRadius: '4px', padding: '4px 8px', fontSize: '0.8rem', cursor: 'pointer', overflow: 'hidden', borderLeft: `3px solid ${cal?.color || 'white'}` }}>
                                         <div style={{ fontWeight: 'bold' }}>{e.title}</div>
                                         <div style={{ opacity: 0.8, fontSize: '0.7rem' }}>{format(e.start, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')} - {format(e.end, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')}</div>
+                                        <div onMouseDown={(me) => handleEventResizeStart(me, e, startHour)} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '6px', cursor: 'ns-resize', background: 'transparent' }} title="Resize event" />
                                       </div>
                                     )
                                  })}

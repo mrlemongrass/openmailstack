@@ -748,7 +748,7 @@ apiRouter.get('/rules', requireAuth, async (req: any, res) => {
     const pass = req.user.password;
 
     try {
-        const client = new ManageSieveClient(sieveConfig.host, sieveConfig.port);
+        const client = new ManageSieveClient(sieveConfig.host, sieveConfig.port, sieveConfig.masterUser, sieveConfig.masterPass);
         await client.connect();
         await client.login(user, pass);
         
@@ -777,7 +777,7 @@ apiRouter.post('/rules', requireAuth, async (req: any, res) => {
         const jsonData = req.body;
         const scriptContent = compileSieve(jsonData);
 
-        const client = new ManageSieveClient(sieveConfig.host, sieveConfig.port);
+        const client = new ManageSieveClient(sieveConfig.host, sieveConfig.port, sieveConfig.masterUser, sieveConfig.masterPass);
         await client.connect();
         await client.login(user, pass);
         

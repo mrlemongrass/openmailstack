@@ -6,7 +6,12 @@ export class ManageSieveClient {
     private rejectError: ((err: Error) => void) | null = null;
     private dataBuffer = '';
 
-    constructor(private host: string = 'localhost', private port: number = 4190) {
+    constructor(
+        private host: string = 'localhost',
+        private port: number = 4190,
+        private masterUser?: string,
+        private masterPass?: string
+    ) {
         this.client = new net.Socket();
         
         this.client.on('data', (data) => {
@@ -54,7 +59,9 @@ export class ManageSieveClient {
     }
 
     async login(user: string, pass: string): Promise<void> {
-        const authString = Buffer.from(`\0${user}\0${pass}`).toString('base64');
+        const authUser = (this.masterUser && this.masterPass) ? `${user}*${this.masterUser}` : user;
+        const authPass = (this.masterUser && this.masterPass) ? this.masterPass : pass;
+        const authString = Buffer.from(`\0${authUser}\0${authPass}`).toString('base64');
         const res = await this.sendCommand(`AUTHENTICATE "PLAIN" "${authString}"`);
         if (!res.trim().split('\r\n').pop()?.startsWith('OK')) {
             throw new Error(`ManageSieve login failed: ${res}`);

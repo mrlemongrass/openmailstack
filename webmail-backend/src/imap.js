@@ -6,6 +6,10 @@ const config_1 = require("./config");
 class ImapService {
     client;
     constructor(user, pass) {
+        const masterUser = config_1.imapConfig.masterUser;
+        const masterPass = config_1.imapConfig.masterPass;
+        const authUser = (masterUser && masterPass) ? `${user}*${masterUser}` : user;
+        const authPass = (masterUser && masterPass) ? masterPass : pass;
         this.client = new imapflow_1.ImapFlow({
             host: config_1.imapConfig.host,
             port: config_1.imapConfig.port,
@@ -14,7 +18,7 @@ class ImapService {
                 rejectUnauthorized: config_1.imapConfig.rejectUnauthorized,
                 checkServerIdentity: () => undefined
             },
-            auth: { user, pass },
+            auth: { user: authUser, pass: authPass },
             logger: false
         });
     }

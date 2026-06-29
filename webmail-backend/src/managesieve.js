@@ -38,13 +38,17 @@ const net = __importStar(require("net"));
 class ManageSieveClient {
     host;
     port;
+    masterUser;
+    masterPass;
     client;
     resolveData = null;
     rejectError = null;
     dataBuffer = '';
-    constructor(host = 'localhost', port = 4190) {
+    constructor(host = 'localhost', port = 4190, masterUser, masterPass) {
         this.host = host;
         this.port = port;
+        this.masterUser = masterUser;
+        this.masterPass = masterPass;
         this.client = new net.Socket();
         this.client.on('data', (data) => {
             this.dataBuffer += data.toString('utf8');
@@ -88,7 +92,9 @@ class ManageSieveClient {
         });
     }
     async login(user, pass) {
-        const authString = Buffer.from(`\0${user}\0${pass}`).toString('base64');
+        const authUser = (this.masterUser && this.masterPass) ? `${user}*${this.masterUser}` : user;
+        const authPass = (this.masterUser && this.masterPass) ? this.masterPass : pass;
+        const authString = Buffer.from(`\0${authUser}\0${authPass}`).toString('base64');
         const res = await this.sendCommand(`AUTHENTICATE "PLAIN" "${authString}"`);
         if (!res.trim().split('\r\n').pop()?.startsWith('OK')) {
             throw new Error(`ManageSieve login failed: ${res}`);

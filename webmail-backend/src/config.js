@@ -48,16 +48,22 @@ exports.imapConfig = {
     port: parseNumber('OMS_IMAP_PORT', 143),
     secure: parseBoolean('OMS_IMAP_SECURE', false),
     rejectUnauthorized: parseBoolean('OMS_IMAP_REJECT_UNAUTHORIZED', process.env.NODE_ENV === 'production'),
+    masterUser: optional('OMS_IMAP_MASTER_USER'),
+    masterPass: optional('OMS_IMAP_MASTER_PASS'),
 };
 exports.smtpConfig = {
     host: optional('OMS_SMTP_HOST', '127.0.0.1'),
     port: parseNumber('OMS_SMTP_PORT', 25),
     secure: parseBoolean('OMS_SMTP_SECURE', false),
     rejectUnauthorized: parseBoolean('OMS_SMTP_REJECT_UNAUTHORIZED', process.env.NODE_ENV === 'production'),
+    masterUser: optional('OMS_SMTP_MASTER_USER'),
+    masterPass: optional('OMS_SMTP_MASTER_PASS'),
 };
 exports.sieveConfig = {
     host: optional('OMS_SIEVE_HOST', '127.0.0.1'),
     port: parseNumber('OMS_SIEVE_PORT', 4190),
+    masterUser: optional('OMS_SIEVE_MASTER_USER'),
+    masterPass: optional('OMS_SIEVE_MASTER_PASS'),
 };
 const normalizeMailboxUsername = (rawUser) => {
     let user = rawUser;

@@ -115,6 +115,14 @@ function contactToActiveSyncApplicationData(contact: ContactRow): any[] {
     if (lastName) data.push({ tag: 'LastName', page: 1, content: lastName });
     if (contact.email) data.push({ tag: 'Email1Address', page: 1, content: contact.email });
     if (contact.phone) data.push({ tag: 'MobilePhoneNumber', page: 1, content: contact.phone });
+    if (contact.organization) data.push({ tag: 'CompanyName', page: 1, content: contact.organization });
+    if (contact.job_title) data.push({ tag: 'JobTitle', page: 1, content: contact.job_title });
+    if ((contact as any).photo_url) {
+        const photo = (contact as any).photo_url;
+        if (photo.startsWith('data:image/')) {
+            data.push({ tag: 'Picture', page: 1, content: photo });
+        }
+    }
 
     const vcard = contactVCard(contact);
     if (vcard) {
@@ -161,6 +169,11 @@ function activeSyncApplicationDataToVCard(davUid: string, applicationData: any):
     if (email) lines.push(`EMAIL;TYPE=INTERNET:${vcardEscape(email)}`);
     if (phone) lines.push(`TEL;TYPE=CELL:${vcardEscape(phone)}`);
     if (company) lines.push(`ORG:${vcardEscape(company)}`);
+    const picture = childText(applicationData, 'Picture');
+    if (picture && picture.startsWith('data:image/')) {
+        const b64 = picture.replace(/^data:image\/[^;]+;base64,/, '');
+        lines.push(`PHOTO;ENCODING=BASE64;TYPE=JPEG:${b64}`);
+    }
     lines.push('END:VCARD');
 
     return `${lines.join('\r\n')}\r\n`;
@@ -226,6 +239,23 @@ function activeSyncCalendarApplicationDataToIcal(uid: string, applicationData: a
     const description = firstNonEmpty(childText(body, 'Data'), childText(applicationData, 'Description'), existing?.description || '');
     const dtstamp = parseActiveSyncCalendarDate(childText(applicationData, 'DtStamp')) || existing?.dtstamp || new Date();
 
+    // Parse recurrence from EAS
+    let rruleLine = existing?.recurrence?.raw || '';
+    const recurrenceNode = childNode(applicationData, 'Recurrence');
+    if (recurrenceNode) {
+        const recType = childText(recurrenceNode, 'Type');
+        const interval = childText(recurrenceNode, 'Interval') || '1';
+        const until = childText(recurrenceNode, 'Until');
+        const occurrences = childText(recurrenceNode, 'Occurrences');
+        const freqMap: Record<string, string> = { '0': 'DAILY', '1': 'WEEKLY', '2': 'MONTHLY', '5': 'YEARLY' };
+        const freq = freqMap[recType] || 'DAILY';
+        let rrule = `RRULE:FREQ=${freq}`;
+        if (interval !== '1') rrule += `;INTERVAL=${interval}`;
+        if (until) rrule += `;UNTIL=${until.replace(/[^0-9TZ]/g, '')}`;
+        if (occurrences) rrule += `;COUNT=${occurrences}`;
+        rruleLine = rrule;
+    }
+
     const lines = [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
@@ -246,6 +276,7 @@ function activeSyncCalendarApplicationDataToIcal(uid: string, applicationData: a
     lines.push(`SUMMARY:${icalEscape(subject)}`);
     if (location) lines.push(`LOCATION:${icalEscape(location)}`);
     if (description) lines.push(`DESCRIPTION:${icalEscape(description)}`);
+    if (rruleLine) lines.push(rruleLine);
     lines.push('TRANSP:OPAQUE');
     lines.push('END:VEVENT');
     lines.push('END:VCALENDAR');
@@ -922,6 +953,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                         const serverId = childText(commandNode, 'ServerId');
                         if (serverId) {
                             const uid = normalizeCalendarEventUid(serverId);
+                            await pool.query('INSERT INTO calendar_tombstones (calendar_id, uid) VALUES (?, ?)', [calendar.id, uid]);
                             await pool.query('DELETE FROM events WHERE calendar_id = ? AND uid = ?', [calendar.id, uid]);
                             await pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar.id]);
                             calendarChanged = true;
@@ -954,7 +986,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 }
 
                 const nextSyncKey = `cal-${calendar.id}-${calendar.sync_token || 1}`;
-                const shouldSendEvents = !calendarChanged && (syncKey === "0" || syncKey === "1" || syncKey !== nextSyncKey);
+                const shouldSendEvents = syncKey === "0" || syncKey === "1" || syncKey !== nextSyncKey;
                 const addNodes: any[] = [];
 
                 if (shouldSendEvents) {
@@ -1001,6 +1033,25 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                             ]
                         });
                     }
+                }
+
+                // Query tombstones and emit Delete commands for deleted events
+                if (shouldSendEvents) {
+                    const [tombstones]: any = await pool.query(
+                        'SELECT uid FROM calendar_tombstones WHERE calendar_id = ? AND deleted_at > DATE_SUB(NOW(), INTERVAL 30 DAY)',
+                        [calendar.id]
+                    );
+                    for (const t of tombstones) {
+                        addNodes.push({
+                            tag: "Add",
+                            page: 0,
+                            children: [
+                                { tag: "ServerId", page: 0, content: t.uid }
+                            ]
+                        });
+                    }
+                    // Clean old tombstones
+                    pool.query('DELETE FROM calendar_tombstones WHERE deleted_at < DATE_SUB(NOW(), INTERVAL 30 DAY)').catch(() => {});
                 }
 
                 const responseAst = {

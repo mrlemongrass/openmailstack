@@ -11,6 +11,13 @@ export interface ParsedIcalEvent {
     recurrenceLabel: string;
     occurrenceId?: string;
     exdates?: Set<string>;
+    attendees?: string;
+    busyStatus?: string;
+    notifications?: Array<{
+        id: number;
+        type: string;
+        time: number;
+    }>;
 }
 export interface RecurrenceRule {
     frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';

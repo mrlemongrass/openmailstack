@@ -1,11 +1,13 @@
 export declare class ManageSieveClient {
     private host;
     private port;
+    private masterUser?;
+    private masterPass?;
     private client;
     private resolveData;
     private rejectError;
     private dataBuffer;
-    constructor(host?: string, port?: number);
+    constructor(host?: string, port?: number, masterUser?: string, masterPass?: string);
     private sendCommand;
     connect(): Promise<string>;
     login(user: string, pass: string): Promise<void>;

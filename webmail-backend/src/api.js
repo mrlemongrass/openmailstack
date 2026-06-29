@@ -708,7 +708,7 @@ exports.apiRouter.get('/rules', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
     try {
-        const client = new managesieve_1.ManageSieveClient(config_1.sieveConfig.host, config_1.sieveConfig.port);
+        const client = new managesieve_1.ManageSieveClient(config_1.sieveConfig.host, config_1.sieveConfig.port, config_1.sieveConfig.masterUser, config_1.sieveConfig.masterPass);
         await client.connect();
         await client.login(user, pass);
         let script = '';
@@ -733,7 +733,7 @@ exports.apiRouter.post('/rules', requireAuth, async (req, res) => {
     try {
         const jsonData = req.body;
         const scriptContent = (0, sieve_compiler_1.compileSieve)(jsonData);
-        const client = new managesieve_1.ManageSieveClient(config_1.sieveConfig.host, config_1.sieveConfig.port);
+        const client = new managesieve_1.ManageSieveClient(config_1.sieveConfig.host, config_1.sieveConfig.port, config_1.sieveConfig.masterUser, config_1.sieveConfig.masterPass);
         await client.connect();
         await client.login(user, pass);
         await client.putScript('webmail', scriptContent);

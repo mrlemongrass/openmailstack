@@ -149,6 +149,29 @@ function parseIcalEvent(uid, ical) {
     const fallbackEnd = new Date(start.getTime() + (allDay ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000));
     const recurrence = parseRrule(firstIcalValue(eventLines, 'RRULE')?.value);
     const exdates = parseExdates(eventLines);
+    // Parse TRANSP
+    const transpValue = firstIcalValue(eventLines, 'TRANSP')?.value?.toUpperCase() || '';
+    const busyStatus = transpValue === 'TRANSPARENT' ? 'free' : 'busy';
+    // Parse ATTENDEE
+    const attendeeLines = eventLines.filter(l => l.split(':')[0].split(';')[0].toUpperCase() === 'ATTENDEE');
+    const attendees = attendeeLines.map(l => {
+        const mailto = l.match(/mailto:([^\s]+)/i);
+        return mailto ? mailto[1] : '';
+    }).filter(Boolean).join(', ');
+    // Parse VALARM trigger
+    let notifications;
+    const valarmStart = eventLines.findIndex(l => l.toUpperCase().trim() === 'BEGIN:VALARM');
+    if (valarmStart >= 0) {
+        const triggerLine = eventLines.slice(valarmStart).find(l => l.split(':')[0].split(';')[0].toUpperCase() === 'TRIGGER');
+        if (triggerLine) {
+            const triggerVal = triggerLine.slice(triggerLine.indexOf(':') + 1).trim();
+            const minutesMatch = triggerVal.match(/^-PT(\d+)M/i) || triggerVal.match(/^-P(\d+)D/i);
+            if (minutesMatch) {
+                const minutes = triggerVal.includes('D') ? parseInt(minutesMatch[1]) * 1440 : parseInt(minutesMatch[1]);
+                notifications = [{ id: 1, type: 'notification', time: minutes }];
+            }
+        }
+    }
     return {
         uid: firstIcalValue(eventLines, 'UID')?.value || uid,
         title: unescapeIcalText(firstIcalValue(eventLines, 'SUMMARY')?.value || 'Untitled'),
@@ -162,6 +185,9 @@ function parseIcalEvent(uid, ical) {
         recurrenceLabel: recurrenceLabel(recurrence),
         type: isTask ? 'task' : 'event',
         exdates,
+        attendees: attendees || undefined,
+        busyStatus,
+        notifications,
     };
 }
 function parseExdates(lines) {

@@ -7,15 +7,19 @@ export class ImapService {
     public client: ImapFlow;
 
     constructor(user: string, pass: string) {
+        const masterUser = imapConfig.masterUser;
+        const masterPass = imapConfig.masterPass;
+        const authUser = (masterUser && masterPass) ? `${user}*${masterUser}` : user;
+        const authPass = (masterUser && masterPass) ? masterPass : pass;
         this.client = new ImapFlow({
             host: imapConfig.host,
             port: imapConfig.port,
             secure: imapConfig.secure,
-            tls: { 
+            tls: {
                 rejectUnauthorized: imapConfig.rejectUnauthorized,
                 checkServerIdentity: () => undefined
             },
-            auth: { user, pass },
+            auth: { user: authUser, pass: authPass },
             logger: false
         });
     }

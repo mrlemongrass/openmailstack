@@ -3163,6 +3163,39 @@ function App() {
     const recurrenceIdLine = eventData.recurrenceId
       ? `RECURRENCE-ID${eventData.isAllDay ? ';VALUE=DATE' : ''}:${formatIcalDate(new Date(eventData.recurrenceId), eventData.isAllDay)}`
       : '';
+
+    // Generate VALARM from notification settings
+    const alarmLines: string[] = [];
+    if (eventData.notifications && eventData.notifications.length > 0) {
+      const n = eventData.notifications[0];
+      if (n.time > 0) {
+        alarmLines.push('BEGIN:VALARM');
+        alarmLines.push(`TRIGGER:-PT${n.time}M`);
+        alarmLines.push('ACTION:DISPLAY');
+        alarmLines.push('DESCRIPTION:Reminder');
+        alarmLines.push('END:VALARM');
+      }
+    }
+
+    // Generate ATTENDEE lines from guests
+    const attendeeLines: string[] = [];
+    if (eventData.guests) {
+      const guestEmails = eventData.guests.split(/[,\s]+/).filter(Boolean);
+      for (const email of guestEmails) {
+        if (email.includes('@')) {
+          attendeeLines.push(`ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${email.trim()}`);
+        }
+      }
+    }
+
+    // Generate TRANSP from busyStatus
+    const transpLine = !eventData.isAllDay ? (eventData.busyStatus === 'free' ? 'TRANSP:TRANSPARENT' : 'TRANSP:OPAQUE') : '';
+
+    // Add TZID to DTSTART/DTEND when timezone is set and not all-day
+    const tzParam = (!eventData.isAllDay && eventData.timezone && eventData.timezone !== 'UTC') ? `;TZID=${eventData.timezone}` : '';
+    const dtStartLine = `DTSTART${eventData.isAllDay ? ';VALUE=DATE' : tzParam}:${formatIcalDate(eventData.start, eventData.isAllDay)}`;
+    const dtEndLine = `DTEND${eventData.isAllDay ? ';VALUE=DATE' : tzParam}:${formatIcalDate(eventData.end, eventData.isAllDay)}`;
+
     const icalLines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -3170,13 +3203,16 @@ function App() {
         "BEGIN:VEVENT",
         `UID:${uid}`,
         `DTSTAMP:${formatIcalDate(new Date(), false)}`,
-        `DTSTART${eventData.isAllDay ? ';VALUE=DATE' : ''}:${formatIcalDate(eventData.start, eventData.isAllDay)}`,
-        `DTEND${eventData.isAllDay ? ';VALUE=DATE' : ''}:${formatIcalDate(eventData.end, eventData.isAllDay)}`,
+        dtStartLine,
+        dtEndLine,
         `SUMMARY:${escapeIcalText(eventData.title)}`,
         eventData.description ? `DESCRIPTION:${escapeIcalText(eventData.description)}` : '',
         eventData.location ? `LOCATION:${escapeIcalText(eventData.location)}` : '',
+        transpLine,
         recurrenceIdLine,
         recurrenceLine,
+        ...alarmLines,
+        ...attendeeLines,
         "END:VEVENT",
         "END:VCALENDAR"
     ].filter(Boolean);
@@ -5798,7 +5834,12 @@ function App() {
                 body: JSON.stringify({ description: data.description })
               });
               if (response.raw_key) {
-                window.prompt('Copy your new API key now. It will not be shown again:', response.raw_key);
+                try {
+                  await navigator.clipboard.writeText(response.raw_key);
+                  setAdminActionStatus('API key copied to clipboard. Save it somewhere secure — it will not be shown again.');
+                } catch {
+                  setAdminActionError('Could not copy to clipboard. Key: ' + response.raw_key);
+                }
               }
             });
             setAdminModal(null);

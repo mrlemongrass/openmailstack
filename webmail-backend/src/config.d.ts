@@ -21,16 +21,22 @@ export declare const imapConfig: {
     port: number;
     secure: boolean;
     rejectUnauthorized: boolean;
+    masterUser: string;
+    masterPass: string;
 };
 export declare const smtpConfig: {
     host: string;
     port: number;
     secure: boolean;
     rejectUnauthorized: boolean;
+    masterUser: string;
+    masterPass: string;
 };
 export declare const sieveConfig: {
     host: string;
     port: number;
+    masterUser: string;
+    masterPass: string;
 };
 export declare const normalizeMailboxUsername: (rawUser: string) => string;
 export declare const getPublicBaseUrl: (req: any) => string;

@@ -12,6 +12,7 @@ export interface SieveAction {
 export interface SieveRule {
     id?: string;
     name?: string;
+    enabled?: boolean;
     condition?: 'any' | 'all' | string;
     criteria?: SieveCriterion[];
     actions?: SieveAction[];

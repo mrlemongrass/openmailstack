@@ -541,6 +541,48 @@ exports.apiRouter.post('/auth/logout', async (req, res) => {
 exports.apiRouter.get('/auth/me', requireAuth, (req, res) => {
     res.json({ success: true, user: { username: req.user.username, isAdmin: req.user.isAdmin } });
 });
+exports.apiRouter.post('/account/password', requireAuth, async (req, res) => {
+    const { current, new: newPassword } = req.body;
+    const normalizedUsername = req.user.username;
+    try {
+        const [rows] = await db_1.pool.query('SELECT password FROM mailbox WHERE username = ? AND active = 1', [normalizedUsername]);
+        if (rows.length === 0) {
+            return res.status(401).json({ success: false, error: 'User not found' });
+        }
+        const dbHash = rows[0].password;
+        let isValid = false;
+        if (dbHash.startsWith('$2y$') || dbHash.startsWith('$2a$') || dbHash.startsWith('$2b$')) {
+            isValid = await bcryptjs_1.default.compare(current, dbHash);
+        }
+        else {
+            return res.status(400).json({ success: false, error: 'Unsupported password hash format' });
+        }
+        if (!isValid) {
+            return res.status(400).json({ success: false, error: 'Current password incorrect' });
+        }
+        const newHash = await bcryptjs_1.default.hash(newPassword, 10);
+        const dovecotCompatHash = newHash.replace(/^\$2b\$/, '$2y$');
+        await db_1.pool.query('UPDATE mailbox SET password = ?, modified = NOW() WHERE username = ?', [dovecotCompatHash, normalizedUsername]);
+        await (0, auth_1.clearSession)(req, res);
+        res.json({ success: true, message: 'Password updated successfully. Please log in again.' });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.get('/account/sessions', requireAuth, async (req, res) => {
+    res.json({
+        success: true,
+        sessions: [
+            {
+                id: 'current',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                isCurrent: true
+            }
+        ]
+    });
+});
 exports.apiRouter.get('/rules', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;

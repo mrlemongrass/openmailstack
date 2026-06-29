@@ -2279,6 +2279,16 @@ function App() {
   const handleSend = (overrideDelay?: number) => {
     setSending(true);
     
+    if (mailSettings.compose.attachmentReminder && composeAttachments.length === 0) {
+      const lowerBody = composeBody.toLowerCase();
+      if (/attach/.test(lowerBody)) {
+        if (!window.confirm("It looks like you meant to attach a file, but there are no attachments. Send anyway?")) {
+          setSending(false);
+          return;
+        }
+      }
+    }
+    
     const formData = new FormData();
     formData.append('from', composeFrom);
     formData.append('to', composeTo);

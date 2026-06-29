@@ -568,6 +568,54 @@ apiRouter.get('/auth/me', requireAuth, (req: any, res) => {
     res.json({ success: true, user: { username: req.user.username, isAdmin: req.user.isAdmin } });
 });
 
+apiRouter.post('/account/password', requireAuth, async (req: any, res) => {
+    const { current, new: newPassword } = req.body;
+    const normalizedUsername = req.user.username;
+    
+    try {
+        const [rows]: any = await pool.query('SELECT password FROM mailbox WHERE username = ? AND active = 1', [normalizedUsername]);
+        if (rows.length === 0) {
+            return res.status(401).json({ success: false, error: 'User not found' });
+        }
+        
+        const dbHash = rows[0].password;
+        let isValid = false;
+        if (dbHash.startsWith('$2y$') || dbHash.startsWith('$2a$') || dbHash.startsWith('$2b$')) {
+            isValid = await bcrypt.compare(current, dbHash);
+        } else {
+            return res.status(400).json({ success: false, error: 'Unsupported password hash format' });
+        }
+
+        if (!isValid) {
+            return res.status(400).json({ success: false, error: 'Current password incorrect' });
+        }
+
+        const newHash = await bcrypt.hash(newPassword, 10);
+        const dovecotCompatHash = newHash.replace(/^\$2b\$/, '$2y$');
+
+        await pool.query('UPDATE mailbox SET password = ?, modified = NOW() WHERE username = ?', [dovecotCompatHash, normalizedUsername]);
+        
+        await clearSession(req, res);
+        res.json({ success: true, message: 'Password updated successfully. Please log in again.' });
+    } catch (err: any) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+apiRouter.get('/account/sessions', requireAuth, async (req: any, res) => {
+    res.json({ 
+        success: true, 
+        sessions: [
+            { 
+                id: 'current', 
+                created_at: new Date().toISOString(), 
+                updated_at: new Date().toISOString(), 
+                isCurrent: true 
+            }
+        ] 
+    });
+});
+
 apiRouter.get('/rules', requireAuth, async (req: any, res) => {
     const user = req.user.username;
     const pass = req.user.password;

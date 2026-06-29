@@ -862,6 +862,7 @@ function App() {
   const [isAdvancedEventMode, setIsAdvancedEventMode] = useState(false);
   const [selectedCalendarEvent, setSelectedCalendarEvent] = useState<CalendarEvent | null>(null);
   const [editingCalendarEvent, setEditingCalendarEvent] = useState<CalendarEvent | null>(null);
+  const [eventEditorError, setEventEditorError] = useState('');
   const [editingCalendar, setEditingCalendar] = useState<Calendar | null>(null);
   const [calendarEditorData, setCalendarEditorData] = useState({ name: '', color: '#3498db', subscribed_url: '' });
   const [calendarEditorSaving, setCalendarEditorSaving] = useState(false);
@@ -2991,6 +2992,44 @@ function App() {
     });
   }, []);
 
+  const saveEventToBackend = async (eventData: any, originalEventId?: string) => {
+    const uid = originalEventId || Math.random().toString(36).substring(2) + "@openmailstack";
+    const formatIcalDate = (d: Date, isAllDay: boolean) => {
+        if (isAllDay) {
+            return d.toISOString().split('T')[0].replace(/-/g, '');
+        }
+        return d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    };
+    const recurrenceLine = recurrenceToRrule(eventData.recurrence);
+
+    const icalLines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//OpenMailStack//WebCalendar//EN",
+        "BEGIN:VEVENT",
+        `UID:${uid}`,
+        `DTSTAMP:${formatIcalDate(new Date(), false)}`,
+        `DTSTART${eventData.isAllDay ? ';VALUE=DATE' : ''}:${formatIcalDate(eventData.start, eventData.isAllDay)}`,
+        `DTEND${eventData.isAllDay ? ';VALUE=DATE' : ''}:${formatIcalDate(eventData.end, eventData.isAllDay)}`,
+        `SUMMARY:${escapeIcalText(eventData.title)}`,
+        eventData.description ? `DESCRIPTION:${escapeIcalText(eventData.description)}` : '',
+        eventData.location ? `LOCATION:${escapeIcalText(eventData.location)}` : '',
+        recurrenceLine,
+        "END:VEVENT",
+        "END:VCALENDAR"
+    ].filter(Boolean);
+    const ical_data = icalLines.join('\r\n');
+
+    const res = await fetch('/api/apps/events', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ calendar_id: eventData.calendarId, uid, ical_data })
+    });
+    const d = await res.json();
+    if (d.success) refreshCalendars();
+    return d.success;
+  };
+
   const refreshCurrentView = async () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
@@ -3299,6 +3338,58 @@ function App() {
     });
     setIsAdvancedEventMode(true);
     setIsEventModalOpen(true);
+  };
+
+  const handleEventDragStart = (ev: React.DragEvent, event: CalendarEvent) => {
+    const rect = (ev.target as HTMLElement).getBoundingClientRect();
+    const offsetY = ev.clientY - rect.top; 
+    const offsetMinutes = Math.round(offsetY); 
+    ev.dataTransfer.setData('application/json', JSON.stringify({ id: event.id, offsetMinutes }));
+    ev.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleEventDrop = async (ev: React.DragEvent, targetDay: Date, targetHour: number) => {
+    ev.preventDefault();
+    try {
+      const data = JSON.parse(ev.dataTransfer.getData('application/json'));
+      if (!data.id) return;
+      
+      const event = events.find(e => e.id === data.id);
+      if (!event) return;
+
+      const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+      const dropY = ev.clientY - rect.top; 
+      const dropMinutesOffset = Math.round(dropY);
+
+      let totalMinutesFromMidnight = targetHour * 60 + dropMinutesOffset - (data.offsetMinutes || 0);
+      totalMinutesFromMidnight = Math.round(totalMinutesFromMidnight / 15) * 15;
+
+      const duration = event.end.getTime() - event.start.getTime();
+      const newStart = new Date(targetDay);
+      newStart.setHours(0, totalMinutesFromMidnight, 0, 0);
+      const newEnd = new Date(newStart.getTime() + duration);
+
+      const updatedEventData = {
+          title: event.title,
+          calendarId: event.calendarId,
+          start: newStart,
+          end: newEnd,
+          isAllDay: event.isAllDay,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          location: event.location || '',
+          description: event.description || '',
+          recurrence: 'none', 
+          busyStatus: 'busy',
+          visibility: 'default',
+          guests: '',
+          notifications: [{ method: 'popup', time: 10 }],
+          guestPermissions: { modify: false, invite: true, seeList: true }
+      };
+
+      await saveEventToBackend(updatedEventData, event.id);
+    } catch (e) {
+      console.error('Drop error', e);
+    }
   };
 
   const deleteCalendarEvent = async (event: CalendarEvent) => {
@@ -4801,7 +4892,10 @@ function App() {
                              return (
                                <div key={i} style={{ flex: 1, borderLeft: i > 0 ? '1px solid rgba(255,255,255,0.05)' : 'none', position: 'relative' }}>
                                  {displayHours.map((h, idx) => (
-                                   <div key={`click-${h}`} onClick={() => {
+                                   <div key={`click-${h}`} 
+                                     onDragOver={(e) => e.preventDefault()}
+                                     onDrop={(e) => handleEventDrop(e, day, h)}
+                                     onClick={() => {
                                      const clickedDate = new Date(day);
                                      clickedDate.setHours(h, 0, 0, 0);
                                      setEditingCalendarEvent(null);
@@ -4817,7 +4911,11 @@ function App() {
                                     const duration = Math.max(endMinutes - startMinutes, 30);
                                     if (startMinutes < 0 || startMinutes >= displayHours.length * 60) return null; // Outside working hours
                                     return (
-                                      <div key={`${e.id}:${e.occurrenceId || e.start.toISOString()}`} onClick={(ev) => { ev.stopPropagation(); openCalendarEvent(e); }} title={e.title} style={{ position: 'absolute', top: `${startMinutes}px`, height: `${duration}px`, left: '4px', right: '4px', background: cal ? `${cal.color}33` : 'rgba(255,255,255,0.1)', color: cal ? cal.color : 'white', borderRadius: '4px', padding: '4px 8px', fontSize: '0.8rem', cursor: 'pointer', overflow: 'hidden', borderLeft: `3px solid ${cal?.color || 'white'}` }}>
+                                      <div key={`${e.id}:${e.occurrenceId || e.start.toISOString()}`} 
+                                        draggable
+                                        onDragStart={(ev) => handleEventDragStart(ev, e)}
+                                        onClick={(ev) => { ev.stopPropagation(); openCalendarEvent(e); }} 
+                                        title={e.title} style={{ position: 'absolute', top: `${startMinutes}px`, height: `${duration}px`, left: '4px', right: '4px', background: cal ? `${cal.color}33` : 'rgba(255,255,255,0.1)', color: cal ? cal.color : 'white', borderRadius: '4px', padding: '4px 8px', fontSize: '0.8rem', cursor: 'pointer', overflow: 'hidden', borderLeft: `3px solid ${cal?.color || 'white'}` }}>
                                         <div style={{ fontWeight: 'bold' }}>{e.title}</div>
                                         <div style={{ opacity: 0.8, fontSize: '0.7rem' }}>{format(e.start, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')} - {format(e.end, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')}</div>
                                       </div>
@@ -6152,56 +6250,31 @@ function App() {
               ) : (
                 <div />
               )}
-              <div style={{ display: 'flex', gap: '12px' }}>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                {eventEditorError && (
+                  <div style={{ color: '#e74c3c', fontSize: '0.9rem', marginRight: '8px' }}>
+                    {eventEditorError}
+                  </div>
+                )}
                 <button className="btn btn-ghost" onClick={() => { setIsEventModalOpen(false); setEditingCalendarEvent(null); }}>Cancel</button>
-                <button className="btn btn-primary" onClick={() => {
+                <button className="btn btn-primary" onClick={async () => {
+                  setEventEditorError('');
                   if (!newEventData.title.trim()) {
-                    window.alert('Event title is required.');
+                    setEventEditorError('Event title is required.');
                     return;
                   }
                   if (newEventData.start > newEventData.end && !newEventData.isAllDay) {
-                    window.alert('Start time must be before end time.');
+                    setEventEditorError('Start time must be before end time.');
                     return;
                   }
 
-                  const uid = editingCalendarEvent?.id || Math.random().toString(36).substring(2) + "@openmailstack";
-                  
-                  const formatIcalDate = (d: Date, isAllDay: boolean) => {
-                      if (isAllDay) {
-                          return d.toISOString().split('T')[0].replace(/-/g, '');
-                      }
-                      return d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-                  };
-                  const recurrenceLine = recurrenceToRrule(newEventData.recurrence);
-
-                  const icalLines = [
-                      "BEGIN:VCALENDAR",
-                      "VERSION:2.0",
-                      "PRODID:-//OpenMailStack//WebCalendar//EN",
-                      "BEGIN:VEVENT",
-                      `UID:${uid}`,
-                      `DTSTAMP:${formatIcalDate(new Date(), false)}`,
-                      `DTSTART${newEventData.isAllDay ? ';VALUE=DATE' : ''}:${formatIcalDate(newEventData.start, newEventData.isAllDay)}`,
-                      `DTEND${newEventData.isAllDay ? ';VALUE=DATE' : ''}:${formatIcalDate(newEventData.end, newEventData.isAllDay)}`,
-                      `SUMMARY:${escapeIcalText(newEventData.title)}`,
-                      `DESCRIPTION:${escapeIcalText(newEventData.description)}`,
-                      `LOCATION:${escapeIcalText(newEventData.location)}`,
-                      recurrenceLine,
-                      "END:VEVENT",
-                      "END:VCALENDAR"
-                  ].filter(Boolean);
-                  const ical_data = icalLines.join('\r\n');
-
-                  fetch('/api/apps/events', {
-                      method: 'POST',
-                      headers: getHeaders(),
-                      body: JSON.stringify({ calendar_id: newEventData.calendarId, uid, ical_data })
-                  }).then(r => r.json()).then(d => {
-                      if (d.success) refreshCalendars();
+                  const success = await saveEventToBackend(newEventData, editingCalendarEvent?.id);
+                  if (success) {
                       setEditingCalendarEvent(null);
-                  });
-
-                  setIsEventModalOpen(false);
+                      setIsEventModalOpen(false);
+                  } else {
+                      setEventEditorError('Failed to save event.');
+                  }
                 }}>{editingCalendarEvent ? 'Save Changes' : 'Save Event'}</button>
               </div>
             </div>

@@ -214,3 +214,167 @@ Day-to-day administration happens in a browser, not in a config file or an SSH s
 - Account, domain, group, list and Sieve management.
 - Queue and report visualisation for DMARC, TLS-RPT and ARF.
 - Configuration of every server object from a single web admin.
+
+---
+
+## Complete Features Matrix
+
+Here is the comprehensive matrix of features we foresee OpenMailStack delivering, categorized by functional area:
+
+### Message Store
+- JMAP for Mail
+- JMAP for Sieve
+- JMAP WebSocket transport
+- JMAP Blob Management
+- JMAP Quotas
+- JMAP Sharing
+- IMAP4rev1
+- IMAP4rev2
+- IMAP QUOTA Extension
+- ManageSieve
+- POP3 with STLS and SASL
+- Sub-addressing and catch-all
+- Email aliases and mailing lists
+- Email alias descriptions and disable flag
+- Domain aliases
+- Disk quotas per user and per tenant
+- Auto-configuration and Autodiscover
+- Masked email addresses (privacy aliases)
+
+### MTA
+- SMTP server with programmable rules
+- Distributed virtual queues
+- Delayed and priority delivery, quotas, routing rules, throttling
+- Smart-host and relay routing
+- Rate and concurrency limiting
+- Envelope rewriting and message modification
+- Milter integration
+- MTA Hooks (HTTP filter alternative)
+- Outbound MTA cluster role
+
+### Sender Authentication and Transport Security
+- DKIM
+- SPF
+- DMARC
+- ARC, inbound verification only
+- DANE
+- MTA-STS
+- SMTP TLS Reporting
+- Automated DKIM key generation and rotation
+- Automated DNS management
+- ACME challenges (TLS-ALPN-01, DNS-01, HTTP-01, DNS-PERSIST-01, EAB)
+- Automatic TLSA record refresh on certificate renewal
+
+### Anti-Spam and Anti-Phishing
+- Spam filtering rules
+- Statistical classifier (FTRL-Proximal)
+- Encryption-at-rest for spam training data
+- DNSBL (IP, domain, hash)
+- Pyzor collaborative digest filtering
+- Phishing protection (homograph URL attacks, sender spoofing)
+- Trusted reply tracking
+- Sender reputation (IP, ASN, domain, address)
+- Greylisting
+- Spam traps
+- ASN and GeoIP blocking, auto-banning
+- AI / LLM spam classifier
+
+### Collaboration
+- CalDAV
+- CalDAV Scheduling
+- iMIP email notifications
+- Free/busy lookup
+- Recurrence expansion (RRULE)
+- Calendar event email notifications via VALARM
+- CardDAV with vCard 2.1/3.0
+- WebDAV
+- WebDAV ACL
+- JMAP for Calendars
+- JMAP for Contacts
+- JMAP for File Storage
+- Auto-configuration for CalDAV, CardDAV, WebDAV
+- Calendar localized invite templates and scheduling locales
+- Branded scheduling and notification emails
+
+### Sieve and Scripting
+- Sieve scripting with all IANA-registered extensions
+- ManageSieve
+- JMAP for Sieve Scripts
+- Sieve script deactivation without deletion
+- MTA Hooks for Sieve-style upstream filters
+- AI / LLM Sieve scripting
+
+### Storage Backends
+- RocksDB
+- FoundationDB
+- PostgreSQL / AlloyDB
+- MySQL / MariaDB
+- SQLite
+- S3-compatible blob storage
+- Azure Blob Storage
+- Filesystem blob storage
+- Redis (in-memory store)
+- Read replicas
+- Sharded blob storage
+- Sharded in-memory data stores
+
+### Full-Text Search
+- Internal FTS backend
+- Meilisearch
+- ElasticSearch / OpenSearch
+- PostgreSQL
+- MySQL
+
+### Authentication
+- Internal directory
+- LDAP / Active Directory
+- SQL directory
+- OAuth 2.0 (device flow and PKCE)
+- OpenID Connect
+- Third-party OIDC providers
+- Two-factor authentication (TOTP)
+- App passwords with labels, IP restrictions and expiration
+- API keys with labels, IP restrictions and expiration
+- Per-domain directory backends
+
+### Security and Encryption
+- Encryption at rest (S/MIME, OpenPGP)
+- Self-service portal for password reset and encryption key management
+- Roles, permissions and ACLs
+- Password strength enforcement (zxcvbn) and rotation policies
+- IP restrictions on accounts, app passwords and API keys
+- Auto-banning with comments and configurable expiration
+- Rate limiting
+- Memory-safe (Rust)
+- Independent security audit
+
+### Cluster and HA
+- Cluster coordination (Zenoh peer-to-peer, Kafka, Redpanda, NATS, Redis)
+- Automatic node ID generation and management
+- Outbound MTA cluster role
+- Fault tolerance and high availability
+- PROXY protocol
+- Kubernetes, Apache Mesos, Docker Swarm
+
+### Observability and Administration
+- Logging and tracing (OpenTelemetry, journald, files, console)
+- Metrics (OpenTelemetry, Prometheus) Limited
+- Webhooks
+- Web admin
+- Report visualization (DMARC, TLS-RPT, ARF)
+- Declarative IaC
+- Live telemetry streaming (SSE)
+- Message delivery history
+- Dashboard with real-time statistics
+- Metric alerts (email and webhook)
+
+### Enterprise Additions
+- Multi-tenancy with per-tenant quotas and isolation
+- Per-domain directory backends
+- Branding and customisation
+- Multi-tenant branding
+- Account archiving and un-deletion
+- Restore deleted emails with metadata
+- AI / LLM spam classifier
+- AI / LLM Sieve scripting
+- Read replicas, sharded blob and in-memory stores

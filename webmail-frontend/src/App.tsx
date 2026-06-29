@@ -132,6 +132,13 @@ interface Note {
 
 type DisplayContact = Contact & { displayName: string, _parsedName?: any };
 
+interface ContactGroup {
+  id: number;
+  name: string;
+  color: string;
+  member_count?: number;
+}
+
 interface CalendarEvent {
   id: string;
   occurrenceId?: string;
@@ -823,7 +830,11 @@ function App() {
   const [directoryContacts, setDirectoryContacts] = useState<Contact[]>([]);
   const [contactLabels, setContactLabels] = useState<ContactLabel[]>([]);
   const [selectedLabel, setSelectedLabel] = useState<number | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [contactsView, setContactsView] = useState<ContactsView>('personal');
+  const [contactGroups, setContactGroups] = useState<ContactGroup[]>([]);
+  const [editingContactGroup, setEditingContactGroup] = useState<Partial<ContactGroup> | null>(null);
+  const [groupMemberIds, setGroupMemberIds] = useState<Set<number>>(new Set());
   const [contactsActionStatus, setContactsActionStatus] = useState('');
   const [contactsActionError, setContactsActionError] = useState('');
   const [calendarActionStatus, setCalendarActionStatus] = useState('');
@@ -1208,8 +1219,12 @@ function App() {
 
   const displayContacts = useMemo((): DisplayContact[] => {
     const sourceContacts = contactsView === 'directory' ? directoryContacts : contacts;
-    const filteredContacts = selectedLabel && contactsView === 'personal' 
-      ? sourceContacts.filter(c => c.labels_json?.includes(selectedLabel))
+    const filteredContacts = (selectedLabel || selectedGroupId) && contactsView === 'personal'
+      ? sourceContacts.filter(c => {
+          if (selectedLabel && !c.labels_json?.includes(selectedLabel)) return false;
+          if (selectedGroupId && !groupMemberIds.has(Number(c.id))) return false;
+          return true;
+        })
       : sourceContacts;
 
     return [...filteredContacts]
@@ -1239,7 +1254,7 @@ function App() {
         if (cmp !== 0) return cmp;
         return a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
       });
-  }, [contacts, contactsSettings.nameFormat, contactsSettings.sortBy, contactsView, directoryContacts, selectedLabel]);
+  }, [contacts, contactsSettings.nameFormat, contactsSettings.sortBy, contactsView, directoryContacts, selectedLabel, selectedGroupId, groupMemberIds]);
 
   const recipientContacts = useMemo(() => {
     const seen = new Set<string>();
@@ -2895,6 +2910,41 @@ function App() {
       .then(d => d.success && setContactLabels(d.labels || []));
   }, []);
 
+  const refreshContactGroups = useCallback(() => {
+    return fetch(`/api/apps/contact-groups`, { headers: getHeaders() })
+      .then(r => r.json())
+      .then(d => d.success && setContactGroups(d.groups || []));
+  }, []);
+
+  const handleSaveContactGroup = async (group: Partial<ContactGroup>) => {
+    setContactsActionError('');
+    try {
+      const isNew = !group.id;
+      const url = isNew ? '/api/apps/contact-groups' : `/api/apps/contact-groups/${group.id}`;
+      const method = isNew ? 'POST' : 'PUT';
+      const res = await fetch(url, { method, headers: getHeaders(), body: JSON.stringify({ name: group.name, color: group.color }) });
+      const d = await res.json();
+      if (!res.ok || !d.success) throw new Error(d.error || 'Could not save group');
+      await refreshContactGroups();
+      setEditingContactGroup(null);
+    } catch (err) {
+      setContactsActionError(err instanceof Error ? err.message : 'Could not save group');
+    }
+  };
+
+  const handleDeleteContactGroup = async (id: number) => {
+    if (!window.confirm('Delete this group?')) return;
+    try {
+      const res = await fetch(`/api/apps/contact-groups/${id}`, { method: 'DELETE', headers: getHeaders() });
+      const d = await res.json();
+      if (!res.ok || !d.success) throw new Error(d.error || 'Could not delete group');
+      if (selectedGroupId === id) setSelectedGroupId(null);
+      await refreshContactGroups();
+    } catch (err) {
+      setContactsActionError(err instanceof Error ? err.message : 'Could not delete group');
+    }
+  };
+
   const handleSaveContactLabel = async (label: Partial<ContactLabel>) => {
     setContactsActionError('');
     setContactsActionStatus('');
@@ -3156,7 +3206,7 @@ function App() {
       } else if (appMode === 'calendar') {
         await refreshCalendars();
       } else if (appMode === 'contacts') {
-        await Promise.all([refreshContacts(), refreshDirectoryContacts(), refreshContactLabels()]);
+        await Promise.all([refreshContacts(), refreshDirectoryContacts(), refreshContactLabels(), refreshContactGroups()]);
       } else if (appMode === 'notes') {
         await fetchNotes();
       } else if (appMode === 'sync') {
@@ -5157,7 +5207,7 @@ function App() {
                     <h3 style={{ margin: 0 }}>Address Books</h3>
                   </div>
                   <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-                    <div className={`nav-item ${contactsView === 'personal' && !selectedLabel ? 'active' : ''}`} onClick={() => { setContactsView('personal'); setSelectedLabel(null); }}>
+                    <div className={`nav-item ${contactsView === 'personal' && !selectedLabel && !selectedGroupId ? 'active' : ''}`} onClick={() => { setContactsView('personal'); setSelectedLabel(null); setSelectedGroupId(null); }}>
                       <Users size={18} style={{ marginRight: '8px' }} /> Personal Contacts
                     </div>
                     <div className={`nav-item ${contactsView === 'directory' ? 'active' : ''}`} onClick={() => { setContactsView('directory'); setSelectedLabel(null); }}>
@@ -5185,6 +5235,50 @@ function App() {
                     <div className="nav-item" style={{ marginTop: '8px', color: 'var(--text-secondary)' }} onClick={() => { setEditingLabel({ name: '', color: '#60a5fa' }); setIsLabelModalOpen(true); }}>
                       <Plus size={16} style={{ marginRight: '8px' }} /> Create Label
                     </div>
+                    <div style={{ marginTop: '24px', paddingBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                      GROUPS
+                    </div>
+                    <div style={{ marginTop: '8px' }}>
+                      {contactGroups.map(group => (
+                        <div key={group.id} className={`nav-item ${selectedGroupId === group.id ? 'active' : ''}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} onClick={() => {
+                          setContactsView('personal');
+                          setSelectedGroupId(group.id);
+                          setSelectedLabel(null);
+                          fetch(`/api/apps/contact-groups/${group.id}/members`, { headers: getHeaders() })
+                            .then(r => r.json())
+                            .then(d => {
+                              if (d.success && Array.isArray(d.members)) {
+                                setGroupMemberIds(new Set(d.members.map((m: any) => m.contact_id)));
+                              }
+                            });
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: group.color, marginRight: '12px' }} />
+                            {group.name}
+                            <span style={{ marginLeft: '8px', fontSize: '0.75rem', opacity: 0.6 }}>({group.member_count || 0})</span>
+                          </div>
+                          {selectedGroupId === group.id && (
+                            <div style={{ display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
+                              <button className="btn btn-ghost" style={{ padding: '4px' }} onClick={() => setEditingContactGroup({ id: group.id, name: group.name, color: group.color })}><Edit2 size={14} /></button>
+                              <button className="btn btn-ghost" style={{ padding: '4px', color: 'var(--accent-error)' }} onClick={() => handleDeleteContactGroup(group.id)}><Trash2 size={14} /></button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="nav-item" style={{ marginTop: '8px', color: 'var(--text-secondary)' }} onClick={() => setEditingContactGroup({ name: '', color: '#60a5fa' })}>
+                      <Plus size={16} style={{ marginRight: '8px' }} /> Create Group
+                    </div>
+                    {editingContactGroup && (
+                      <div style={{ marginTop: '8px', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }} onClick={e => e.stopPropagation()}>
+                        <input className="glass-input" style={{ width: '100%', marginBottom: '8px' }} placeholder="Group name" value={editingContactGroup.name || ''} onChange={e => setEditingContactGroup({ ...editingContactGroup, name: e.target.value })} />
+                        <input type="color" value={editingContactGroup.color || '#60a5fa'} onChange={e => setEditingContactGroup({ ...editingContactGroup, color: e.target.value })} style={{ width: '100%', marginBottom: '8px', height: '32px' }} />
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => handleSaveContactGroup(editingContactGroup)}>Save</button>
+                          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setEditingContactGroup(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </Panel>

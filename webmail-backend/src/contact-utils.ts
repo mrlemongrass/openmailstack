@@ -122,6 +122,25 @@ export async function ensureContactsSchema(): Promise<void> {
                 await pool.query('ALTER TABLE contacts ADD COLUMN photo_url MEDIUMTEXT NULL AFTER labels_json');
             }
 
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS contact_groups (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    username VARCHAR(255) NOT NULL,
+                    name VARCHAR(255) NOT NULL,
+                    color VARCHAR(32) NOT NULL DEFAULT '#60a5fa',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    KEY idx_contact_groups_username (username)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS contact_group_members (
+                    group_id INT NOT NULL,
+                    contact_id INT NOT NULL,
+                    PRIMARY KEY (group_id, contact_id),
+                    KEY idx_group_members_contact (contact_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+
             const [indexes]: any = await pool.query("SHOW INDEX FROM contacts WHERE Key_name = 'idx_contacts_user_dav_uid'");
             if (indexes.length === 0) {
                 await pool.query('ALTER TABLE contacts ADD KEY idx_contacts_user_dav_uid (username, dav_uid)');

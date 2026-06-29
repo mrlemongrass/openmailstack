@@ -11,21 +11,32 @@ exports.SESSION_COOKIE = 'oms_session';
 let schemaPromise = null;
 const ensureSessionSchema = async () => {
     if (!schemaPromise) {
-        schemaPromise = db_1.pool.query(`
-            CREATE TABLE IF NOT EXISTS webmail_sessions (
-                id_hash CHAR(64) NOT NULL PRIMARY KEY,
-                username VARCHAR(255) NOT NULL,
-                password_ciphertext TEXT NOT NULL,
-                password_iv VARBINARY(12) NOT NULL,
-                password_tag VARBINARY(16) NOT NULL,
-                is_admin TINYINT(1) NOT NULL DEFAULT 0,
-                expires_at DATETIME NOT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                KEY idx_expires_at (expires_at),
-                KEY idx_username (username)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        `).then(() => undefined);
+        schemaPromise = (async () => {
+            await db_1.pool.query(`
+                CREATE TABLE IF NOT EXISTS webmail_sessions (
+                    id_hash CHAR(64) NOT NULL PRIMARY KEY,
+                    username VARCHAR(255) NOT NULL,
+                    password_ciphertext TEXT NOT NULL,
+                    password_iv VARBINARY(12) NOT NULL,
+                    password_tag VARBINARY(16) NOT NULL,
+                    is_admin TINYINT(1) NOT NULL DEFAULT 0,
+                    expires_at DATETIME NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    KEY idx_expires_at (expires_at),
+                    KEY idx_username (username)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+            await db_1.pool.query(`
+                CREATE TABLE IF NOT EXISTS mailbox_credentials (
+                    username VARCHAR(255) NOT NULL PRIMARY KEY,
+                    password_ciphertext TEXT NOT NULL,
+                    password_iv VARBINARY(12) NOT NULL,
+                    password_tag VARBINARY(16) NOT NULL,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+        })().then(() => undefined);
     }
     return schemaPromise;
 };
@@ -92,6 +103,12 @@ const createSession = async (res, data) => {
         data.isAdmin ? 1 : 0,
         toMysqlDate(expiresAt)
     ]);
+    // Also store credentials persistently for offline indexing
+    db_1.pool.query(`INSERT INTO mailbox_credentials (username, password_ciphertext, password_iv, password_tag)
+         VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE
+         password_ciphertext = VALUES(password_ciphertext),
+         password_iv = VALUES(password_iv),
+         password_tag = VALUES(password_tag)`, [data.username, encryptedPassword.ciphertext, encryptedPassword.iv, encryptedPassword.tag]).catch(err => console.error('Failed to store mailbox credentials:', err));
     const session = { ...data, id, expiresAt };
     const maxAge = Math.floor(config_1.serverConfig.sessionTtlMs / 1000);
     res.setHeader('Set-Cookie', `${exports.SESSION_COOKIE}=${encodeURIComponent(id)}; ${cookieOptions(maxAge).join('; ')}`);

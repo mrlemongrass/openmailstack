@@ -29,6 +29,7 @@ const eas_notes_1 = require("./eas-notes");
 const notes_imap_sync_1 = require("./notes-imap-sync");
 const search_worker_1 = require("./search-worker");
 const scheduled_send_1 = require("./scheduled-send");
+const calendar_subscription_1 = require("./calendar-subscription");
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
 exports.io = new socket_io_1.Server(server, {
@@ -44,6 +45,7 @@ exports.io.on('connection', (socket) => {
 (0, search_index_1.ensureMailSearchSchema)().catch(err => console.error('Failed to initialize mail search index:', err));
 (0, search_worker_1.startSearchWorker)();
 (0, scheduled_send_1.startScheduledSender)();
+(0, calendar_subscription_1.startCalendarSubscriptionWorker)();
 (0, user_settings_1.ensureUserSettingsSchema)().catch(err => console.error('Failed to initialize user settings schema:', err));
 (0, admin_settings_1.ensureAdminSettingsSchema)().catch(err => console.error('Failed to initialize admin settings schema:', err));
 (0, branding_1.ensureBrandingSchema)().catch(err => console.error('Failed to initialize branding schema:', err));

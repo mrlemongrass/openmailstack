@@ -333,6 +333,108 @@ exports.appsApiRouter.delete('/contact-labels/:id', async (req, res) => {
     }
 });
 // ==========================================
+// CONTACT GROUPS API
+// ==========================================
+exports.appsApiRouter.get('/contact-groups', async (req, res) => {
+    const user = req.username;
+    try {
+        const [groups] = await db_1.pool.query(`SELECT g.*, COUNT(m.contact_id) as member_count
+             FROM contact_groups g LEFT JOIN contact_group_members m ON g.id = m.group_id
+             WHERE g.username = ? GROUP BY g.id ORDER BY g.name`, [user]);
+        res.json({ success: true, groups });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.post('/contact-groups', async (req, res) => {
+    const user = req.username;
+    const { name, color } = req.body;
+    if (!name || !name.trim())
+        return res.status(400).json({ success: false, error: 'Group name is required' });
+    try {
+        const [result] = await db_1.pool.query('INSERT INTO contact_groups (username, name, color) VALUES (?, ?, ?)', [user, name.trim(), color || '#60a5fa']);
+        res.json({ success: true, id: result.insertId });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.put('/contact-groups/:id', async (req, res) => {
+    const user = req.username;
+    const { name, color } = req.body;
+    try {
+        const [result] = await db_1.pool.query('UPDATE contact_groups SET name = COALESCE(?, name), color = COALESCE(?, color) WHERE id = ? AND username = ?', [name?.trim() || null, color || null, req.params.id, user]);
+        if (result.affectedRows === 0)
+            return res.status(404).json({ success: false, error: 'Group not found' });
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.delete('/contact-groups/:id', async (req, res) => {
+    const user = req.username;
+    try {
+        await db_1.pool.query('DELETE FROM contact_group_members WHERE group_id = ?', [req.params.id]);
+        const [result] = await db_1.pool.query('DELETE FROM contact_groups WHERE id = ? AND username = ?', [req.params.id, user]);
+        if (result.affectedRows === 0)
+            return res.status(404).json({ success: false, error: 'Group not found' });
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.get('/contact-groups/:id/members', async (req, res) => {
+    const user = req.username;
+    try {
+        const [rows] = await db_1.pool.query(`SELECT m.contact_id, c.name, c.email FROM contact_group_members m
+             JOIN contacts c ON c.id = m.contact_id
+             JOIN contact_groups g ON g.id = m.group_id
+             WHERE m.group_id = ? AND g.username = ?`, [req.params.id, user]);
+        res.json({ success: true, members: rows });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.post('/contact-groups/:id/members', async (req, res) => {
+    const user = req.username;
+    const { contactIds } = req.body;
+    if (!Array.isArray(contactIds))
+        return res.status(400).json({ success: false, error: 'contactIds array required' });
+    try {
+        const [group] = await db_1.pool.query('SELECT id FROM contact_groups WHERE id = ? AND username = ?', [req.params.id, user]);
+        if (group.length === 0)
+            return res.status(404).json({ success: false, error: 'Group not found' });
+        let added = 0;
+        for (const contactId of contactIds) {
+            try {
+                await db_1.pool.query('INSERT IGNORE INTO contact_group_members (group_id, contact_id) VALUES (?, ?)', [req.params.id, contactId]);
+                added++;
+            }
+            catch { }
+        }
+        res.json({ success: true, added });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.delete('/contact-groups/:id/members/:contactId', async (req, res) => {
+    const user = req.username;
+    try {
+        await db_1.pool.query(`DELETE m FROM contact_group_members m
+             JOIN contact_groups g ON g.id = m.group_id
+             WHERE m.group_id = ? AND m.contact_id = ? AND g.username = ?`, [req.params.id, req.params.contactId, user]);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+// ==========================================
 // TASKS API
 // ==========================================
 exports.appsApiRouter.get('/tasks', async (req, res) => {

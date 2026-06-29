@@ -1,13 +1,53 @@
 import { pool } from "./db";
 import { ImapService } from "./imap";
 import { simpleParser } from "mailparser";
+const pdfParse = require("pdf-parse");
 import { upsertMailSearchRows, deleteMailSearchRows, ensureMailSearchSchema, MailSearchIndexRow } from "./search-index";
 import { decryptPassword } from "./auth";
 
 const getAddressText = (addr: any) => addr?.text || "";
 const getAttachmentNames = (parsed: any) => parsed.attachments ? parsed.attachments.map((a: any) => a.filename).filter(Boolean).join(", ") : "";
 
-const parsedMailToIndexRow = (folder: string, msg: any, parsed: any): MailSearchIndexRow => ({
+const stripXmlTags = (xml: string): string => xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+const extractOfficeXmlText = (content: Buffer): string => {
+    try {
+        // Office Open XML / ODF files are ZIP archives containing XML
+        const zlib = require('zlib');
+        // Try to find and extract document.xml or content.xml
+        // Simple approach: find XML text between tags in the raw buffer
+        const str = content.toString('utf8');
+        // Look for document.xml content in ZIP central directory entries
+        const xmlSegments = str.match(/<w:t[^>]*>([^<]+)<\/w:t>/g);
+        if (xmlSegments) return xmlSegments.map(s => s.replace(/<\/?w:t[^>]*>/g, '')).join(' ').trim();
+        // Fallback: strip all XML tags from any recognizable XML in the buffer
+        const xmlMatch = str.match(/<office:document[^>]*>[\s\S]*<\/office:document>/);
+        if (xmlMatch) return stripXmlTags(xmlMatch[0]);
+        // Try text:p for ODF
+        const textSegments = str.match(/<text:p[^>]*>([^<]*)<\/text:p>/g);
+        if (textSegments) return textSegments.map(s => s.replace(/<\/?text:p[^>]*>/g, '')).join(' ').trim();
+    } catch {}
+    return '';
+};
+
+const extractAttachmentText = async (attachment: any): Promise<string> => {
+    const ct = attachment.contentType || '';
+    const content = attachment.content;
+    if (!content || content.length === 0) return '';
+
+    try {
+        if (ct === 'application/pdf') {
+            const data = await pdfParse(content);
+            return (data.text || '').substring(0, 100000);
+        }
+        if (ct.includes('opendocument') || ct.includes('openxmlformats') || ct === 'application/msword' || ct === 'application/rtf') {
+            return extractOfficeXmlText(content).substring(0, 100000);
+        }
+    } catch {}
+    return '';
+};
+
+const parsedMailToIndexRow = (folder: string, msg: any, parsed: any, extraText?: string): MailSearchIndexRow => ({
     folder,
     uid: msg.uid,
     messageId: parsed.messageId || "",
@@ -27,6 +67,7 @@ const parsedMailToIndexRow = (folder: string, msg: any, parsed: any): MailSearch
                 }
             }
         }
+        if (extraText) txt += "\n\n" + extraText;
         return txt;
     })(),
     attachmentNames: getAttachmentNames(parsed),
@@ -173,18 +214,22 @@ interface UserCredential {
 }
 
 const getAvailableUserCredentials = async (): Promise<UserCredential[]> => {
-    const [sessions]: any = await pool.query(
-        "SELECT username, password_ciphertext, password_iv, password_tag FROM webmail_sessions WHERE expires_at > NOW()"
+    const [rows]: any = await pool.query(
+        `SELECT username, password_ciphertext, password_iv, password_tag FROM (
+            SELECT username, password_ciphertext, password_iv, password_tag FROM webmail_sessions WHERE expires_at > NOW()
+            UNION
+            SELECT username, password_ciphertext, password_iv, password_tag FROM mailbox_credentials
+        ) AS combined`
     );
     const seen = new Set<string>();
     const credentials: UserCredential[] = [];
 
-    for (const session of sessions) {
-        const username = session.username;
+    for (const row of rows) {
+        const username = row.username;
         if (seen.has(username)) continue;
         seen.add(username);
         try {
-            const password = decryptPassword(session.password_ciphertext, session.password_iv, session.password_tag);
+            const password = decryptPassword(row.password_ciphertext, row.password_iv, row.password_tag);
             credentials.push({ username, password });
         } catch (err) {
             console.error(`[SearchWorker] Failed to decrypt credentials for ${username}:`, err);
@@ -221,7 +266,14 @@ const indexUserFolders = async (credential: UserCredential) => {
                 const rows: MailSearchIndexRow[] = [];
                 for (const msg of messages) {
                     const parsed = await simpleParser(msg.source);
-                    rows.push(parsedMailToIndexRow(folderPath, msg, parsed));
+                    let extraText = '';
+                    if (parsed.attachments && Array.isArray(parsed.attachments)) {
+                        for (const att of parsed.attachments) {
+                            const txt = await extractAttachmentText(att);
+                            if (txt) extraText += `\n\n--- ${att.filename || 'attachment'} ---\n${txt}`;
+                        }
+                    }
+                    rows.push(parsedMailToIndexRow(folderPath, msg, parsed, extraText || undefined));
                 }
 
                 if (rows.length > 0) {

@@ -33,6 +33,7 @@ import { activeSyncToDbNote, dbNoteToActiveSync } from './eas-notes';
 import { syncNotesWithImap } from './notes-imap-sync';
 import { startSearchWorker } from './search-worker';
 import { startScheduledSender } from './scheduled-send';
+import { startCalendarSubscriptionWorker } from './calendar-subscription';
 
 const app = express();
 const server = http.createServer(app);
@@ -50,6 +51,7 @@ io.on('connection', (socket) => {
 ensureMailSearchSchema().catch(err => console.error('Failed to initialize mail search index:', err));
 startSearchWorker();
 startScheduledSender();
+startCalendarSubscriptionWorker();
 ensureUserSettingsSchema().catch(err => console.error('Failed to initialize user settings schema:', err));
 ensureAdminSettingsSchema().catch(err => console.error('Failed to initialize admin settings schema:', err));
 ensureBrandingSchema().catch(err => console.error('Failed to initialize branding schema:', err));

@@ -79,6 +79,17 @@ export async function ensureCalendarSchema(): Promise<void> {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
 
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS calendar_tombstones (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    calendar_id INT NOT NULL,
+                    uid VARCHAR(255) NOT NULL,
+                    deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    KEY idx_tombstones_calendar (calendar_id),
+                    KEY idx_tombstones_deleted (deleted_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+
             await backfillMissingCalendarSlugs();
         })();
     }

@@ -4,11 +4,53 @@ exports.startSearchWorker = exports.purgeUserSearchIndex = exports.getSearchWork
 const db_1 = require("./db");
 const imap_1 = require("./imap");
 const mailparser_1 = require("mailparser");
+const pdfParse = require("pdf-parse");
 const search_index_1 = require("./search-index");
 const auth_1 = require("./auth");
 const getAddressText = (addr) => addr?.text || "";
 const getAttachmentNames = (parsed) => parsed.attachments ? parsed.attachments.map((a) => a.filename).filter(Boolean).join(", ") : "";
-const parsedMailToIndexRow = (folder, msg, parsed) => ({
+const stripXmlTags = (xml) => xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+const extractOfficeXmlText = (content) => {
+    try {
+        // Office Open XML / ODF files are ZIP archives containing XML
+        const zlib = require('zlib');
+        // Try to find and extract document.xml or content.xml
+        // Simple approach: find XML text between tags in the raw buffer
+        const str = content.toString('utf8');
+        // Look for document.xml content in ZIP central directory entries
+        const xmlSegments = str.match(/<w:t[^>]*>([^<]+)<\/w:t>/g);
+        if (xmlSegments)
+            return xmlSegments.map(s => s.replace(/<\/?w:t[^>]*>/g, '')).join(' ').trim();
+        // Fallback: strip all XML tags from any recognizable XML in the buffer
+        const xmlMatch = str.match(/<office:document[^>]*>[\s\S]*<\/office:document>/);
+        if (xmlMatch)
+            return stripXmlTags(xmlMatch[0]);
+        // Try text:p for ODF
+        const textSegments = str.match(/<text:p[^>]*>([^<]*)<\/text:p>/g);
+        if (textSegments)
+            return textSegments.map(s => s.replace(/<\/?text:p[^>]*>/g, '')).join(' ').trim();
+    }
+    catch { }
+    return '';
+};
+const extractAttachmentText = async (attachment) => {
+    const ct = attachment.contentType || '';
+    const content = attachment.content;
+    if (!content || content.length === 0)
+        return '';
+    try {
+        if (ct === 'application/pdf') {
+            const data = await pdfParse(content);
+            return (data.text || '').substring(0, 100000);
+        }
+        if (ct.includes('opendocument') || ct.includes('openxmlformats') || ct === 'application/msword' || ct === 'application/rtf') {
+            return extractOfficeXmlText(content).substring(0, 100000);
+        }
+    }
+    catch { }
+    return '';
+};
+const parsedMailToIndexRow = (folder, msg, parsed, extraText) => ({
     folder,
     uid: msg.uid,
     messageId: parsed.messageId || "",
@@ -28,6 +70,8 @@ const parsedMailToIndexRow = (folder, msg, parsed) => ({
                 }
             }
         }
+        if (extraText)
+            txt += "\n\n" + extraText;
         return txt;
     })(),
     attachmentNames: getAttachmentNames(parsed),
@@ -130,16 +174,20 @@ const reconcileExpungedMessages = async (username, folder, imap) => {
     }
 };
 const getAvailableUserCredentials = async () => {
-    const [sessions] = await db_1.pool.query("SELECT username, password_ciphertext, password_iv, password_tag FROM webmail_sessions WHERE expires_at > NOW()");
+    const [rows] = await db_1.pool.query(`SELECT username, password_ciphertext, password_iv, password_tag FROM (
+            SELECT username, password_ciphertext, password_iv, password_tag FROM webmail_sessions WHERE expires_at > NOW()
+            UNION
+            SELECT username, password_ciphertext, password_iv, password_tag FROM mailbox_credentials
+        ) AS combined`);
     const seen = new Set();
     const credentials = [];
-    for (const session of sessions) {
-        const username = session.username;
+    for (const row of rows) {
+        const username = row.username;
         if (seen.has(username))
             continue;
         seen.add(username);
         try {
-            const password = (0, auth_1.decryptPassword)(session.password_ciphertext, session.password_iv, session.password_tag);
+            const password = (0, auth_1.decryptPassword)(row.password_ciphertext, row.password_iv, row.password_tag);
             credentials.push({ username, password });
         }
         catch (err) {
@@ -169,7 +217,15 @@ const indexUserFolders = async (credential) => {
                 const rows = [];
                 for (const msg of messages) {
                     const parsed = await (0, mailparser_1.simpleParser)(msg.source);
-                    rows.push(parsedMailToIndexRow(folderPath, msg, parsed));
+                    let extraText = '';
+                    if (parsed.attachments && Array.isArray(parsed.attachments)) {
+                        for (const att of parsed.attachments) {
+                            const txt = await extractAttachmentText(att);
+                            if (txt)
+                                extraText += `\n\n--- ${att.filename || 'attachment'} ---\n${txt}`;
+                        }
+                    }
+                    rows.push(parsedMailToIndexRow(folderPath, msg, parsed, extraText || undefined));
                 }
                 if (rows.length > 0) {
                     await (0, search_index_1.upsertMailSearchRows)(username, rows);

@@ -288,10 +288,42 @@ async function handleReport(req, res, user) {
         if (!(await userHasCalendarAccess(calendarId, user))) {
             return res.status(404).send();
         }
-        const [events] = await db_1.pool.query('SELECT * FROM events WHERE calendar_id = ?', [calendarId]);
-        const responses = events.map((ev) => `
+        // Parse REPORT body to detect sync-collection vs calendar-query
+        const body = req.body || '';
+        const bodyStr = typeof body === 'string' ? body : (body instanceof Buffer ? body.toString('utf8') : '');
+        const isSyncCollection = /<sync-collection/i.test(bodyStr);
+        const syncTokenMatch = bodyStr.match(/<D:sync-token>([^<]+)<\/D:sync-token>/i);
+        const requestedToken = syncTokenMatch ? syncTokenMatch[1] : null;
+        // Build the base href for this calendar
+        const hrefBase = isLegacy
+            ? `/SOGo/dav/${user}/Calendar/`
+            : `/caldav/calendars/${user}/${(cal && cal.dav_slug) || calendarId}/`;
+        let events;
+        let tombstones = [];
+        if (isSyncCollection && requestedToken && cal) {
+            // Incremental sync: parse requested token, return only changes
+            const tokenNum = parseInt(requestedToken.replace(/\D/g, ''), 10) || 0;
+            const currentToken = cal.sync_token || 0;
+            if (tokenNum >= currentToken) {
+                // No changes since last sync — return empty multistatus with updated token
+                events = [];
+            }
+            else {
+                // Return events changed since the token
+                events = (await db_1.pool.query('SELECT * FROM events WHERE calendar_id = ? AND updated_at > COALESCE((SELECT deleted_at FROM calendar_tombstones WHERE calendar_id = ? ORDER BY deleted_at DESC LIMIT 1), DATE_SUB(NOW(), INTERVAL 1 YEAR))', [calendarId, calendarId]))[0];
+                // Get tombstones since last sync
+                tombstones = (await db_1.pool.query('SELECT uid, deleted_at FROM calendar_tombstones WHERE calendar_id = ? AND deleted_at > DATE_SUB(NOW(), INTERVAL 30 DAY)', [calendarId]))[0];
+                // Clean old tombstones
+                db_1.pool.query('DELETE FROM calendar_tombstones WHERE deleted_at < DATE_SUB(NOW(), INTERVAL 30 DAY)').catch(() => { });
+            }
+        }
+        else {
+            // Full sync (calendar-query or no sync-token)
+            events = (await db_1.pool.query('SELECT * FROM events WHERE calendar_id = ?', [calendarId]))[0];
+        }
+        const eventResponses = events.map((ev) => `
   <D:response>
-    <D:href>${isLegacy ? `/SOGo/dav/${user}/Calendar/` : `/caldav/calendars/${user}/${(cal && cal.dav_slug) || calendarId}/`}${ev.uid}.ics</D:href>
+    <D:href>${hrefBase}${ev.uid}.ics</D:href>
     <D:propstat>
       <D:prop>
         <D:getetag>"${ev.uid}"</D:getetag>
@@ -300,10 +332,16 @@ async function handleReport(req, res, user) {
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
   </D:response>`).join('');
+        const tombstoneResponses = tombstones.map((t) => `
+  <D:response>
+    <D:href>${hrefBase}${t.uid}.ics</D:href>
+    <D:status>HTTP/1.1 404 Not Found</D:status>
+  </D:response>`).join('');
         res.set('Content-Type', 'application/xml; charset=utf-8');
+        const syncTokenXml = cal ? `\n  <D:sync-token>http://sabre.io/ns/sync/${cal.sync_token || 0}</D:sync-token>` : '';
         const xml = `<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
-  ${responses}
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">${syncTokenXml}
+  ${eventResponses}${tombstoneResponses}
 </D:multistatus>`;
         res.status(207).send(xml);
     }
@@ -491,6 +529,7 @@ async function handleDelete(req, res, user) {
         if (!(await userHasCalendarAccess(calendarId, user, true))) {
             return res.status(404).send();
         }
+        await db_1.pool.query('INSERT INTO calendar_tombstones (calendar_id, uid) VALUES (?, ?)', [calendarId, uid]);
         await db_1.pool.query('DELETE FROM events WHERE calendar_id = ? AND uid = ?', [calendarId, uid]);
         await db_1.pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendarId]);
         res.status(204).send();

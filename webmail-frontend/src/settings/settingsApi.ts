@@ -41,11 +41,12 @@ export interface CalendarUserSettings {
   defaultReminderMinutes: 0 | 5 | 10 | 15 | 30 | 60 | 1440;
   weekStartsOn: 0 | 1 | 6;
   timeZone: string;
+  clockFormat: '12h' | '24h';
 }
 
 export interface ContactsUserSettings {
   nameFormat: 'firstLast' | 'lastFirst';
-  sortBy: 'name' | 'email';
+  sortBy: 'firstName' | 'lastName' | 'email';
   listDensity: 'comfortable' | 'cozy' | 'compact';
   autoCreateFromSent: boolean;
 }
@@ -80,11 +81,12 @@ export const defaultCalendarSettings: CalendarUserSettings = {
   defaultReminderMinutes: 10,
   weekStartsOn: 0,
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+  clockFormat: '12h',
 };
 
 export const defaultContactsSettings: ContactsUserSettings = {
   nameFormat: 'firstLast',
-  sortBy: 'name',
+  sortBy: 'firstName',
   listDensity: 'cozy',
   autoCreateFromSent: true,
 };

@@ -37,6 +37,7 @@ exports.settingsDefaults = {
         defaultReminderMinutes: 10,
         weekStartsOn: 0,
         timeZone: 'UTC',
+        clockFormat: '12h',
     },
     contacts: {
         nameFormat: 'firstLast',
@@ -167,6 +168,7 @@ function normalizeSettings(namespace, value) {
             defaultReminderMinutes: numberOption(source.defaultReminderMinutes, [0, 5, 10, 15, 30, 60, 1440], exports.settingsDefaults.calendar.defaultReminderMinutes),
             weekStartsOn: weekStartValue(source.weekStartsOn, exports.settingsDefaults.calendar.weekStartsOn),
             timeZone: typeof source.timeZone === 'string' && source.timeZone.trim() ? source.timeZone.trim().slice(0, 80) : exports.settingsDefaults.calendar.timeZone,
+            clockFormat: stringOption(source.clockFormat, ['12h', '24h'], exports.settingsDefaults.calendar.clockFormat),
         };
     }
     if (namespace === 'contacts') {

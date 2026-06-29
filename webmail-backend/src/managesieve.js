@@ -96,7 +96,7 @@ class ManageSieveClient {
     }
     async getScript(scriptName) {
         const res = await this.sendCommand(`GETSCRIPT "${scriptName}"`);
-        const lines = res.split('\r\n');
+        const lines = res.trim().split('\r\n');
         const lastLine = lines.pop();
         if (!lastLine?.startsWith('OK')) {
             throw new Error(`GETSCRIPT failed: ${res}`);

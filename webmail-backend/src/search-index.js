@@ -20,8 +20,11 @@ const ensureMailSearchSchema = async () => {
                 preview TEXT NULL,
                 body_text MEDIUMTEXT NULL,
                 attachment_names TEXT NULL,
+                in_reply_to TEXT NULL,
+                refs TEXT NULL,
                 is_read TINYINT(1) NOT NULL DEFAULT 0,
                 is_starred TINYINT(1) NOT NULL DEFAULT 0,
+                message_size INT UNSIGNED NOT NULL DEFAULT 0,
                 indexed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 UNIQUE KEY uniq_user_folder_uid (username, folder, uid),
                 KEY idx_user_folder_date (username, folder, sent_at),
@@ -30,6 +33,15 @@ const ensureMailSearchSchema = async () => {
                 FULLTEXT KEY ft_mail_search (subject, sender, recipients, body_text, attachment_names)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
+            const [cols] = await db_1.pool.query('SHOW COLUMNS FROM mail_search_index LIKE "message_size"');
+            if (cols.length === 0) {
+                await db_1.pool.query('ALTER TABLE mail_search_index ADD COLUMN message_size INT UNSIGNED NOT NULL DEFAULT 0 AFTER is_starred');
+            }
+            const [colsReply] = await db_1.pool.query('SHOW COLUMNS FROM mail_search_index LIKE "in_reply_to"');
+            if (colsReply.length === 0) {
+                await db_1.pool.query('ALTER TABLE mail_search_index ADD COLUMN in_reply_to TEXT NULL AFTER attachment_names');
+                await db_1.pool.query('ALTER TABLE mail_search_index ADD COLUMN refs TEXT NULL AFTER in_reply_to');
+            }
             await db_1.pool.query(`
                 CREATE TABLE IF NOT EXISTS mail_saved_searches (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -65,6 +77,20 @@ const toMysqlDate = (value) => {
 const escapeLike = (value) => value.replace(/[\\%_]/g, '\\$&');
 const tokenize = (query) => query.match(/"[^"]+"|\S+/g) || [];
 const cleanTokenValue = (value) => value.replace(/^"|"$/g, '').trim();
+const parseSize = (val) => {
+    const match = val.match(/^(\d+)(k|m|g)?b?$/i);
+    if (!match)
+        return undefined;
+    const num = parseInt(match[1], 10);
+    const unit = match[2]?.toLowerCase();
+    if (unit === 'k')
+        return num * 1024;
+    if (unit === 'm')
+        return num * 1024 * 1024;
+    if (unit === 'g')
+        return num * 1024 * 1024 * 1024;
+    return num;
+};
 const parseMailSearchExpression = (query) => {
     const parsed = {
         terms: [],
@@ -86,6 +112,9 @@ const parseMailSearchExpression = (query) => {
         else if (normalized === 'is:unstarred' || normalized === '-is:starred' || normalized === '-is:flagged') {
             parsed.isStarred = false;
         }
+        else if (normalized === 'has:attachment') {
+            parsed.hasAttachment = true;
+        }
         else if (normalized.startsWith('from:') && token.length > 5) {
             parsed.from.push(cleanTokenValue(token.slice(5)));
         }
@@ -94,6 +123,17 @@ const parseMailSearchExpression = (query) => {
         }
         else if (normalized.startsWith('subject:') && token.length > 8) {
             parsed.subject.push(cleanTokenValue(token.slice(8)));
+        }
+        else if (normalized.startsWith('before:') && token.length > 7) {
+            parsed.before = cleanTokenValue(token.slice(7));
+        }
+        else if (normalized.startsWith('after:') && token.length > 6) {
+            parsed.after = cleanTokenValue(token.slice(6));
+        }
+        else if (normalized.startsWith('larger:') && token.length > 7) {
+            const size = parseSize(cleanTokenValue(token.slice(7)));
+            if (size !== undefined)
+                parsed.larger = size;
         }
         else {
             const value = cleanTokenValue(token);
@@ -122,9 +162,9 @@ const upsertMailSearchRows = async (username, rows) => {
     await (0, exports.ensureMailSearchSchema)();
     const values = rows.map(row => [
         username,
-        trimForIndex(row.folder, 255),
+        row.folder,
         row.uid,
-        trimForIndex(row.messageId, 512) || null,
+        trimForIndex(row.messageId, 512),
         trimForIndex(row.subject, 4096),
         trimForIndex(row.sender, 4096),
         trimForIndex(row.recipients, 4096),
@@ -132,11 +172,14 @@ const upsertMailSearchRows = async (username, rows) => {
         trimForIndex(row.preview, 1024),
         trimForIndex(row.bodyText, 1024 * 1024),
         trimForIndex(row.attachmentNames, 4096),
+        trimForIndex(row.inReplyTo || '', 4096),
+        trimForIndex(Array.isArray(row.references) ? row.references.join(' ') : (row.references || ''), 4096),
         row.isRead ? 1 : 0,
-        row.isStarred ? 1 : 0
+        row.isStarred ? 1 : 0,
+        row.messageSize || 0
     ]);
     await db_1.pool.query(`INSERT INTO mail_search_index
-            (username, folder, uid, message_id, subject, sender, recipients, sent_at, preview, body_text, attachment_names, is_read, is_starred)
+            (username, folder, uid, message_id, subject, sender, recipients, sent_at, preview, body_text, attachment_names, in_reply_to, refs, is_read, is_starred, message_size)
          VALUES ?
          ON DUPLICATE KEY UPDATE
             message_id = VALUES(message_id),
@@ -147,8 +190,11 @@ const upsertMailSearchRows = async (username, rows) => {
             preview = VALUES(preview),
             body_text = VALUES(body_text),
             attachment_names = VALUES(attachment_names),
+            in_reply_to = VALUES(in_reply_to),
+            refs = VALUES(refs),
             is_read = VALUES(is_read),
             is_starred = VALUES(is_starred),
+            message_size = VALUES(message_size),
             indexed_at = CURRENT_TIMESTAMP`, [values]);
     return rows.length;
 };
@@ -264,6 +310,21 @@ const searchMailIndex = async (username, options) => {
         where.push('is_starred = ?');
         whereParams.push(parsed.isStarred ? 1 : 0);
     }
+    if (parsed.hasAttachment) {
+        where.push(`(attachment_names IS NOT NULL AND attachment_names != '')`);
+    }
+    if (parsed.before) {
+        where.push(`sent_at < ?`);
+        whereParams.push(toMysqlDate(parsed.before) || parsed.before);
+    }
+    if (parsed.after) {
+        where.push(`sent_at > ?`);
+        whereParams.push(toMysqlDate(parsed.after) || parsed.after);
+    }
+    if (parsed.larger !== undefined) {
+        where.push(`message_size > ?`);
+        whereParams.push(parsed.larger);
+    }
     for (const value of parsed.from)
         addLikeCondition(where, whereParams, 'sender', value);
     for (const value of parsed.to)
@@ -295,6 +356,9 @@ const searchMailIndex = async (username, options) => {
     const [rows] = await db_1.pool.query(`SELECT
             folder,
             uid,
+            message_id AS messageId,
+            in_reply_to AS inReplyTo,
+            refs,
             subject,
             sender,
             recipients,
@@ -311,6 +375,9 @@ const searchMailIndex = async (username, options) => {
     return rows.map((row) => ({
         folder: row.folder,
         uid: Number(row.uid),
+        messageId: row.messageId || '',
+        inReplyTo: row.inReplyTo || '',
+        references: row.refs ? row.refs.split(' ').filter(Boolean) : [],
         subject: row.subject || '(No Subject)',
         from: row.sender || '',
         to: row.recipients || '',

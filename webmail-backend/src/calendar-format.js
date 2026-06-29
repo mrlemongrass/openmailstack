@@ -9,8 +9,7 @@ const crypto_1 = require("crypto");
 function slugifyCalendarName(name) {
     const slug = name
         .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/[^a-zA-Z0-9._-]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 80);
     return slug || 'calendar';
@@ -134,7 +133,15 @@ function recurrenceLabel(rule) {
 }
 function parseIcalEvent(uid, ical) {
     const lines = unfoldIcal(ical);
-    const eventLines = firstComponentPropertyLines(lines, 'VEVENT');
+    let isTask = false;
+    let eventLines = firstComponentPropertyLines(lines, 'VEVENT');
+    if (eventLines === lines) {
+        const todoLines = firstComponentPropertyLines(lines, 'VTODO');
+        if (todoLines !== lines) {
+            eventLines = todoLines;
+            isTask = true;
+        }
+    }
     const startField = firstIcalValue(eventLines, 'DTSTART');
     const endField = firstIcalValue(eventLines, 'DTEND');
     const allDay = Boolean(startField?.params.toUpperCase().includes('VALUE=DATE') || startField?.value.length === 8);
@@ -152,6 +159,7 @@ function parseIcalEvent(uid, ical) {
         dtstamp: parseIcalDate(firstIcalValue(eventLines, 'DTSTAMP')?.value || '', false),
         recurrence,
         recurrenceLabel: recurrenceLabel(recurrence),
+        type: isTask ? 'task' : 'event',
     };
 }
 function addRecurrenceInterval(date, frequency, interval) {

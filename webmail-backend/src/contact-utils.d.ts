@@ -8,6 +8,19 @@ export interface ContactRow {
     dav_uid?: string;
     sync_token?: number;
     updated_at?: string | Date;
+    emails_json?: any;
+    phones_json?: any;
+    addresses_json?: any;
+    job_title?: string;
+    organization?: string;
+    notes?: string;
+    labels_json?: any;
+}
+export interface ContactLabelRow {
+    id: number;
+    username: string;
+    name: string;
+    color: string;
 }
 export interface ParsedVCardContact {
     name: string;
@@ -21,6 +34,7 @@ export declare function normalizeDavUid(raw: string): string;
 export declare function getContactDavUid(contact: ContactRow): string;
 export declare function getContactHref(user: string, contact: ContactRow): string;
 export declare function normalizeVCardData(vcard: string, davUid: string, fallback: ParsedVCardContact): string;
+export declare function patchVCardData(vcard: string, davUid: string, updates: any): string;
 export declare function contactEtag(contact: ContactRow): string;
 export declare function listContacts(user: string): Promise<ContactRow[]>;
 export declare function getContactByDavUid(user: string, davUid: string): Promise<ContactRow | null>;

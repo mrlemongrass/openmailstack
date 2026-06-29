@@ -3,6 +3,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.io = void 0;
+const http_1 = __importDefault(require("http"));
+const socket_io_1 = require("socket.io");
 const express_1 = __importDefault(require("express"));
 const body_parser_1 = __importDefault(require("body-parser"));
 const parser_1 = require("./wbxml/parser");
@@ -21,13 +24,32 @@ const admin_settings_1 = require("./admin-settings");
 const branding_1 = require("./branding");
 const calendar_utils_1 = require("./calendar-utils");
 const contact_utils_1 = require("./contact-utils");
+const notes_utils_1 = require("./notes-utils");
+const eas_notes_1 = require("./eas-notes");
+const notes_imap_sync_1 = require("./notes-imap-sync");
+const search_worker_1 = require("./search-worker");
+const scheduled_send_1 = require("./scheduled-send");
 const app = (0, express_1.default)();
+const server = http_1.default.createServer(app);
+exports.io = new socket_io_1.Server(server, {
+    cors: { origin: true, credentials: true }
+});
+exports.io.on('connection', (socket) => {
+    socket.on('join', (username) => {
+        if (username) {
+            socket.join(username);
+        }
+    });
+});
 (0, search_index_1.ensureMailSearchSchema)().catch(err => console.error('Failed to initialize mail search index:', err));
+(0, search_worker_1.startSearchWorker)();
+(0, scheduled_send_1.startScheduledSender)();
 (0, user_settings_1.ensureUserSettingsSchema)().catch(err => console.error('Failed to initialize user settings schema:', err));
 (0, admin_settings_1.ensureAdminSettingsSchema)().catch(err => console.error('Failed to initialize admin settings schema:', err));
 (0, branding_1.ensureBrandingSchema)().catch(err => console.error('Failed to initialize branding schema:', err));
 (0, calendar_utils_1.ensureCalendarSchema)().catch(err => console.error('Failed to initialize calendar schema:', err));
 (0, contact_utils_1.ensureContactsSchema)().catch(err => console.error('Failed to initialize contacts schema:', err));
+(0, notes_utils_1.ensureNotesSchema)().catch(err => console.error('Failed to initialize notes schema:', err));
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(security_1.securityHeaders);
@@ -212,6 +234,13 @@ app.use('/api/auth/login', (0, security_1.rateLimit)(15 * 60 * 1000, 20));
 app.use('/api', (0, cors_1.default)({ credentials: true, origin: true }), api_1.apiRouter);
 app.use('/api/apps', (0, cors_1.default)({ credentials: true, origin: true }), apps_api_1.appsApiRouter);
 app.use('/caldav', caldav_1.default);
+app.all('/', (req, res, next) => {
+    if (req.method === 'PROPFIND') {
+        res.redirect(301, '/carddav/');
+        return;
+    }
+    next();
+});
 app.use('/carddav', carddav_1.default);
 app.all('/.well-known/caldav', (req, res) => {
     res.redirect(301, '/caldav/');
@@ -726,7 +755,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 let calendar;
                 if (collectionId.startsWith('cal-')) {
                     const calendarId = collectionId.slice(4);
-                    const [rows] = await db_1.pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ? LIMIT 1', [calendarId, creds.user]);
+                    const visibleCals = await (0, calendar_utils_1.getVisibleCalendars)(creds.user);
+                    const rows = visibleCals.filter(c => c.id.toString() === calendarId);
                     if (rows.length === 0) {
                         const notFoundAst = {
                             tag: "Sync",
@@ -756,6 +786,18 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 let calendarChanged = false;
                 for (const commandNode of commandsNode?.children || []) {
                     const applicationData = childNode(commandNode, 'ApplicationData');
+                    if (calendar.access_role === 'read') {
+                        responses.push({
+                            tag: commandNode.tag,
+                            page: 0,
+                            children: [
+                                ...(childText(commandNode, 'ClientId') ? [{ tag: 'ClientId', page: 0, content: childText(commandNode, 'ClientId') }] : []),
+                                ...(childText(commandNode, 'ServerId') ? [{ tag: 'ServerId', page: 0, content: childText(commandNode, 'ServerId') }] : []),
+                                { tag: 'Status', page: 0, content: '8' }
+                            ]
+                        });
+                        continue;
+                    }
                     if (commandNode.tag === 'Add') {
                         if (!applicationData) {
                             responses.push({
@@ -837,7 +879,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     }
                 }
                 if (calendarChanged) {
-                    const [updatedCalendars] = await db_1.pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ? LIMIT 1', [calendar.id, creds.user]);
+                    const visibleCals = await (0, calendar_utils_1.getVisibleCalendars)(creds.user);
+                    const updatedCalendars = visibleCals.filter(c => c.id === calendar.id);
                     if (updatedCalendars.length > 0) {
                         calendar = updatedCalendars[0];
                     }
@@ -908,6 +951,126 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
             }
             catch (e) {
                 console.error("Failed to sync calendar:", e);
+                return res.status(500).send();
+            }
+        }
+        if (collectionId === 'mock-notes') {
+            const creds = getAuthCredentials();
+            if (!creds)
+                return res.status(401).send();
+            console.log(`[SYNC] Notes sync for ${creds.user}, SyncKey=${syncKey}`);
+            let responses = [];
+            try {
+                const commandsNode = childNode(syncCollectionNode, 'Commands');
+                if (commandsNode) {
+                    for (const cmd of commandsNode.children || []) {
+                        if (cmd.tag === 'Add') {
+                            const clientId = childText(cmd, 'ClientId');
+                            const appData = childNode(cmd, 'ApplicationData');
+                            const noteData = (0, eas_notes_1.activeSyncToDbNote)(appData);
+                            const saved = await (0, notes_utils_1.saveNote)({ ...noteData, owner: creds.user });
+                            responses.push({
+                                tag: 'Add', page: 0, children: [
+                                    { tag: 'ClientId', page: 0, content: clientId },
+                                    { tag: 'ServerId', page: 0, content: saved.id },
+                                    { tag: 'Status', page: 0, content: '1' }
+                                ]
+                            });
+                        }
+                        else if (cmd.tag === 'Change') {
+                            const serverId = childText(cmd, 'ServerId');
+                            const appData = childNode(cmd, 'ApplicationData');
+                            const noteData = (0, eas_notes_1.activeSyncToDbNote)(appData);
+                            await (0, notes_utils_1.saveNote)({ ...noteData, id: serverId, owner: creds.user });
+                            responses.push({
+                                tag: 'Change', page: 0, children: [
+                                    { tag: 'ServerId', page: 0, content: serverId },
+                                    { tag: 'Status', page: 0, content: '1' }
+                                ]
+                            });
+                        }
+                        else if (cmd.tag === 'Delete') {
+                            const serverId = childText(cmd, 'ServerId');
+                            if (serverId) {
+                                await (0, notes_utils_1.deleteNote)(serverId, creds.user);
+                            }
+                            responses.push({
+                                tag: 'Delete', page: 0, children: [
+                                    { tag: 'ServerId', page: 0, content: serverId },
+                                    { tag: 'Status', page: 0, content: '1' }
+                                ]
+                            });
+                        }
+                    }
+                    if (responses.length > 0) {
+                        (0, notes_imap_sync_1.syncNotesWithImap)(creds.user, creds.pass).catch(e => console.error(e));
+                    }
+                }
+                let addNodes = [];
+                let nextSyncKeyInt = await (0, notes_utils_1.getNotesSyncToken)(creds.user);
+                if (syncKey === '0') {
+                    nextSyncKeyInt = 1;
+                }
+                else if (syncKey === '1') {
+                    const allNotes = await (0, notes_utils_1.listNotes)(creds.user);
+                    for (const note of allNotes) {
+                        addNodes.push({
+                            tag: 'Add', page: 0, children: [
+                                { tag: 'ServerId', page: 0, content: note.id },
+                                (0, eas_notes_1.dbNoteToActiveSync)(note)
+                            ]
+                        });
+                    }
+                }
+                else {
+                    const currentSyncKey = parseInt(syncKey) || 1;
+                    if (currentSyncKey !== nextSyncKeyInt) {
+                        const allNotes = await (0, notes_utils_1.listNotes)(creds.user, true);
+                        const changedNotes = allNotes.filter(n => n.sync_token > currentSyncKey);
+                        for (const note of changedNotes) {
+                            if (note.is_deleted) {
+                                addNodes.push({
+                                    tag: 'Delete',
+                                    page: 0,
+                                    children: [
+                                        { tag: 'ServerId', page: 0, content: note.id }
+                                    ]
+                                });
+                            }
+                            else {
+                                addNodes.push({
+                                    tag: 'Change',
+                                    page: 0,
+                                    children: [
+                                        { tag: 'ServerId', page: 0, content: note.id },
+                                        (0, eas_notes_1.dbNoteToActiveSync)(note)
+                                    ]
+                                });
+                            }
+                        }
+                    }
+                }
+                const responseAst = {
+                    tag: "Sync", page: 0, children: [
+                        { tag: "Collections", page: 0, children: [
+                                { tag: "Collection", page: 0, children: [
+                                        { tag: "Class", page: 0, content: "Notes" },
+                                        { tag: "SyncKey", page: 0, content: nextSyncKeyInt.toString() },
+                                        { tag: "CollectionId", page: 0, content: collectionId },
+                                        { tag: "Status", page: 0, content: "1" },
+                                        ...(responses.length > 0 ? [{ tag: "Responses", page: 0, children: responses }] : []),
+                                        ...(addNodes.length > 0 ? [{ tag: "Commands", page: 0, children: addNodes }] : [])
+                                    ] }
+                            ] }
+                    ]
+                };
+                const writer = new writer_1.WbxmlWriter();
+                writer.writeNode(responseAst);
+                res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+                return res.status(200).send(writer.getBuffer());
+            }
+            catch (e) {
+                console.error("Notes sync error:", e);
                 return res.status(500).send();
             }
         }
@@ -986,10 +1149,11 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
             return res.status(401).send();
         let addNodes = [];
         let fetchResponses = [];
+        let changeReadFlags = [];
+        let changeResponses = [];
         let nextSyncKey = ((parseInt(syncKey) || 0) + 1).toString();
         let moreAvailable = false;
         try {
-            // Parse request for Fetch commands
             let fetchServerIds = [];
             if (req.body && req.body.length > 0) {
                 try {
@@ -1005,6 +1169,19 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                                     const idNode = cmd.children?.find((c) => c.tag === 'ServerId');
                                     if (idNode && idNode.content)
                                         fetchServerIds.push(idNode.content.toString());
+                                }
+                                else if (cmd.tag === 'Change') {
+                                    const idNode = cmd.children?.find((c) => c.tag === 'ServerId');
+                                    const appData = cmd.children?.find((c) => c.tag === 'ApplicationData');
+                                    if (idNode && idNode.content && appData) {
+                                        const readNode = appData.children?.find((c) => c.tag === 'Read');
+                                        if (readNode && readNode.content !== undefined) {
+                                            changeReadFlags.push({
+                                                serverId: idNode.content.toString(),
+                                                isRead: readNode.content.toString() === '1'
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1051,15 +1228,19 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
             let result;
             let lowestUid = -1;
             let currentUidNext = -1;
+            let sinceModseq = "0";
             if (syncKey === "1") {
                 // Initial sync, fetch newest 25
                 result = await imap.getMessages(folderPath);
             }
             else {
                 const parts = syncKey.split('-');
-                if (parts.length === 2) {
+                if (parts.length >= 2) {
                     lowestUid = parseInt(parts[0]);
                     currentUidNext = parseInt(parts[1]);
+                    if (parts.length >= 3) {
+                        sinceModseq = parts[2];
+                    }
                 }
                 else {
                     currentUidNext = parseInt(syncKey);
@@ -1071,16 +1252,61 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     result = await imap.getMessages(folderPath, undefined, lowestUid);
                 }
             }
+            // Get flag changes
+            if (sinceModseq !== "0" && syncKey !== "1") {
+                const changedResult = await imap.getChangedFlags(folderPath, sinceModseq);
+                result.highestModseq = changedResult.highestModseq;
+                for (let c of changedResult.changed) {
+                    if (!result.messages.some((m) => m.uid === c.uid)) {
+                        changeResponses.push({
+                            tag: "Change",
+                            page: 0,
+                            children: [
+                                { tag: "ServerId", page: 0, content: `${collectionId}-${c.uid}` },
+                                { tag: "ApplicationData", page: 0, children: [
+                                        { tag: "Read", page: 17, content: c.flags.includes('\\Seen') ? "1" : "0" }
+                                    ] }
+                            ]
+                        });
+                    }
+                }
+            }
+            // Process flag changes from client
+            for (let change of changeReadFlags) {
+                const parts = change.serverId.split('-');
+                const uidPart = parts.length > 1 ? parts[1] : change.serverId;
+                try {
+                    await imap.messageAction(folderPath, [parseInt(uidPart)], change.isRead ? 'read' : 'unread');
+                    changeResponses.push({
+                        tag: "Change",
+                        page: 0,
+                        children: [
+                            { tag: "ServerId", page: 0, content: change.serverId },
+                            { tag: "Status", page: 0, content: "1" }
+                        ]
+                    });
+                }
+                catch (e) {
+                    changeResponses.push({
+                        tag: "Change",
+                        page: 0,
+                        children: [
+                            { tag: "ServerId", page: 0, content: change.serverId },
+                            { tag: "Status", page: 0, content: "8" }
+                        ]
+                    });
+                }
+            }
             await imap.logout();
-            const { messages, uidNext, lowestUid: newLowestUid, moreAvailable: isMore } = result;
+            const { messages, uidNext, highestModseq, lowestUid: newLowestUid, moreAvailable: isMore } = result;
             if (isMore)
                 moreAvailable = true;
             // Set nextSyncKey to maintain pagination bounds
             if (uidNext) {
                 const effectiveLowestUid = newLowestUid > 0 ? newLowestUid : (lowestUid > 0 ? lowestUid : uidNext);
-                nextSyncKey = `${effectiveLowestUid}-${uidNext}`;
+                nextSyncKey = `${effectiveLowestUid}-${uidNext}-${highestModseq || "0"}`;
             }
-            console.log(`[SYNC] Fetched ${messages.length} messages from IMAP for ${folderPath} (SyncKey state: ${nextSyncKey})`);
+            console.log(`[SYNC] Fetched ${messages.length} messages, ${changeResponses.length} changes for ${folderPath} (SyncKey: ${nextSyncKey})`);
             const simpleParser = require('mailparser').simpleParser;
             for (let msg of messages) {
                 // parse email
@@ -1134,7 +1360,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                                 { tag: "CollectionId", page: 0, content: collectionId },
                                 { tag: "Status", page: 0, content: "1" },
                                 ...(moreAvailable ? [{ tag: "MoreAvailable", page: 0, children: [] }] : []),
-                                ...(fetchResponses.length > 0 ? [{ tag: "Responses", page: 0, children: fetchResponses }] : []),
+                                ...((fetchResponses.length > 0 || changeResponses.length > 0) ? [{ tag: "Responses", page: 0, children: [...fetchResponses, ...changeResponses] }] : []),
                                 ...(addNodes.length > 0 ? [{ tag: "Commands", page: 0, children: addNodes }] : [])
                             ]
                         }
@@ -1438,7 +1664,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     }
     res.status(200).send();
 });
-app.listen(config_1.serverConfig.port, config_1.serverConfig.host, () => {
+server.listen(config_1.serverConfig.port, config_1.serverConfig.host, () => {
     console.log(`OpenMailStack webmail backend listening on ${config_1.serverConfig.host}:${config_1.serverConfig.port}`);
 });
 //# sourceMappingURL=index.js.map

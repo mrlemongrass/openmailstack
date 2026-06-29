@@ -11,8 +11,11 @@ export interface MailSearchIndexRow {
     preview: string;
     bodyText: string;
     attachmentNames: string;
+    inReplyTo?: string;
+    references?: string[];
     isRead: boolean;
     isStarred: boolean;
+    messageSize?: number;
 }
 export interface MailSearchIndexStatus {
     indexedCount: number;

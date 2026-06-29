@@ -1,0 +1,7 @@
+[Unit]
+Description=Sync OpenMailStack Rspamd spam policy maps
+After=mariadb.service rspamd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/openmailstack-spam-map-sync --reload

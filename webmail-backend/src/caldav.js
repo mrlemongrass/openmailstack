@@ -9,9 +9,18 @@ const xml2js_1 = __importDefault(require("xml2js"));
 const calendar_utils_1 = require("./calendar-utils");
 const dav_auth_1 = require("./dav-auth");
 const router = express_1.default.Router();
-async function userOwnsCalendar(calendarId, user) {
-    const [rows] = await db_1.pool.query('SELECT id FROM calendars WHERE id = ? AND user_id = ? LIMIT 1', [calendarId, user]);
-    return rows.length > 0;
+async function userHasCalendarAccess(calendarId, user, requireWrite = false) {
+    const [rows] = await db_1.pool.query(`SELECT c.user_id, cs.permission 
+         FROM calendars c 
+         LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+         WHERE c.id = ?`, [user, calendarId]);
+    if (rows.length === 0)
+        return false;
+    if (rows[0].user_id === user)
+        return true;
+    if (requireWrite)
+        return rows[0].permission === 'write';
+    return rows[0].permission === 'read' || rows[0].permission === 'write';
 }
 function calendarCollectionMatch(path) {
     return path.match(/^(?:\/caldav)?\/calendars\/[^\/]+\/([^\/]+)\/?$/);
@@ -32,7 +41,7 @@ function firstPropertyValue(obj, names) {
 async function readCalendarProperties(req, fallbackName) {
     const rawBody = req.body ? req.body.toString('utf-8') : '';
     if (!rawBody.trim()) {
-        return { name: fallbackName, color: undefined };
+        return { name: fallbackName, color: undefined, components: undefined };
     }
     try {
         const parsed = await xml2js_1.default.parseStringPromise(rawBody, { explicitArray: false });
@@ -41,13 +50,24 @@ async function readCalendarProperties(req, fallbackName) {
         const prop = set?.['D:prop'] || set?.['d:prop'] || set?.prop || parsed?.['D:prop'] || parsed?.['d:prop'] || parsed?.prop;
         const displayName = firstPropertyValue(prop, ['D:displayname', 'd:displayname', 'displayname']);
         const calendarColor = firstPropertyValue(prop, ['A:calendar-color', 'a:calendar-color', 'calendar-color']);
+        let components;
+        const compSet = prop?.['C:supported-calendar-component-set'] || prop?.['c:supported-calendar-component-set'];
+        if (compSet) {
+            const comp = compSet['C:comp'] || compSet['c:comp'] || compSet.comp;
+            const compArray = Array.isArray(comp) ? comp : [comp];
+            const names = compArray.map((c) => c?.$?.name).filter(Boolean);
+            if (names.length > 0) {
+                components = names.join(',');
+            }
+        }
         return {
             name: displayName.trim() || fallbackName,
-            color: /^#[0-9a-f]{6}$/i.test(calendarColor.trim()) ? calendarColor.trim() : undefined
+            color: /^#[0-9a-f]{6}$/i.test(calendarColor.trim()) ? calendarColor.trim() : undefined,
+            components
         };
     }
     catch {
-        return { name: fallbackName, color: undefined };
+        return { name: fallbackName, color: undefined, components: undefined };
     }
 }
 const authenticate = (0, dav_auth_1.davBasicAuth)('OpenMailStack CalDAV');
@@ -81,6 +101,9 @@ router.all(/.*/, async (req, res) => {
     if (method === 'DELETE') {
         return handleDelete(req, res, user);
     }
+    if (method === 'GET') {
+        return handleGet(req, res, user);
+    }
     res.status(404).send('Not Found');
 });
 async function handlePropfind(req, res, user) {
@@ -92,7 +115,7 @@ async function handlePropfind(req, res, user) {
         xml = `<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/">
   <D:response>
-    <D:href>/caldav/${user}/</D:href>
+    <D:href>${req.originalUrl}</D:href>
     <D:propstat>
       <D:prop>
         <D:current-user-principal><D:href>/caldav/principals/${user}/</D:href></D:current-user-principal>
@@ -120,12 +143,53 @@ async function handlePropfind(req, res, user) {
   </D:response>
 </D:multistatus>`;
     }
+    else if (path === `/calendars/${user}/` || path === `/calendars/${user}`) {
+        // List all calendars
+        try {
+            const rows = await (0, calendar_utils_1.getVisibleCalendars)(user);
+            let responses = rows.map((cal) => `
+  <D:response>
+    <D:href>/caldav/calendars/${user}/${cal.dav_slug || cal.id}/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
+        <D:displayname>${cal.name}</D:displayname>
+        <CS:getctag>"${cal.sync_token}"</CS:getctag>
+        <D:sync-token>http://sabre.io/ns/sync/${cal.sync_token}</D:sync-token>
+        <C:supported-calendar-component-set>
+          ${(cal.components || 'VEVENT,VTODO').split(',').map((c) => `<C:comp name="${c.trim()}"/>`).join('\\n          ')}
+        </C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>`).join('');
+            const homeSetCtag = rows.reduce((acc, cal) => acc + (cal.sync_token || 0), 0) + rows.length;
+            xml = `<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/">
+  <D:response>
+    <D:href>/caldav/calendars/${user}/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/></D:resourcetype>
+        <CS:getctag>"${homeSetCtag}"</CS:getctag>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  ${responses}
+</D:multistatus>`;
+        }
+        catch (e) {
+            console.error(e);
+            return res.status(500).send('DB Error');
+        }
+    }
     else if (path.includes('/calendars/') || path.match(/\/[^\/]+\/[^\/]+\/$/)) {
         // Match /caldav/calendars/user/1/ after the /caldav mount, or legacy /user/Calendar/.
         let calendarId = '1';
         let isLegacy = false;
         const calMatch = calendarCollectionMatch(path);
-        const legacyMatch = path.match(/^\/([^\/]+)\/([^\/]+)\/$/);
+        const legacyMatch = path.match(/^\/([^\/]+)\/Calendar\/?$/i);
         let cal = null;
         if (calMatch) {
             cal = await (0, calendar_utils_1.getCalendarByToken)(user, calMatch[1]);
@@ -155,7 +219,7 @@ async function handlePropfind(req, res, user) {
                     const [events] = await db_1.pool.query('SELECT * FROM events WHERE calendar_id = ?', [calendarId]);
                     eventResponses = events.map((ev) => `
   <D:response>
-    <D:href>${isLegacy ? `/SOGo/dav/${user}/Calendar/` : `/caldav/calendars/${user}/${calendarId}/`}${ev.uid}.ics</D:href>
+    <D:href>${isLegacy ? `/SOGo/dav/${user}/Calendar/` : `/caldav/calendars/${user}/${(cal && cal.dav_slug) || calendarId}/`}${ev.uid}.ics</D:href>
     <D:propstat>
       <D:prop>
         <D:getetag>"${ev.uid}"</D:getetag>
@@ -168,7 +232,7 @@ async function handlePropfind(req, res, user) {
                 xml = `<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/">
   <D:response>
-    <D:href>${isLegacy ? `/SOGo/dav/${user}/Calendar/` : `/caldav/calendars/${user}/${calendarId}/`}</D:href>
+    <D:href>${isLegacy ? `/SOGo/dav/${user}/Calendar/` : `/caldav/calendars/${user}/${(cal && cal.dav_slug) || calendarId}/`}</D:href>
     <D:propstat>
       <D:prop>
         <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
@@ -176,52 +240,13 @@ async function handlePropfind(req, res, user) {
         <CS:getctag>"${cal.sync_token}"</CS:getctag>
         <D:sync-token>http://sabre.io/ns/sync/${cal.sync_token}</D:sync-token>
         <C:supported-calendar-component-set>
-          <C:comp name="VEVENT"/>
+          ${(cal.components || 'VEVENT,VTODO').split(',').map((c) => `<C:comp name="${c.trim()}"/>`).join('\\n          ')}
         </C:supported-calendar-component-set>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
   </D:response>
   ${eventResponses}
-</D:multistatus>`;
-            }
-            catch (e) {
-                console.error(e);
-                return res.status(500).send('DB Error');
-            }
-        }
-        else {
-            // List all calendars
-            try {
-                const rows = await (0, calendar_utils_1.getVisibleCalendars)(user);
-                let responses = rows.map((cal) => `
-  <D:response>
-    <D:href>/caldav/calendars/${user}/${cal.id}/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
-        <D:displayname>${cal.name}</D:displayname>
-        <CS:getctag>"${cal.sync_token}"</CS:getctag>
-        <D:sync-token>http://sabre.io/ns/sync/${cal.sync_token}</D:sync-token>
-        <C:supported-calendar-component-set>
-          <C:comp name="VEVENT"/>
-        </C:supported-calendar-component-set>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>`).join('');
-                xml = `<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/">
-  <D:response>
-    <D:href>/caldav/calendars/${user}/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:resourcetype><D:collection/></D:resourcetype>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-  ${responses}
 </D:multistatus>`;
             }
             catch (e) {
@@ -239,10 +264,11 @@ async function handleReport(req, res, user) {
     const path = req.path;
     let calendarId = '1';
     let isLegacy = false;
+    let cal = null;
     const calMatch = calendarCollectionMatch(path);
     const legacyMatch = path.match(/^\/([^\/]+)\/([^\/]+)\/$/);
     if (calMatch) {
-        const cal = await (0, calendar_utils_1.getCalendarByToken)(user, calMatch[1]);
+        cal = await (0, calendar_utils_1.getCalendarByToken)(user, calMatch[1]);
         if (!cal)
             return res.status(404).send();
         calendarId = cal.id.toString();
@@ -250,8 +276,8 @@ async function handleReport(req, res, user) {
     else if (legacyMatch) {
         isLegacy = true;
         try {
-            const defaultCalendar = await (0, calendar_utils_1.ensureDefaultCalendar)(user);
-            calendarId = defaultCalendar.id.toString();
+            cal = await (0, calendar_utils_1.ensureDefaultCalendar)(user);
+            calendarId = cal.id.toString();
         }
         catch (e) { }
     }
@@ -259,13 +285,13 @@ async function handleReport(req, res, user) {
         return res.status(404).send();
     }
     try {
-        if (!(await userOwnsCalendar(calendarId, user))) {
+        if (!(await userHasCalendarAccess(calendarId, user))) {
             return res.status(404).send();
         }
         const [events] = await db_1.pool.query('SELECT * FROM events WHERE calendar_id = ?', [calendarId]);
         const responses = events.map((ev) => `
   <D:response>
-    <D:href>${isLegacy ? `/SOGo/dav/${user}/Calendar/` : `/caldav/calendars/${user}/${calendarId}/`}${ev.uid}.ics</D:href>
+    <D:href>${isLegacy ? `/SOGo/dav/${user}/Calendar/` : `/caldav/calendars/${user}/${(cal && cal.dav_slug) || calendarId}/`}${ev.uid}.ics</D:href>
     <D:propstat>
       <D:prop>
         <D:getetag>"${ev.uid}"</D:getetag>
@@ -280,6 +306,32 @@ async function handleReport(req, res, user) {
   ${responses}
 </D:multistatus>`;
         res.status(207).send(xml);
+    }
+    catch (e) {
+        console.error(e);
+        res.status(500).send();
+    }
+}
+async function handleGet(req, res, user) {
+    const path = req.path;
+    const eventMatch = calendarEventMatch(path);
+    if (!eventMatch)
+        return res.status(404).send();
+    const cal = await (0, calendar_utils_1.getCalendarByToken)(user, eventMatch[1]);
+    if (!cal)
+        return res.status(404).send();
+    const calendarId = cal.id.toString();
+    const uid = eventMatch[2];
+    try {
+        if (!(await userHasCalendarAccess(calendarId, user))) {
+            return res.status(404).send();
+        }
+        const [events] = await db_1.pool.query('SELECT * FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1', [calendarId, uid]);
+        if (events.length === 0)
+            return res.status(404).send();
+        res.set('Content-Type', 'text/calendar; charset=utf-8');
+        res.set('ETag', `"${events[0].uid}"`);
+        res.status(200).send(events[0].ical_data);
     }
     catch (e) {
         console.error(e);
@@ -312,7 +364,7 @@ async function handlePut(req, res, user) {
     }
     const icalData = req.body ? req.body.toString('utf-8') : '';
     try {
-        if (!(await userOwnsCalendar(calendarId, user))) {
+        if (!(await userHasCalendarAccess(calendarId, user, true))) {
             return res.status(404).send();
         }
         await db_1.pool.query(`INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?)
@@ -400,7 +452,7 @@ async function handleMkcalendar(req, res, user) {
     }
     try {
         const props = await readCalendarProperties(req, requestedSlug);
-        const calendar = await (0, calendar_utils_1.createCalendar)(user, props.name, { slug: requestedSlug, color: props.color });
+        const calendar = await (0, calendar_utils_1.createCalendar)(user, props.name, { slug: requestedSlug, color: props.color, components: props.components });
         res.set('Location', (0, calendar_utils_1.getCalendarHref)(user, calendar));
         res.status(201).send();
     }
@@ -436,7 +488,7 @@ async function handleDelete(req, res, user) {
     const calendarId = cal.id.toString();
     const uid = eventMatch[2];
     try {
-        if (!(await userOwnsCalendar(calendarId, user))) {
+        if (!(await userHasCalendarAccess(calendarId, user, true))) {
             return res.status(404).send();
         }
         await db_1.pool.query('DELETE FROM events WHERE calendar_id = ? AND uid = ?', [calendarId, uid]);

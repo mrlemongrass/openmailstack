@@ -1,0 +1,112 @@
+- generic [ref=e3]:
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: HouseVo
+      - generic [ref=e8]:
+        - generic [ref=e9] [cursor=pointer]: Mail
+        - generic [ref=e10] [cursor=pointer]: Calendar
+        - generic [ref=e11] [cursor=pointer]: Contacts
+        - generic [ref=e12] [cursor=pointer]: Sync Info
+    - generic [ref=e13]:
+      - button "Refresh current view" [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+      - generic [ref=e20]:
+        - button "localtest@housevo.us" [active] [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+          - generic [ref=e25]: localtest@housevo.us
+          - img [ref=e26]
+        - generic [ref=e132]:
+          - button "Settings" [ref=e133] [cursor=pointer]:
+            - img [ref=e134]
+            - text: Settings
+          - button "Sign Out" [ref=e137] [cursor=pointer]:
+            - img [ref=e138]
+            - text: Sign Out
+  - generic [ref=e28]:
+    - complementary [ref=e29]
+    - main [ref=e30]:
+      - generic [ref=e31]:
+        - generic [ref=e32]:
+          - generic [ref=e33]:
+            - generic [ref=e34]: Admin Settings
+            - heading "Branding" [level=2] [ref=e35]
+          - generic [ref=e36]:
+            - button "Reset" [ref=e37] [cursor=pointer]:
+              - img [ref=e38]
+              - text: Reset
+            - button "Save" [ref=e41] [cursor=pointer]:
+              - img [ref=e42]
+              - text: Save
+        - generic [ref=e46]:
+          - generic [ref=e47]:
+            - heading "Identity" [level=3] [ref=e48]
+            - generic [ref=e49]:
+              - generic [ref=e50]: App Name
+              - textbox "App Name" [ref=e51]:
+                - /placeholder: OpenMailStack
+                - text: HouseVo
+            - generic [ref=e52]:
+              - generic [ref=e53]: Company Name
+              - textbox "Company Name" [ref=e54]:
+                - /placeholder: Company or organization
+                - text: House Vo Consulting
+          - generic [ref=e55]:
+            - heading "Login Page" [level=3] [ref=e56]
+            - generic [ref=e57]:
+              - generic [ref=e58]: Login Title
+              - textbox "Login Title" [ref=e59]:
+                - /placeholder: OpenMailStack
+                - text: HouseVo Webmail
+            - generic [ref=e60]:
+              - generic [ref=e61]: Login Subtitle
+              - textbox "Login Subtitle" [ref=e62]:
+                - /placeholder: Sign in to continue
+                - text: Sign in to continue
+        - generic [ref=e63]:
+          - heading "Images" [level=3] [ref=e64]
+          - generic [ref=e65]:
+            - generic [ref=e66]:
+              - img [ref=e68]
+              - generic [ref=e72]:
+                - strong [ref=e73]: App Icon
+                - generic [ref=e74]: 512 x 512 px recommended
+                - generic [ref=e75]: Max 256 KB saved
+              - generic [ref=e77] [cursor=pointer]:
+                - text: Upload
+                - button "Upload" [ref=e80]
+            - generic [ref=e81]:
+              - generic [ref=e83]:
+                - strong [ref=e84]: Browser Favicon
+                - generic [ref=e85]: 64 x 64 px recommended
+                - generic [ref=e86]: Max 256 KB saved
+              - generic [ref=e87]:
+                - generic [ref=e88] [cursor=pointer]:
+                  - text: Upload
+                  - button "Upload" [ref=e91]
+                - button "Clear Browser Favicon" [ref=e92] [cursor=pointer]:
+                  - img [ref=e93]
+            - generic [ref=e96]:
+              - generic [ref=e98]:
+                - strong [ref=e99]: Login Logo
+                - generic [ref=e100]: 512 x 160 px recommended
+                - generic [ref=e101]: Max 512 KB saved
+              - generic [ref=e102]:
+                - generic [ref=e103] [cursor=pointer]:
+                  - text: Upload
+                  - button "Upload" [ref=e106]
+                - button "Clear Login Logo" [ref=e107] [cursor=pointer]:
+                  - img [ref=e108]
+            - generic [ref=e111]:
+              - img [ref=e113]
+              - generic [ref=e117]:
+                - strong [ref=e118]: Login Background
+                - generic [ref=e119]: 2400 x 1600 px recommended
+                - generic [ref=e120]: Max 2048 KB saved
+              - generic [ref=e122] [cursor=pointer]:
+                - text: Upload
+                - button "Upload" [ref=e125]
+        - generic [ref=e126]:
+          - heading "Preview" [level=3] [ref=e127]
+          - generic [ref=e129]:
+            - strong [ref=e130]: HouseVo Webmail
+            - generic [ref=e131]: Sign in to continue

@@ -8,9 +8,11 @@ export interface CalendarRow {
     user_id: string;
     name: string;
     dav_slug?: string;
+    components?: string;
     color?: string;
     sync_token?: number;
     event_count?: number;
+    access_role?: string;
 }
 
 let schemaPromise: Promise<void> | null = null;
@@ -21,6 +23,11 @@ export async function ensureCalendarSchema(): Promise<void> {
             const [slugColumn]: any = await pool.query("SHOW COLUMNS FROM calendars LIKE 'dav_slug'");
             if (slugColumn.length === 0) {
                 await pool.query('ALTER TABLE calendars ADD COLUMN dav_slug VARCHAR(255) NULL AFTER name');
+            }
+
+            const [componentsColumn]: any = await pool.query("SHOW COLUMNS FROM calendars LIKE 'components'");
+            if (componentsColumn.length === 0) {
+                await pool.query("ALTER TABLE calendars ADD COLUMN components VARCHAR(255) NOT NULL DEFAULT 'VEVENT,VTODO' AFTER dav_slug");
             }
 
             const [slugIndex]: any = await pool.query("SHOW INDEX FROM calendars WHERE Key_name = 'idx_calendars_user_dav_slug'");
@@ -54,6 +61,17 @@ export async function ensureCalendarSchema(): Promise<void> {
                     console.warn('Skipping uniq_events_calendar_uid creation until duplicate event UIDs are cleaned up');
                 }
             }
+
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS calendar_shares (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    calendar_id INT NOT NULL,
+                    shared_with_user_id VARCHAR(255) NOT NULL,
+                    permission ENUM('read', 'write') DEFAULT 'read',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_share (calendar_id, shared_with_user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
 
             await backfillMissingCalendarSlugs();
         })();
@@ -125,13 +143,13 @@ export async function ensureCalendarSlug(calendar: CalendarRow): Promise<string>
     return slug;
 }
 
-export async function createCalendar(user: string, name: string, options: { color?: string; slug?: string } = {}): Promise<CalendarRow> {
+export async function createCalendar(user: string, name: string, options: { color?: string; slug?: string; components?: string } = {}): Promise<CalendarRow> {
     await ensureCalendarSchema();
     const cleanName = name.trim() || 'New Calendar';
     const slug = await uniqueCalendarSlug(user, options.slug || cleanName);
     const [result]: any = await pool.query(
-        'INSERT INTO calendars (user_id, name, dav_slug, color, sync_token) VALUES (?, ?, ?, ?, 1)',
-        [user, cleanName, slug, options.color || '#3498db']
+        'INSERT INTO calendars (user_id, name, dav_slug, color, components, sync_token) VALUES (?, ?, ?, ?, ?, 1)',
+        [user, cleanName, slug, options.color || '#3498db', options.components || 'VEVENT,VTODO']
     );
     const [created]: any = await pool.query('SELECT * FROM calendars WHERE id = ?', [result.insertId]);
     return created[0];
@@ -171,13 +189,15 @@ export async function getVisibleCalendars(user: string): Promise<CalendarRow[]> 
     await ensureDefaultCalendar(user);
 
     const [rows]: any = await pool.query(
-        `SELECT c.*, COUNT(e.uid) AS event_count
+        `SELECT c.*, COUNT(e.uid) AS event_count,
+                (CASE WHEN c.user_id = ? THEN 'owner' ELSE cs.permission END) AS access_role
          FROM calendars c
          LEFT JOIN events e ON e.calendar_id = c.id
-         WHERE c.user_id = ?
+         LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+         WHERE c.user_id = ? OR cs.shared_with_user_id = ?
          GROUP BY c.id
          ORDER BY c.id ASC`,
-        [user]
+        [user, user, user, user]
     );
 
     let keptPersonal = false;

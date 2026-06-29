@@ -255,6 +255,13 @@ exports.CODEPAGES = {
         0x17: 'Count',
         0x18: 'Version'
     },
+    12: {
+        0x05: 'Subject',
+        0x06: 'MessageClass',
+        0x07: 'LastModifiedDate',
+        0x08: 'Categories',
+        0x09: 'Category'
+    },
     13: {
         0x05: 'Ping',
         0x06: 'AutdState',
@@ -367,6 +374,13 @@ exports.CODEPAGES = {
         0x0F: 'LongId',
         0x10: 'InstanceId',
         0x11: 'Mime' // Sometimes 0x11 is used depending on version, but usually 0x0A
+    },
+    23: {
+        0x05: 'Subject',
+        0x06: 'MessageClass',
+        0x07: 'LastModifiedDate',
+        0x08: 'Categories',
+        0x09: 'Category'
     }
     // Note: there are many more codepages for EAS, we can expand these as needed.
 };

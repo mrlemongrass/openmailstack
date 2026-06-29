@@ -1,0 +1,8 @@
+spawn openssl s_client -crlf -quiet -connect localhost:993
+expect "*OK*"
+send "a1 LOGIN thang@housevo.us housevo\r"
+expect "a1 OK"
+send "a2 LIST \"\" \"*\"\r"
+expect "a2 OK"
+send "a3 LOGOUT\r"
+expect eof

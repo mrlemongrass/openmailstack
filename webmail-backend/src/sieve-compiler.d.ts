@@ -16,8 +16,15 @@ export interface SieveRule {
     criteria?: SieveCriterion[];
     actions?: SieveAction[];
 }
+export interface SieveVacation {
+    enabled: boolean;
+    subject?: string;
+    body: string;
+    days?: number;
+}
 export interface SieveRulesDocument {
     rules?: SieveRule[];
+    vacation?: SieveVacation;
 }
 export declare function extractJsonFromSieve(script: string): SieveRulesDocument;
 export declare function quoteSieveString(value: unknown): string;

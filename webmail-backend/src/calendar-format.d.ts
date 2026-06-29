@@ -19,7 +19,9 @@ export interface RecurrenceRule {
     raw: string;
 }
 export declare function slugifyCalendarName(name: string): string;
-export declare function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent;
+export declare function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & {
+    type?: 'event' | 'task';
+};
 export declare function expandRecurringEvent(event: ParsedIcalEvent, rangeStart: Date, rangeEnd: Date, maxOccurrences?: number): ParsedIcalEvent[];
 export declare function formatActiveSyncDate(date: Date): string;
 export declare function getCalendarFolderSyncKey(folders: Array<{

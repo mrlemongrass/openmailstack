@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.requireAdminSession = exports.requireSession = exports.clearSession = exports.getSession = exports.createSession = exports.SESSION_COOKIE = void 0;
+exports.requireAdminSession = exports.requireSession = exports.clearSession = exports.getSession = exports.createSession = exports.decryptPassword = exports.SESSION_COOKIE = void 0;
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("./db");
 const config_1 = require("./config");
@@ -70,6 +70,7 @@ const decryptPassword = (ciphertext, iv, tag) => {
         decipher.final()
     ]).toString('utf8');
 };
+exports.decryptPassword = decryptPassword;
 const toMysqlDate = (timestamp) => new Date(timestamp).toISOString().slice(0, 19).replace('T', ' ');
 const cleanupExpiredSessions = async () => {
     await ensureSessionSchema();
@@ -117,7 +118,7 @@ const getSession = async (req) => {
         return {
             id,
             username: row.username,
-            password: decryptPassword(row.password_ciphertext, row.password_iv, row.password_tag),
+            password: (0, exports.decryptPassword)(row.password_ciphertext, row.password_iv, row.password_tag),
             isAdmin: !!row.is_admin,
             expiresAt
         };

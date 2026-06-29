@@ -1,0 +1,11 @@
+[Unit]
+Description=Run OpenMailStack Rspamd spam policy map sync
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

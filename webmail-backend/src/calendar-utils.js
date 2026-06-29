@@ -24,6 +24,10 @@ async function ensureCalendarSchema() {
             if (slugColumn.length === 0) {
                 await db_1.pool.query('ALTER TABLE calendars ADD COLUMN dav_slug VARCHAR(255) NULL AFTER name');
             }
+            const [componentsColumn] = await db_1.pool.query("SHOW COLUMNS FROM calendars LIKE 'components'");
+            if (componentsColumn.length === 0) {
+                await db_1.pool.query("ALTER TABLE calendars ADD COLUMN components VARCHAR(255) NOT NULL DEFAULT 'VEVENT,VTODO' AFTER dav_slug");
+            }
             const [slugIndex] = await db_1.pool.query("SHOW INDEX FROM calendars WHERE Key_name = 'idx_calendars_user_dav_slug'");
             if (slugIndex.length === 0) {
                 await db_1.pool.query('ALTER TABLE calendars ADD KEY idx_calendars_user_dav_slug (user_id, dav_slug)');
@@ -51,6 +55,16 @@ async function ensureCalendarSchema() {
                     console.warn('Skipping uniq_events_calendar_uid creation until duplicate event UIDs are cleaned up');
                 }
             }
+            await db_1.pool.query(`
+                CREATE TABLE IF NOT EXISTS calendar_shares (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    calendar_id INT NOT NULL,
+                    shared_with_user_id VARCHAR(255) NOT NULL,
+                    permission ENUM('read', 'write') DEFAULT 'read',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_share (calendar_id, shared_with_user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
             await backfillMissingCalendarSlugs();
         })();
     }
@@ -113,7 +127,7 @@ async function createCalendar(user, name, options = {}) {
     await ensureCalendarSchema();
     const cleanName = name.trim() || 'New Calendar';
     const slug = await uniqueCalendarSlug(user, options.slug || cleanName);
-    const [result] = await db_1.pool.query('INSERT INTO calendars (user_id, name, dav_slug, color, sync_token) VALUES (?, ?, ?, ?, 1)', [user, cleanName, slug, options.color || '#3498db']);
+    const [result] = await db_1.pool.query('INSERT INTO calendars (user_id, name, dav_slug, color, components, sync_token) VALUES (?, ?, ?, ?, ?, 1)', [user, cleanName, slug, options.color || '#3498db', options.components || 'VEVENT,VTODO']);
     const [created] = await db_1.pool.query('SELECT * FROM calendars WHERE id = ?', [result.insertId]);
     return created[0];
 }
@@ -140,12 +154,14 @@ async function getCalendarByToken(user, token) {
 async function getVisibleCalendars(user) {
     await ensureCalendarSchema();
     await ensureDefaultCalendar(user);
-    const [rows] = await db_1.pool.query(`SELECT c.*, COUNT(e.uid) AS event_count
+    const [rows] = await db_1.pool.query(`SELECT c.*, COUNT(e.uid) AS event_count,
+                (CASE WHEN c.user_id = ? THEN 'owner' ELSE cs.permission END) AS access_role
          FROM calendars c
          LEFT JOIN events e ON e.calendar_id = c.id
-         WHERE c.user_id = ?
+         LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+         WHERE c.user_id = ? OR cs.shared_with_user_id = ?
          GROUP BY c.id
-         ORDER BY c.id ASC`, [user]);
+         ORDER BY c.id ASC`, [user, user, user, user]);
     let keptPersonal = false;
     const visible = rows.filter((cal) => {
         if (cal.name !== 'Personal')

@@ -1,0 +1,120 @@
+- generic [ref=e3]:
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: HouseVo
+      - generic [ref=e8]:
+        - generic [ref=e9] [cursor=pointer]: Mail
+        - generic [ref=e10] [cursor=pointer]: Calendar
+        - generic [ref=e11] [cursor=pointer]: Contacts
+        - generic [ref=e12] [cursor=pointer]: Sync Info
+    - generic [ref=e13]:
+      - button "Refresh current view" [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+      - button "localtest@housevo.us" [ref=e21] [cursor=pointer]:
+        - img [ref=e22]
+        - generic [ref=e25]: localtest@housevo.us
+        - img [ref=e26]
+  - generic [ref=e28]:
+    - complementary [ref=e29]:
+      - generic [ref=e141]:
+        - generic [ref=e142]: Personalization
+        - button "Appearance" [ref=e143] [cursor=pointer]:
+          - img [ref=e144]
+          - text: Appearance
+      - generic [ref=e150]:
+        - generic [ref=e151]: Mail
+        - button "Identity & Compose" [ref=e152] [cursor=pointer]:
+          - img [ref=e153]
+          - text: Identity & Compose
+        - button "Signatures" [ref=e156] [cursor=pointer]:
+          - img [ref=e157]
+          - text: Signatures
+        - button "Reading" [ref=e162] [cursor=pointer]:
+          - img [ref=e163]
+          - text: Reading
+        - button "Forwarding" [ref=e164] [cursor=pointer]:
+          - img [ref=e165]
+          - text: Forwarding
+        - button "Filters" [ref=e168] [cursor=pointer]:
+          - img [ref=e169]
+          - text: Filters
+        - button "Spam & Senders" [ref=e171] [cursor=pointer]:
+          - img [ref=e172]
+          - text: Spam & Senders
+      - generic [ref=e174]:
+        - generic [ref=e175]: Apps
+        - button "Calendar" [ref=e176] [cursor=pointer]:
+          - img [ref=e177]
+          - text: Calendar
+        - button "Contacts" [ref=e179] [cursor=pointer]:
+          - img [ref=e180]
+          - text: Contacts
+        - button "Sync & Devices" [ref=e185] [cursor=pointer]:
+          - img [ref=e186]
+          - text: Sync & Devices
+      - generic [ref=e188]:
+        - generic [ref=e189]: Account
+        - button "Password" [ref=e190] [cursor=pointer]:
+          - img [ref=e191]
+          - text: Password
+        - button "Advanced" [ref=e194] [cursor=pointer]:
+          - img [ref=e195]
+          - text: Advanced
+    - main [ref=e30]:
+      - generic [ref=e197]:
+        - generic [ref=e199]:
+          - generic [ref=e200]: Personalization
+          - heading "Appearance" [level=2] [ref=e201]
+        - generic [ref=e202]:
+          - generic [ref=e203]:
+            - heading "Theme" [level=3] [ref=e204]
+            - generic [ref=e205]:
+              - button "System" [ref=e206] [cursor=pointer]
+              - button "Dark" [ref=e207] [cursor=pointer]
+              - button "Light" [ref=e208] [cursor=pointer]
+              - button "High contrast" [ref=e209] [cursor=pointer]
+          - generic [ref=e210]:
+            - heading "Accent" [level=3] [ref=e211]
+            - generic [ref=e212]:
+              - button "Blue" [ref=e213] [cursor=pointer]:
+                - img [ref=e214]
+              - button "Cyan" [ref=e216] [cursor=pointer]
+              - button "Green" [ref=e217] [cursor=pointer]
+              - button "Amber" [ref=e218] [cursor=pointer]
+              - button "Rose" [ref=e219] [cursor=pointer]
+              - button "Violet" [ref=e220] [cursor=pointer]
+          - generic [ref=e221]:
+            - heading "Density" [level=3] [ref=e222]
+            - generic [ref=e223]:
+              - button "Comfortable" [ref=e224] [cursor=pointer]
+              - button "Cozy" [ref=e225] [cursor=pointer]
+              - button "Compact" [ref=e226] [cursor=pointer]
+          - generic [ref=e227]:
+            - heading "Type Size" [level=3] [ref=e228]
+            - generic [ref=e229]:
+              - button "Small" [ref=e230] [cursor=pointer]
+              - button "Normal" [ref=e231] [cursor=pointer]
+              - button "Large" [ref=e232] [cursor=pointer]
+          - generic [ref=e233]:
+            - heading "Shape" [level=3] [ref=e234]
+            - generic [ref=e235]:
+              - button "Sharp" [ref=e236] [cursor=pointer]
+              - button "Soft" [ref=e237] [cursor=pointer]
+              - button "Round" [ref=e238] [cursor=pointer]
+          - generic [ref=e239]:
+            - heading "Motion" [level=3] [ref=e240]
+            - generic [ref=e241]:
+              - generic [ref=e242]: Reduce motion
+              - checkbox "Reduce motion" [ref=e243]
+        - generic [ref=e244]:
+          - heading "Profiles" [level=3] [ref=e245]
+          - generic [ref=e246]:
+            - button "Starship Compact, sharp, violet." [ref=e247] [cursor=pointer]:
+              - strong [ref=e248]: Starship
+              - generic [ref=e249]: Compact, sharp, violet.
+            - button "Fish Readable, cyan, soft." [ref=e250] [cursor=pointer]:
+              - strong [ref=e251]: Fish
+              - generic [ref=e252]: Readable, cyan, soft.
+            - button "Ghostty High contrast, compact, green." [ref=e253] [cursor=pointer]:
+              - strong [ref=e254]: Ghostty
+              - generic [ref=e255]: High contrast, compact, green.

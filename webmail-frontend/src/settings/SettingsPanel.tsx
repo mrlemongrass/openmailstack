@@ -67,6 +67,8 @@ interface SettingsContentProps {
   onAddRule: () => void;
   onUpdateRule: (id: string, updates: Partial<Rule>) => void;
   onDeleteRule: (id: string) => void;
+  vacationSettings: { enabled: boolean; subject?: string; body: string; days?: number };
+  onUpdateVacationSettings: (settings: { enabled: boolean; subject?: string; body: string; days?: number }) => void;
   onSaveRules: () => void;
   onAddSignature: () => void;
   onUpdateSignatures: (signatures: Signature[]) => void;
@@ -94,6 +96,7 @@ const navGroups: { title: string; items: { tab: SettingsTab; label: string; icon
       { tab: 'mail_signatures', label: 'Signatures', icon: PenTool },
       { tab: 'mail_reading', label: 'Reading', icon: SlidersHorizontal },
       { tab: 'mail_forwarding', label: 'Forwarding', icon: Send },
+      { tab: 'mail_vacation', label: 'Auto-Responder', icon: Send },
       { tab: 'mail_filters', label: 'Filters', icon: Filter },
       { tab: 'mail_spam', label: 'Spam & Senders', icon: ShieldAlert },
     ],
@@ -208,6 +211,7 @@ export function SettingsContent(props: SettingsContentProps) {
   else if (activeTab === 'mail_signatures') content = <SignaturesPane {...props} />;
   else if (activeTab === 'mail_reading') content = <MailReadingPane {...props} />;
   else if (activeTab === 'mail_forwarding') content = <ForwardingPane {...props} />;
+  else if (activeTab === 'mail_vacation') content = <VacationPane {...props} />;
   else if (activeTab === 'mail_filters') content = <FiltersPane {...props} />;
   else if (activeTab === 'mail_spam') content = <MailSpamPane />;
   else if (activeTab === 'calendar_defaults') content = <CalendarPane {...props} />;
@@ -584,6 +588,64 @@ function ForwardingPane({ forwardingGoto, saving, onForwardingChange, onSaveForw
   );
 }
 
+function VacationPane({ vacationSettings, onUpdateVacationSettings, saving, onSaveRules }: SettingsContentProps) {
+  return (
+    <div className="settings-page">
+      <SettingsHeader
+        title="Auto-Responder"
+        eyebrow="Mail"
+        action={<button className="btn btn-primary" type="button" onClick={onSaveRules} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>}
+      />
+      <section className="settings-section">
+        <label className="settings-field">
+          <span>Enable Auto-Responder</span>
+          <input
+            type="checkbox"
+            checked={vacationSettings.enabled}
+            onChange={event => onUpdateVacationSettings({ ...vacationSettings, enabled: event.target.checked })}
+          />
+        </label>
+        {vacationSettings.enabled && (
+          <>
+            <label className="settings-field">
+              <span>Subject (Optional)</span>
+              <input
+                className="glass-input"
+                placeholder="Out of office"
+                value={vacationSettings.subject || ''}
+                onChange={event => onUpdateVacationSettings({ ...vacationSettings, subject: event.target.value })}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Message Body</span>
+              <textarea
+                className="glass-input"
+                style={{ minHeight: '150px' }}
+                placeholder="I am currently out of the office and will reply when I return."
+                value={vacationSettings.body}
+                onChange={event => onUpdateVacationSettings({ ...vacationSettings, body: event.target.value })}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Reply Interval (Days)</span>
+              <input
+                type="number"
+                min="1"
+                className="glass-input"
+                value={vacationSettings.days || 1}
+                onChange={event => onUpdateVacationSettings({ ...vacationSettings, days: parseInt(event.target.value, 10) || 1 })}
+              />
+            </label>
+            <div className="settings-disabled-note">
+              The reply interval ensures that the same sender will only receive the auto-responder once every X days.
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function FiltersPane({ loading, saving, rules, folders, onAddRule, onUpdateRule, onDeleteRule, onSaveRules }: SettingsContentProps) {
   const [activeRuleId, setActiveRuleId] = useState<string | null>(null);
   
@@ -708,8 +770,23 @@ function CalendarPane({ setupValues, calendarSettings, calendars, onCalendarSett
             </select>
           </label>
           <label className="settings-field">
+            <span>Clock Format</span>
+            <SegmentedControl
+              options={[
+                { value: '12h', label: '12 Hour (AM/PM)' },
+                { value: '24h', label: '24 Hour' },
+              ]}
+              value={calendarSettings.clockFormat || '12h'}
+              onChange={value => updateCalendar({ clockFormat: value as '12h' | '24h' })}
+            />
+          </label>
+          <label className="settings-field">
             <span>Time Zone</span>
-            <input className="glass-input" value={calendarSettings.timeZone} onChange={event => updateCalendar({ timeZone: event.target.value })} />
+            <select className="glass-input glass-select" value={calendarSettings.timeZone} onChange={event => updateCalendar({ timeZone: event.target.value })}>
+              {((Intl as any).supportedValuesOf ? (Intl as any).supportedValuesOf('timeZone') : [Intl.DateTimeFormat().resolvedOptions().timeZone]).map((tz: string) => (
+                <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
+              ))}
+            </select>
           </label>
           <label className="settings-field">
             <span>Default Reminder</span>
@@ -759,7 +836,8 @@ function ContactsPane({ setupValues, contactsSettings, onContactsSettingsChange 
             <span>Sort By</span>
             <SegmentedControl
               options={[
-                { value: 'name', label: 'Name' },
+                { value: 'firstName', label: 'First Name' },
+                { value: 'lastName', label: 'Last Name' },
                 { value: 'email', label: 'Email' },
               ]}
               value={contactsSettings.sortBy}

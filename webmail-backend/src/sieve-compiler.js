@@ -63,7 +63,7 @@ function compileAction(action) {
     return null;
 }
 function compileSieve(jsonData) {
-    let script = 'require ["fileinto", "reject", "envelope", "body"];\n\n';
+    let script = 'require ["fileinto", "reject", "envelope", "body", "vacation"];\n\n';
     const encodedJson = Buffer.from(JSON.stringify(jsonData || { rules: [] }), 'utf8').toString('base64url');
     script += `/* JSON_DATA_BASE64: ${encodedJson} */\n\n`;
     for (const rule of jsonData.rules || []) {
@@ -80,6 +80,12 @@ function compileSieve(jsonData) {
         script += `if ${operator} (${criteriaStrings.join(', ')}) {\n`;
         script += `${actionStrings.join('\n')}\n`;
         script += `    stop;\n}\n\n`;
+    }
+    if (jsonData.vacation && jsonData.vacation.enabled && jsonData.vacation.body) {
+        script += `# Vacation Auto-Responder\n`;
+        const days = jsonData.vacation.days || 1;
+        const subjectPart = jsonData.vacation.subject ? ` :subject ${quoteSieveString(jsonData.vacation.subject)}` : '';
+        script += `vacation :days ${days}${subjectPart} ${quoteSieveString(jsonData.vacation.body)};\n\n`;
     }
     return script;
 }

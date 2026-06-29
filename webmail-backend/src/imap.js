@@ -43,11 +43,12 @@ class ImapService {
         const messages = [];
         const count = mbx.exists;
         const currentUidNext = mbx.uidNext;
+        const highestModseq = mbx.highestModseq ? mbx.highestModseq.toString() : "0";
         let lowestUid = -1;
         let moreAvailable = false;
         if (count === 0) {
             await this.client.mailboxClose();
-            return { messages: [], uidNext: currentUidNext, lowestUid: 0, moreAvailable: false };
+            return { messages: [], uidNext: currentUidNext, highestModseq, lowestUid: 0, moreAvailable: false };
         }
         if (minUid && minUid > 0) {
             // Forward sync: Fetch new messages
@@ -94,12 +95,29 @@ class ImapService {
                     source: msg.source
                 });
             }
-            if (messages.length > 0) {
-                lowestUid = messages[0].uid;
-            }
+        }
+        if (lowestUid === -1 && messages.length > 0) {
+            lowestUid = Math.min(...messages.map(m => m.uid));
         }
         await this.client.mailboxClose();
-        return { messages, uidNext: currentUidNext, lowestUid, moreAvailable };
+        return { messages, uidNext: currentUidNext, highestModseq, lowestUid, moreAvailable };
+    }
+    async getChangedFlags(folderPath, sinceModseq) {
+        const mbx = await this.client.mailboxOpen(folderPath);
+        const changed = [];
+        const highestModseq = mbx.highestModseq ? mbx.highestModseq.toString() : sinceModseq;
+        try {
+            if (mbx.highestModseq && BigInt(sinceModseq) > 0n) {
+                for await (let msg of this.client.fetch('1:*', { uid: true, flags: true }, { changedSince: BigInt(sinceModseq), uid: true })) {
+                    changed.push({ uid: msg.uid, flags: Array.from(msg.flags || []) });
+                }
+            }
+        }
+        catch (e) {
+            console.error("Error in getChangedFlags:", e);
+        }
+        await this.client.mailboxClose();
+        return { changed, highestModseq };
     }
     buildSearchQuery(query, field) {
         if (field === 'from')
@@ -235,6 +253,15 @@ class ImapService {
             await this.client.mailboxClose();
         }
         return messages;
+    }
+    async getQuota() {
+        try {
+            return await this.client.getQuota();
+        }
+        catch (e) {
+            console.error('Failed to get quota:', e);
+            return null;
+        }
     }
     async getMessageByUid(folderPath, uid) {
         const mbx = await this.client.mailboxOpen(folderPath);

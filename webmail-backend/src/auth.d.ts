@@ -6,6 +6,7 @@ export interface WebmailSession {
     expiresAt: number;
 }
 export declare const SESSION_COOKIE = "oms_session";
+export declare const decryptPassword: (ciphertext: string, iv: Buffer, tag: Buffer) => string;
 export declare const createSession: (res: any, data: Omit<WebmailSession, "id" | "expiresAt">) => Promise<WebmailSession>;
 export declare const getSession: (req: any) => Promise<WebmailSession | null>;
 export declare const clearSession: (req: any, res: any) => Promise<void>;

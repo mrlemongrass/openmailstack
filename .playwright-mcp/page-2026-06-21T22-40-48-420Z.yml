@@ -1,0 +1,117 @@
+- generic [ref=e3]:
+  - banner [ref=e17]:
+    - generic [ref=e18]:
+      - generic [ref=e19]: HouseVo
+      - generic [ref=e20]:
+        - generic [ref=e21] [cursor=pointer]: Mail
+        - generic [ref=e22] [cursor=pointer]: Calendar
+        - generic [ref=e23] [cursor=pointer]: Contacts
+        - generic [ref=e24] [cursor=pointer]: Sync Info
+    - generic [ref=e25]:
+      - button "Refresh current view" [ref=e26] [cursor=pointer]:
+        - img [ref=e27]
+      - button "localtest@housevo.us" [ref=e33] [cursor=pointer]:
+        - img [ref=e34]
+        - generic [ref=e37]: localtest@housevo.us
+        - img [ref=e38]
+  - generic [ref=e40]:
+    - complementary [ref=e213]:
+      - generic [ref=e214]: Administration
+      - generic [ref=e215] [cursor=pointer]:
+        - img [ref=e216]
+        - text: Dashboard
+      - generic [ref=e219] [cursor=pointer]:
+        - img [ref=e220]
+        - text: Domains & DNS
+      - generic [ref=e223] [cursor=pointer]:
+        - img [ref=e224]
+        - text: Cross-Domain Routing
+      - generic [ref=e230] [cursor=pointer]:
+        - img [ref=e231]
+        - text: Mailboxes
+      - generic [ref=e236] [cursor=pointer]:
+        - img [ref=e237]
+        - text: Aliases & Groups
+      - generic [ref=e242] [cursor=pointer]:
+        - img [ref=e243]
+        - text: Spam Quarantine
+      - generic [ref=e245] [cursor=pointer]:
+        - img [ref=e246]
+        - text: Spam Policies
+      - generic [ref=e248] [cursor=pointer]:
+        - img [ref=e249]
+        - text: Rspamd WebUI
+      - generic [ref=e251] [cursor=pointer]:
+        - img [ref=e252]
+        - text: Branding
+      - generic [ref=e256] [cursor=pointer]:
+        - img [ref=e257]
+        - text: Settings
+      - generic [ref=e258] [cursor=pointer]:
+        - img [ref=e259]
+        - text: Administrators
+      - generic [ref=e262] [cursor=pointer]:
+        - img [ref=e263]
+        - text: Audit Logs
+      - generic [ref=e266] [cursor=pointer]:
+        - img [ref=e267]
+        - text: API Keys
+      - generic [ref=e270] [cursor=pointer]:
+        - img [ref=e271]
+        - text: System Updates
+    - main [ref=e41]:
+      - generic [ref=e307]:
+        - generic [ref=e308]:
+          - heading "Domain & DNS Management" [level=2] [ref=e309]
+          - button "Add Domain" [ref=e310] [cursor=pointer]:
+            - img [ref=e311]
+            - text: Add Domain
+        - generic [ref=e313]:
+          - generic [ref=e314]:
+            - generic [ref=e315]:
+              - generic [ref=e316]: housevo.us
+              - generic [ref=e317]: Active
+            - generic [ref=e318]: Default quota Unlimited · max Unlimited
+          - generic [ref=e319]:
+            - button "DNS Settings" [active] [ref=e320] [cursor=pointer]
+            - button "Delete" [ref=e321] [cursor=pointer]
+  - dialog "housevo.us" [ref=e322]:
+    - generic [ref=e323]:
+      - generic [ref=e324]:
+        - generic [ref=e325]:
+          - generic [ref=e326]: DNS
+          - heading "housevo.us" [level=3] [ref=e327]
+        - button "Close DNS records" [ref=e328] [cursor=pointer]:
+          - img [ref=e329]
+      - generic [ref=e333]:
+        - generic [ref=e334]:
+          - img [ref=e335]
+          - text: Records
+        - generic [ref=e339]:
+          - generic [ref=e340]:
+            - generic [ref=e341]: MX @
+            - code [ref=e342]: 10 mail.housevo.us.
+            - generic [ref=e343]: Mail exchanger
+          - button "Copy MX @" [ref=e344] [cursor=pointer]:
+            - img [ref=e345]
+        - generic [ref=e349]:
+          - generic [ref=e350]:
+            - generic [ref=e351]: TXT @
+            - code [ref=e352]: v=spf1 mx a:mail.housevo.us -all
+            - generic [ref=e353]: SPF record
+          - button "Copy TXT @" [ref=e354] [cursor=pointer]:
+            - img [ref=e355]
+        - generic [ref=e359]:
+          - generic [ref=e360]:
+            - generic [ref=e361]: TXT _dmarc
+            - code [ref=e362]: v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r;
+            - generic [ref=e363]: DMARC record
+          - button "Copy TXT _dmarc" [ref=e364] [cursor=pointer]:
+            - img [ref=e365]
+        - generic [ref=e369]:
+          - generic [ref=e370]:
+            - generic [ref=e371]: TXT mail._domainkey
+            - code [ref=e372]: Pending generation... (check back later)
+            - generic [ref=e373]: DKIM public key
+          - button "Copy TXT mail._domainkey" [ref=e374] [cursor=pointer]:
+            - img [ref=e375]

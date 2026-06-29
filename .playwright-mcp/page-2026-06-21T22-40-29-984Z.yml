@@ -1,0 +1,91 @@
+- generic [ref=e3]:
+  - banner [ref=e17]:
+    - generic [ref=e18]:
+      - generic [ref=e19]: HouseVo
+      - generic [ref=e20]:
+        - generic [ref=e21] [cursor=pointer]: Mail
+        - generic [ref=e22] [cursor=pointer]: Calendar
+        - generic [ref=e23] [cursor=pointer]: Contacts
+        - generic [ref=e24] [cursor=pointer]: Sync Info
+    - generic [ref=e25]:
+      - button "Refresh current view" [ref=e26] [cursor=pointer]:
+        - img [ref=e27]
+      - button "localtest@housevo.us" [ref=e33] [cursor=pointer]:
+        - img [ref=e34]
+        - generic [ref=e37]: localtest@housevo.us
+        - img [ref=e38]
+  - generic [ref=e40]:
+    - complementary [ref=e213]:
+      - generic [ref=e214]: Administration
+      - generic [ref=e215] [cursor=pointer]:
+        - img [ref=e216]
+        - text: Dashboard
+      - generic [ref=e219] [cursor=pointer]:
+        - img [ref=e220]
+        - text: Domains & DNS
+      - generic [ref=e223] [cursor=pointer]:
+        - img [ref=e224]
+        - text: Cross-Domain Routing
+      - generic [ref=e230] [cursor=pointer]:
+        - img [ref=e231]
+        - text: Mailboxes
+      - generic [ref=e236] [cursor=pointer]:
+        - img [ref=e237]
+        - text: Aliases & Groups
+      - generic [ref=e242] [cursor=pointer]:
+        - img [ref=e243]
+        - text: Spam Quarantine
+      - generic [ref=e245] [cursor=pointer]:
+        - img [ref=e246]
+        - text: Spam Policies
+      - generic [ref=e248] [cursor=pointer]:
+        - img [ref=e249]
+        - text: Rspamd WebUI
+      - generic [ref=e251] [cursor=pointer]:
+        - img [ref=e252]
+        - text: Branding
+      - generic [ref=e256] [cursor=pointer]:
+        - img [ref=e257]
+        - text: Settings
+      - generic [ref=e258] [cursor=pointer]:
+        - img [ref=e259]
+        - text: Administrators
+      - generic [ref=e262] [cursor=pointer]:
+        - img [ref=e263]
+        - text: Audit Logs
+      - generic [ref=e266] [cursor=pointer]:
+        - img [ref=e267]
+        - text: API Keys
+      - generic [ref=e270] [cursor=pointer]:
+        - img [ref=e271]
+        - text: System Updates
+    - main [ref=e41]:
+      - generic [ref=e274]:
+        - generic [ref=e275]:
+          - heading "System Health Dashboard" [level=2] [ref=e276]
+          - generic [ref=e277]: ADMIN
+        - generic [ref=e278]:
+          - generic [ref=e279]:
+            - heading "System Services" [level=3] [ref=e280]
+            - list [ref=e281]:
+              - listitem [ref=e282]:
+                - generic [ref=e283]: Dovecot (IMAP)
+                - generic [ref=e284]: Active
+              - listitem [ref=e285]:
+                - generic [ref=e286]: Postfix (SMTP)
+                - generic [ref=e287]: Active
+              - listitem [ref=e288]:
+                - generic [ref=e289]: Rspamd
+                - generic [ref=e290]: Active
+          - generic [ref=e291]:
+            - heading "Server Resources" [level=3] [ref=e292]
+            - generic [ref=e293]:
+              - generic [ref=e294]:
+                - generic [ref=e295]: CPU Load
+                - generic [ref=e296]: 0.15, 0.10, 0.05
+              - generic [ref=e297]:
+                - generic [ref=e298]: Memory Usage
+                - generic [ref=e299]: 1024 MB / 4096 MB (25%)
+              - generic [ref=e302]:
+                - generic [ref=e303]: Disk Usage (/)
+                - generic [ref=e304]: 20 GB / 100 GB (20%)

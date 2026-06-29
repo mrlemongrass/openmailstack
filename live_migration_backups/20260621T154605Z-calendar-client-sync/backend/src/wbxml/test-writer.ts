@@ -1,0 +1,26 @@
+import { WbxmlParser } from './parser';
+import { WbxmlWriter } from './writer';
+
+const hexData = "03016a00000d4548033930300001494a4b037663617264253246706572736f6e616c00014c03436f6e74616374730001014a4b03766576656e74253246706572736f6e616c00014c0343616c656e6461720001014a4b0376746f646f25324646333434302d36413234333830302d312d343341434430303000014c035461736b730001014a4b036d61696c253246633736343832313034303133616236393233303530313030393037643265326400014c03456d61696c0001014a4b03766576656e7425324646333434302d36413234333830302d312d343341434430303000014c0343616c656e6461720001014a4b0376746f646f253246706572736f6e616c00014c035461736b730001014a4b036d61696c253246376638383662313436633533616236396331306530313030393037643265326400014c03456d61696c0001014a4b036d61696c253246373831663061333166633162623336393236313730303030393037643265326400014c03456d61696c0001010101";
+const buffer = Buffer.from(hexData, 'hex');
+
+try {
+    const parser = new WbxmlParser(buffer);
+    const result = parser.parse();
+    console.log("Parsed AST correctly!");
+    
+    const writer = new WbxmlWriter();
+    writer.writeNode(result);
+    const outBuffer = writer.getBuffer();
+    const outHex = outBuffer.toString('hex');
+    
+    if (outHex === hexData) {
+        console.log("SUCCESS! Write matches original read byte-for-byte!");
+    } else {
+        console.error("FAILURE! Output hex does not match original.");
+        console.log("Original:", hexData);
+        console.log("Output  :", outHex);
+    }
+} catch (e) {
+    console.error("Error:", e);
+}

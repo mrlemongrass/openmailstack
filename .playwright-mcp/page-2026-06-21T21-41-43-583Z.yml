@@ -1,0 +1,104 @@
+- generic [ref=e3]:
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: HouseVo
+      - generic [ref=e8]:
+        - generic [ref=e9] [cursor=pointer]: Mail
+        - generic [ref=e10] [cursor=pointer]: Calendar
+        - generic [ref=e11] [cursor=pointer]: Contacts
+        - generic [ref=e12] [cursor=pointer]: Sync Info
+    - generic [ref=e13]:
+      - button "Refresh current view" [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+      - button "localtest@housevo.us" [ref=e21] [cursor=pointer]:
+        - img [ref=e22]
+        - generic [ref=e25]: localtest@housevo.us
+        - img [ref=e26]
+  - generic [ref=e28]:
+    - complementary [ref=e29]:
+      - generic [ref=e141]:
+        - generic [ref=e142]: Personalization
+        - button "Appearance" [ref=e143] [cursor=pointer]:
+          - img [ref=e144]
+          - text: Appearance
+      - generic [ref=e150]:
+        - generic [ref=e151]: Mail
+        - button "Identity & Compose" [ref=e152] [cursor=pointer]:
+          - img [ref=e153]
+          - text: Identity & Compose
+        - button "Signatures" [ref=e156] [cursor=pointer]:
+          - img [ref=e157]
+          - text: Signatures
+        - button "Reading" [active] [ref=e162] [cursor=pointer]:
+          - img [ref=e163]
+          - text: Reading
+        - button "Forwarding" [ref=e164] [cursor=pointer]:
+          - img [ref=e165]
+          - text: Forwarding
+        - button "Filters" [ref=e168] [cursor=pointer]:
+          - img [ref=e169]
+          - text: Filters
+        - button "Spam & Senders" [ref=e171] [cursor=pointer]:
+          - img [ref=e172]
+          - text: Spam & Senders
+      - generic [ref=e174]:
+        - generic [ref=e175]: Apps
+        - button "Calendar" [ref=e176] [cursor=pointer]:
+          - img [ref=e177]
+          - text: Calendar
+        - button "Contacts" [ref=e179] [cursor=pointer]:
+          - img [ref=e180]
+          - text: Contacts
+        - button "Sync & Devices" [ref=e185] [cursor=pointer]:
+          - img [ref=e186]
+          - text: Sync & Devices
+      - generic [ref=e188]:
+        - generic [ref=e189]: Account
+        - button "Password" [ref=e190] [cursor=pointer]:
+          - img [ref=e191]
+          - text: Password
+        - button "Advanced" [ref=e194] [cursor=pointer]:
+          - img [ref=e195]
+          - text: Advanced
+    - main [ref=e30]:
+      - generic [ref=e290]:
+        - generic [ref=e292]:
+          - generic [ref=e293]: Mail
+          - heading "Reading" [level=2] [ref=e294]
+        - generic [ref=e295]:
+          - generic [ref=e296]:
+            - heading "Conversation View" [level=3] [ref=e297]
+            - generic [ref=e298]:
+              - generic [ref=e299]: Group messages by conversation
+              - checkbox "Group messages by conversation" [ref=e300]
+            - generic [ref=e301]:
+              - generic [ref=e302]: Show message snippets
+              - checkbox "Show message snippets" [checked] [ref=e303]
+          - generic [ref=e304]:
+            - heading "Layout" [level=3] [ref=e305]
+            - generic [ref=e306]:
+              - button "Comfortable" [ref=e307] [cursor=pointer]
+              - button "Cozy" [ref=e308] [cursor=pointer]
+              - button "Compact" [ref=e309] [cursor=pointer]
+            - generic [ref=e310]:
+              - generic [ref=e311]: Preview Pane
+              - generic [ref=e312]:
+                - button "Preview Pane Bottom Off" [ref=e313] [cursor=pointer]: Right
+                - button "Bottom" [ref=e314] [cursor=pointer]
+                - button "Off" [ref=e315] [cursor=pointer]
+          - generic [ref=e316]:
+            - heading "Privacy & Read State" [level=3] [ref=e317]
+            - generic [ref=e318]:
+              - generic [ref=e319]: External Images
+              - generic [ref=e320]:
+                - button "External Images Trusted Always" [ref=e321] [cursor=pointer]: Ask
+                - button "Trusted" [ref=e322] [cursor=pointer]
+                - button "Always" [ref=e323] [cursor=pointer]
+            - generic [ref=e324]:
+              - generic [ref=e325]: Mark Read After
+              - combobox "Mark Read After" [ref=e326]:
+                - option "Immediately"
+                - option "1 second" [selected]
+                - option "3 seconds"
+                - option "5 seconds"
+            - generic [ref=e327]: Preview-pane and external-image behavior are stored now; the message viewer wiring is a follow-up pass.

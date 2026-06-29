@@ -72,7 +72,7 @@ const encryptPassword = (password: string) => {
     };
 };
 
-const decryptPassword = (ciphertext: string, iv: Buffer, tag: Buffer) => {
+export const decryptPassword = (ciphertext: string, iv: Buffer, tag: Buffer) => {
     const decipher = crypto.createDecipheriv('aes-256-gcm', getSessionKey(), iv);
     decipher.setAuthTag(tag);
     return Buffer.concat([

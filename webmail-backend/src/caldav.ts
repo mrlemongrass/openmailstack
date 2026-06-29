@@ -6,9 +6,16 @@ import { davBasicAuth } from './dav-auth';
 
 const router = express.Router();
 
-async function userOwnsCalendar(calendarId: string, user: string): Promise<boolean> {
-    const [rows]: any = await pool.query('SELECT id FROM calendars WHERE id = ? AND user_id = ? LIMIT 1', [calendarId, user]);
-    return rows.length > 0;
+async function userHasCalendarAccess(calendarId: string, user: string, requireWrite: boolean = false): Promise<boolean> {
+    const [rows]: any = await pool.query(
+        `SELECT c.user_id, cs.permission 
+         FROM calendars c 
+         LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+         WHERE c.id = ?`, [user, calendarId]);
+    if (rows.length === 0) return false;
+    if (rows[0].user_id === user) return true;
+    if (requireWrite) return rows[0].permission === 'write';
+    return rows[0].permission === 'read' || rows[0].permission === 'write';
 }
 
 function calendarCollectionMatch(path: string): RegExpMatchArray | null {
@@ -31,7 +38,7 @@ function firstPropertyValue(obj: any, names: string[]): string {
 async function readCalendarProperties(req: Request, fallbackName: string) {
     const rawBody = req.body ? req.body.toString('utf-8') : '';
     if (!rawBody.trim()) {
-        return { name: fallbackName, color: undefined };
+        return { name: fallbackName, color: undefined, components: undefined };
     }
 
     try {
@@ -41,12 +48,25 @@ async function readCalendarProperties(req: Request, fallbackName: string) {
         const prop = set?.['D:prop'] || set?.['d:prop'] || set?.prop || parsed?.['D:prop'] || parsed?.['d:prop'] || parsed?.prop;
         const displayName = firstPropertyValue(prop, ['D:displayname', 'd:displayname', 'displayname']);
         const calendarColor = firstPropertyValue(prop, ['A:calendar-color', 'a:calendar-color', 'calendar-color']);
+        
+        let components: string | undefined;
+        const compSet = prop?.['C:supported-calendar-component-set'] || prop?.['c:supported-calendar-component-set'];
+        if (compSet) {
+            const comp = compSet['C:comp'] || compSet['c:comp'] || compSet.comp;
+            const compArray = Array.isArray(comp) ? comp : [comp];
+            const names = compArray.map((c: any) => c?.$?.name).filter(Boolean);
+            if (names.length > 0) {
+                components = names.join(',');
+            }
+        }
+
         return {
             name: displayName.trim() || fallbackName,
-            color: /^#[0-9a-f]{6}$/i.test(calendarColor.trim()) ? calendarColor.trim() : undefined
+            color: /^#[0-9a-f]{6}$/i.test(calendarColor.trim()) ? calendarColor.trim() : undefined,
+            components
         };
     } catch {
-        return { name: fallbackName, color: undefined };
+        return { name: fallbackName, color: undefined, components: undefined };
     }
 }
 
@@ -90,6 +110,10 @@ router.all(/.*/, async (req: Request, res: Response) => {
 
     if (method === 'DELETE') {
         return handleDelete(req, res, user);
+    }
+
+    if (method === 'GET') {
+        return handleGet(req, res, user);
     }
 
     res.status(404).send('Not Found');
@@ -147,7 +171,7 @@ async function handlePropfind(req: Request, res: Response, user: string) {
         <CS:getctag>"${cal.sync_token}"</CS:getctag>
         <D:sync-token>http://sabre.io/ns/sync/${cal.sync_token}</D:sync-token>
         <C:supported-calendar-component-set>
-          <C:comp name="VEVENT"/>
+          ${(cal.components || 'VEVENT,VTODO').split(',').map((c: string) => `<C:comp name="${c.trim()}"/>`).join('\\n          ')}
         </C:supported-calendar-component-set>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
@@ -230,7 +254,7 @@ async function handlePropfind(req: Request, res: Response, user: string) {
         <CS:getctag>"${cal.sync_token}"</CS:getctag>
         <D:sync-token>http://sabre.io/ns/sync/${cal.sync_token}</D:sync-token>
         <C:supported-calendar-component-set>
-          <C:comp name="VEVENT"/>
+          ${(cal.components || 'VEVENT,VTODO').split(',').map((c: string) => `<C:comp name="${c.trim()}"/>`).join('\\n          ')}
         </C:supported-calendar-component-set>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
@@ -274,7 +298,7 @@ async function handleReport(req: Request, res: Response, user: string) {
     }
 
     try {
-        if (!(await userOwnsCalendar(calendarId, user))) {
+        if (!(await userHasCalendarAccess(calendarId, user))) {
             return res.status(404).send();
         }
 
@@ -299,6 +323,33 @@ async function handleReport(req: Request, res: Response, user: string) {
 </D:multistatus>`;
         res.status(207).send(xml);
     } catch(e) {
+        console.error(e);
+        res.status(500).send();
+    }
+}
+
+async function handleGet(req: Request, res: Response, user: string) {
+    const path = req.path;
+    const eventMatch = calendarEventMatch(path);
+    if (!eventMatch) return res.status(404).send();
+    
+    const cal = await getCalendarByToken(user, eventMatch[1]);
+    if (!cal) return res.status(404).send();
+    const calendarId = cal.id.toString();
+    const uid = eventMatch[2];
+
+    try {
+        if (!(await userHasCalendarAccess(calendarId, user))) {
+            return res.status(404).send();
+        }
+
+        const [events]: any = await pool.query('SELECT * FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1', [calendarId, uid]);
+        if (events.length === 0) return res.status(404).send();
+
+        res.set('Content-Type', 'text/calendar; charset=utf-8');
+        res.set('ETag', `"${events[0].uid}"`);
+        res.status(200).send(events[0].ical_data);
+    } catch (e) {
         console.error(e);
         res.status(500).send();
     }
@@ -330,7 +381,7 @@ async function handlePut(req: Request, res: Response, user: string) {
     const icalData = req.body ? req.body.toString('utf-8') : '';
 
     try {
-        if (!(await userOwnsCalendar(calendarId, user))) {
+        if (!(await userHasCalendarAccess(calendarId, user, true))) {
             return res.status(404).send();
         }
 
@@ -428,7 +479,7 @@ async function handleMkcalendar(req: Request, res: Response, user: string) {
 
     try {
         const props = await readCalendarProperties(req, requestedSlug);
-        const calendar = await createCalendar(user, props.name, { slug: requestedSlug, color: props.color });
+        const calendar = await createCalendar(user, props.name, { slug: requestedSlug, color: props.color, components: props.components });
         res.set('Location', getCalendarHref(user, calendar));
         res.status(201).send();
     } catch (e) {
@@ -464,7 +515,7 @@ async function handleDelete(req: Request, res: Response, user: string) {
     const uid = eventMatch[2];
 
     try {
-        if (!(await userOwnsCalendar(calendarId, user))) {
+        if (!(await userHasCalendarAccess(calendarId, user, true))) {
             return res.status(404).send();
         }
 

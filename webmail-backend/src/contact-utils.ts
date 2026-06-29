@@ -11,6 +11,20 @@ export interface ContactRow {
     dav_uid?: string;
     sync_token?: number;
     updated_at?: string | Date;
+    emails_json?: any;
+    phones_json?: any;
+    addresses_json?: any;
+    job_title?: string;
+    organization?: string;
+    notes?: string;
+    labels_json?: any;
+}
+
+export interface ContactLabelRow {
+    id: number;
+    username: string;
+    name: string;
+    color: string;
 }
 
 export interface ParsedVCardContact {
@@ -36,8 +50,25 @@ export async function ensureContactsSchema(): Promise<void> {
                     sync_token BIGINT UNSIGNED NOT NULL DEFAULT 1,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    emails_json JSON NULL,
+                    phones_json JSON NULL,
+                    addresses_json JSON NULL,
+                    job_title VARCHAR(255) NULL,
+                    organization VARCHAR(255) NULL,
+                    notes TEXT NULL,
+                    labels_json JSON NULL,
                     KEY idx_contacts_username (username),
                     KEY idx_contacts_user_dav_uid (username, dav_uid)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS contact_labels (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    username VARCHAR(255) NOT NULL,
+                    name VARCHAR(255) NOT NULL,
+                    color VARCHAR(32) NOT NULL DEFAULT '#60a5fa',
+                    KEY idx_contact_labels_username (username)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
 
@@ -60,6 +91,27 @@ export async function ensureContactsSchema(): Promise<void> {
             }
             if (!columnNames.has('updated_at')) {
                 await pool.query('ALTER TABLE contacts ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
+            }
+            if (!columnNames.has('emails_json')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN emails_json JSON NULL AFTER updated_at');
+            }
+            if (!columnNames.has('phones_json')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN phones_json JSON NULL AFTER emails_json');
+            }
+            if (!columnNames.has('addresses_json')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN addresses_json JSON NULL AFTER phones_json');
+            }
+            if (!columnNames.has('job_title')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN job_title VARCHAR(255) NULL AFTER addresses_json');
+            }
+            if (!columnNames.has('organization')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN organization VARCHAR(255) NULL AFTER job_title');
+            }
+            if (!columnNames.has('notes')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN notes TEXT NULL AFTER organization');
+            }
+            if (!columnNames.has('labels_json')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN labels_json JSON NULL AFTER notes');
             }
 
             const [indexes]: any = await pool.query("SHOW INDEX FROM contacts WHERE Key_name = 'idx_contacts_user_dav_uid'");
@@ -179,6 +231,67 @@ export function normalizeVCardData(vcard: string, davUid: string, fallback: Pars
     }
 
     return `${lines.join('\r\n')}\r\n`;
+}
+
+export function patchVCardData(vcard: string, davUid: string, updates: any): string {
+    const trimmed = (vcard || '').trim();
+    let lines = trimmed && /^BEGIN:VCARD/i.test(trimmed) ? unfoldVCard(trimmed) : ['BEGIN:VCARD', 'VERSION:3.0', 'END:VCARD'];
+    
+    if (!lines.some(line => line.toUpperCase().startsWith('UID:') || line.toUpperCase().startsWith('UID;'))) {
+        const versionIndex = lines.findIndex(line => line.toUpperCase().startsWith('VERSION:'));
+        lines.splice(versionIndex >= 0 ? versionIndex + 1 : 1, 0, `UID:${vcardEscape(davUid)}`);
+    }
+
+    const nameParts = (updates.name || '').trim().split(/\s+/).filter(Boolean);
+    const firstName = nameParts.length <= 1 ? (nameParts[0] || '') : nameParts.slice(0, -1).join(' ');
+    const lastName = nameParts.length <= 1 ? '' : nameParts[nameParts.length - 1];
+
+    let newLines: string[] = [];
+    let existingN = ['', '', '', '', ''];
+    const nLine = lines.find(l => l.toUpperCase().startsWith('N:') || l.toUpperCase().startsWith('N;'));
+    if (nLine) {
+        const val = nLine.slice(nLine.indexOf(':') + 1);
+        const parts = val.split(/(?<!\\);/).map(vcardUnescape);
+        for (let i = 0; i < 5; i++) if (parts[i]) existingN[i] = parts[i];
+    }
+    
+    existingN[0] = lastName;
+    existingN[1] = firstName;
+
+    for (const line of lines) {
+        if (line.toUpperCase().startsWith('BEGIN:') || line.toUpperCase().startsWith('END:') || line.toUpperCase().startsWith('VERSION:') || line.toUpperCase().startsWith('UID:')) {
+            newLines.push(line);
+            continue;
+        }
+        const propUpper = line.split(':')[0].split(';')[0].toUpperCase();
+        if (['FN', 'N', 'EMAIL', 'TEL', 'ORG', 'TITLE', 'NOTE'].includes(propUpper)) {
+            continue; // We will insert these manually at the end
+        }
+        newLines.push(line);
+    }
+
+    const endIndex = newLines.findIndex(l => l.toUpperCase() === 'END:VCARD');
+    const insertAt = endIndex >= 0 ? endIndex : newLines.length;
+    
+    newLines.splice(insertAt, 0, `FN:${vcardEscape(updates.name || '')}`);
+    newLines.splice(insertAt + 1, 0, `N:${existingN.map(vcardEscape).join(';')}`);
+    
+    const emails = Array.isArray(updates.emails_json) && updates.emails_json.length > 0 ? updates.emails_json : (updates.email ? [{ value: updates.email, type: 'INTERNET' }] : []);
+    for (const email of emails) {
+        if (email.value) newLines.splice(insertAt + 2, 0, `EMAIL;TYPE=${email.type || 'INTERNET'}:${vcardEscape(email.value)}`);
+    }
+    
+    const phones = Array.isArray(updates.phones_json) && updates.phones_json.length > 0 ? updates.phones_json : (updates.phone ? [{ value: updates.phone, type: 'CELL' }] : []);
+    for (const phone of phones) {
+        if (phone.value) newLines.splice(insertAt + 2, 0, `TEL;TYPE=${phone.type || 'CELL'}:${vcardEscape(phone.value)}`);
+    }
+
+    if (updates.organization) newLines.splice(insertAt + 2, 0, `ORG:${vcardEscape(updates.organization)}`);
+    if (updates.job_title) newLines.splice(insertAt + 2, 0, `TITLE:${vcardEscape(updates.job_title)}`);
+    if (updates.notes) newLines.splice(insertAt + 2, 0, `NOTE:${vcardEscape(updates.notes)}`);
+
+    if (endIndex < 0) newLines.push('END:VCARD');
+    return `${newLines.join('\r\n')}\r\n`;
 }
 
 export function contactEtag(contact: ContactRow): string {

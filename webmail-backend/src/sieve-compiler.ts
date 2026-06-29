@@ -19,8 +19,16 @@ export interface SieveRule {
     actions?: SieveAction[];
 }
 
+export interface SieveVacation {
+    enabled: boolean;
+    subject?: string;
+    body: string;
+    days?: number;
+}
+
 export interface SieveRulesDocument {
     rules?: SieveRule[];
+    vacation?: SieveVacation;
 }
 
 const JSON_DATA_BASE64_PATTERN = /\/\* JSON_DATA_BASE64: ([A-Za-z0-9_-]+) \*\//;
@@ -88,7 +96,7 @@ function compileAction(action: SieveAction): string | null {
 }
 
 export function compileSieve(jsonData: SieveRulesDocument): string {
-    let script = 'require ["fileinto", "reject", "envelope", "body"];\n\n';
+    let script = 'require ["fileinto", "reject", "envelope", "body", "vacation"];\n\n';
     const encodedJson = Buffer.from(JSON.stringify(jsonData || { rules: [] }), 'utf8').toString('base64url');
     script += `/* JSON_DATA_BASE64: ${encodedJson} */\n\n`;
 
@@ -107,6 +115,13 @@ export function compileSieve(jsonData: SieveRulesDocument): string {
         script += `if ${operator} (${criteriaStrings.join(', ')}) {\n`;
         script += `${actionStrings.join('\n')}\n`;
         script += `    stop;\n}\n\n`;
+    }
+
+    if (jsonData.vacation && jsonData.vacation.enabled && jsonData.vacation.body) {
+        script += `# Vacation Auto-Responder\n`;
+        const days = jsonData.vacation.days || 1;
+        const subjectPart = jsonData.vacation.subject ? ` :subject ${quoteSieveString(jsonData.vacation.subject)}` : '';
+        script += `vacation :days ${days}${subjectPart} ${quoteSieveString(jsonData.vacation.body)};\n\n`;
     }
 
     return script;

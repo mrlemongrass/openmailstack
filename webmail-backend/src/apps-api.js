@@ -5,6 +5,7 @@ const express_1 = require("express");
 const db_1 = require("./db");
 const auth_1 = require("./auth");
 const calendar_utils_1 = require("./calendar-utils");
+const contact_utils_1 = require("./contact-utils");
 exports.appsApiRouter = (0, express_1.Router)();
 // Middleware to protect routes and extract username
 const authenticateApp = (req, res, next) => {
@@ -29,9 +30,29 @@ exports.appsApiRouter.get('/contacts', async (req, res) => {
 });
 exports.appsApiRouter.post('/contacts', async (req, res) => {
     const user = req.username;
-    const { name, email, phone, vcard_data } = req.body;
+    const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json } = req.body;
     try {
-        const [result] = await db_1.pool.query('INSERT INTO contacts (username, name, email, phone, vcard_data) VALUES (?, ?, ?, ?, ?)', [user, name || '', email || '', phone || '', vcard_data || '']);
+        const davUid = `contact-${Date.now()}`;
+        const newVcardData = vcard_data || (0, contact_utils_1.patchVCardData)('', davUid, {
+            name, email, phone, emails_json, phones_json, job_title, organization, notes
+        });
+        const [result] = await db_1.pool.query(`INSERT INTO contacts 
+            (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, sync_token) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`, [
+            user,
+            name || '',
+            email || '',
+            phone || '',
+            newVcardData,
+            davUid,
+            emails_json ? JSON.stringify(emails_json) : null,
+            phones_json ? JSON.stringify(phones_json) : null,
+            addresses_json ? JSON.stringify(addresses_json) : null,
+            job_title || null,
+            organization || null,
+            notes || null,
+            labels_json ? JSON.stringify(labels_json) : null
+        ]);
         res.json({ success: true, id: result.insertId });
     }
     catch (e) {
@@ -40,9 +61,35 @@ exports.appsApiRouter.post('/contacts', async (req, res) => {
 });
 exports.appsApiRouter.put('/contacts/:id', async (req, res) => {
     const user = req.username;
-    const { name, email, phone, vcard_data } = req.body;
+    const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json } = req.body;
     try {
-        await db_1.pool.query('UPDATE contacts SET name=?, email=?, phone=?, vcard_data=? WHERE id=? AND username=?', [name, email, phone, vcard_data, req.params.id, user]);
+        const [existing] = await db_1.pool.query('SELECT * FROM contacts WHERE id=? AND username=?', [req.params.id, user]);
+        if (existing.length === 0)
+            return res.status(404).json({ success: false, error: 'Contact not found' });
+        const existingContact = existing[0];
+        let newVcardData = vcard_data;
+        if (typeof vcard_data !== 'string') {
+            newVcardData = (0, contact_utils_1.patchVCardData)(existingContact.vcard_data || '', existingContact.dav_uid || `contact-${existingContact.id}`, {
+                name, email, phone, emails_json, phones_json, job_title, organization, notes
+            });
+        }
+        await db_1.pool.query(`UPDATE contacts 
+             SET name=?, email=?, phone=?, vcard_data=?, emails_json=?, phones_json=?, addresses_json=?, job_title=?, organization=?, notes=?, labels_json=?, sync_token = sync_token + 1
+             WHERE id=? AND username=?`, [
+            name || '',
+            email || '',
+            phone || '',
+            newVcardData || '',
+            emails_json ? JSON.stringify(emails_json) : null,
+            phones_json ? JSON.stringify(phones_json) : null,
+            addresses_json ? JSON.stringify(addresses_json) : null,
+            job_title || null,
+            organization || null,
+            notes || null,
+            labels_json ? JSON.stringify(labels_json) : null,
+            req.params.id,
+            user
+        ]);
         res.json({ success: true });
     }
     catch (e) {
@@ -53,6 +100,219 @@ exports.appsApiRouter.delete('/contacts/:id', async (req, res) => {
     const user = req.username;
     try {
         await db_1.pool.query('DELETE FROM contacts WHERE id=? AND username=?', [req.params.id, user]);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.get('/contacts-export', async (req, res) => {
+    const user = req.username;
+    const format = req.query.format || 'vcard';
+    try {
+        const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ?', [user]);
+        if (format === 'csv') {
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', 'attachment; filename="contacts.csv"');
+            let csv = 'Name,Email,Phone,Job Title,Organization,Notes\n';
+            for (const row of rows) {
+                const escapeCsv = (str) => `"${(str || '').replace(/"/g, '""')}"`;
+                csv += `${escapeCsv(row.name)},${escapeCsv(row.email)},${escapeCsv(row.phone)},${escapeCsv(row.job_title)},${escapeCsv(row.organization)},${escapeCsv(row.notes)}\n`;
+            }
+            res.send(csv);
+        }
+        else {
+            res.setHeader('Content-Type', 'text/vcard');
+            res.setHeader('Content-Disposition', 'attachment; filename="contacts.vcf"');
+            let vcards = '';
+            for (const row of rows) {
+                vcards += (0, contact_utils_1.normalizeVCardData)(row.vcard_data || '', (0, contact_utils_1.getContactDavUid)(row), { name: row.name, email: row.email, phone: row.phone });
+            }
+            res.send(vcards);
+        }
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.post('/contacts-import', async (req, res) => {
+    const user = req.username;
+    const { data, format } = req.body;
+    if (!data)
+        return res.status(400).json({ success: false, error: 'No data provided' });
+    try {
+        let imported = 0;
+        if (format === 'csv') {
+            const lines = data.split('\n');
+            const headers = lines[0].toLowerCase().split(',').map((h) => h.trim().replace(/"/g, ''));
+            const nameIdx = headers.findIndex((h) => h.includes('name'));
+            const emailIdx = headers.findIndex((h) => h.includes('email'));
+            const phoneIdx = headers.findIndex((h) => h.includes('phone'));
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim())
+                    continue;
+                // Simple CSV split handling quotes correctly is hard without a library, but let's do a basic split for now
+                // This is a naive regex that splits by comma ignoring commas inside quotes
+                const match = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+                if (!match)
+                    continue;
+                const cols = match.map((c) => c.replace(/^"|"$/g, '').trim());
+                const name = nameIdx >= 0 ? cols[nameIdx] || '' : '';
+                const email = emailIdx >= 0 ? cols[emailIdx] || '' : '';
+                const phone = phoneIdx >= 0 ? cols[phoneIdx] || '' : '';
+                if (name || email) {
+                    await db_1.pool.query('INSERT INTO contacts (username, name, email, phone) VALUES (?, ?, ?, ?)', [user, name, email, phone]);
+                    imported++;
+                }
+            }
+        }
+        else {
+            // vCard import
+            const vcards = data.split(/(?=BEGIN:VCARD)/i);
+            for (const vcard of vcards) {
+                if (!vcard.trim().toUpperCase().startsWith('BEGIN:VCARD'))
+                    continue;
+                const parsed = (0, contact_utils_1.parseVCard)(vcard);
+                if (parsed.name || parsed.email) {
+                    await db_1.pool.query('INSERT INTO contacts (username, name, email, phone, vcard_data) VALUES (?, ?, ?, ?, ?)', [user, parsed.name || '', parsed.email || '', parsed.phone || '', vcard]);
+                    imported++;
+                }
+            }
+        }
+        res.json({ success: true, count: imported });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.get('/contacts-duplicates', async (req, res) => {
+    const user = req.username;
+    try {
+        const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ?', [user]);
+        const duplicates = [];
+        const seen = new Set();
+        for (let i = 0; i < rows.length; i++) {
+            if (seen.has(rows[i].id))
+                continue;
+            const matches = [rows[i]];
+            for (let j = i + 1; j < rows.length; j++) {
+                if (seen.has(rows[j].id))
+                    continue;
+                let isMatch = false;
+                const c1 = rows[i];
+                const c2 = rows[j];
+                if (c1.email && c1.email.toLowerCase() === c2.email?.toLowerCase())
+                    isMatch = true;
+                else if (c1.phone && c1.phone === c2.phone)
+                    isMatch = true;
+                else if (c1.name && c1.name.toLowerCase() === c2.name?.toLowerCase())
+                    isMatch = true;
+                if (isMatch) {
+                    matches.push(c2);
+                    seen.add(c2.id);
+                }
+            }
+            if (matches.length > 1) {
+                duplicates.push(matches);
+            }
+            seen.add(rows[i].id);
+        }
+        res.json({ success: true, duplicates });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.post('/contacts-merge', async (req, res) => {
+    const user = req.username;
+    const { primaryId, duplicateIds } = req.body;
+    if (!primaryId || !duplicateIds || !Array.isArray(duplicateIds) || duplicateIds.length === 0) {
+        return res.status(400).json({ success: false, error: 'Invalid input' });
+    }
+    try {
+        const [primaryRows] = await db_1.pool.query('SELECT * FROM contacts WHERE id=? AND username=?', [primaryId, user]);
+        if (primaryRows.length === 0)
+            return res.status(404).json({ success: false, error: 'Primary contact not found' });
+        const primary = primaryRows[0];
+        const [dupRows] = await db_1.pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=?', [duplicateIds, user]);
+        if (dupRows.length === 0)
+            return res.json({ success: true });
+        let emails = primary.emails_json ? (typeof primary.emails_json === 'string' ? JSON.parse(primary.emails_json) : primary.emails_json) : [];
+        let phones = primary.phones_json ? (typeof primary.phones_json === 'string' ? JSON.parse(primary.phones_json) : primary.phones_json) : [];
+        let addresses = primary.addresses_json ? (typeof primary.addresses_json === 'string' ? JSON.parse(primary.addresses_json) : primary.addresses_json) : [];
+        let labels = primary.labels_json ? (typeof primary.labels_json === 'string' ? JSON.parse(primary.labels_json) : primary.labels_json) : [];
+        let { name, email, phone, job_title, organization, notes } = primary;
+        for (const dup of dupRows) {
+            name = name || dup.name;
+            email = email || dup.email;
+            phone = phone || dup.phone;
+            job_title = job_title || dup.job_title;
+            organization = organization || dup.organization;
+            notes = [notes, dup.notes].filter(Boolean).join('\\n\\n');
+            const dEmails = dup.emails_json ? (typeof dup.emails_json === 'string' ? JSON.parse(dup.emails_json) : dup.emails_json) : [];
+            const dPhones = dup.phones_json ? (typeof dup.phones_json === 'string' ? JSON.parse(dup.phones_json) : dup.phones_json) : [];
+            const dAddresses = dup.addresses_json ? (typeof dup.addresses_json === 'string' ? JSON.parse(dup.addresses_json) : dup.addresses_json) : [];
+            const dLabels = dup.labels_json ? (typeof dup.labels_json === 'string' ? JSON.parse(dup.labels_json) : dup.labels_json) : [];
+            emails = [...emails, ...dEmails];
+            phones = [...phones, ...dPhones];
+            addresses = [...addresses, ...dAddresses];
+            labels = [...labels, ...dLabels];
+        }
+        const uniqueByValue = (arr) => Array.from(new Map(arr.map(item => [item.value, item])).values());
+        emails = uniqueByValue(emails);
+        phones = uniqueByValue(phones);
+        addresses = uniqueByValue(addresses);
+        labels = Array.from(new Set(labels));
+        const newVcardData = (0, contact_utils_1.patchVCardData)(primary.vcard_data || '', primary.dav_uid || `contact-${primary.id}`, {
+            name, email, phone, emails_json: emails, phones_json: phones, job_title, organization, notes
+        });
+        await db_1.pool.query(`UPDATE contacts SET name=?, email=?, phone=?, job_title=?, organization=?, notes=?, emails_json=?, phones_json=?, addresses_json=?, labels_json=?, vcard_data=?, sync_token = sync_token + 1 WHERE id=? AND username=?`, [name, email, phone, job_title, organization, notes, JSON.stringify(emails), JSON.stringify(phones), JSON.stringify(addresses), JSON.stringify(labels), newVcardData, primaryId, user]);
+        await db_1.pool.query('DELETE FROM contacts WHERE id IN (?) AND username=?', [dupRows.map((d) => d.id), user]);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+// ==========================================
+// CONTACT LABELS API
+// ==========================================
+exports.appsApiRouter.get('/contact-labels', async (req, res) => {
+    const user = req.username;
+    try {
+        const [rows] = await db_1.pool.query('SELECT * FROM contact_labels WHERE username = ? ORDER BY name ASC', [user]);
+        res.json({ success: true, labels: rows });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.post('/contact-labels', async (req, res) => {
+    const user = req.username;
+    const { name, color } = req.body;
+    try {
+        const [result] = await db_1.pool.query('INSERT INTO contact_labels (username, name, color) VALUES (?, ?, ?)', [user, name || 'New Label', color || '#60a5fa']);
+        res.json({ success: true, id: result.insertId });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.put('/contact-labels/:id', async (req, res) => {
+    const user = req.username;
+    const { name, color } = req.body;
+    try {
+        await db_1.pool.query('UPDATE contact_labels SET name=?, color=? WHERE id=? AND username=?', [name, color, req.params.id, user]);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.delete('/contact-labels/:id', async (req, res) => {
+    const user = req.username;
+    try {
+        await db_1.pool.query('DELETE FROM contact_labels WHERE id=? AND username=?', [req.params.id, user]);
         res.json({ success: true });
     }
     catch (e) {
@@ -107,13 +367,24 @@ exports.appsApiRouter.delete('/tasks/:id', async (req, res) => {
 // ==========================================
 // NOTES API
 // ==========================================
+// NOTES API
+// ==========================================
+const notes_utils_1 = require("./notes-utils");
+const notes_imap_sync_1 = require("./notes-imap-sync");
 exports.appsApiRouter.get('/notes', async (req, res) => {
     const user = req.username;
+    const pass = req.user?.password;
     try {
-        const [rows] = await db_1.pool.query('SELECT * FROM notes WHERE username = ? ORDER BY updated_at DESC', [user]);
+        if (pass) {
+            // Run IMAP sync in background (non-blocking) or foreground?
+            // Let's await it so the response includes fresh notes.
+            await (0, notes_imap_sync_1.syncNotesWithImap)(user, pass);
+        }
+        const rows = await (0, notes_utils_1.listNotes)(user);
         res.json({ success: true, notes: rows });
     }
     catch (e) {
+        console.error("GET notes error", e);
         res.status(500).json({ success: false, error: e.message });
     }
 });
@@ -121,34 +392,48 @@ exports.appsApiRouter.post('/notes', async (req, res) => {
     const user = req.username;
     const { title, content } = req.body;
     try {
-        const [result] = await db_1.pool.query('INSERT INTO notes (username, title, content) VALUES (?, ?, ?)', [user, title || 'Untitled', content || '']);
-        res.json({ success: true, id: result.insertId });
+        const saved = await (0, notes_utils_1.saveNote)({ title, content, owner: user });
+        res.json({ success: true, id: saved.id });
     }
     catch (e) {
+        console.error("POST notes error", e);
         res.status(500).json({ success: false, error: e.message });
     }
 });
 exports.appsApiRouter.put('/notes/:id', async (req, res) => {
     const user = req.username;
-    const { title, content } = req.body;
+    const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
     try {
-        await db_1.pool.query('UPDATE notes SET title=?, content=? WHERE id=? AND username=?', [title, content, req.params.id, user]);
+        await (0, notes_utils_1.saveNote)({
+            id: req.params.id,
+            owner: user,
+            title,
+            content,
+            color,
+            is_pinned: is_pinned ? 1 : 0,
+            is_locked: is_locked ? 1 : 0,
+            folder,
+            labels_json
+        });
         res.json({ success: true });
     }
     catch (e) {
+        console.error("PUT notes error", e);
         res.status(500).json({ success: false, error: e.message });
     }
 });
 exports.appsApiRouter.delete('/notes/:id', async (req, res) => {
     const user = req.username;
     try {
-        await db_1.pool.query('DELETE FROM notes WHERE id=? AND username=?', [req.params.id, user]);
+        await (0, notes_utils_1.deleteNote)(req.params.id, user);
         res.json({ success: true });
     }
     catch (e) {
+        console.error("DELETE notes error", e);
         res.status(500).json({ success: false, error: e.message });
     }
 });
+// ==========================================
 // ==========================================
 // CALENDARS & EVENTS API
 // ==========================================
@@ -228,6 +513,46 @@ exports.appsApiRouter.put('/calendars/:id', async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 });
+exports.appsApiRouter.get('/calendars/:id/shares', async (req, res) => {
+    const user = req.username;
+    try {
+        const [rows] = await db_1.pool.query('SELECT shared_with_user_id, permission FROM calendar_shares WHERE calendar_id = ? AND calendar_id IN (SELECT id FROM calendars WHERE user_id = ?)', [req.params.id, user]);
+        res.json({ success: true, shares: rows });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.post('/calendars/:id/shares', async (req, res) => {
+    const user = req.username;
+    const { email, permission = 'read' } = req.body;
+    if (!email)
+        return res.status(400).json({ success: false, error: 'email required' });
+    try {
+        const [calRows] = await db_1.pool.query('SELECT id FROM calendars WHERE id = ? AND user_id = ?', [req.params.id, user]);
+        if (calRows.length === 0)
+            return res.status(403).json({ success: false, error: 'Not authorized' });
+        await db_1.pool.query('INSERT INTO calendar_shares (calendar_id, shared_with_user_id, permission) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE permission = VALUES(permission)', [req.params.id, email, permission]);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.delete('/calendars/:id/shares/:email', async (req, res) => {
+    const user = req.username;
+    const { email } = req.params;
+    try {
+        const [calRows] = await db_1.pool.query('SELECT id FROM calendars WHERE id = ? AND user_id = ?', [req.params.id, user]);
+        if (calRows.length === 0 && email !== user)
+            return res.status(403).json({ success: false, error: 'Not authorized' });
+        await db_1.pool.query('DELETE FROM calendar_shares WHERE calendar_id = ? AND shared_with_user_id = ?', [req.params.id, email]);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 exports.appsApiRouter.delete('/calendars/:id', async (req, res) => {
     const user = req.username;
     const calendarId = Number(req.params.id);
@@ -274,11 +599,21 @@ exports.appsApiRouter.post('/events', async (req, res) => {
     const { calendar_id, uid, ical_data } = req.body;
     try {
         // verify calendar ownership
-        const [cals] = await db_1.pool.query('SELECT id FROM calendars WHERE id=? AND user_id=?', [calendar_id, user]);
+        const [cals] = await db_1.pool.query(`
+            SELECT c.id 
+            FROM calendars c 
+            LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+            WHERE c.id = ? AND (c.user_id = ? OR cs.permission = 'write')
+        `, [user, calendar_id, user]);
         if (cals.length === 0)
             return res.status(403).json({ success: false, error: 'Unauthorized calendar' });
         await db_1.pool.query('INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE ical_data=?', [calendar_id, uid, ical_data, ical_data]);
         await db_1.pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar_id]);
+        try {
+            const { io } = require('./index');
+            io.to(user).emit('calendar_updated', { calendarId: calendar_id });
+        }
+        catch (e) { }
         res.json({ success: true });
     }
     catch (e) {
@@ -289,11 +624,21 @@ exports.appsApiRouter.delete('/events/:calendar_id/:uid', async (req, res) => {
     const user = req.username;
     const { calendar_id, uid } = req.params;
     try {
-        const [cals] = await db_1.pool.query('SELECT id FROM calendars WHERE id=? AND user_id=?', [calendar_id, user]);
+        const [cals] = await db_1.pool.query(`
+            SELECT c.id 
+            FROM calendars c 
+            LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+            WHERE c.id = ? AND (c.user_id = ? OR cs.permission = 'write')
+        `, [user, calendar_id, user]);
         if (cals.length === 0)
             return res.status(403).json({ success: false, error: 'Unauthorized calendar' });
         await db_1.pool.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [calendar_id, uid]);
         await db_1.pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar_id]);
+        try {
+            const { io } = require('./index');
+            io.to(user).emit('calendar_updated', { calendarId: calendar_id });
+        }
+        catch (e) { }
         res.json({ success: true });
     }
     catch (e) {

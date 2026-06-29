@@ -1,0 +1,173 @@
+- generic [ref=e3]:
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: HouseVo
+      - generic [ref=e8]:
+        - generic [ref=e9] [cursor=pointer]: Mail
+        - generic [ref=e10] [cursor=pointer]: Calendar
+        - generic [ref=e11] [cursor=pointer]: Contacts
+        - generic [ref=e12] [cursor=pointer]: Sync Info
+    - generic [ref=e13]:
+      - button "Refresh current view" [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+      - button "localtest@housevo.us" [ref=e21] [cursor=pointer]:
+        - img [ref=e22]
+        - generic [ref=e25]: localtest@housevo.us
+        - img [ref=e26]
+  - generic [ref=e28]:
+    - complementary [ref=e29]:
+      - generic [ref=e30]: Administration
+      - generic [ref=e31] [cursor=pointer]:
+        - img [ref=e32]
+        - text: Dashboard
+      - generic [ref=e35] [cursor=pointer]:
+        - img [ref=e36]
+        - text: Domains & DNS
+      - generic [ref=e39] [cursor=pointer]:
+        - img [ref=e40]
+        - text: Cross-Domain Routing
+      - generic [ref=e46] [cursor=pointer]:
+        - img [ref=e47]
+        - text: Mailboxes
+      - generic [ref=e52] [cursor=pointer]:
+        - img [ref=e53]
+        - text: Aliases & Groups
+      - generic [ref=e58] [cursor=pointer]:
+        - img [ref=e59]
+        - text: Spam Quarantine
+      - generic [ref=e61] [cursor=pointer]:
+        - img [ref=e62]
+        - text: Spam Policies
+      - generic [ref=e64] [cursor=pointer]:
+        - img [ref=e65]
+        - text: Rspamd WebUI
+      - generic [ref=e67] [cursor=pointer]:
+        - img [ref=e68]
+        - text: Branding
+      - generic [ref=e72] [cursor=pointer]:
+        - img [ref=e73]
+        - text: Settings
+      - generic [ref=e74] [cursor=pointer]:
+        - img [ref=e75]
+        - text: Administrators
+      - generic [ref=e78] [cursor=pointer]:
+        - img [ref=e79]
+        - text: Audit Logs
+      - generic [ref=e82] [cursor=pointer]:
+        - img [ref=e83]
+        - text: API Keys
+      - generic [ref=e86] [cursor=pointer]:
+        - img [ref=e87]
+        - text: System Updates
+    - main [ref=e90]:
+      - generic [ref=e91]:
+        - generic [ref=e92]:
+          - generic [ref=e93]:
+            - generic [ref=e94]: Admin Settings
+            - heading "Organization Controls" [level=2] [ref=e95]
+          - button "Save" [ref=e96] [cursor=pointer]:
+            - img [ref=e97]
+            - text: Save
+        - generic [ref=e101]:
+          - generic [ref=e102]:
+            - heading "Organization" [level=3] [ref=e103]
+            - generic [ref=e104]:
+              - generic [ref=e105]: Name
+              - textbox "Name" [ref=e106]:
+                - /placeholder: Company or team name
+            - generic [ref=e107]:
+              - generic [ref=e108]: Support Email
+              - textbox "Support Email" [ref=e109]:
+                - /placeholder: support@example.com
+            - generic [ref=e110]:
+              - generic [ref=e111]: Support URL
+              - textbox "Support URL" [ref=e112]:
+                - /placeholder: https://example.com/help
+            - generic [ref=e113]:
+              - generic [ref=e114]:
+                - generic [ref=e115]: Locale
+                - textbox "Locale" [ref=e116]: en-US
+              - generic [ref=e117]:
+                - generic [ref=e118]: Time Zone
+                - textbox "Time Zone" [ref=e119]: UTC
+          - generic [ref=e120]:
+            - heading "Domains & URLs" [level=3] [ref=e121]
+            - generic [ref=e122]:
+              - generic [ref=e123]: Webmail URL
+              - textbox "Webmail URL" [ref=e124]:
+                - /placeholder: https://mail.example.com/
+            - generic [ref=e125]:
+              - generic [ref=e126]: Mail Host
+              - textbox "Mail Host" [ref=e127]:
+                - /placeholder: mail.example.com
+            - generic [ref=e128]:
+              - generic [ref=e129]: Autodiscover Host
+              - textbox "Autodiscover Host" [ref=e130]:
+                - /placeholder: autodiscover.example.com
+            - generic [ref=e131]:
+              - generic [ref=e132]: CalDAV URL
+              - textbox "CalDAV URL" [ref=e133]:
+                - /placeholder: https://mail.example.com/.well-known/caldav
+            - generic [ref=e134]:
+              - generic [ref=e135]: CardDAV URL
+              - textbox "CardDAV URL" [ref=e136]:
+                - /placeholder: https://mail.example.com/.well-known/carddav
+          - generic [ref=e137]:
+            - heading "Security" [level=3] [ref=e138]
+            - generic [ref=e139]:
+              - generic [ref=e140]: Session Lifetime
+              - combobox "Session Lifetime" [ref=e141]:
+                - option "8 hours" [selected]
+                - option "12 hours"
+                - option "24 hours"
+                - option "3 days"
+                - option "7 days"
+            - generic [ref=e142]:
+              - generic [ref=e143]: Require secure cookies
+              - checkbox "Require secure cookies" [checked] [ref=e144]
+            - generic [ref=e145]:
+              - generic [ref=e146]: Allow user password changes
+              - checkbox "Allow user password changes" [ref=e147]
+            - generic [ref=e148]:
+              - generic [ref=e149]: Show last-login notice
+              - checkbox "Show last-login notice" [checked] [ref=e150]
+            - generic [ref=e151]: Runtime enforcement for these policies needs a later backend/session pass.
+          - generic [ref=e152]:
+            - heading "Mail Defaults" [level=3] [ref=e153]
+            - generic [ref=e154]:
+              - generic [ref=e155]:
+                - generic [ref=e156]: Max Attachment MB
+                - spinbutton "Max Attachment MB" [ref=e157]: "25"
+              - generic [ref=e158]:
+                - generic [ref=e159]: Default Quota MB
+                - spinbutton "Default Quota MB" [ref=e160]: "1024"
+            - generic [ref=e161]:
+              - generic [ref=e162]: Spam Policy
+              - combobox "Spam Policy" [ref=e163]:
+                - option "Standard" [selected]
+                - option "Strict"
+                - option "Permissive"
+            - generic [ref=e164]:
+              - generic [ref=e165]: Allow external forwarding
+              - checkbox "Allow external forwarding" [checked] [ref=e166]
+            - generic [ref=e167]: These defaults are stored now; enforcement is intentionally separate from existing Postfix/Rspamd policy.
+          - generic [ref=e168]:
+            - heading "System" [level=3] [ref=e169]
+            - generic [ref=e170]:
+              - generic [ref=e171]: Update Channel
+              - combobox "Update Channel" [ref=e172]:
+                - option "Stable" [selected]
+                - option "Preview"
+            - generic [ref=e173]:
+              - generic [ref=e174]: Maintenance Window
+              - textbox "Maintenance Window" [ref=e175]:
+                - /placeholder: Sunday 02:00
+                - text: Sunday 02:00
+            - generic [ref=e176]:
+              - generic [ref=e177]: Telemetry
+              - combobox "Telemetry" [ref=e178]:
+                - option "Off" [selected]
+                - option "Basic health only"
+            - generic [ref=e179]:
+              - generic [ref=e180]: Admin Notice
+              - textbox "Admin Notice" [ref=e181]

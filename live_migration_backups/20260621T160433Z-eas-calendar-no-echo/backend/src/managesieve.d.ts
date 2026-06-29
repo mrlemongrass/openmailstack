@@ -1,0 +1,17 @@
+export declare class ManageSieveClient {
+    private host;
+    private port;
+    private client;
+    private resolveData;
+    private rejectError;
+    private dataBuffer;
+    constructor(host?: string, port?: number);
+    private sendCommand;
+    connect(): Promise<string>;
+    login(user: string, pass: string): Promise<void>;
+    getScript(scriptName: string): Promise<string>;
+    putScript(scriptName: string, content: string): Promise<void>;
+    setActive(scriptName: string): Promise<void>;
+    logout(): Promise<void>;
+}
+//# sourceMappingURL=managesieve.d.ts.map

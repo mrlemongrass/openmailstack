@@ -83,7 +83,10 @@ const parsedMailToSummary = (folder, msg, parsed, previewLength = 100) => ({
     isRead: msg.flags.includes('\\Seen'),
     isStarred: msg.flags.includes('\\Flagged'),
     hasAttachments: getVisibleAttachments(parsed).length > 0,
-    preview: parsed.text ? parsed.text.substring(0, previewLength) : ''
+    preview: parsed.text ? parsed.text.substring(0, previewLength) : '',
+    messageId: parsed.messageId || '',
+    inReplyTo: parsed.inReplyTo || '',
+    references: parsed.references || []
 });
 const parsedMailToIndexRow = (folder, msg, parsed) => ({
     folder,
@@ -94,10 +97,25 @@ const parsedMailToIndexRow = (folder, msg, parsed) => ({
     recipients: [getAddressText(parsed.to), getAddressText(parsed.cc), getAddressText(parsed.bcc)].filter(Boolean).join(', '),
     sentAt: parsed.date || null,
     preview: parsed.text ? parsed.text.substring(0, 180) : '',
-    bodyText: parsed.text || '',
+    bodyText: (() => {
+        let txt = parsed.text || '';
+        if (parsed.attachments && Array.isArray(parsed.attachments)) {
+            for (const att of parsed.attachments) {
+                if (att.contentType && (att.contentType.startsWith('text/') || att.contentType === 'application/json')) {
+                    if (att.content && att.content.length < 50000) {
+                        txt += '\n\n--- ' + (att.filename || 'attachment') + ' ---\n' + att.content.toString('utf8');
+                    }
+                }
+            }
+        }
+        return txt;
+    })(),
     attachmentNames: getAttachmentNames(parsed),
+    inReplyTo: parsed.inReplyTo || '',
+    references: parsed.references || [],
     isRead: msg.flags.includes('\\Seen'),
-    isStarred: msg.flags.includes('\\Flagged')
+    isStarred: msg.flags.includes('\\Flagged'),
+    messageSize: msg.source ? msg.source.length : 0
 });
 const allowedSearchFields = ['all', 'from', 'to', 'subject', 'body', 'attachments', 'unread', 'starred'];
 const isBlankAllowedSearchField = (field) => ['unread', 'starred'].includes(field);
@@ -444,6 +462,21 @@ exports.apiRouter.post('/rules', requireAuth, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+exports.apiRouter.get('/quota', requireAuth, async (req, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+    try {
+        const { ImapService } = require('./imap');
+        const imap = new ImapService(user, pass);
+        await imap.connect();
+        const quota = await imap.getQuota();
+        await imap.logout();
+        res.json({ success: true, quota });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 exports.apiRouter.get('/folders', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -515,6 +548,33 @@ exports.apiRouter.get('/folders/:folder/messages', requireAuth, async (req, res)
     const folder = req.params.folder;
     const olderThan = parseInt(String(req.query.olderThan || ''), 10);
     const fetchOlderThan = Number.isFinite(olderThan) && olderThan > 1 ? olderThan : undefined;
+    if (folder === 'SCHEDULED') {
+        try {
+            const [rows] = await db_1.pool.query('SELECT id, send_at, mail_options FROM scheduled_emails WHERE username = ? ORDER BY send_at ASC', [user]);
+            const messages = rows.map((r) => {
+                let opts = {};
+                try {
+                    opts = JSON.parse(r.mail_options);
+                }
+                catch (e) { }
+                return {
+                    uid: r.id + 100000000, // fake high UID to avoid collisions
+                    id: r.id,
+                    subject: opts.subject || '(No Subject)',
+                    from: [{ address: opts.from || user, name: '' }],
+                    to: opts.to ? opts.to.split(',').map((t) => ({ address: t, name: '' })) : [],
+                    date: r.send_at,
+                    flags: [],
+                    unseen: false,
+                    is_scheduled: true
+                };
+            });
+            return res.json({ success: true, messages, moreAvailable: false });
+        }
+        catch (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+    }
     try {
         const { ImapService } = require('./imap');
         const simpleParser = require('mailparser').simpleParser;
@@ -776,6 +836,22 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
                 content: f.buffer
             }))
         };
+        const delaySeconds = parseInt(req.body.delaySeconds || '0', 10);
+        if (delaySeconds > 0) {
+            const scheduledOptions = {
+                ...mailOptions,
+                attachments: files.map((f) => ({
+                    filename: f.originalname,
+                    content: f.buffer.toString('base64'),
+                    encoding: 'base64'
+                }))
+            };
+            const sendAt = new Date(Date.now() + delaySeconds * 1000);
+            const { ensureScheduledEmailsSchema } = require('./scheduled-send');
+            await ensureScheduledEmailsSchema();
+            const [insertRes] = await db_1.pool.query('INSERT INTO scheduled_emails (username, send_at, mail_options, draft_uid) VALUES (?, ?, ?, ?)', [user, sendAt, JSON.stringify(scheduledOptions), draftUid ? parseInt(draftUid, 10) : null]);
+            return res.json({ success: true, scheduledId: insertRes.insertId, sendAt, message: 'Message scheduled' });
+        }
         const info = await transporter.sendMail(mailOptions);
         if (to) {
             const emails = to.split(',').map((e) => e.trim());
@@ -833,6 +909,26 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
         res.status(500).json({ success: false, error: err.message });
     }
 });
+exports.apiRouter.post('/messages/undo', requireAuth, require('express').json(), async (req, res) => {
+    const user = req.user.username;
+    const { scheduledId } = req.body;
+    if (!scheduledId) {
+        return res.status(400).json({ success: false, error: 'scheduledId is required' });
+    }
+    try {
+        const [result] = await db_1.pool.query('DELETE FROM scheduled_emails WHERE id = ? AND username = ?', [scheduledId, user]);
+        if (result.affectedRows > 0) {
+            res.json({ success: true, message: 'Message send undone' });
+        }
+        else {
+            res.status(404).json({ success: false, error: 'Scheduled message not found or already sent' });
+        }
+    }
+    catch (err) {
+        console.error('Undo error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 exports.apiRouter.post('/messages/draft', requireAuth, upload.array('attachments'), async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -853,11 +949,16 @@ exports.apiRouter.post('/messages/draft', requireAuth, upload.array('attachments
             subject: subject || 'No Subject',
             text: text || '',
             html: html || '',
+            headers: {},
             attachments: files.map((f) => ({
                 filename: f.originalname,
                 content: f.buffer
             }))
         };
+        const draftId = req.body.draftId;
+        if (draftId) {
+            mailOptions.headers['X-Draft-Id'] = draftId;
+        }
         const { ImapService } = require('./imap');
         const imap = new ImapService(user, pass);
         await imap.connect();
@@ -873,13 +974,33 @@ exports.apiRouter.post('/messages/draft', requireAuth, upload.array('attachments
         const MailComposer = require('nodemailer/lib/mail-composer');
         const mail = new MailComposer(mailOptions);
         const rawMessage = await mail.compile().build();
-        // If there's a previous draft, delete it
+        const uidsToDelete = [];
+        // If there's a previous draftUid, add it to deletion list
         if (draftUid) {
+            uidsToDelete.push(parseInt(draftUid, 10));
+        }
+        // Search for any existing drafts with this draftId
+        if (draftId) {
             try {
-                await imap.messageAction(draftsFolder, [parseInt(draftUid, 10)], 'delete');
+                await imap.client.mailboxOpen(draftsFolder);
+                const searchRes = await imap.client.search({ header: { 'x-draft-id': draftId } });
+                if (searchRes && searchRes.length > 0) {
+                    for (const uid of searchRes) {
+                        if (!uidsToDelete.includes(uid))
+                            uidsToDelete.push(uid);
+                    }
+                }
             }
             catch (e) {
-                console.error('Failed to delete old draft', e);
+                console.error('Failed to search for existing drafts by draftId', e);
+            }
+        }
+        if (uidsToDelete.length > 0) {
+            try {
+                await imap.messageAction(draftsFolder, uidsToDelete, 'delete');
+            }
+            catch (e) {
+                console.error('Failed to delete old drafts', e);
             }
         }
         const appendRes = await imap.client.append(draftsFolder, rawMessage, ['\\Draft', '\\Seen']);
@@ -990,6 +1111,39 @@ exports.apiRouter.get('/folders/:folder/messages/:uid', requireAuth, async (req,
     const pass = req.user.password;
     const folder = req.params.folder;
     const uid = parseInt(req.params.uid);
+    if (folder === 'SCHEDULED') {
+        try {
+            const realId = uid - 100000000;
+            const [rows] = await db_1.pool.query('SELECT * FROM scheduled_emails WHERE id = ? AND username = ?', [realId, user]);
+            if (rows.length === 0)
+                return res.status(404).json({ success: false, error: 'Not found' });
+            let opts = {};
+            try {
+                opts = JSON.parse(rows[0].mail_options);
+            }
+            catch (e) { }
+            return res.json({
+                success: true,
+                message: {
+                    uid,
+                    subject: opts.subject || '(No Subject)',
+                    from: [{ address: opts.from || user, name: '' }],
+                    to: opts.to ? opts.to.split(',').map((t) => ({ address: t, name: '' })) : [],
+                    cc: opts.cc ? opts.cc.split(',').map((t) => ({ address: t, name: '' })) : [],
+                    bcc: opts.bcc ? opts.bcc.split(',').map((t) => ({ address: t, name: '' })) : [],
+                    date: rows[0].send_at,
+                    html: opts.html || '',
+                    text: opts.text || '',
+                    attachments: [], // We won't try to parse attachments for scheduled messages for now
+                    is_scheduled: true,
+                    scheduled_id: realId
+                }
+            });
+        }
+        catch (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+    }
     try {
         const { ImapService } = require('./imap');
         const simpleParser = require('mailparser').simpleParser;
@@ -1013,7 +1167,11 @@ exports.apiRouter.get('/folders/:folder/messages/:uid', requireAuth, async (req,
                 isRead: msg.flags.includes('\\Seen'),
                 isStarred: msg.flags.includes('\\Flagged'),
                 hasAttachments: getVisibleAttachments(parsed).length > 0,
-                attachments: getAttachmentMetadata(parsed)
+                attachments: getAttachmentMetadata(parsed),
+                draftId: parsed.headers.get('x-draft-id'),
+                messageId: parsed.messageId || '',
+                inReplyTo: parsed.inReplyTo || '',
+                references: parsed.references || []
             }
         });
     }
@@ -1045,10 +1203,11 @@ exports.apiRouter.get('/contacts', requireAuth, async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
-exports.apiRouter.get('/directory', requireAuth, async (_req, res) => {
+exports.apiRouter.get('/directory', requireAuth, async (req, res) => {
     try {
         await ensureMailboxProfileSchema();
-        const [rows] = await db_1.pool.query(`
+        const q = req.query.q ? String(req.query.q) : '';
+        let sql = `
             SELECT
                 m.username AS email,
                 m.name,
@@ -1066,8 +1225,15 @@ exports.apiRouter.get('/directory', requireAuth, async (_req, res) => {
             LEFT JOIN webmail_mailbox_profiles p ON p.username = m.username
             WHERE m.active = 1
               AND COALESCE(p.show_in_directory, 1) = 1
-            ORDER BY m.name ASC, m.username ASC
-        `);
+        `;
+        const params = [];
+        if (q) {
+            sql += ` AND (m.username LIKE ? OR m.name LIKE ? OR m.phone LIKE ? OR p.job_title LIKE ? OR p.company LIKE ?)`;
+            const likeTerm = `%${q}%`;
+            params.push(likeTerm, likeTerm, likeTerm, likeTerm, likeTerm);
+        }
+        sql += ` ORDER BY m.name ASC, m.username ASC LIMIT 100`;
+        const [rows] = await db_1.pool.query(sql, params);
         res.json({
             success: true,
             contacts: rows.map((row) => ({
@@ -1695,6 +1861,51 @@ exports.apiRouter.post('/admin/spam_policies', requireAuth, requireAdmin, async 
         await logAdminAction(req, 'spam_policy.update', 'spam_policy', 'global', {
             bytes: Buffer.byteLength(rulesStr, 'utf8'),
         });
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+const notes_utils_1 = require("./notes-utils");
+const notes_imap_sync_1 = require("./notes-imap-sync");
+exports.apiRouter.get('/notes', requireAuth, async (req, res) => {
+    try {
+        await (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password);
+        const notes = await (0, notes_utils_1.listNotes)(req.user.username);
+        console.log(`[NOTES GET] User: ${req.user.username}, count: ${notes.length}`);
+        res.json({ success: true, notes });
+    }
+    catch (err) {
+        console.error(`[NOTES GET] ERROR:`, err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.post('/notes', requireAuth, async (req, res) => {
+    try {
+        const note = await (0, notes_utils_1.saveNote)({ ...req.body, owner: req.user.username });
+        (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
+        res.json({ success: true, note });
+    }
+    catch (err) {
+        console.error('Notes POST error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.put('/notes/:id', requireAuth, async (req, res) => {
+    try {
+        const note = await (0, notes_utils_1.saveNote)({ ...req.body, id: req.params.id, owner: req.user.username });
+        (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
+        res.json({ success: true, note });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.delete('/notes/:id', requireAuth, async (req, res) => {
+    try {
+        await (0, notes_utils_1.deleteNote)(req.params.id, req.user.username);
+        (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
         res.json({ success: true });
     }
     catch (err) {

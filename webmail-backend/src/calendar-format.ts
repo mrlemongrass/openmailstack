@@ -158,9 +158,17 @@ function recurrenceLabel(rule: RecurrenceRule | null): string {
     return rule.interval === 1 ? `Every ${unit}` : `Every ${rule.interval} ${unit}s`;
 }
 
-export function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent {
+export function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & { type?: 'event' | 'task' } {
     const lines = unfoldIcal(ical);
-    const eventLines = firstComponentPropertyLines(lines, 'VEVENT');
+    let isTask = false;
+    let eventLines = firstComponentPropertyLines(lines, 'VEVENT');
+    if (eventLines === lines) {
+        const todoLines = firstComponentPropertyLines(lines, 'VTODO');
+        if (todoLines !== lines) {
+            eventLines = todoLines;
+            isTask = true;
+        }
+    }
     const startField = firstIcalValue(eventLines, 'DTSTART');
     const endField = firstIcalValue(eventLines, 'DTEND');
     const allDay = Boolean(startField?.params.toUpperCase().includes('VALUE=DATE') || startField?.value.length === 8);
@@ -179,6 +187,7 @@ export function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent {
         dtstamp: parseIcalDate(firstIcalValue(eventLines, 'DTSTAMP')?.value || '', false),
         recurrence,
         recurrenceLabel: recurrenceLabel(recurrence),
+        type: isTask ? 'task' : 'event',
     };
 }
 

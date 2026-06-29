@@ -1,0 +1,49 @@
+- generic [ref=e3]:
+  - banner [ref=e17]:
+    - generic [ref=e18]:
+      - generic [ref=e19]: HouseVo
+      - generic [ref=e20]:
+        - generic [ref=e21] [cursor=pointer]: Mail
+        - generic [ref=e22] [cursor=pointer]: Calendar
+        - generic [ref=e23] [cursor=pointer]: Contacts
+        - generic [ref=e24] [cursor=pointer]: Sync Info
+    - generic [ref=e25]:
+      - button "Refresh current view" [ref=e26] [cursor=pointer]:
+        - img [ref=e27]
+      - button "localtest@housevo.us" [ref=e33] [cursor=pointer]:
+        - img [ref=e34]
+        - generic [ref=e37]: localtest@housevo.us
+        - img [ref=e38]
+  - main [ref=e102]:
+    - generic [ref=e311]:
+      - generic [ref=e314]:
+        - button "New Contact" [disabled] [ref=e316]: New Contact
+        - generic [ref=e319]:
+          - heading "Address Books" [level=3]
+        - generic [ref=e320]:
+          - generic [ref=e321] [cursor=pointer]: Personal Contacts
+          - generic [ref=e326] [cursor=pointer]: Global Directory (GAL)
+          - generic [ref=e331] [cursor=pointer]: New Address Book
+      - separator [ref=e332]
+      - generic [ref=e336]:
+        - generic [ref=e337]:
+          - heading "Global Directory" [level=2] [ref=e349]
+          - button "Contacts sync information" [ref=e339] [cursor=pointer]:
+            - img [ref=e340]
+            - text: Sync Info
+        - generic [ref=e343]:
+          - generic [ref=e350]:
+            - generic [ref=e351]: L
+            - generic [ref=e352]:
+              - generic [ref=e353]: Local Test
+              - generic [ref=e354]: localtest@housevo.us
+          - generic [ref=e355]:
+            - generic [ref=e356]: M
+            - generic [ref=e357]:
+              - generic [ref=e358]: Melissa Vo
+              - generic [ref=e359]: melissa@housevo.us
+          - generic [ref=e360]:
+            - generic [ref=e361]: T
+            - generic [ref=e362]:
+              - generic [ref=e363]: Thang Vo
+              - generic [ref=e364]: thang@housevo.us

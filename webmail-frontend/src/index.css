@@ -1052,3 +1052,35 @@ body {
 .ql-editor {
   min-height: 200px;
 }
+
+.contact-card:hover {
+  transform: translateY(-4px) scale(1.01);
+  background: linear-gradient(145deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%) !important;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.2) !important;
+  border-color: rgba(255,255,255,0.15) !important;
+  z-index: 10;
+}
+
+.contact-card:hover .contact-card-actions {
+  opacity: 1 !important;
+}
+
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-content {
+  display: none;
+  position: absolute;
+  z-index: 100;
+  padding: 8px;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  top: 100%;
+  margin-top: 8px;
+}
+
+.dropdown:focus-within .dropdown-content {
+  display: block;
+}

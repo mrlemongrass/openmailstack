@@ -1,0 +1,76 @@
+- generic [ref=e3]:
+  - banner [ref=e17]:
+    - generic [ref=e18]:
+      - generic [ref=e19]: HouseVo
+      - generic [ref=e20]:
+        - generic [ref=e21] [cursor=pointer]: Mail
+        - generic [ref=e22] [cursor=pointer]: Calendar
+        - generic [ref=e23] [cursor=pointer]: Contacts
+        - generic [ref=e24] [cursor=pointer]: Sync Info
+    - generic [ref=e25]:
+      - button "Refresh current view" [ref=e26] [cursor=pointer]:
+        - img [ref=e27]
+      - button "localtest@housevo.us" [ref=e33] [cursor=pointer]:
+        - img [ref=e34]
+        - generic [ref=e37]: localtest@housevo.us
+        - img [ref=e38]
+  - generic [ref=e40]:
+    - complementary [ref=e213]:
+      - generic [ref=e214]: Administration
+      - generic [ref=e215] [cursor=pointer]:
+        - img [ref=e216]
+        - text: Dashboard
+      - generic [ref=e219] [cursor=pointer]:
+        - img [ref=e220]
+        - text: Domains & DNS
+      - generic [ref=e223] [cursor=pointer]:
+        - img [ref=e224]
+        - text: Cross-Domain Routing
+      - generic [ref=e230] [cursor=pointer]:
+        - img [ref=e231]
+        - text: Mailboxes
+      - generic [ref=e236] [cursor=pointer]:
+        - img [ref=e237]
+        - text: Aliases & Groups
+      - generic [ref=e242] [cursor=pointer]:
+        - img [ref=e243]
+        - text: Spam Quarantine
+      - generic [ref=e245] [cursor=pointer]:
+        - img [ref=e246]
+        - text: Spam Policies
+      - generic [ref=e248] [cursor=pointer]:
+        - img [ref=e249]
+        - text: Rspamd WebUI
+      - generic [ref=e251] [cursor=pointer]:
+        - img [ref=e252]
+        - text: Branding
+      - generic [ref=e256] [cursor=pointer]:
+        - img [ref=e257]
+        - text: Settings
+      - generic [ref=e258] [cursor=pointer]:
+        - img [ref=e259]
+        - text: Administrators
+      - generic [ref=e262] [cursor=pointer]:
+        - img [ref=e263]
+        - text: Audit Logs
+      - generic [ref=e266] [cursor=pointer]:
+        - img [ref=e267]
+        - text: API Keys
+      - generic [ref=e270] [cursor=pointer]:
+        - img [ref=e271]
+        - text: System Updates
+    - main [ref=e41]:
+      - generic [ref=e378]:
+        - generic [ref=e379]:
+          - heading "Cross-Domain Routing" [level=2] [ref=e380]
+          - button "Add Routing" [ref=e381] [cursor=pointer]:
+            - img [ref=e382]
+            - text: Add Routing
+        - paragraph [ref=e383]: Route all mail from an Alias Domain to a Target Domain.
+        - generic [ref=e384]:
+          - generic [ref=e385]:
+            - textbox "Alias Domain (e.g. example.net)" [ref=e386]
+            - generic [ref=e387]: ➔
+            - combobox [ref=e388]:
+              - option "housevo.us" [selected]
+          - paragraph [ref=e389]: No cross-domain routing rules.

@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
-import { Mail, MailOpen, Users, Settings, X, Plus, Filter, Search, Star, Trash2, Maximize2, Minimize2, Send, Reply, ReplyAll, Forward, Inbox, ChevronRight, ChevronLeft, ChevronDown, ShieldAlert, Edit, Edit2, Share2, Save, Lock, User, UserPlus, RefreshCw, Paperclip, Eye, Download, Copy, Check, Smartphone, Monitor, Link2, Image, SlidersHorizontal, Undo2 } from 'lucide-react';
+import { io } from 'socket.io-client';
+import { Mail, MailOpen, Users, Settings, X, Plus, Filter, Search, Star, Trash2, Maximize2, Minimize2, Send, Reply, ReplyAll, Forward, Inbox, ChevronRight, ChevronLeft, ChevronDown, ShieldAlert, Edit, Edit2, Share2, Save, Lock, User, UserPlus, RefreshCw, Paperclip, Eye, Download, Upload, Copy, Check, Smartphone, Monitor, Link2, Image, SlidersHorizontal, Undo2, Phone, Briefcase, MapPin, StickyNote, Clock, HelpCircle } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultLayout } from 'react-resizable-panels';
 import DOMPurify from 'dompurify';
 import 'react-quill-new/dist/quill.snow.css';
+import 'react-quill-new/dist/quill.bubble.css';
 import './index.css';
 import { SettingsContent, SettingsSidebar } from './settings/SettingsPanel';
 import { normalizeSettingsTab } from './settings/tabs';
@@ -16,6 +18,7 @@ import { applyBrandingToDocument, defaultBranding, fetchBranding, saveAdminBrand
 import { format, addMonths, subMonths, addWeeks, subWeeks, addDays, subDays, startOfMonth, endOfMonth, startOfWeek, endOfWeek, isSameMonth, isSameDay } from 'date-fns';
 
 const ReactQuill = lazy(() => import('react-quill-new'));
+const LiveNoteEditor = lazy(() => import('./LiveNoteEditor').then(m => ({ default: m.LiveNoteEditor })));
 
 interface Rule {
   id: string;
@@ -52,6 +55,12 @@ interface Message {
   preview?: string;
   html?: string;
   text?: string;
+  messageId?: string;
+  inReplyTo?: string;
+  references?: string[];
+  is_scheduled?: boolean;
+  scheduled_id?: number;
+  draftId?: string;
   threadCount?: number;
   threadUids?: number[];
 }
@@ -74,20 +83,49 @@ interface Signature {
   defaultForReply?: boolean;
 }
 
-interface Contact {
+export interface ContactItem {
+  value: string;
+  label: string;
+}
+
+export interface ContactLabel {
+  id: number;
+  name: string;
+  color: string;
+}
+
+export interface Contact {
   id?: number | string;
   name: string;
   email: string;
   phone?: string;
-  alternateEmail?: string;
-  company?: string;
+  alternateEmail?: string; // Legacy
+  company?: string; // Legacy
   jobTitle?: string;
-  address?: string;
+  organization?: string;
+  address?: string; // Legacy
   notes?: string;
   source?: 'personal' | 'directory';
+  emails_json?: ContactItem[];
+  phones_json?: ContactItem[];
+  addresses_json?: ContactItem[];
+  labels_json?: number[];
+  vcard_data?: string;
 }
 
-type DisplayContact = Contact & { displayName: string };
+interface Note {
+  id: string;
+  title: string;
+  content: string;
+  color: string;
+  is_pinned: number;
+  is_locked: number;
+  folder: string;
+  labels_json: string;
+  updated_at: string;
+}
+
+type DisplayContact = Contact & { displayName: string, _parsedName?: any };
 
 interface CalendarEvent {
   id: string;
@@ -109,6 +147,7 @@ interface Calendar {
   name: string;
   color: string;
   isVisible?: boolean;
+  access_role?: string;
   events: CalendarEvent[];
 }
 
@@ -187,7 +226,7 @@ interface SearchIndexRefreshResponse {
 
 type SearchField = 'all' | 'from' | 'to' | 'subject' | 'body' | 'attachments' | 'unread' | 'starred';
 type SearchScope = 'folder' | 'all';
-type AppMode = 'webmail' | 'settings' | 'admin' | 'calendar' | 'contacts' | 'sync';
+type AppMode = 'webmail' | 'settings' | 'admin' | 'calendar' | 'contacts' | 'notes' | 'sync';
 
 const CALENDAR_COLOR_OPTIONS = ['#3498db', '#e74c3c', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22', '#1abc9c', '#e91e63', '#607d8b'];
 
@@ -369,10 +408,19 @@ interface UserIdentities {
 }
 
 interface MailUndoState {
+  type: 'move' | 'send';
   label: string;
-  sourceFolder: string;
-  targetFolder: string;
-  uids: number[];
+  sourceFolder?: string;
+  targetFolder?: string;
+  uids?: number[];
+  scheduledId?: number;
+}
+
+export interface SieveVacation {
+  enabled: boolean;
+  subject?: string;
+  body: string;
+  days?: number;
 }
 
 const getHeaders = () => ({
@@ -604,6 +652,7 @@ const FolderNode = ({ node, level, activeFolder, setActiveFolder, expandedFolder
 function App() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [saving, setSaving] = useState(false);
+  const [userQuota, setUserQuota] = useState<{ usage: number, limit: number } | null>(null);
   const [appMode, setAppMode] = useState<AppMode>(() => getInitialAppMode());
   const [activeTab, setActiveTab] = useState(() => {
     const mode = getInitialAppMode();
@@ -619,6 +668,7 @@ function App() {
   const [mailUndo, setMailUndo] = useState<MailUndoState | null>(null);
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [mailLoading, setMailLoading] = useState(false);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [mailLowestUid, setMailLowestUid] = useState<number | null>(null);
@@ -636,7 +686,13 @@ function App() {
   const [indexLoading, setIndexLoading] = useState(false);
   const [searchIndexStatus, setSearchIndexStatus] = useState<SearchIndexStatusResponse | null>(null);
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
-  const [expandedFolders, setExpandedFolders] = useState<{[key: string]: boolean}>({});
+  const [expandedFolders, setExpandedFolders] = useState<{[key: string]: boolean}>(() => {
+    try {
+      const saved = localStorage.getItem('oms_expanded_folders');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {};
+  });
   const [isComposing, setIsComposing] = useState(false);
   const [composeDocked, setComposeDocked] = useState(false);
   const [showCc, setShowCc] = useState(false);
@@ -650,6 +706,7 @@ function App() {
   const [composeSignature, setComposeSignature] = useState('none');
   const [composeAttachments, setComposeAttachments] = useState<File[]>([]);
   const [draftUid, setDraftUid] = useState<string | null>(null);
+  const [draftId, setDraftId] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [userIdentities, setUserIdentities] = useState<UserIdentities>({ name: '', address: '', aliases: [] });
@@ -669,10 +726,19 @@ function App() {
   const mailUndoTimer = useRef<number | null>(null);
   const mailKeyboardAction = useRef<((action: 'delete' | 'archive' | 'spam' | 'read' | 'unread' | 'star' | 'unstar') => Promise<void>) | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [duplicateGroups, setDuplicateGroups] = useState<Contact[][]>([]);
   const [directoryContacts, setDirectoryContacts] = useState<Contact[]>([]);
+  const [contactLabels, setContactLabels] = useState<ContactLabel[]>([]);
+  const [selectedLabel, setSelectedLabel] = useState<number | null>(null);
   const [contactsView, setContactsView] = useState<ContactsView>('personal');
   const [contactsActionStatus, setContactsActionStatus] = useState('');
   const [contactsActionError, setContactsActionError] = useState('');
+  const [editingContact, setEditingContact] = useState<Partial<Contact> | null>(null);
+  const [isContactModalOpen, setIsContactModalOpen] = useState(false);
+  const [editingLabel, setEditingLabel] = useState<Partial<ContactLabel> | null>(null);
+  const [isLabelModalOpen, setIsLabelModalOpen] = useState(false);
+  const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
+  const [directorySearchQuery, setDirectorySearchQuery] = useState('');
 
   useEffect(() => {
     localStorage.setItem('oms_signatures', JSON.stringify(signatures));
@@ -691,6 +757,10 @@ function App() {
     localStorage.setItem('oms_app_mode', appMode);
     localStorage.setItem('oms_active_tab', activeTab);
   }, [appMode, activeTab]);
+
+  useEffect(() => {
+    localStorage.setItem('oms_expanded_folders', JSON.stringify(expandedFolders));
+  }, [expandedFolders]);
 
   useEffect(() => () => {
     if (mailUndoTimer.current) {
@@ -716,6 +786,10 @@ function App() {
   const [calendarEditorSaving, setCalendarEditorSaving] = useState(false);
   const [calendarEditorError, setCalendarEditorError] = useState('');
   const [deletingCalendarId, setDeletingCalendarId] = useState<number | null>(null);
+  const [sharingCalendarId, setSharingCalendarId] = useState<number | null>(null);
+  const [sharingCalendarShares, setSharingCalendarShares] = useState<any[]>([]);
+  const [sharingNewUser, setSharingNewUser] = useState('');
+  const [sharingNewPermission, setSharingNewPermission] = useState('read');
   const [newEventData, setNewEventData] = useState({ 
     title: '', calendarId: 1, start: new Date(), end: new Date(new Date().getTime() + 60*60*1000), 
     isAllDay: false, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -725,7 +799,7 @@ function App() {
     busyStatus: 'busy', visibility: 'default'
   });
 
-
+  const [vacationSettings, setVacationSettings] = useState<SieveVacation>({ enabled: false, body: '', days: 1 });
   const [folders, setFolders] = useState<MailFolder[]>([]);
 
   const [isAdmin, setIsAdmin] = useState(false);
@@ -981,6 +1055,7 @@ function App() {
   const webmailPanelLayout = useDefaultLayout({ id: 'oms-webmail-v7', panelIds: ['webmail-sidebar', 'message-list', 'message-view'] });
   const calendarPanelLayout = useDefaultLayout({ id: 'oms-cal-v8', panelIds: ['calendar-sidebar', 'calendar-view'] });
   const contactsPanelLayout = useDefaultLayout({ id: 'oms-contacts-v8', panelIds: ['contacts-sidebar', 'contacts-view'] });
+  const notesPanelLayout = useDefaultLayout({ id: 'oms-notes-layout', panelIds: ['notes-sidebar', 'notes-view'] });
 
   const availableSenders = useMemo(() => {
     const candidates = [userIdentities.address, ...userIdentities.aliases, currentUsername]
@@ -990,28 +1065,78 @@ function App() {
   }, [currentUsername, userIdentities.address, userIdentities.aliases]);
 
   const displayContacts = useMemo((): DisplayContact[] => {
-    const formatContactName = (contact: Contact) => {
-      const rawName = contact.name.trim();
-      if (!rawName) return 'Unknown Name';
-      if (contactsSettings.nameFormat === 'lastFirst') {
-        const parts = rawName.split(/\s+/);
-        if (parts.length > 1) {
-          return `${parts[parts.length - 1]}, ${parts.slice(0, -1).join(' ')}`;
+    const parseName = (contact: Contact) => {
+      let firstName = '', lastName = '', middleName = '', prefix = '', suffix = '';
+      if (contact.vcard_data) {
+        const nLine = contact.vcard_data.split('\\n').find((l: string) => l.toUpperCase().startsWith('N:') || l.toUpperCase().startsWith('N;'));
+        if (nLine) {
+          const val = nLine.slice(nLine.indexOf(':') + 1).trim();
+          const parts = val.split(/(?<!\\\\);/).map((s: string) => s.replace(/\\\\;/g, ';').replace(/\\\\,/g, ',').replace(/\\\\\\\\/g, '\\\\'));
+          lastName = parts[0] || '';
+          firstName = parts[1] || '';
+          middleName = parts[2] || '';
+          prefix = parts[3] || '';
+          suffix = parts[4] || '';
         }
       }
-      return rawName;
+      if (!firstName && !lastName) {
+        const rawParts = (contact.name || '').trim().split(/\\s+/);
+        if (rawParts.length > 1) {
+          lastName = rawParts.pop() || '';
+          firstName = rawParts.join(' ');
+        } else {
+          firstName = rawParts[0] || '';
+        }
+      }
+      return { firstName, lastName, middleName, prefix, suffix };
+    };
+
+    const formatContactName = (contact: Contact, parsed: ReturnType<typeof parseName>) => {
+      if (!parsed.firstName && !parsed.lastName) return contact.email || 'Unknown Contact';
+      
+      const { firstName, lastName, middleName, prefix, suffix } = parsed;
+      let display = '';
+      if (contactsSettings.nameFormat === 'lastFirst' && lastName) {
+        display = `${lastName}, ${[prefix, firstName, middleName, suffix].filter(Boolean).join(' ')}`;
+      } else {
+        display = [prefix, firstName, middleName, lastName, suffix].filter(Boolean).join(' ');
+      }
+      return display.trim() || 'Unknown Contact';
     };
 
     const sourceContacts = contactsView === 'directory' ? directoryContacts : contacts;
+    const filteredContacts = selectedLabel && contactsView === 'personal' 
+      ? sourceContacts.filter(c => c.labels_json?.includes(selectedLabel))
+      : sourceContacts;
 
-    return [...sourceContacts]
-      .map(contact => ({ ...contact, displayName: formatContactName(contact) }))
+    return [...filteredContacts]
+      .map(contact => {
+        const parsed = parseName(contact);
+        return { 
+          ...contact, 
+          displayName: formatContactName(contact, parsed),
+          _parsedName: parsed
+        };
+      })
       .sort((a, b) => {
-        const aValue = contactsSettings.sortBy === 'email' ? a.email : a.displayName;
-        const bValue = contactsSettings.sortBy === 'email' ? b.email : b.displayName;
-        return aValue.localeCompare(bValue, undefined, { sensitivity: 'base' });
+        if (contactsSettings.sortBy === 'email') {
+          return a.email.localeCompare(b.email, undefined, { sensitivity: 'base' });
+        }
+        
+        let aValue = '', bValue = '';
+        if (contactsSettings.sortBy === 'lastName') {
+          aValue = a._parsedName.lastName || a._parsedName.firstName || a.email;
+          bValue = b._parsedName.lastName || b._parsedName.firstName || b.email;
+        } else {
+          aValue = a._parsedName.firstName || a._parsedName.lastName || a.email;
+          bValue = b._parsedName.firstName || b._parsedName.lastName || b.email;
+        }
+        
+        const cmp = aValue.localeCompare(bValue, undefined, { sensitivity: 'base' });
+        if (cmp !== 0) return cmp;
+        return a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
       });
-  }, [contacts, contactsSettings.nameFormat, contactsSettings.sortBy, contactsView, directoryContacts]);
+  }, [contacts, contactsSettings.nameFormat, contactsSettings.sortBy, contactsView, directoryContacts, selectedLabel]);
 
   const recipientContacts = useMemo(() => {
     const seen = new Set<string>();
@@ -1029,12 +1154,6 @@ function App() {
     const name = contact.name.trim();
     return name ? `"${name.replace(/"/g, '')}" <${contact.email}>` : contact.email;
   };
-
-  const contactListMetrics = useMemo(() => {
-    if (contactsSettings.listDensity === 'compact') return { padding: '10px 12px', avatar: 32, nameSize: '1rem' };
-    if (contactsSettings.listDensity === 'comfortable') return { padding: '18px', avatar: 48, nameSize: '1.12rem' };
-    return { padding: '14px', avatar: 40, nameSize: '1.06rem' };
-  }, [contactsSettings.listDensity]);
 
   const getDefaultCalendarId = useCallback(() => {
     const configuredCalendar = calendarSettings.defaultCalendarId === null
@@ -1521,10 +1640,16 @@ function App() {
   useEffect(() => {
     if (isAuthenticated) {
       fetch(`/api/rules`, { headers: getHeaders() }).then(res => res.json())
-        .then(data => { if (data.rules) setRules(data.rules); setLoading(false); })
+        .then(data => { 
+          if (data.rules) setRules(data.rules); 
+          if (data.vacation) setVacationSettings(data.vacation);
+          setLoading(false); 
+        })
         .catch(() => setLoading(false));
       fetch(`/api/folders`, { headers: getHeaders() }).then(res => res.json())
         .then(data => setFolders(data.folders || []));
+      fetch(`/api/quota`, { headers: getHeaders() }).then(res => res.json())
+        .then(data => { if (data.success && data.quota) setUserQuota(data.quota); });
       fetch(`/api/settings/forwarding`, { headers: getHeaders() }).then(res => res.json())
         .then(data => { if (data.success) setForwardingGoto(data.goto); });
       fetch(`/api/user/identities`, { headers: getHeaders() }).then(res => res.json())
@@ -1888,7 +2013,232 @@ function App() {
     }
   };
 
-  const handleSend = () => {
+  // --- Notes State ---
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [editingNote, setEditingNote] = useState<Partial<Note>>({});
+  const [notesView, setNotesView] = useState('notes');
+  const [notesSearchQuery, setNotesSearchQuery] = useState('');
+  const [notesLabels, setNotesLabels] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('oms_notes_labels') || '["Work", "Personal", "Ideas"]'); } catch { return ["Work", "Personal", "Ideas"]; }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('oms_notes_labels', JSON.stringify(notesLabels));
+  }, [notesLabels]);
+
+  const fetchNotes = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/notes?t=${Date.now()}`, { credentials: 'include' });
+      const data = await res.json();
+      if (data.success) {
+        setNotes(data.notes);
+      }
+    } catch (e: any) { 
+      console.error('Failed to fetch notes', e); 
+    }
+  }, []);
+
+  const handleSaveNote = async () => {
+    
+    try {
+      const method = editingNote.id ? 'PUT' : 'POST';
+      const url = editingNote.id ? `/api/notes/${editingNote.id}` : '/api/notes';
+      const res = await fetch(url, {
+        method, credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingNote)
+      });
+      if ((await res.json()).success) {
+        setIsNoteModalOpen(false);
+        fetchNotes();
+      }
+    } catch (e) { console.error('Failed to save note', e); }
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    
+    try {
+      const res = await fetch(`/api/notes/${id}`, {
+        method: 'DELETE', credentials: 'include'
+      });
+      if ((await res.json()).success) {
+        if (selectedNote?.id === id) setSelectedNote(null);
+        fetchNotes();
+      }
+    } catch (e) { console.error('Failed to delete note', e); }
+  };
+
+  const handleDuplicateNote = async (note: Note) => {
+    
+    try {
+      const res = await fetch('/api/notes', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...note, id: undefined, title: `${note.title || 'Untitled Note'} (Copy)` })
+      });
+      if ((await res.json()).success) fetchNotes();
+    } catch (e) { console.error('Failed to duplicate note', e); }
+  };
+
+  const handleTogglePinNote = async (note: Note) => {
+    
+    try {
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...note, is_pinned: note.is_pinned ? 0 : 1 })
+      });
+      if ((await res.json()).success) fetchNotes();
+    } catch (e) { console.error('Failed to toggle pin', e); }
+  };
+
+  const handleToggleLockNote = async (note: Note) => {
+    
+    try {
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...note, is_locked: note.is_locked ? 0 : 1 })
+      });
+      if ((await res.json()).success) fetchNotes();
+    } catch (e) { console.error('Failed to toggle lock', e); }
+  };
+
+  const handleExportNotes = async (format: 'pdf' | 'md' | 'json') => {
+    const notesToExport = notes.filter(n => {
+      if (notesView === 'pinned') return n.is_pinned === 1;
+      if (notesView === 'locked') return n.is_locked === 1;
+      if (notesView === 'trash') return n.folder === 'trash';
+      if (notesView === 'notes') return n.folder !== 'trash';
+      let labels = [];
+      try { labels = JSON.parse(n.labels_json || '[]'); } catch(e) {}
+      return labels.includes(notesView) && n.folder !== 'trash';
+    });
+    
+    if (format === 'json') {
+      const data = JSON.stringify(notesToExport, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'notes_export.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else if (format === 'md') {
+      const TurndownService = (await import('turndown')).default;
+      const turndownService = new TurndownService();
+      let mdText = '';
+      for (const note of notesToExport) {
+        mdText += `# ${note.title || 'Untitled'}\n\n`;
+        mdText += turndownService.turndown(note.content || '') + '\n\n---\n\n';
+      }
+      const blob = new Blob([mdText], { type: 'text/markdown' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'notes_export.md';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else if (format === 'pdf') {
+      const html2pdf = (await import('html2pdf.js')).default;
+      const container = document.createElement('div');
+      for (const note of notesToExport) {
+        const noteDiv = document.createElement('div');
+        noteDiv.innerHTML = `<h1>${note.title || 'Untitled'}</h1><div>${note.content || ''}</div><hr style="page-break-after: always;"/>`;
+        container.appendChild(noteDiv);
+      }
+      html2pdf().from(container).set({
+        margin: 10,
+        filename: 'notes_export.pdf',
+        html2canvas: { scale: 2 },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      }).save();
+    }
+  };
+
+  const handleImportNotes = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    
+    try {
+      if (ext === 'json') {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        const importedNotes = Array.isArray(data) ? data : [data];
+        for (const note of importedNotes) {
+           await fetch('/api/notes', {
+             method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ title: note.title, content: note.content, color: note.color, folder: note.folder, labels_json: note.labels_json })
+           });
+        }
+        fetchNotes();
+      } else if (ext === 'md') {
+        const text = await file.text();
+        const marked = (await import('marked')).marked;
+        const content = marked.parse(text);
+        await fetch('/api/notes', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: file.name.replace('.md', ''), content })
+        });
+        fetchNotes();
+      } else if (ext === 'html') {
+        const text = await file.text();
+        await fetch('/api/notes', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: file.name.replace('.html', ''), content: text })
+        });
+        fetchNotes();
+      } else if (ext === 'pdf') {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfjsLib = await import('pdfjs-dist');
+        const pdfWorkerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+        const pdf = await loadingTask.promise;
+        let fullText = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          const strings = content.items.map((item: any) => item.str);
+          fullText += strings.join(' ') + '\n\n';
+        }
+        await fetch('/api/notes', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: file.name.replace('.pdf', ''), content: `<p>${fullText.replace(/\n/g, '<br>')}</p>` })
+        });
+        fetchNotes();
+      } else {
+        alert('Unsupported file format.');
+      }
+    } catch (err) {
+      console.error('Import failed', err);
+      alert('Failed to import note.');
+    }
+    e.target.value = '';
+  };
+
+  const htmlToText = (html: string) => {
+    const tmp = document.createElement('DIV');
+    tmp.innerHTML = html;
+    return tmp.textContent || tmp.innerText || '';
+  };
+
+  useEffect(() => {
+    if (appMode === 'notes') fetchNotes();
+  }, [appMode, fetchNotes]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sharedId = params.get('share_note');
+    if (sharedId) {
+       setAppMode('notes');
+       setEditingNote({ id: sharedId, title: 'Shared Note', content: '' });
+       setIsNoteModalOpen(true);
+       window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  const handleSend = (overrideDelay?: number) => {
     setSending(true);
     
     const formData = new FormData();
@@ -1905,6 +2255,11 @@ function App() {
       formData.append('attachments', file);
     });
     
+    const delay = overrideDelay !== undefined ? overrideDelay : mailSettings.compose.undoSendSeconds;
+    if (delay > 0) {
+      formData.append('delaySeconds', delay.toString());
+    }
+    
     const headers = new Headers(getHeaders());
     headers.delete('Content-Type');
 
@@ -1917,8 +2272,16 @@ function App() {
     .then(data => {
       setSending(false);
       if (data.success) {
-        setIsComposing(false);
+        setComposeBody('');
+        setComposeAttachments([]);
         setDraftUid(null);
+        setDraftId(null);
+        setIsComposing(false);
+        if (data.scheduledId && delay > 0) {
+          showSendUndo(overrideDelay !== undefined ? `Message scheduled.` : `Message sent.`, data.scheduledId, delay);
+        } else {
+          // Normal toast or nothing
+        }
       } else {
         alert('Failed to send: ' + data.error);
       }
@@ -1961,8 +2324,17 @@ function App() {
       setMailUndo(null);
       return;
     }
-    setMailUndo({ label, sourceFolder, targetFolder, uids });
+    setMailUndo({ type: 'move', label, sourceFolder, targetFolder, uids });
     mailUndoTimer.current = window.setTimeout(() => setMailUndo(null), 8000);
+  };
+
+  const showSendUndo = (label: string, scheduledId: number, delaySeconds: number) => {
+    if (mailUndoTimer.current) {
+      window.clearTimeout(mailUndoTimer.current);
+    }
+    setMailUndo({ type: 'send', label, scheduledId });
+    // Keep toast open for the duration, minus a little buffer
+    mailUndoTimer.current = window.setTimeout(() => setMailUndo(null), Math.max(0, delaySeconds * 1000 - 500));
   };
 
   const handleUndoMailAction = async () => {
@@ -1973,29 +2345,51 @@ function App() {
       window.clearTimeout(mailUndoTimer.current);
       mailUndoTimer.current = null;
     }
-    try {
-      const res = await fetch('/api/messages/action', {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({
-          folder: undo.targetFolder,
-          uids: undo.uids,
-          action: 'move',
-          targetFolder: undo.sourceFolder
-        })
-      });
-      const data = await res.json() as MessageActionResponse;
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Undo failed.');
+    
+    if (undo.type === 'send' && undo.scheduledId) {
+      try {
+        const res = await fetch('/api/messages/undo', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({ scheduledId: undo.scheduledId })
+        });
+        const data = await res.json();
+        if (data.success) {
+          setIsComposing(true);
+        } else {
+          alert('Too late to undo send: ' + (data.error || 'Already sent'));
+        }
+      } catch (err) {
+        console.error(err);
       }
-      await refreshFolders();
-      if (!isSearchActive) {
-        await fetchMessages();
-      } else {
-        await executeSearch();
+      return;
+    }
+    
+    if (undo.type === 'move') {
+      try {
+        const res = await fetch('/api/messages/action', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({
+            folder: undo.targetFolder,
+            uids: undo.uids,
+            action: 'move',
+            targetFolder: undo.sourceFolder
+          })
+        });
+        const data = await res.json() as MessageActionResponse;
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'Undo failed.');
+        }
+        await refreshFolders();
+        if (!isSearchActive) {
+          await fetchMessages();
+        } else {
+          await executeSearch();
+        }
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Undo failed.');
       }
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Undo failed.');
     }
   };
 
@@ -2074,14 +2468,92 @@ function App() {
   });
 
   useEffect(() => {
-    if (appMode !== 'webmail' || isComposing) return;
+    if (appMode !== 'webmail') return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      
+      const key = event.key.toLowerCase();
+      
+      if (key === 'escape') {
+        if (isComposing) {
+          setIsComposing(false);
+          return;
+        }
+        if (viewingThread) {
+          setViewingThread(null);
+          return;
+        }
+      }
+
+      if (isComposing) return; // Other shortcuts don't apply when composing
+
+      // Global shortcuts
+      if (key === 'c') {
+        event.preventDefault();
+        handleCompose();
+        return;
+      }
+      if (key === '/') {
+        event.preventDefault();
+        const searchInput = document.querySelector('input[type="text"][placeholder*="Search"]') as HTMLInputElement;
+        if (searchInput) searchInput.focus();
+        return;
+      }
+      
+      // Thread viewing shortcuts
+      if (viewingThread) {
+        if (key === 'r') {
+          event.preventDefault();
+          handleReply('reply');
+          return;
+        }
+        if (key === 'a') {
+          event.preventDefault();
+          handleReply('replyAll');
+          return;
+        }
+        if (key === 'f') {
+          event.preventDefault();
+          handleReply('forward');
+          return;
+        }
+      }
+      
+      // List navigation shortcuts (j/k)
+      if (!viewingThread && messages.length > 0) {
+        if (key === 'j' || key === 'k') {
+          event.preventDefault();
+          // Find currently focused message or first message
+          const currentIndex = messages.findIndex(m => selectedMessages.includes(m.uid));
+          let nextIndex = key === 'j' ? currentIndex + 1 : currentIndex - 1;
+          
+          if (currentIndex === -1) {
+            nextIndex = key === 'j' ? 0 : messages.length - 1;
+          } else if (nextIndex < 0) {
+            nextIndex = 0;
+          } else if (nextIndex >= messages.length) {
+            nextIndex = messages.length - 1;
+          }
+          
+          if (nextIndex >= 0 && nextIndex < messages.length) {
+            setSelectedMessages([messages[nextIndex].uid]);
+            const row = document.getElementById(`message-row-${messages[nextIndex].uid}`);
+            if (row) row.scrollIntoView({ block: 'nearest' });
+          }
+          return;
+        }
+        
+        if (key === 'enter' && selectedMessages.length === 1) {
+          event.preventDefault();
+          void loadMessage(selectedMessages[0]);
+          return;
+        }
+      }
+
       if (selectedMessages.length === 0 || !canBulkAct) return;
 
-      const key = event.key.toLowerCase();
-      if (key === 'delete' || key === 'backspace') {
+      if (key === 'delete' || key === 'backspace' || key === '#') {
         event.preventDefault();
         void mailKeyboardAction.current?.('delete');
       } else if (key === 'e') {
@@ -2098,7 +2570,7 @@ function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [appMode, canBulkAct, isComposing, selectedMessages.length]);
+  }, [appMode, canBulkAct, isComposing, selectedMessages, viewingThread, messages]);
 
   const buildSignatureHtml = (signature?: Signature) => (
     signature
@@ -2113,6 +2585,7 @@ function App() {
     if (!targetMsg) return;
     setIsComposing(true);
     setDraftUid(null);
+    setDraftId(crypto.randomUUID());
     setComposeFrom(getPreferredComposeFrom());
     setComposeCc(type === 'replyAll' ? targetMsg.cc || '' : '');
     const selfBcc = mailSettings.identity.alwaysBccSelf ? userIdentities.address || currentUsername : '';
@@ -2142,6 +2615,28 @@ function App() {
     setComposeBody(buildSignatureHtml(defaultSig) + quotedHtml);
   };
 
+  const handleEditDraft = (msg: Message) => {
+    setIsComposing(true);
+    setDraftUid(msg.uid.toString());
+    setDraftId(msg.draftId || crypto.randomUUID());
+    setComposeFrom(msg.from || getPreferredComposeFrom());
+    setComposeTo(msg.to || '');
+    setComposeCc(msg.cc || '');
+    setComposeBcc('');
+    setShowBcc(false);
+    setShowCc(!!msg.cc);
+    setComposeSubject(msg.subject || '');
+    
+    // Convert DOMPurify sanitized html to composeBody
+    const htmlContent = msg.html || (msg.text ? `<pre>${msg.text}</pre>` : '');
+    setComposeBody(htmlContent);
+    
+    // We can't easily populate attachments without downloading them, so we just clear them.
+    // In a real app, we might need a way to keep existing attachments.
+    setComposeAttachments([]);
+    setComposeSignature('none'); // Assume signature is already in the draft
+  };
+
   const handleCompose = () => {
     const selfBcc = mailSettings.identity.alwaysBccSelf ? userIdentities.address || currentUsername : '';
     setComposeFrom(getPreferredComposeFrom());
@@ -2161,11 +2656,18 @@ function App() {
     }
     setComposeAttachments([]);
     setDraftUid(null);
+    setDraftId(crypto.randomUUID());
     setIsComposing(true);
   };
 
+  const lastSavedDraftRef = useRef<string>('');
+
   useEffect(() => {
     if (!isComposing || (!composeTo && !composeSubject && !composeBody)) return;
+    
+    const currentDraftContent = JSON.stringify({ composeFrom, composeTo, composeCc, composeBcc, composeSubject, composeBody });
+    if (currentDraftContent === lastSavedDraftRef.current) return;
+    
     const timeout = setTimeout(() => {
       const formData = new FormData();
       formData.append('from', composeFrom);
@@ -2176,6 +2678,7 @@ function App() {
       formData.append('subject', composeSubject);
       formData.append('html', composeBody);
       if (draftUid) formData.append('draftUid', draftUid);
+      if (draftId) formData.append('draftId', draftId);
       
       composeAttachments.forEach(file => {
         formData.append('attachments', file);
@@ -2192,6 +2695,7 @@ function App() {
       .then(res => res.json())
       .then(data => {
         if (data.success && data.draftUid) {
+          lastSavedDraftRef.current = currentDraftContent;
           setDraftUid(data.draftUid.toString());
         }
       }).catch(() => {
@@ -2199,34 +2703,102 @@ function App() {
       });
     }, 5000); // Save draft after 5 seconds of inactivity
     return () => clearTimeout(timeout);
-  }, [composeFrom, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments, draftUid, isComposing, mailSettings.identity.replyTo]);
+  }, [composeFrom, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments, draftUid, draftId, isComposing, mailSettings.identity.replyTo]);
 
   const refreshContacts = useCallback(() => {
-    return fetch(`/api/apps/contacts`, { headers: getHeaders() })
-      .then(r => r.json() as Promise<ContactsResponse>)
-      .then(d => d.success && setContacts(d.contacts || []));
+    return Promise.all([
+      fetch(`/api/apps/contacts`, { headers: getHeaders() }).then(r => r.json()),
+      fetch(`/api/apps/contacts-duplicates`, { headers: getHeaders() }).then(r => r.json()).catch(() => ({ success: false }))
+    ]).then(([contactsData, duplicatesData]) => {
+      if (contactsData.success) setContacts(contactsData.contacts || []);
+      if (duplicatesData.success) setDuplicateGroups(duplicatesData.duplicates || []);
+    });
   }, []);
 
-  const refreshDirectoryContacts = useCallback(() => {
-    return fetch(`/api/directory`, { headers: getHeaders() })
+  const refreshDirectoryContacts = useCallback((query?: string) => {
+    const qs = query ? `?q=${encodeURIComponent(query)}` : '';
+    return fetch(`/api/directory${qs}`, { headers: getHeaders() })
       .then(r => r.json() as Promise<ContactsResponse>)
       .then(d => d.success && setDirectoryContacts(d.contacts || []));
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const timer = setTimeout(() => {
+      refreshDirectoryContacts(directorySearchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [directorySearchQuery, isAuthenticated, refreshDirectoryContacts]);
+
+  const refreshContactLabels = useCallback(() => {
+    return fetch(`/api/apps/contact-labels`, { headers: getHeaders() })
+      .then(r => r.json())
+      .then(d => d.success && setContactLabels(d.labels || []));
+  }, []);
+
+  const handleSaveContactLabel = async (label: Partial<ContactLabel>) => {
+    setContactsActionError('');
+    setContactsActionStatus('');
+    try {
+      const isNew = !label.id;
+      const url = isNew ? '/api/apps/contact-labels' : `/api/apps/contact-labels/${label.id}`;
+      const method = isNew ? 'POST' : 'PUT';
+      
+      const response = await fetch(url, {
+        method,
+        headers: getHeaders(),
+        body: JSON.stringify({
+          name: label.name || 'New Label',
+          color: label.color || '#60a5fa'
+        })
+      });
+      
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not save label.');
+      
+      await refreshContactLabels();
+      setIsLabelModalOpen(false);
+      setEditingLabel(null);
+    } catch (err) {
+      setContactsActionError(err instanceof Error ? err.message : 'Could not save label.');
+    }
+  };
+
+  const handleDeleteContactLabel = async (id: number) => {
+    if (!window.confirm('Are you sure you want to delete this label? Contacts will not be deleted, but they will be removed from this label.')) return;
+    setContactsActionError('');
+    setContactsActionStatus('');
+    try {
+      const response = await fetch(`/api/apps/contact-labels/${id}`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not delete label.');
+      
+      if (selectedLabel === id) setSelectedLabel(null);
+      await refreshContactLabels();
+    } catch (err) {
+      setContactsActionError(err instanceof Error ? err.message : 'Could not delete label.');
+    }
+  };
 
   const handleAddDirectoryContact = async (contact: Contact) => {
     setContactsActionError('');
     setContactsActionStatus('');
     try {
-      const response = await fetch('/api/contacts', {
+      const response = await fetch('/api/apps/contacts', {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
           name: contact.name || contact.email,
           email: contact.email,
-          phone: contact.phone || ''
+          phone: contact.phone || '',
+          job_title: contact.jobTitle || '',
+          organization: contact.organization || contact.company || ''
         })
       });
-      const data = await response.json() as ContactsResponse;
+      const data = await response.json();
       if (!response.ok || !data.success) {
         throw new Error(data.error || 'Could not save contact.');
       }
@@ -2234,6 +2806,128 @@ function App() {
       setContactsActionStatus(`${contact.name || contact.email} saved to Personal Contacts.`);
     } catch (err) {
       setContactsActionError(err instanceof Error ? err.message : 'Could not save contact.');
+    }
+  };
+
+  const handleSaveContact = async (contact: Partial<Contact>) => {
+    setContactsActionError('');
+    setContactsActionStatus('');
+    try {
+      const isNew = !contact.id;
+      const url = isNew ? '/api/apps/contacts' : `/api/apps/contacts/${contact.id}`;
+      const method = isNew ? 'POST' : 'PUT';
+      
+      const response = await fetch(url, {
+        method,
+        headers: getHeaders(),
+        body: JSON.stringify({
+          name: contact.name || '',
+          email: contact.email || '',
+          phone: contact.phone || '',
+          emails_json: contact.emails_json || [],
+          phones_json: contact.phones_json || [],
+          addresses_json: contact.addresses_json || [],
+          job_title: contact.jobTitle || '',
+          organization: contact.organization || '',
+          notes: contact.notes || '',
+          labels_json: contact.labels_json || []
+        })
+      });
+      
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not save contact.');
+      
+      await refreshContacts();
+      setIsContactModalOpen(false);
+      setEditingContact(null);
+      setContactsActionStatus(`Contact saved successfully.`);
+    } catch (err) {
+      setContactsActionError(err instanceof Error ? err.message : 'Could not save contact.');
+    }
+  };
+
+  const handleDeleteContact = async (id: number | string) => {
+    if (!window.confirm('Are you sure you want to delete this contact?')) return;
+    setContactsActionError('');
+    setContactsActionStatus('');
+    try {
+      const response = await fetch(`/api/apps/contacts/${id}`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not delete contact.');
+      
+      await refreshContacts();
+      setContactsActionStatus('Contact deleted.');
+    } catch (err) {
+      setContactsActionError(err instanceof Error ? err.message : 'Could not delete contact.');
+    }
+  };
+
+  const handleExportContacts = (format: 'vcard' | 'csv') => {
+    // Generate a temporary link to download the file directly via the browser
+    const a = document.createElement('a');
+    a.href = `/api/apps/contacts-export?format=${format}&token=${localStorage.getItem('oms_token')}`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleImportContacts = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const format = file.name.toLowerCase().endsWith('.csv') ? 'csv' : 'vcard';
+    
+    setContactsActionStatus('Importing contacts...');
+    setContactsActionError('');
+    
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const text = evt.target?.result as string;
+        const response = await fetch('/api/apps/contacts-import', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({ data: text, format })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Could not import contacts.');
+        
+        await refreshContacts();
+        setContactsActionStatus(`Successfully imported ${data.count} contacts.`);
+      } catch (err) {
+        setContactsActionError(err instanceof Error ? err.message : 'Import failed.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Reset input
+  };
+
+  const handleMergeContactGroup = async (group: Contact[]) => {
+    if (group.length < 2) return;
+    const primaryId = group[0].id;
+    const duplicateIds = group.slice(1).map(c => c.id);
+    
+    setContactsActionStatus('Merging contacts...');
+    setContactsActionError('');
+    try {
+      const response = await fetch('/api/apps/contacts-merge', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ primaryId, duplicateIds })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not merge contacts.');
+      
+      await refreshContacts();
+      setContactsActionStatus('Contacts merged successfully.');
+      if (duplicateGroups.length <= 1) {
+        setIsDuplicateModalOpen(false);
+      }
+    } catch (err) {
+      setContactsActionError(err instanceof Error ? err.message : 'Merge failed.');
     }
   };
 
@@ -2269,9 +2963,11 @@ function App() {
       } else if (appMode === 'calendar') {
         await refreshCalendars();
       } else if (appMode === 'contacts') {
-        await Promise.all([refreshContacts(), refreshDirectoryContacts()]);
+        await Promise.all([refreshContacts(), refreshDirectoryContacts(), refreshContactLabels()]);
+      } else if (appMode === 'notes') {
+        await fetchNotes();
       } else if (appMode === 'sync') {
-        await Promise.all([refreshCalendars(), refreshContacts()]);
+        await Promise.all([refreshCalendars(), refreshContacts(), fetchNotes()]);
       }
     } finally {
       setIsRefreshing(false);
@@ -2289,9 +2985,31 @@ function App() {
     if (isAuthenticated) {
       refreshContacts();
       refreshDirectoryContacts();
+      refreshContactLabels();
       refreshCalendars();
     }
-  }, [isAdmin, isAuthenticated, refreshAdminData, refreshContacts, refreshDirectoryContacts, refreshCalendars]);
+  }, [isAdmin, isAuthenticated, refreshAdminData, refreshContacts, refreshDirectoryContacts, refreshContactLabels, refreshCalendars]);
+
+  useEffect(() => {
+    if (isAuthenticated && currentUsername) {
+      const socket = io('/', { withCredentials: true });
+      socket.emit('join', currentUsername);
+
+      socket.on('note_updated', () => {
+        fetchNotes();
+      });
+      socket.on('note_deleted', () => {
+        fetchNotes();
+      });
+      socket.on('calendar_updated', () => {
+        refreshCalendars();
+      });
+
+      return () => {
+        socket.disconnect();
+      };
+    }
+  }, [isAuthenticated, currentUsername, fetchNotes, refreshCalendars]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -2323,7 +3041,7 @@ function App() {
     fetch(`/api/rules`, {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ rules })
+      body: JSON.stringify({ rules, vacation: vacationSettings })
     })
     .then(res => res.json())
     .then(() => {
@@ -2367,11 +3085,54 @@ function App() {
   const displayMessages = useMemo(() => {
     if (!isThreaded) return messages;
     
+    const parentMap = new Map<string, string>();
+    const findRoot = (id: string): string => {
+      if (!parentMap.has(id)) return id;
+      const parent = parentMap.get(id)!;
+      if (parent === id) return id;
+      const root = findRoot(parent);
+      parentMap.set(id, root);
+      return root;
+    };
+    const union = (id1: string, id2: string) => {
+      if (!id1 || !id2) return;
+      const root1 = findRoot(id1);
+      const root2 = findRoot(id2);
+      if (root1 !== root2) {
+        parentMap.set(root2, root1);
+      }
+    };
+
+    messages.forEach(msg => {
+      const msgId = msg.messageId;
+      if (msgId) {
+        if (!parentMap.has(msgId)) parentMap.set(msgId, msgId);
+        
+        if (msg.inReplyTo) {
+           if (!parentMap.has(msg.inReplyTo)) parentMap.set(msg.inReplyTo, msg.inReplyTo);
+           union(msgId, msg.inReplyTo);
+        }
+        
+        if (msg.references && Array.isArray(msg.references)) {
+           msg.references.forEach(ref => {
+              if (!parentMap.has(ref)) parentMap.set(ref, ref);
+              union(msgId, ref);
+           });
+        }
+      }
+    });
+
     const threadMap = new Map<string, typeof messages>();
     messages.forEach(msg => {
-      const folderKey = msg.folder || activeFolder;
-      const norm = normalizedSubject(msg.subject || '');
-      const threadKey = `${folderKey}\u0000${norm}`;
+      let threadKey = '';
+      if (msg.messageId && parentMap.has(msg.messageId)) {
+         threadKey = findRoot(msg.messageId);
+      } else {
+         const folderKey = msg.folder || activeFolder;
+         const norm = normalizedSubject(msg.subject || '');
+         threadKey = `${folderKey}\u0000${norm}`;
+      }
+      
       if (!threadMap.has(threadKey)) {
         threadMap.set(threadKey, []);
       }
@@ -2512,7 +3273,7 @@ function App() {
 
     const sameDay = isSameDay(event.start, event.end);
     return sameDay
-      ? `${format(event.start, 'EEEE, MMMM d, yyyy')} | ${format(event.start, 'h:mm a')} - ${format(event.end, 'h:mm a')}`
+      ? `${format(event.start, 'EEEE, MMMM d, yyyy')} | ${format(event.start, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')} - ${format(event.end, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')}`
       : `${format(event.start, 'MMM d, yyyy h:mm a')} - ${format(event.end, 'MMM d, yyyy h:mm a')}`;
   };
 
@@ -2747,7 +3508,7 @@ function App() {
     );
   }
   return (
-    <div className={`app-container ${(appMode === 'webmail' || appMode === 'calendar' || appMode === 'contacts' || appMode === 'sync' || appMode === 'settings' || appMode === 'admin') ? 'webmail-mode' : ''}`}>
+    <div className={`app-container ${(appMode === 'webmail' || appMode === 'calendar' || appMode === 'contacts' || appMode === 'notes' || appMode === 'sync' || appMode === 'settings' || appMode === 'admin') ? 'webmail-mode' : ''}`}>
       <header className="header" style={{ padding: '0 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '30px' }}>
           <div className="header-title" style={{ margin: 0 }}>
@@ -2773,6 +3534,12 @@ function App() {
             >
               Contacts
             </span>
+            <span 
+              onClick={() => navigateApp('notes')} 
+              style={{ cursor: 'pointer', fontWeight: appMode === 'notes' ? 'bold' : 'normal', color: appMode === 'notes' ? 'var(--accent-primary)' : 'var(--text-primary)' }}
+            >
+              Notes
+            </span>
             <span
               onClick={() => navigateApp('sync')}
               style={{ cursor: 'pointer', fontWeight: appMode === 'sync' ? 'bold' : 'normal', color: appMode === 'sync' ? 'var(--accent-primary)' : 'var(--text-primary)' }}
@@ -2792,6 +3559,17 @@ function App() {
             style={{ padding: '6px 10px' }}
           >
             <RefreshCw size={18} style={{ transform: isRefreshing ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+          </button>
+          
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => setShowKeyboardShortcuts(true)}
+            title="Keyboard shortcuts"
+            aria-label="Keyboard shortcuts"
+            style={{ padding: '6px 10px' }}
+          >
+            <HelpCircle size={18} />
           </button>
           
           <div style={{ position: 'relative' }}>
@@ -2832,18 +3610,19 @@ function App() {
 	                  className="btn btn-ghost" 
 	                  style={{ width: '100%', textAlign: 'left', borderRadius: 0, padding: '12px 16px', color: 'var(--danger-color)' }}
 	                  onClick={() => {
-	                    fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).finally(() => {
-	                      setIsAuthenticated(false);
-	                      setIsAdmin(false);
-	                      setCurrentUsername('');
-	                      setMessages([]);
-	                      setViewingThread(null);
-	                      localStorage.removeItem('oms_token');
-	                      localStorage.removeItem('oms_isAdmin');
-	                      localStorage.removeItem('oms_username');
-	                    });
-	                  }}
-	                >
+                    fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).finally(() => {
+                      setIsAuthenticated(false);
+                      setIsAdmin(false);
+                      setCurrentUsername('');
+                      setMessages([]);
+                      setViewingThread(null);
+                      setUserQuota(null);
+                      localStorage.removeItem('oms_token');
+                      localStorage.removeItem('oms_isAdmin');
+                      localStorage.removeItem('oms_username');
+                    });
+                  }}
+                >
                   <X size={16} style={{ display: 'inline', marginRight: '8px' }} /> Sign Out
                 </button>
               </div>
@@ -2853,6 +3632,7 @@ function App() {
       </header>
 
       <div className="main-layout" style={{ gridTemplateColumns: (appMode === 'settings' || appMode === 'admin') ? '280px 1fr' : '1fr' }}>
+        {activeDropdown && <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setActiveDropdown(null)} />}
         {(appMode === 'settings' || appMode === 'admin') && (
           <aside className="sidebar glass-panel">
 
@@ -2922,6 +3702,8 @@ function App() {
                       className="btn btn-primary" 
                       style={{ width: '100%', display: 'flex', justifyContent: 'center', gap: '8px' }}
                       onClick={handleCompose}
+                      aria-label="Compose new message"
+                      aria-keyshortcuts="c"
                     >
                       <Edit size={16} /> Compose
                     </button>
@@ -2930,6 +3712,13 @@ function App() {
                     <h3 style={{ margin: 0 }}>Folders</h3>
                   </div>
                   <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+                    <div 
+                      className={`nav-item ${activeFolder === 'SCHEDULED' ? 'active' : ''}`}
+                      style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', borderRadius: '4px', marginBottom: '8px' }}
+                      onClick={() => handleFolderSelect('SCHEDULED')}
+                    >
+                      <Clock size={16} /> Scheduled Outbox
+                    </div>
                     {Object.values(buildFolderTree(folders)).sort((a, b) => a.name.localeCompare(b.name)).map((node) => (
                       <FolderNode 
                         key={node.fullPath} 
@@ -2943,6 +3732,23 @@ function App() {
                       />
                     ))}
                   </div>
+                  
+                  {userQuota && userQuota.limit > 0 && (
+                    <div style={{ padding: '16px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                        <span>{formatQuota(userQuota.usage)} used</span>
+                        <span>{formatQuota(userQuota.limit)}</span>
+                      </div>
+                      <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div style={{ 
+                          height: '100%', 
+                          width: `${Math.min(100, (userQuota.usage / userQuota.limit) * 100)}%`,
+                          background: (userQuota.usage / userQuota.limit) > 0.9 ? 'var(--accent-error)' : 'var(--accent-primary)',
+                          transition: 'width 0.3s ease'
+                        }} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </Panel>
               <PanelResizeHandle style={{ width: '16px', cursor: 'col-resize', position: 'relative' }}>
@@ -2958,6 +3764,8 @@ function App() {
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="Search mail"
+                        aria-label="Search mail"
+                        aria-keyshortcuts="/"
                         style={{ width: '100%', paddingLeft: '36px' }}
                       />
                     </div>
@@ -3023,12 +3831,12 @@ function App() {
                       title="Select All"
                     />
                     <div style={{ display: 'flex', gap: '8px' }}>
-                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Delete" onClick={() => handleMessageAction('delete')} disabled={selectedMessages.length === 0 || !canBulkAct}><Trash2 size={14} /></button>
-                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Archive" onClick={() => handleMessageAction('archive')} disabled={selectedMessages.length === 0 || !canBulkAct}><Inbox size={14} /></button>
-                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Report Spam" onClick={() => handleMessageAction('spam')} disabled={selectedMessages.length === 0 || !canBulkAct}><ShieldAlert size={14} /></button>
-                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Mark read" onClick={() => handleMessageAction('read')} disabled={selectedMessages.length === 0 || !canBulkAct}><MailOpen size={14} /></button>
-                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Mark unread" onClick={() => handleMessageAction('unread')} disabled={selectedMessages.length === 0 || !canBulkAct}><Mail size={14} /></button>
-                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Star" onClick={() => handleMessageAction('star')} disabled={selectedMessages.length === 0 || !canBulkAct}><Star size={14} /></button>
+                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Delete" aria-label="Delete" aria-keyshortcuts="Delete" onClick={() => handleMessageAction('delete')} disabled={selectedMessages.length === 0 || !canBulkAct}><Trash2 size={14} /></button>
+                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Archive" aria-label="Archive" aria-keyshortcuts="e" onClick={() => handleMessageAction('archive')} disabled={selectedMessages.length === 0 || !canBulkAct}><Inbox size={14} /></button>
+                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Report Spam" aria-label="Report Spam" onClick={() => handleMessageAction('spam')} disabled={selectedMessages.length === 0 || !canBulkAct}><ShieldAlert size={14} /></button>
+                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Mark read" aria-label="Mark read" onClick={() => handleMessageAction('read')} disabled={selectedMessages.length === 0 || !canBulkAct}><MailOpen size={14} /></button>
+                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Mark unread" aria-label="Mark unread" aria-keyshortcuts="u" onClick={() => handleMessageAction('unread')} disabled={selectedMessages.length === 0 || !canBulkAct}><Mail size={14} /></button>
+                      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} title="Star" aria-label="Star" aria-keyshortcuts="s" onClick={() => handleMessageAction('star')} disabled={selectedMessages.length === 0 || !canBulkAct}><Star size={14} /></button>
                     </div>
                     <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Threads</label>
@@ -3055,6 +3863,7 @@ function App() {
                       <>
                         {displayMessages.map((msg) => (
                           <div 
+                          id={`message-row-${msg.uid}`}
                           key={`${msg.folder || activeFolder}:${msg.uid}`} 
                           draggable={canBulkAct}
                           onDragStart={(e) => {
@@ -3149,9 +3958,34 @@ function App() {
                               <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{new Date(msg.date).toLocaleString()}</div>
                             </div>
                             <div style={{ display: 'flex', gap: '8px' }}>
-                              <button className="btn btn-ghost" title="Reply" onClick={() => handleReply('reply', msg)}><Reply size={16} /></button>
-                              <button className="btn btn-ghost" title="Reply All" onClick={() => handleReply('replyAll', msg)}><ReplyAll size={16} /></button>
-                              <button className="btn btn-ghost" title="Forward" onClick={() => handleReply('forward', msg)}><Forward size={16} /></button>
+                              {msg.is_scheduled ? (
+                                <button className="btn btn-danger" onClick={async () => {
+                                  try {
+                                    const res = await fetch('/api/messages/undo', { method: 'POST', headers: getHeaders(), body: JSON.stringify({ scheduledId: msg.scheduled_id }) });
+                                    const data = await res.json();
+                                    if (data.success) {
+                                      setViewingThread(null);
+                                      fetchMessages();
+                                    } else {
+                                      alert('Failed to cancel: ' + data.error);
+                                    }
+                                  } catch (e) {}
+                                }}>
+                                  <Undo2 size={16} /> Cancel Send
+                                </button>
+                              ) : (
+                                <>
+                                  {(msg.folder?.toLowerCase().includes('draft') || activeFolder?.toLowerCase().includes('draft')) ? (
+                                    <button className="btn btn-primary" title="Edit Draft" aria-label="Edit Draft" onClick={() => handleEditDraft(msg)}><Edit2 size={16} /> Edit Draft</button>
+                                  ) : (
+                                    <>
+                                      <button className="btn btn-ghost" title="Reply" aria-label="Reply" aria-keyshortcuts="r" onClick={() => handleReply('reply', msg)}><Reply size={16} /></button>
+                                      <button className="btn btn-ghost" title="Reply All" aria-label="Reply All" aria-keyshortcuts="a" onClick={() => handleReply('replyAll', msg)}><ReplyAll size={16} /></button>
+                                      <button className="btn btn-ghost" title="Forward" aria-label="Forward" aria-keyshortcuts="f" onClick={() => handleReply('forward', msg)}><Forward size={16} /></button>
+                                    </>
+                                  )}
+                                </>
+                              )}
                             </div>
                           </div>
                           <div 
@@ -3503,6 +4337,7 @@ function App() {
               saving={saving}
               settingsSyncError={settingsSyncError}
               rules={rules}
+              vacationSettings={vacationSettings}
               folders={folders}
               signatures={signatures}
               mailSettings={mailSettings}
@@ -3519,6 +4354,7 @@ function App() {
               onAddRule={addRule}
               onUpdateRule={updateRule}
               onDeleteRule={deleteRule}
+              onUpdateVacationSettings={setVacationSettings}
               onSaveRules={handleSave}
               onAddSignature={handleAddSignature}
               onUpdateSignatures={handleUpdateSignatures}
@@ -3581,16 +4417,29 @@ function App() {
                           style={{ marginRight: '8px', cursor: 'pointer' }}
                         />
                         <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: cal.color, marginRight: '8px' }}></div>
-                        <span style={{ flex: 1 }}>{cal.name}</span>
+                        <span style={{ flex: 1 }}>{cal.name} {cal.access_role && cal.access_role !== 'owner' && <span style={{ opacity: 0.5, fontSize: '0.8em' }}>({cal.access_role})</span>}</span>
                         <div style={{ display: 'flex', gap: '4px', opacity: 0.5 }}>
-                          <button className="btn btn-ghost" style={{ padding: '2px' }} title="Edit calendar" aria-label={`Edit ${cal.name}`} onClick={(e) => {
-                             e.stopPropagation();
-                             openCalendarEditor(cal);
-                          }}><Edit2 size={12} /></button>
-                          <button className="btn btn-ghost" style={{ padding: '2px' }} title="Delete calendar" aria-label={`Delete ${cal.name}`} onClick={(e) => {
-                             e.stopPropagation();
-                             deleteCalendar(cal);
-                          }} disabled={deletingCalendarId === cal.id}><Trash2 size={12} /></button>
+                          {(!cal.access_role || cal.access_role === 'owner') && (
+                            <button className="btn btn-ghost" style={{ padding: '2px' }} title="Share calendar" aria-label={`Share ${cal.name}`} onClick={(e) => {
+                               e.stopPropagation();
+                               setSharingCalendarId(cal.id);
+                               fetch(`/api/apps/calendars/${cal.id}/shares`, { headers: getHeaders() })
+                                 .then(r => r.json())
+                                 .then(d => { if (d.success) setSharingCalendarShares(d.shares || []); });
+                            }}><Share2 size={12} /></button>
+                          )}
+                          {(!cal.access_role || cal.access_role === 'owner') && (
+                            <button className="btn btn-ghost" style={{ padding: '2px' }} title="Edit calendar" aria-label={`Edit ${cal.name}`} onClick={(e) => {
+                               e.stopPropagation();
+                               openCalendarEditor(cal);
+                            }}><Edit2 size={12} /></button>
+                          )}
+                          {(!cal.access_role || cal.access_role === 'owner') && (
+                            <button className="btn btn-ghost" style={{ padding: '2px' }} title="Delete calendar" aria-label={`Delete ${cal.name}`} onClick={(e) => {
+                               e.stopPropagation();
+                               deleteCalendar(cal);
+                            }} disabled={deletingCalendarId === cal.id}><Trash2 size={12} /></button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -3670,7 +4519,7 @@ function App() {
                       })}
                     </div>
                   ) : calendarView === 'month' ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px', flex: 1, minHeight: 0 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '8px', flex: 1, minHeight: 0 }}>
                       {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
                         <div key={day} style={{ textAlign: 'center', fontWeight: 'bold', padding: '10px 0', color: 'var(--text-secondary)' }}>{day}</div>
                       ))}
@@ -3703,8 +4552,8 @@ function App() {
                               {dayEvents.map(e => {
                                 const cal = calendars.find(c => c.id === e.calendarId);
                                 return (
-                                  <div key={`${e.id}:${e.occurrenceId || e.start.toISOString()}`} onClick={(ev) => { ev.stopPropagation(); openCalendarEvent(e); }} style={{ padding: '2px 6px', background: cal ? `${cal.color}33` : 'rgba(255,255,255,0.1)', color: cal ? cal.color : 'white', fontSize: '0.75rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {!e.isAllDay && <span style={{ marginRight: '4px' }}>{format(e.start, 'h:mm a')}</span>}
+                                  <div key={`${e.id}:${e.occurrenceId || e.start.toISOString()}`} onClick={(ev) => { ev.stopPropagation(); openCalendarEvent(e); }} title={e.title} style={{ padding: '2px 6px', background: cal ? `${cal.color}33` : 'rgba(255,255,255,0.1)', color: cal ? cal.color : 'white', fontSize: '0.75rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {!e.isAllDay && <span style={{ marginRight: '4px' }}>{format(e.start, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')}</span>}
                                     {e.title}
                                   </div>
                                 );
@@ -3762,9 +4611,9 @@ function App() {
                                     const endMinutes = e.end.getHours() * 60 + e.end.getMinutes();
                                     const duration = Math.max(endMinutes - startMinutes, 30);
                                     return (
-                                      <div key={`${e.id}:${e.occurrenceId || e.start.toISOString()}`} onClick={(ev) => { ev.stopPropagation(); openCalendarEvent(e); }} style={{ position: 'absolute', top: `${startMinutes}px`, height: `${duration}px`, left: '4px', right: '4px', background: cal ? `${cal.color}33` : 'rgba(255,255,255,0.1)', color: cal ? cal.color : 'white', borderRadius: '4px', padding: '4px 8px', fontSize: '0.8rem', cursor: 'pointer', overflow: 'hidden', borderLeft: `3px solid ${cal?.color || 'white'}` }}>
+                                      <div key={`${e.id}:${e.occurrenceId || e.start.toISOString()}`} onClick={(ev) => { ev.stopPropagation(); openCalendarEvent(e); }} title={e.title} style={{ position: 'absolute', top: `${startMinutes}px`, height: `${duration}px`, left: '4px', right: '4px', background: cal ? `${cal.color}33` : 'rgba(255,255,255,0.1)', color: cal ? cal.color : 'white', borderRadius: '4px', padding: '4px 8px', fontSize: '0.8rem', cursor: 'pointer', overflow: 'hidden', borderLeft: `3px solid ${cal?.color || 'white'}` }}>
                                         <div style={{ fontWeight: 'bold' }}>{e.title}</div>
-                                        <div style={{ opacity: 0.8, fontSize: '0.7rem' }}>{format(e.start, 'h:mm a')} - {format(e.end, 'h:mm a')}</div>
+                                        <div style={{ opacity: 0.8, fontSize: '0.7rem' }}>{format(e.start, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')} - {format(e.end, calendarSettings.clockFormat === '24h' ? 'HH:mm' : 'h:mm a')}</div>
                                       </div>
                                     )
                                  })}
@@ -3790,6 +4639,7 @@ function App() {
                       style={{ width: '100%', display: 'flex', justifyContent: 'center', gap: '8px' }}
                       disabled={contactsView === 'directory'}
                       title={contactsView === 'directory' ? 'Global directory entries are managed from Admin > Mailboxes' : 'New Contact'}
+                      onClick={() => { setEditingContact({ name: '', email: '', phone: '', emails_json: [], phones_json: [], addresses_json: [], jobTitle: '', organization: '', notes: '' }); setIsContactModalOpen(true); }}
                     >
                       <User size={16} /> New Contact
                     </button>
@@ -3798,14 +4648,33 @@ function App() {
                     <h3 style={{ margin: 0 }}>Address Books</h3>
                   </div>
                   <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-                    <div className={`nav-item ${contactsView === 'personal' ? 'active' : ''}`} onClick={() => setContactsView('personal')}>
+                    <div className={`nav-item ${contactsView === 'personal' && !selectedLabel ? 'active' : ''}`} onClick={() => { setContactsView('personal'); setSelectedLabel(null); }}>
                       <Users size={18} style={{ marginRight: '8px' }} /> Personal Contacts
                     </div>
-                    <div className={`nav-item ${contactsView === 'directory' ? 'active' : ''}`} onClick={() => setContactsView('directory')}>
+                    <div className={`nav-item ${contactsView === 'directory' ? 'active' : ''}`} onClick={() => { setContactsView('directory'); setSelectedLabel(null); }}>
                       <Users size={18} style={{ marginRight: '8px' }} /> Global Directory (GAL)
                     </div>
-                    <div className="nav-item" style={{ marginTop: '16px', color: 'var(--text-secondary)' }}>
-                      <Plus size={16} style={{ marginRight: '8px' }} /> New Address Book
+                    <div style={{ marginTop: '24px', paddingBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                      LABELS
+                    </div>
+                    <div style={{ marginTop: '8px' }}>
+                      {contactLabels.map(label => (
+                        <div key={label.id} className={`nav-item ${selectedLabel === label.id ? 'active' : ''}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} onClick={() => { setContactsView('personal'); setSelectedLabel(label.id); }}>
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: label.color, marginRight: '12px' }} />
+                            {label.name}
+                          </div>
+                          {selectedLabel === label.id && (
+                            <div style={{ display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
+                              <button className="btn btn-ghost" style={{ padding: '4px' }} onClick={() => { setEditingLabel(label); setIsLabelModalOpen(true); }}><Edit2 size={14} /></button>
+                              <button className="btn btn-ghost" style={{ padding: '4px', color: 'var(--accent-error)' }} onClick={() => handleDeleteContactLabel(label.id)}><Trash2 size={14} /></button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="nav-item" style={{ marginTop: '8px', color: 'var(--text-secondary)' }} onClick={() => { setEditingLabel({ name: '', color: '#60a5fa' }); setIsLabelModalOpen(true); }}>
+                      <Plus size={16} style={{ marginRight: '8px' }} /> Create Label
                     </div>
                   </div>
                 </div>
@@ -3816,49 +4685,358 @@ function App() {
               <Panel id="contacts-view" minSize={30}>
                 <div className="glass-panel" style={{ padding: '30px', height: '100%', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h2 style={{ margin: 0 }}>{contactsView === 'directory' ? 'Global Directory' : 'Address Book'}</h2>
-                    <button className="btn btn-ghost" onClick={() => navigateApp('sync')} title="Contacts sync information" aria-label="Contacts sync information">
-                      <Link2 size={18} /> Sync Info
-                    </button>
+                    <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      {contactsView === 'directory' ? 'Global Directory' : 'Address Book'}
+                      {contactsView === 'directory' && (
+                        <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.05)', borderRadius: '20px', padding: '4px 12px' }}>
+                          <Search size={16} color="var(--text-secondary)" />
+                          <input 
+                            type="text"
+                            placeholder="Search directory..."
+                            value={directorySearchQuery}
+                            onChange={(e) => setDirectorySearchQuery(e.target.value)}
+                            style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', padding: '4px 8px', fontSize: '0.9rem', width: '200px' }}
+                          />
+                        </div>
+                      )}
+                    </h2>
+                    
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <button className="btn btn-primary" onClick={() => { setEditingContact(null); setIsContactModalOpen(true); }} title="Create a new contact">
+                        <UserPlus size={16} /> Add Contact
+                      </button>
+                      <div className="dropdown" style={{ position: 'relative' }}>
+                        <button className="btn" style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }} title="Import Address Book" onClick={() => setActiveDropdown(activeDropdown === 'contacts-import' ? null : 'contacts-import')}>
+                          <Download size={16} /> Import <ChevronDown size={14} />
+                        </button>
+                        {activeDropdown === 'contacts-import' && (
+                          <div className="glass-panel" style={{ position: 'absolute', top: '100%', right: 0, zIndex: 100, minWidth: '180px', padding: '8px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}>
+                            <input type="file" id="contact-import-upload" style={{ display: 'none' }} accept=".vcf,.vcard,.csv" onChange={handleImportContacts} />
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('contact-import-upload')?.click(); }}>Import from vCard (.vcf)</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('contact-import-upload')?.click(); }}>Import from CSV</div>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="dropdown" style={{ position: 'relative' }}>
+                        <button className="btn" style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }} title="Export Address Book" onClick={() => setActiveDropdown(activeDropdown === 'contacts-export' ? null : 'contacts-export')}>
+                          <Upload size={16} /> Export <ChevronDown size={14} />
+                        </button>
+                        {activeDropdown === 'contacts-export' && (
+                          <div className="glass-panel" style={{ position: 'absolute', top: '100%', right: 0, zIndex: 100, minWidth: '180px', padding: '8px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); handleExportContacts('vcard'); }}>Export as vCard (.vcf)</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); handleExportContacts('csv'); }}>Export as CSV</div>
+                          </div>
+                        )}
+                      </div>
+
+                      <button className="btn btn-ghost" onClick={() => navigateApp('sync')} title="Contacts sync information" aria-label="Contacts sync information">
+                        <Link2 size={18} /> Sync Info
+                      </button>
+                    </div>
                   </div>
                   {(contactsActionError || contactsActionStatus) && (
                     <div className={contactsActionError ? 'settings-error-banner' : 'settings-status-banner'} style={{ marginBottom: '16px' }}>
                       {contactsActionError || contactsActionStatus}
                     </div>
                   )}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto' }}>
+                  {duplicateGroups.length > 0 && contactsView === 'personal' && (
+                    <div className="settings-status-banner" style={{ marginBottom: '16px', background: 'rgba(59, 130, 246, 0.2)', border: '1px solid rgba(59, 130, 246, 0.4)', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Users size={18} color="#60a5fa" />
+                        We found {duplicateGroups.length} duplicate contact group(s).
+                      </div>
+                      <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.85rem' }} onClick={() => setIsDuplicateModalOpen(true)}>Review & Merge</button>
+                    </div>
+                  )}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px', overflowY: 'auto', padding: '4px' }}>
                     {displayContacts.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)' }}>
-                        {contactsView === 'directory' ? 'No directory entries are visible.' : 'No contacts found. Send an email to automatically add contacts.'}
+                      <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '60px 40px', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px dashed rgba(255,255,255,0.1)' }}>
+                        {contactsView === 'directory' ? 'No directory entries are visible.' : 'No contacts found. Click "Add Contact" to create one, or "Import" to upload a vCard or CSV.'}
                       </div>
                     ) : (
                       displayContacts.map((contact, index) => (
-                        <div key={contact.id || contact.email || index} style={{ 
-                          display: 'flex', alignItems: 'center', gap: '16px', padding: contactListMetrics.padding, 
-                          background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px' 
+                        <div key={contact.id || contact.email || index} className="contact-card" style={{ 
+                          position: 'relative', display: 'flex', flexDirection: 'column', gap: '16px', padding: '24px', 
+                          background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', 
+                          border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px',
+                          boxShadow: '0 4px 20px rgba(0,0,0,0.1)', transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)'
                         }}>
-                          <div style={{ 
-                            width: `${contactListMetrics.avatar}px`, height: `${contactListMetrics.avatar}px`, borderRadius: '50%', background: 'var(--accent-primary)', 
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.2rem'
-                          }}>
-                            {contact.displayName !== 'Unknown Name' ? contact.displayName.charAt(0).toUpperCase() : contact.email.charAt(0).toUpperCase()}
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
+                            <div style={{ 
+                              width: '56px', height: '56px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, #3b82f6) 100%)', 
+                              display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.4rem', flexShrink: 0,
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                            }}>
+                              {contact.displayName !== 'Unknown Name' ? contact.displayName.charAt(0).toUpperCase() : contact.email.charAt(0).toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0, marginTop: '2px' }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '1.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{contact.displayName}</div>
+                              <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{contact.email}</div>
+                            </div>
                           </div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 'bold', fontSize: contactListMetrics.nameSize }}>{contact.displayName}</div>
-                            <div style={{ color: 'var(--text-secondary)' }}>{contact.email}</div>
-                            {(contact.phone || contact.company || contact.jobTitle || contact.address) && (
-                              <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '4px' }}>
-                                {[contact.jobTitle, contact.company, contact.phone, contact.address].filter(Boolean).join(' · ')}
-                              </div>
+                          
+                          {(contact.phone || contact.organization || contact.company || contact.jobTitle || contact.address || (contact.emails_json && contact.emails_json.length > 0) || (contact.phones_json && contact.phones_json.length > 0) || (contact.addresses_json && contact.addresses_json.length > 0)) && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                              {(contact.emails_json || []).map((em, idx) => (
+                                <div key={`em-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                  <Mail size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>{em.label}:</span> {em.value}
+                                </div>
+                              ))}
+                              {contact.phone && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}><Phone size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>Primary:</span> {contact.phone}</div>}
+                              {(contact.phones_json || []).map((ph, idx) => (
+                                <div key={`ph-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                  <Phone size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>{ph.label}:</span> {ph.value}
+                                </div>
+                              ))}
+                              {(contact.jobTitle || contact.organization || contact.company) && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                  <Briefcase size={14} /> {[contact.jobTitle, contact.organization || contact.company].filter(Boolean).join(' at ')}
+                                </div>
+                              )}
+                              {contact.address && <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}><MapPin size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>Primary:</span> {contact.address}</div>}
+                              {(contact.addresses_json || []).map((addr, idx) => (
+                                <div key={`addr-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                  <MapPin size={14} /> <span style={{ opacity: 0.7, minWidth: '40px' }}>{addr.label}:</span> {addr.value}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          
+                          {contact.labels_json && contact.labels_json.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: 'auto', paddingTop: '12px' }}>
+                              {contact.labels_json.map(labelId => {
+                                const label = contactLabels.find(l => l.id === labelId);
+                                if (!label) return null;
+                                return (
+                                  <div key={label.id} style={{ 
+                                    padding: '4px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: '500',
+                                    background: `${label.color}22`, color: label.color, border: `1px solid ${label.color}44`
+                                  }}>
+                                    {label.name}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          
+                          <div className="contact-card-actions" style={{ position: 'absolute', top: '16px', right: '16px', display: 'flex', gap: '4px', background: 'var(--bg-panel)', borderRadius: '8px', padding: '2px', boxShadow: '0 2px 8px rgba(0,0,0,0.2)', opacity: 0, transition: 'opacity 0.2s', border: '1px solid rgba(255,255,255,0.1)' }}>
+                            {contactsView === 'directory' && (
+                              <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={() => handleAddDirectoryContact(contact)} title="Save to Personal Contacts">
+                                <UserPlus size={14} />
+                              </button>
+                            )}
+                            {contactsView === 'personal' && (
+                              <>
+                                <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={() => { setEditingContact(contact); setIsContactModalOpen(true); }} title="Edit Contact">
+                                  <Edit2 size={14} />
+                                </button>
+                                <button className="btn btn-ghost" style={{ padding: '6px', color: 'var(--accent-error)' }} onClick={() => handleDeleteContact(contact.id!)} title="Delete Contact">
+                                  <Trash2 size={14} />
+                                </button>
+                              </>
                             )}
                           </div>
-                          {contactsView === 'directory' && (
-                            <button className="btn btn-ghost" style={{ padding: '8px 10px', flexShrink: 0 }} onClick={() => handleAddDirectoryContact(contact)} title="Save to Personal Contacts">
-                              <UserPlus size={16} />
-                            </button>
-                          )}
                         </div>
                       ))
+                    )}
+                  </div>
+                </div>
+              </Panel>
+            </PanelGroup>
+          )}
+          {appMode === 'notes' && (
+            <PanelGroup id="oms-notes-layout" orientation="horizontal" defaultLayout={notesPanelLayout.defaultLayout} onLayoutChanged={notesPanelLayout.onLayoutChanged} style={{ width: '100%', height: '100%', minHeight: 0 }}>
+              <Panel id="notes-sidebar" defaultSize={20} minSize={20}>
+                <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                  <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                    <button
+                      className="btn btn-primary"
+                      style={{ width: '100%', display: 'flex', justifyContent: 'center', gap: '8px' }}
+                      onClick={() => { setEditingNote({ title: '', content: '', color: '#3b82f6', is_pinned: 0, is_locked: 0, folder: 'notes', labels_json: '[]' }); setIsNoteModalOpen(true); }}
+                    >
+                      <Plus size={16} /> New Note
+                    </button>
+                  </div>
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+                    <div className={`nav-item ${notesView === 'notes' ? 'active' : ''}`} onClick={() => setNotesView('notes')}>
+                      <StickyNote size={18} style={{ marginRight: '8px' }} /> All Notes
+                    </div>
+                    <div className={`nav-item ${notesView === 'pinned' ? 'active' : ''}`} onClick={() => setNotesView('pinned')}>
+                      <Star size={18} style={{ marginRight: '8px' }} /> Pinned Notes
+                    </div>
+                    <div className={`nav-item ${notesView === 'locked' ? 'active' : ''}`} onClick={() => setNotesView('locked')}>
+                      <Lock size={18} style={{ marginRight: '8px' }} /> Locked Notes
+                    </div>
+                    <div className={`nav-item ${notesView === 'trash' ? 'active' : ''}`} onClick={() => setNotesView('trash')}>
+                      <Trash2 size={18} style={{ marginRight: '8px' }} /> Trash
+                    </div>
+                    
+                    <div style={{ marginTop: '24px', paddingBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      LABELS
+                      <Plus size={14} style={{ cursor: 'pointer', color: 'var(--accent-primary)' }} onClick={() => {
+                        const newLabel = prompt('New Label Name:');
+                        if (newLabel && !notesLabels.includes(newLabel)) {
+                          setNotesLabels([...notesLabels, newLabel]);
+                        }
+                      }} />
+                    </div>
+                    <div style={{ marginTop: '8px' }}>
+                      {notesLabels.map(label => (
+                        <div key={label} className={`nav-item ${notesView === label ? 'active' : ''}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} onClick={() => setNotesView(label)}>
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--accent-primary)', marginRight: '12px' }} />
+                            {label}
+                          </div>
+                          <Trash2 size={14} style={{ cursor: 'pointer', color: 'var(--text-secondary)' }} onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Delete label "${label}"?`)) {
+                              setNotesLabels(notesLabels.filter(l => l !== label));
+                              if (notesView === label) setNotesView('notes');
+                            }
+                          }} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </Panel>
+              <PanelResizeHandle style={{ width: '16px', cursor: 'col-resize', position: 'relative' }}>
+                <div style={{ position: 'absolute', top: 0, bottom: 0, left: '6px', right: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px' }} />
+              </PanelResizeHandle>
+              <Panel id="notes-view" minSize={30}>
+                <div className="glass-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '20px 30px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '16px', textTransform: 'capitalize' }}>
+                      {notesView} <span style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>({notes.length})</span>
+                      <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.05)', borderRadius: '20px', padding: '4px 12px' }}>
+                        <Search size={16} color="var(--text-secondary)" />
+                        <input 
+                          type="text"
+                          placeholder="Search notes..."
+                          value={notesSearchQuery}
+                          onChange={(e) => setNotesSearchQuery(e.target.value)}
+                          style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', padding: '4px 8px', fontSize: '0.9rem', width: '200px' }}
+                        />
+                      </div>
+                    </h2>
+                    
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <div className="dropdown" style={{ position: 'relative' }}>
+                        <button className="btn" style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }} title="Import Notes" onClick={() => setActiveDropdown(activeDropdown === 'notes-import' ? null : 'notes-import')}>
+                          <Download size={16} /> Import <ChevronDown size={14} />
+                        </button>
+                        {activeDropdown === 'notes-import' && (
+                          <div className="glass-panel" style={{ position: 'absolute', top: '100%', right: 0, zIndex: 100, minWidth: '180px', padding: '8px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}>
+                            <input type="file" id="note-import-upload" style={{ display: 'none' }} accept=".html,.pdf,.md,.json" onChange={handleImportNotes} />
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('note-import-upload')?.click(); }}>Import from Apple Notes (HTML)</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('note-import-upload')?.click(); }}>Import from PDF</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('note-import-upload')?.click(); }}>Import from Markdown</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('note-import-upload')?.click(); }}>Import from JSON</div>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="dropdown" style={{ position: 'relative' }}>
+                        <button className="btn" style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }} title="Export Notes" onClick={() => setActiveDropdown(activeDropdown === 'notes-export' ? null : 'notes-export')}>
+                          <Upload size={16} /> Export <ChevronDown size={14} />
+                        </button>
+                        {activeDropdown === 'notes-export' && (
+                          <div className="glass-panel" style={{ position: 'absolute', top: '100%', right: 0, zIndex: 100, minWidth: '180px', padding: '8px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); handleExportNotes('pdf'); }}>Export to PDF</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); handleExportNotes('md'); }}>Export to Markdown</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); handleExportNotes('json'); }}>Export to JSON</div>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <button className="btn btn-ghost" onClick={() => navigateApp('sync')} title="Sync Info">
+                        <Link2 size={18} /> Sync Info
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '30px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px', alignContent: 'start' }}>
+                    {notes
+                      .filter(n => {
+                        if (notesView === 'pinned') return n.is_pinned === 1;
+                        if (notesView === 'locked') return n.is_locked === 1;
+                        if (notesView === 'trash') return n.folder === 'trash';
+                        if (notesView === 'notes') return n.folder !== 'trash';
+                        let labels = [];
+                        try { labels = JSON.parse(n.labels_json || '[]'); } catch(e) {}
+                        return labels.includes(notesView) && n.folder !== 'trash';
+                      })
+                      .filter(n => (n.title || '').toLowerCase().includes((notesSearchQuery || '').toLowerCase()) || (n.content || '').toLowerCase().includes((notesSearchQuery || '').toLowerCase()))
+                      .map(note => (
+                      <div key={note.id} className="contact-card" style={{ 
+                        position: 'relative', display: 'flex', flexDirection: 'column', padding: '20px',
+                        background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
+                        border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px', borderTop: `4px solid ${note.color}`,
+                        boxShadow: '0 4px 20px rgba(0,0,0,0.1)', transition: 'all 0.3s', cursor: 'pointer', minHeight: '160px'
+                      }} onClick={() => { setEditingNote(note); setIsNoteModalOpen(true); }}>
+                        
+                        {note.is_pinned === 1 && (
+                          <div style={{ position: 'absolute', top: '-10px', right: '20px', color: 'var(--accent-primary)', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }}>
+                            <Star size={24} fill="var(--accent-primary)" />
+                          </div>
+                        )}
+                        
+                        {note.is_locked === 1 ? (
+                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+                            <Lock size={32} style={{ marginBottom: '12px', opacity: 0.5 }} />
+                            <div style={{ fontWeight: 'bold' }}>Locked Note</div>
+                          </div>
+                        ) : (
+                          <>
+                            <h3 style={{ margin: '0 0 12px 0', fontSize: '1.1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {note.title || 'Untitled Note'}
+                            </h3>
+                            <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                              {htmlToText(note.content || 'Empty note...')}
+                            </p>
+                          </>
+                        )}
+                        
+                        <div style={{ marginTop: 'auto', paddingTop: '16px', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                            {(() => {
+                              try {
+                                const labels = JSON.parse(note.labels_json || '[]');
+                                return labels.map((l: string) => (
+                                  <span key={l} style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem' }}>{l}</span>
+                                ));
+                              } catch(e) { return null; }
+                            })()}
+                          </div>
+                          <span>{new Date(note.updated_at).toLocaleDateString()}</span>
+                        </div>
+                        
+                        <div className="contact-card-actions" style={{ position: 'absolute', top: '12px', right: '12px', display: 'flex', gap: '4px', background: 'var(--bg-panel)', borderRadius: '8px', padding: '2px', boxShadow: '0 2px 8px rgba(0,0,0,0.2)', opacity: 0, transition: 'opacity 0.2s', border: '1px solid rgba(255,255,255,0.1)' }}>
+                          <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={(e) => { e.stopPropagation(); handleTogglePinNote(note); }} title={note.is_pinned ? "Unpin Note" : "Pin Note"}>
+                            <Star size={14} fill={note.is_pinned ? "currentColor" : "none"} />
+                          </button>
+                          <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={(e) => { e.stopPropagation(); handleDuplicateNote(note); }} title="Duplicate Note">
+                            <Copy size={14} />
+                          </button>
+                          <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={(e) => { e.stopPropagation(); handleToggleLockNote(note); }} title={note.is_locked ? "Unlock Note" : "Lock Note"}>
+                            {note.is_locked ? <Eye size={14} /> : <Lock size={14} />}
+                          </button>
+                          <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={(e) => { e.stopPropagation(); setEditingNote(note); setIsNoteModalOpen(true); }} title="Edit Note">
+                            <Edit2 size={14} />
+                          </button>
+                          <button className="btn btn-ghost" style={{ padding: '6px', color: 'var(--accent-error)' }} onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }} title="Delete Note">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {notes.filter(n => n.folder !== 'trash').length === 0 && (
+                      <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '60px', color: 'var(--text-secondary)' }}>
+                        <StickyNote size={48} style={{ margin: '0 auto 16px', opacity: 0.3 }} />
+                        <p style={{ fontSize: '1.2rem', marginBottom: '8px' }}>No notes found</p>
+                        <p style={{ fontSize: '0.9rem' }}>Create a new note to get started.</p>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -4098,6 +5276,82 @@ function App() {
         </div>
       )}
 
+      {sharingCalendarId && (
+        <div className="sync-setup-overlay" role="dialog" aria-modal="true" onClick={() => setSharingCalendarId(null)}>
+          <div className="glass-panel sync-setup-modal" style={{ width: 'min(480px, 100%)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="sync-setup-header">
+              <div>
+                <div className="sync-setup-eyebrow">Calendar</div>
+                <h3>Share Calendar</h3>
+              </div>
+              <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={() => setSharingCalendarId(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="sync-setup-body" style={{ paddingBottom: '24px' }}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Shared With</label>
+                {sharingCalendarShares.length === 0 ? (
+                  <div style={{ padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                    Not shared with anyone.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {sharingCalendarShares.map((share, idx) => (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '8px 12px', borderRadius: '8px' }}>
+                        <div>
+                          <div style={{ fontSize: '0.95rem' }}>{share.shared_with_user_id}</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{share.permission} access</div>
+                        </div>
+                        <button className="btn btn-ghost" style={{ color: 'var(--danger)', padding: '4px' }} onClick={() => {
+                          fetch(`/api/apps/calendars/${sharingCalendarId}/shares/${encodeURIComponent(share.shared_with_user_id)}`, { method: 'DELETE', headers: getHeaders() })
+                            .then(r => r.json())
+                            .then(d => { if (d.success) setSharingCalendarShares(sharingCalendarShares.filter(s => s.shared_with_user_id !== share.shared_with_user_id)); });
+                        }}>
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Add Person</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    className="glass-input"
+                    placeholder="email@housevo.us"
+                    value={sharingNewUser}
+                    onChange={(e) => setSharingNewUser(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <select className="glass-input" value={sharingNewPermission} onChange={(e) => setSharingNewPermission(e.target.value)} style={{ width: '100px' }}>
+                    <option value="read">Read</option>
+                    <option value="write">Write</option>
+                  </select>
+                  <button className="btn btn-primary" disabled={!sharingNewUser} onClick={() => {
+                    fetch(`/api/apps/calendars/${sharingCalendarId}/shares`, {
+                      method: 'POST',
+                      headers: getHeaders(),
+                      body: JSON.stringify({ email: sharingNewUser, permission: sharingNewPermission })
+                    }).then(r => r.json()).then(d => {
+                      if (d.success) {
+                        setSharingCalendarShares([...sharingCalendarShares.filter(s => s.shared_with_user_id !== sharingNewUser), { shared_with_user_id: sharingNewUser, permission: sharingNewPermission }]);
+                        setSharingNewUser('');
+                      } else {
+                        alert(d.error || 'Failed to share');
+                      }
+                    });
+                  }}>
+                    Share
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingCalendar && (
         <div className="sync-setup-overlay" role="dialog" aria-modal="true" aria-labelledby="calendar-editor-title" onClick={() => !calendarEditorSaving && setEditingCalendar(null)}>
           <div className="glass-panel sync-setup-modal" style={{ width: 'min(480px, 100%)' }} onClick={(e) => e.stopPropagation()}>
@@ -4237,7 +5491,13 @@ function App() {
             borderBottomLeftRadius: 0,
             borderBottomRightRadius: 0,
             boxShadow: '0 -4px 20px rgba(0,0,0,0.5)',
-            zIndex: 1000
+            zIndex: 1000,
+            resize: 'both',
+            overflow: 'hidden',
+            minWidth: '300px',
+            minHeight: '400px',
+            maxWidth: '90vw',
+            maxHeight: '90vh'
           } : {
             top: 0, left: 0, right: 0, bottom: 0, 
             background: 'rgba(0,0,0,0.8)', 
@@ -4247,11 +5507,13 @@ function App() {
         }}>
           <div className="glass-panel" style={{ 
             width: composeDocked ? '100%' : '600px', 
-            height: composeDocked ? '100%' : 'auto',
+            height: composeDocked ? '100%' : '600px',
             background: '#1a1a1a', 
             display: 'flex', 
             flexDirection: 'column',
-            ...(composeDocked && { borderRadius: '16px 16px 0 0', borderBottom: 'none' })
+            ...(composeDocked 
+                ? { borderRadius: '16px 16px 0 0', borderBottom: 'none' } 
+                : { resize: 'both', overflow: 'hidden', minWidth: '400px', minHeight: '400px', maxWidth: '95vw', maxHeight: '95vh' })
           }}>
             <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)' }}>
               <h3 style={{ margin: 0 }}>New Message</h3>
@@ -4360,9 +5622,27 @@ function App() {
                   ))}
                 </select>
               </div>
-              <button className="btn btn-primary" onClick={handleSend} disabled={sending}>
-                <Send size={16} /> {sending ? 'Sending...' : 'Send'}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <select 
+                  className="input-field" 
+                  style={{ width: '130px', padding: '6px' }}
+                  onChange={(e) => {
+                    if (e.target.value !== 'none') {
+                      handleSend(parseInt(e.target.value, 10));
+                    }
+                    e.target.value = 'none';
+                  }}
+                  disabled={sending}
+                >
+                  <option value="none">Send Later</option>
+                  <option value="3600">In 1 hour</option>
+                  <option value="14400">In 4 hours</option>
+                  <option value="86400">Tomorrow</option>
+                </select>
+                <button className="btn btn-primary" onClick={() => handleSend()} disabled={sending}>
+                  <Send size={16} /> {sending ? 'Sending...' : 'Send'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -4589,6 +5869,442 @@ function App() {
                   setIsEventModalOpen(false);
                 }}>{editingCalendarEvent ? 'Save Changes' : 'Save Event'}</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isContactModalOpen && editingContact && (
+        <div className="sync-setup-overlay" role="dialog" aria-modal="true" onClick={() => setIsContactModalOpen(false)}>
+          <div className="glass-panel sync-setup-modal" style={{ width: 'min(600px, 95vw)' }} onClick={e => e.stopPropagation()}>
+            <div className="sync-setup-header" style={{ alignItems: 'flex-start', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '20px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                <div style={{ 
+                  width: '56px', height: '56px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, #3b82f6) 100%)', 
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.4rem', boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                }}>
+                  {editingContact.name ? editingContact.name.charAt(0).toUpperCase() : editingContact.email ? editingContact.email.charAt(0).toUpperCase() : <UserPlus size={24} />}
+                </div>
+                <div>
+                  <div className="sync-setup-eyebrow" style={{ marginBottom: '4px' }}>Contact</div>
+                  <h3 id="contact-modal-title" style={{ margin: 0, fontSize: '1.4rem' }}>{editingContact.id ? 'Edit Contact' : 'New Contact'}</h3>
+                </div>
+              </div>
+              <button className="btn btn-ghost" style={{ padding: '8px' }} onClick={() => setIsContactModalOpen(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="sync-setup-body" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Name</label>
+                  <input className="glass-input" value={editingContact.name || ''} onChange={e => setEditingContact({...editingContact, name: e.target.value})} autoFocus />
+                </div>
+                
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Emails</label>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                    <div style={{ width: '80px', flexShrink: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', alignSelf: 'center' }}>Primary</div>
+                    <input className="glass-input" type="email" style={{ flex: 1 }} value={editingContact.email || ''} onChange={e => setEditingContact({...editingContact, email: e.target.value})} placeholder="Primary Email" />
+                  </div>
+                  {(editingContact.emails_json || []).map((item, idx) => (
+                    <div key={`email-${idx}`} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                      <select className="glass-input" style={{ width: '80px', flexShrink: 0, padding: '4px' }} value={item.label} onChange={e => {
+                        const next = [...(editingContact.emails_json || [])];
+                        next[idx] = { ...next[idx], label: e.target.value };
+                        setEditingContact({...editingContact, emails_json: next});
+                      }}>
+                        <option value="Work">Work</option>
+                        <option value="Home">Home</option>
+                        <option value="Other">Other</option>
+                      </select>
+                      <input className="glass-input" type="email" style={{ flex: 1 }} value={item.value} onChange={e => {
+                        const next = [...(editingContact.emails_json || [])];
+                        next[idx] = { ...next[idx], value: e.target.value };
+                        setEditingContact({...editingContact, emails_json: next});
+                      }} />
+                      <button className="btn btn-ghost" style={{ padding: '4px', color: 'var(--accent-error)' }} onClick={() => {
+                        const next = (editingContact.emails_json || []).filter((_, i) => i !== idx);
+                        setEditingContact({...editingContact, emails_json: next});
+                      }}><X size={16} /></button>
+                    </div>
+                  ))}
+                  <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => {
+                    const current = editingContact.emails_json || [];
+                    setEditingContact({...editingContact, emails_json: [...current, { label: 'Work', value: '' }]});
+                  }}>+ Add Email</button>
+                </div>
+
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone Numbers</label>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                    <div style={{ width: '80px', flexShrink: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', alignSelf: 'center' }}>Primary</div>
+                    <input className="glass-input" type="tel" style={{ flex: 1 }} value={editingContact.phone || ''} onChange={e => setEditingContact({...editingContact, phone: e.target.value})} placeholder="Primary Phone" />
+                  </div>
+                  {(editingContact.phones_json || []).map((item, idx) => (
+                    <div key={`phone-${idx}`} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                      <select className="glass-input" style={{ width: '80px', flexShrink: 0, padding: '4px' }} value={item.label} onChange={e => {
+                        const next = [...(editingContact.phones_json || [])];
+                        next[idx] = { ...next[idx], label: e.target.value };
+                        setEditingContact({...editingContact, phones_json: next});
+                      }}>
+                        <option value="Mobile">Mobile</option>
+                        <option value="Work">Work</option>
+                        <option value="Home">Home</option>
+                        <option value="Other">Other</option>
+                      </select>
+                      <input className="glass-input" type="tel" style={{ flex: 1 }} value={item.value} onChange={e => {
+                        const next = [...(editingContact.phones_json || [])];
+                        next[idx] = { ...next[idx], value: e.target.value };
+                        setEditingContact({...editingContact, phones_json: next});
+                      }} />
+                      <button className="btn btn-ghost" style={{ padding: '4px', color: 'var(--accent-error)' }} onClick={() => {
+                        const next = (editingContact.phones_json || []).filter((_, i) => i !== idx);
+                        setEditingContact({...editingContact, phones_json: next});
+                      }}><X size={16} /></button>
+                    </div>
+                  ))}
+                  <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => {
+                    const current = editingContact.phones_json || [];
+                    setEditingContact({...editingContact, phones_json: [...current, { label: 'Mobile', value: '' }]});
+                  }}>+ Add Phone</button>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Job Title</label>
+                  <input className="glass-input" value={editingContact.jobTitle || ''} onChange={e => setEditingContact({...editingContact, jobTitle: e.target.value})} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Organization</label>
+                  <input className="glass-input" value={editingContact.organization || editingContact.company || ''} onChange={e => setEditingContact({...editingContact, organization: e.target.value})} />
+                </div>
+
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Addresses</label>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                    <div style={{ width: '80px', flexShrink: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', alignSelf: 'center' }}>Primary</div>
+                    <input className="glass-input" style={{ flex: 1 }} value={editingContact.address || ''} onChange={e => setEditingContact({...editingContact, address: e.target.value})} placeholder="Primary Address" />
+                  </div>
+                  {(editingContact.addresses_json || []).map((item, idx) => (
+                    <div key={`address-${idx}`} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                      <select className="glass-input" style={{ width: '80px', flexShrink: 0, padding: '4px' }} value={item.label} onChange={e => {
+                        const next = [...(editingContact.addresses_json || [])];
+                        next[idx] = { ...next[idx], label: e.target.value };
+                        setEditingContact({...editingContact, addresses_json: next});
+                      }}>
+                        <option value="Home">Home</option>
+                        <option value="Work">Work</option>
+                        <option value="Other">Other</option>
+                      </select>
+                      <input className="glass-input" style={{ flex: 1 }} value={item.value} onChange={e => {
+                        const next = [...(editingContact.addresses_json || [])];
+                        next[idx] = { ...next[idx], value: e.target.value };
+                        setEditingContact({...editingContact, addresses_json: next});
+                      }} />
+                      <button className="btn btn-ghost" style={{ padding: '4px', color: 'var(--accent-error)' }} onClick={() => {
+                        const next = (editingContact.addresses_json || []).filter((_, i) => i !== idx);
+                        setEditingContact({...editingContact, addresses_json: next});
+                      }}><X size={16} /></button>
+                    </div>
+                  ))}
+                  <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => {
+                    const current = editingContact.addresses_json || [];
+                    setEditingContact({...editingContact, addresses_json: [...current, { label: 'Home', value: '' }]});
+                  }}>+ Add Address</button>
+                </div>
+                
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Notes</label>
+                  <textarea className="glass-input" rows={3} value={editingContact.notes || ''} onChange={e => setEditingContact({...editingContact, notes: e.target.value})} />
+                </div>
+                {contactLabels.length > 0 && (
+                  <div style={{ gridColumn: 'span 2' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Labels</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {contactLabels.map(label => {
+                        const isSelected = editingContact.labels_json?.includes(label.id);
+                        return (
+                          <div 
+                            key={label.id}
+                            style={{ 
+                              padding: '4px 12px', 
+                              borderRadius: '16px', 
+                              fontSize: '0.85rem',
+                              cursor: 'pointer',
+                              background: isSelected ? label.color : 'rgba(255,255,255,0.1)',
+                              color: isSelected ? '#fff' : 'var(--text-primary)',
+                              border: `1px solid ${isSelected ? label.color : 'rgba(255,255,255,0.2)'}`
+                            }}
+                            onClick={() => {
+                              const current = editingContact.labels_json || [];
+                              if (isSelected) {
+                                setEditingContact({...editingContact, labels_json: current.filter(id => id !== label.id)});
+                              } else {
+                                setEditingContact({...editingContact, labels_json: [...current, label.id]});
+                              }
+                            }}
+                          >
+                            {label.name}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+              <button className="btn btn-ghost" onClick={() => setIsContactModalOpen(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => handleSaveContact(editingContact)} disabled={!editingContact.name && !editingContact.email}>
+                Save Contact
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLabelModalOpen && editingLabel && (
+        <div className="sync-setup-overlay" role="dialog" aria-modal="true" onClick={() => setIsLabelModalOpen(false)}>
+          <div className="glass-panel sync-setup-modal" style={{ width: 'min(400px, 95vw)' }} onClick={e => e.stopPropagation()}>
+            <div className="sync-setup-header">
+              <div>
+                <div className="sync-setup-eyebrow">Label</div>
+                <h3 id="label-modal-title">{editingLabel.id ? 'Edit Label' : 'Create Label'}</h3>
+              </div>
+              <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={() => setIsLabelModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="sync-setup-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Name</label>
+                <input className="glass-input" value={editingLabel.name || ''} onChange={e => setEditingLabel({...editingLabel, name: e.target.value})} autoFocus />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Color</label>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {['#ef4444', '#f97316', '#f59e0b', '#10b981', '#3b82f6', '#6366f1', '#8b5cf6', '#ec4899', '#64748b'].map(c => (
+                    <div 
+                      key={c}
+                      style={{ width: '32px', height: '32px', borderRadius: '50%', background: c, cursor: 'pointer', border: editingLabel.color === c ? '3px solid white' : 'none' }}
+                      onClick={() => setEditingLabel({...editingLabel, color: c})}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+              <button className="btn btn-ghost" onClick={() => setIsLabelModalOpen(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => handleSaveContactLabel(editingLabel)} disabled={!editingLabel.name}>
+                Save Label
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isDuplicateModalOpen && (
+        <div className="sync-setup-overlay" role="dialog" aria-modal="true" onClick={() => setIsDuplicateModalOpen(false)}>
+          <div className="glass-panel sync-setup-modal" style={{ width: 'min(600px, 95vw)', maxHeight: '80vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+            <div className="sync-setup-header" style={{ position: 'sticky', top: 0, background: 'var(--bg-glass)', zIndex: 10, padding: '24px', margin: '-24px -24px 24px -24px', backdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              <div>
+                <div className="sync-setup-eyebrow">Address Book</div>
+                <h3 id="duplicate-modal-title">Merge Duplicates</h3>
+              </div>
+              <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={() => setIsDuplicateModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className="sync-setup-body" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              {duplicateGroups.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)' }}>
+                  <Check size={48} color="#10b981" style={{ margin: '0 auto 16px', display: 'block' }} />
+                  No duplicates found. Your address book is clean!
+                </div>
+              ) : (
+                duplicateGroups.map((group, idx) => (
+                  <div key={idx} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>Group {idx + 1}</div>
+                      <button className="btn btn-primary" onClick={() => handleMergeContactGroup(group)} style={{ padding: '6px 12px', fontSize: '0.85rem' }}>
+                        Merge This Group
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {group.map((contact, cIdx) => {
+                        const displayName = contact.name || contact.organization || contact.email || 'Unknown Name';
+                        return (
+                          <div key={contact.id || cIdx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
+                            <div style={{ 
+                              width: '32px', height: '32px', borderRadius: '50%', background: 'var(--accent-primary)', 
+                              display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.9rem'
+                            }}>
+                              {displayName !== 'Unknown Name' ? displayName.charAt(0).toUpperCase() : '?'}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 'bold' }}>{displayName}</div>
+                              <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{contact.email}</div>
+                              {contact.phone && <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{contact.phone}</div>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isNoteModalOpen && (
+        <div className="sync-setup-overlay" role="dialog" aria-modal="true" onClick={() => setIsNoteModalOpen(false)}>
+          <div className="glass-panel sync-setup-modal" style={{ width: '700px', height: '80vh', maxWidth: '95vw', maxHeight: '95vh', minWidth: '400px', minHeight: '300px', display: 'flex', flexDirection: 'column', resize: 'both', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+            <div className="sync-setup-header" style={{ padding: '24px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              <div>
+                <div className="sync-setup-eyebrow">Note</div>
+                <h3 id="note-modal-title" style={{ margin: 0, fontSize: '1.4rem' }}>{editingNote.id ? 'Edit Note' : 'New Note'}</h3>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="btn btn-ghost" style={{ padding: '8px' }} onClick={() => {
+                  // Trigger a share action
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('share_note', editingNote.id || '');
+                  navigator.clipboard.writeText(url.toString());
+                  alert('Share link copied to clipboard! Anyone with this link can view and live-edit this note.');
+                }} title="Share Note">
+                  <Share2 size={18} />
+                </button>
+                <button className="btn btn-ghost" style={{ padding: '8px' }} onClick={() => setIsNoteModalOpen(false)}>
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+            <div className="sync-setup-body" style={{ flex: 1, padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+              <div>
+                <input 
+                  className="glass-input" 
+                  value={editingNote.title || ''} 
+                  onChange={e => setEditingNote({...editingNote, title: e.target.value})} 
+                  placeholder="Note Title..."
+                  style={{ fontSize: '1.4rem', fontWeight: 'bold', border: 'none', background: 'transparent', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', borderRadius: 0 }}
+                  autoFocus 
+                />
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <Suspense fallback={<div style={{ padding: '16px', color: 'var(--text-secondary)' }}>Loading editor...</div>}>
+                  {editingNote.id ? (
+                    <LiveNoteEditor 
+                      noteId={editingNote.id}
+                      initialContent={editingNote.content || ''}
+                      onChange={(content) => setEditingNote({...editingNote, content})}
+                    />
+                  ) : (
+                    <ReactQuill 
+                      theme="bubble"
+                      value={editingNote.content || ''}
+                      onChange={(content) => setEditingNote({...editingNote, content})}
+                      style={{ height: '100%', display: 'flex', flexDirection: 'column', color: 'var(--text-primary)', fontSize: '1.1rem', lineHeight: '1.6' }}
+                      placeholder="Start typing your note here..."
+                      modules={{
+                        toolbar: [
+                          [{ 'header': [1, 2, 3, false] }],
+                          ['bold', 'italic', 'underline', 'strike', 'blockquote'],
+                          [{'list': 'ordered'}, {'list': 'bullet'}, {'indent': '-1'}, {'indent': '+1'}],
+                          ['link', 'image'],
+                          ['clean']
+                        ]
+                      }}
+                    />
+                  )}
+                </Suspense>
+              </div>
+              <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginTop: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Labels (comma separated)</label>
+                  <input 
+                    className="glass-input" 
+                    value={(() => {
+                      try {
+                        return JSON.parse(editingNote.labels_json || '[]').join(', ');
+                      } catch (e) { return ''; }
+                    })()}
+                    onChange={(e) => {
+                      const labels = e.target.value.split(',').map(l => l.trim()).filter(Boolean);
+                      setEditingNote({...editingNote, labels_json: JSON.stringify(labels)});
+                    }}
+                    placeholder="Work, Ideas..."
+                    style={{ width: '100%', fontSize: '0.9rem' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Color Tag</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'].map(c => (
+                      <div 
+                        key={c} 
+                        style={{ width: '24px', height: '24px', borderRadius: '50%', background: c, cursor: 'pointer', border: editingNote.color === c ? '2px solid white' : '2px solid transparent', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}
+                        onClick={() => setEditingNote({...editingNote, color: c})}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', padding: '20px 24px', borderTop: '1px solid rgba(255,255,255,0.05)', background: 'var(--bg-glass)' }}>
+              <button className="btn btn-ghost" onClick={() => setIsNoteModalOpen(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSaveNote} disabled={!editingNote.title && (!editingNote.content || editingNote.content === '<p><br></p>')}>
+                Save Note
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showKeyboardShortcuts && (
+        <div className="sync-setup-overlay" onClick={() => setShowKeyboardShortcuts(false)} style={{ zIndex: 9999 }}>
+          <div className="glass-panel sync-setup-modal" style={{ width: '400px' }} onClick={e => e.stopPropagation()}>
+            <div className="sync-setup-header" style={{ padding: '24px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.4rem' }}>Keyboard Shortcuts</h3>
+              </div>
+              <button className="btn btn-ghost" style={{ padding: '8px' }} onClick={() => setShowKeyboardShortcuts(false)}><X size={20} /></button>
+            </div>
+            <div className="sync-setup-body" style={{ flex: 1, padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+              <div>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Global</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px', alignItems: 'center' }}>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>c</kbd> <span>Compose</span>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>/</kbd> <span>Search</span>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>Esc</kbd> <span>Close active view</span>
+                </div>
+              </div>
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', margin: '8px 0' }} />
+              <div>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Message List</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px', alignItems: 'center' }}>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>j / k</kbd> <span>Next / Previous message</span>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>Enter</kbd> <span>Open selected</span>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>Delete</kbd> <span>Trash selected</span>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>e</kbd> <span>Archive selected</span>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>s</kbd> <span>Star selected</span>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>u</kbd> <span>Mark unread</span>
+                </div>
+              </div>
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', margin: '8px 0' }} />
+              <div>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Reading Message</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px', alignItems: 'center' }}>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>r</kbd> <span>Reply</span>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>a</kbd> <span>Reply All</span>
+                  <kbd className="glass-input" style={{ padding: '2px 8px', fontSize: '0.8rem', textAlign: 'center' }}>f</kbd> <span>Forward</span>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', padding: '20px 24px', borderTop: '1px solid rgba(255,255,255,0.05)', background: 'var(--bg-glass)' }}>
+              <button className="btn btn-primary" onClick={() => setShowKeyboardShortcuts(false)}>Done</button>
             </div>
           </div>
         </div>

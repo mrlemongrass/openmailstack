@@ -9,13 +9,22 @@ export declare class ImapService {
     getMessages(folderPath: string, minUid?: number, fetchOlderThan?: number): Promise<{
         messages: any[];
         uidNext: number;
+        highestModseq: string;
         lowestUid: number;
         moreAvailable: boolean;
+    }>;
+    getChangedFlags(folderPath: string, sinceModseq: string): Promise<{
+        changed: {
+            uid: number;
+            flags: string[];
+        }[];
+        highestModseq: string;
     }>;
     private buildSearchQuery;
     searchMessages(folderPaths: string[], query: string, field?: MailSearchField, limit?: number): Promise<any[]>;
     getRecentMessagesForIndex(folderPath: string, limit?: number): Promise<any[]>;
     getMessagesSinceUid(folderPath: string, minUid: number, limit?: number): Promise<any[]>;
+    getQuota(): Promise<false | import("imapflow").QuotaResponse>;
     getMessageByUid(folderPath: string, uid: number): Promise<any>;
     appendMessage(folderPath: string, content: string | Buffer, flags?: string[]): Promise<void>;
     moveMessage(sourceFolder: string, targetFolder: string, uid: number): Promise<void>;

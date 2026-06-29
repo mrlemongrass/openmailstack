@@ -1,3 +1,5 @@
+import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 import express from 'express';
 import bodyParser from 'body-parser';
 import { WbxmlParser } from './wbxml/parser';
@@ -26,14 +28,34 @@ import {
     saveContactFromVCard,
     type ContactRow
 } from './contact-utils';
+import { ensureNotesSchema, listNotes, saveNote, deleteNote, getNotesSyncToken } from './notes-utils';
+import { activeSyncToDbNote, dbNoteToActiveSync } from './eas-notes';
+import { syncNotesWithImap } from './notes-imap-sync';
+import { startSearchWorker } from './search-worker';
+import { startScheduledSender } from './scheduled-send';
 
 const app = express();
+const server = http.createServer(app);
+export const io = new SocketIOServer(server, {
+    cors: { origin: true, credentials: true }
+});
+
+io.on('connection', (socket) => {
+    socket.on('join', (username) => {
+        if (username) {
+            socket.join(username);
+        }
+    });
+});
 ensureMailSearchSchema().catch(err => console.error('Failed to initialize mail search index:', err));
+startSearchWorker();
+startScheduledSender();
 ensureUserSettingsSchema().catch(err => console.error('Failed to initialize user settings schema:', err));
 ensureAdminSettingsSchema().catch(err => console.error('Failed to initialize admin settings schema:', err));
 ensureBrandingSchema().catch(err => console.error('Failed to initialize branding schema:', err));
 ensureCalendarSchema().catch(err => console.error('Failed to initialize calendar schema:', err));
 ensureContactsSchema().catch(err => console.error('Failed to initialize contacts schema:', err));
+ensureNotesSchema().catch(err => console.error('Failed to initialize notes schema:', err));
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(securityHeaders);
@@ -256,6 +278,15 @@ app.use('/api/auth/login', rateLimit(15 * 60 * 1000, 20));
 app.use('/api', cors({ credentials: true, origin: true }), apiRouter);
 app.use('/api/apps', cors({ credentials: true, origin: true }), appsApiRouter);
 app.use('/caldav', caldavRouter);
+
+app.all('/', (req, res, next) => {
+    if (req.method === 'PROPFIND') {
+        res.redirect(301, '/carddav/');
+        return;
+    }
+    next();
+});
+
 app.use('/carddav', carddavRouter);
 
 app.all('/.well-known/caldav', (req, res) => {
@@ -785,7 +816,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 let calendar: any;
                 if (collectionId.startsWith('cal-')) {
                     const calendarId = collectionId.slice(4);
-                    const [rows]: any = await pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ? LIMIT 1', [calendarId, creds.user]);
+                    const visibleCals = await getVisibleCalendars(creds.user);
+                    const rows = visibleCals.filter(c => c.id.toString() === calendarId);
                     if (rows.length === 0) {
                         const notFoundAst = {
                             tag: "Sync",
@@ -816,6 +848,19 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 
                 for (const commandNode of commandsNode?.children || []) {
                     const applicationData = childNode(commandNode, 'ApplicationData');
+
+                    if (calendar.access_role === 'read') {
+                        responses.push({
+                            tag: commandNode.tag,
+                            page: 0,
+                            children: [
+                                ...(childText(commandNode, 'ClientId') ? [{ tag: 'ClientId', page: 0, content: childText(commandNode, 'ClientId') }] : []),
+                                ...(childText(commandNode, 'ServerId') ? [{ tag: 'ServerId', page: 0, content: childText(commandNode, 'ServerId') }] : []),
+                                { tag: 'Status', page: 0, content: '8' }
+                            ]
+                        });
+                        continue;
+                    }
 
                     if (commandNode.tag === 'Add') {
                         if (!applicationData) {
@@ -899,7 +944,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 }
 
                 if (calendarChanged) {
-                    const [updatedCalendars]: any = await pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ? LIMIT 1', [calendar.id, creds.user]);
+                    const visibleCals = await getVisibleCalendars(creds.user);
+                    const updatedCalendars = visibleCals.filter(c => c.id === calendar.id);
                     if (updatedCalendars.length > 0) {
                         calendar = updatedCalendars[0];
                     }
@@ -983,6 +1029,127 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
             }
         }
 
+        if (collectionId === 'mock-notes') {
+            const creds = getAuthCredentials();
+            if (!creds) return res.status(401).send();
+            
+            console.log(`[SYNC] Notes sync for ${creds.user}, SyncKey=${syncKey}`);
+            let responses: any[] = [];
+            
+            try {
+                const commandsNode = childNode(syncCollectionNode, 'Commands');
+                if (commandsNode) {
+                    for (const cmd of commandsNode.children || []) {
+                        if (cmd.tag === 'Add') {
+                            const clientId = childText(cmd, 'ClientId');
+                            const appData = childNode(cmd, 'ApplicationData');
+                            const noteData = activeSyncToDbNote(appData);
+                            const saved = await saveNote({ ...noteData, owner: creds.user });
+                            responses.push({
+                                tag: 'Add', page: 0, children: [
+                                    { tag: 'ClientId', page: 0, content: clientId },
+                                    { tag: 'ServerId', page: 0, content: saved.id },
+                                    { tag: 'Status', page: 0, content: '1' }
+                                ]
+                            });
+                        } else if (cmd.tag === 'Change') {
+                            const serverId = childText(cmd, 'ServerId');
+                            const appData = childNode(cmd, 'ApplicationData');
+                            const noteData = activeSyncToDbNote(appData);
+                            await saveNote({ ...noteData, id: serverId, owner: creds.user });
+                            responses.push({
+                                tag: 'Change', page: 0, children: [
+                                    { tag: 'ServerId', page: 0, content: serverId },
+                                    { tag: 'Status', page: 0, content: '1' }
+                                ]
+                            });
+                        } else if (cmd.tag === 'Delete') {
+                            const serverId = childText(cmd, 'ServerId');
+                            if (serverId) {
+                                await deleteNote(serverId, creds.user);
+                            }
+                            responses.push({
+                                tag: 'Delete', page: 0, children: [
+                                    { tag: 'ServerId', page: 0, content: serverId },
+                                    { tag: 'Status', page: 0, content: '1' }
+                                ]
+                            });
+                        }
+                    }
+                    if (responses.length > 0) {
+                        syncNotesWithImap(creds.user, creds.pass).catch(e => console.error(e));
+                    }
+                }
+                
+                let addNodes: any[] = [];
+                let nextSyncKeyInt = await getNotesSyncToken(creds.user);
+                
+                if (syncKey === '0') {
+                    nextSyncKeyInt = 1;
+                } else if (syncKey === '1') {
+                    const allNotes = await listNotes(creds.user);
+                    for (const note of allNotes) {
+                        addNodes.push({
+                            tag: 'Add', page: 0, children: [
+                                { tag: 'ServerId', page: 0, content: note.id },
+                                dbNoteToActiveSync(note)
+                            ]
+                        });
+                    }
+                } else {
+                    const currentSyncKey = parseInt(syncKey) || 1;
+                    if (currentSyncKey !== nextSyncKeyInt) {
+                        const allNotes = await listNotes(creds.user, true);
+                        const changedNotes = allNotes.filter(n => n.sync_token > currentSyncKey);
+                        for (const note of changedNotes) {
+                            if ((note as any).is_deleted) {
+                                addNodes.push({
+                                    tag: 'Delete',
+                                    page: 0,
+                                    children: [
+                                        { tag: 'ServerId', page: 0, content: note.id }
+                                    ]
+                                });
+                            } else {
+                                addNodes.push({
+                                    tag: 'Change',
+                                    page: 0,
+                                    children: [
+                                        { tag: 'ServerId', page: 0, content: note.id },
+                                        dbNoteToActiveSync(note)
+                                    ]
+                                });
+                            }
+                        }
+                    }
+                }
+                
+                const responseAst = {
+                    tag: "Sync", page: 0, children: [
+                        { tag: "Collections", page: 0, children: [
+                            { tag: "Collection", page: 0, children: [
+                                { tag: "Class", page: 0, content: "Notes" },
+                                { tag: "SyncKey", page: 0, content: nextSyncKeyInt.toString() },
+                                { tag: "CollectionId", page: 0, content: collectionId },
+                                { tag: "Status", page: 0, content: "1" },
+                                ...(responses.length > 0 ? [{ tag: "Responses", page: 0, children: responses }] : []),
+                                ...(addNodes.length > 0 ? [{ tag: "Commands", page: 0, children: addNodes }] : [])
+                            ]}
+                        ]}
+                    ]
+                };
+                
+                const writer = new WbxmlWriter();
+                writer.writeNode(responseAst);
+                res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+                return res.status(200).send(writer.getBuffer());
+                
+            } catch (e) {
+                console.error("Notes sync error:", e);
+                return res.status(500).send();
+            }
+        }
+
         if (collectionId.startsWith('mock-')) {
             console.log(`Mock Sync for ${collectionId}`);
             let cls = "Email";
@@ -1058,12 +1225,14 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 
         let addNodes: any[] = [];
         let fetchResponses: any[] = [];
+        let changeReadFlags: Array<{serverId: string, isRead: boolean}> = [];
+        let changeResponses: any[] = [];
         let nextSyncKey = ((parseInt(syncKey) || 0) + 1).toString();
         let moreAvailable = false;
 
         try {
-            // Parse request for Fetch commands
             let fetchServerIds: string[] = [];
+            
             if (req.body && req.body.length > 0) {
                 try {
                     const parser = new WbxmlParser(req.body);
@@ -1077,6 +1246,18 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                                 if (cmd.tag === 'Fetch') {
                                     const idNode = cmd.children?.find((c: any) => c.tag === 'ServerId');
                                     if (idNode && idNode.content) fetchServerIds.push(idNode.content.toString());
+                                } else if (cmd.tag === 'Change') {
+                                    const idNode = cmd.children?.find((c: any) => c.tag === 'ServerId');
+                                    const appData = cmd.children?.find((c: any) => c.tag === 'ApplicationData');
+                                    if (idNode && idNode.content && appData) {
+                                        const readNode = appData.children?.find((c: any) => c.tag === 'Read');
+                                        if (readNode && readNode.content !== undefined) {
+                                            changeReadFlags.push({
+                                                serverId: idNode.content.toString(),
+                                                isRead: readNode.content.toString() === '1'
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1124,15 +1305,19 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
             let result;
             let lowestUid = -1;
             let currentUidNext = -1;
+            let sinceModseq = "0";
             
             if (syncKey === "1") {
                 // Initial sync, fetch newest 25
                 result = await imap.getMessages(folderPath);
             } else {
                 const parts = syncKey.split('-');
-                if (parts.length === 2) {
+                if (parts.length >= 2) {
                     lowestUid = parseInt(parts[0]);
                     currentUidNext = parseInt(parts[1]);
+                    if (parts.length >= 3) {
+                        sinceModseq = parts[2];
+                    }
                 } else {
                     currentUidNext = parseInt(syncKey);
                 }
@@ -1145,18 +1330,64 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     result = await imap.getMessages(folderPath, undefined, lowestUid);
                 }
             }
+
+            // Get flag changes
+            if (sinceModseq !== "0" && syncKey !== "1") {
+                const changedResult = await imap.getChangedFlags(folderPath, sinceModseq);
+                result.highestModseq = changedResult.highestModseq;
+                for (let c of changedResult.changed) {
+                    if (!result.messages.some((m: any) => m.uid === c.uid)) {
+                        changeResponses.push({
+                            tag: "Change",
+                            page: 0,
+                            children: [
+                                { tag: "ServerId", page: 0, content: `${collectionId}-${c.uid}` },
+                                { tag: "ApplicationData", page: 0, children: [
+                                    { tag: "Read", page: 17, content: c.flags.includes('\\Seen') ? "1" : "0" }
+                                ]}
+                            ]
+                        });
+                    }
+                }
+            }
+            
+            // Process flag changes from client
+            for (let change of changeReadFlags) {
+                const parts = change.serverId.split('-');
+                const uidPart = parts.length > 1 ? parts[1] : change.serverId;
+                try {
+                    await imap.messageAction(folderPath, [parseInt(uidPart)], change.isRead ? 'read' : 'unread');
+                    changeResponses.push({
+                        tag: "Change",
+                        page: 0,
+                        children: [
+                            { tag: "ServerId", page: 0, content: change.serverId },
+                            { tag: "Status", page: 0, content: "1" }
+                        ]
+                    });
+                } catch (e) {
+                    changeResponses.push({
+                        tag: "Change",
+                        page: 0,
+                        children: [
+                            { tag: "ServerId", page: 0, content: change.serverId },
+                            { tag: "Status", page: 0, content: "8" }
+                        ]
+                    });
+                }
+            }
             
             await imap.logout();
-            const { messages, uidNext, lowestUid: newLowestUid, moreAvailable: isMore } = result;
+            const { messages, uidNext, highestModseq, lowestUid: newLowestUid, moreAvailable: isMore } = result;
             if (isMore) moreAvailable = true;
             
             // Set nextSyncKey to maintain pagination bounds
             if (uidNext) {
                 const effectiveLowestUid = newLowestUid > 0 ? newLowestUid : (lowestUid > 0 ? lowestUid : uidNext);
-                nextSyncKey = `${effectiveLowestUid}-${uidNext}`;
+                nextSyncKey = `${effectiveLowestUid}-${uidNext}-${highestModseq || "0"}`;
             }
 
-            console.log(`[SYNC] Fetched ${messages.length} messages from IMAP for ${folderPath} (SyncKey state: ${nextSyncKey})`);
+            console.log(`[SYNC] Fetched ${messages.length} messages, ${changeResponses.length} changes for ${folderPath} (SyncKey: ${nextSyncKey})`);
 
             const simpleParser = require('mailparser').simpleParser;
 
@@ -1214,7 +1445,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                                 { tag: "CollectionId", page: 0, content: collectionId },
                                 { tag: "Status", page: 0, content: "1" },
                                 ...(moreAvailable ? [{ tag: "MoreAvailable", page: 0, children: [] }] : []),
-                                ...(fetchResponses.length > 0 ? [{ tag: "Responses", page: 0, children: fetchResponses }] : []),
+                                ...((fetchResponses.length > 0 || changeResponses.length > 0) ? [{ tag: "Responses", page: 0, children: [...fetchResponses, ...changeResponses] }] : []),
                                 ...(addNodes.length > 0 ? [{ tag: "Commands", page: 0, children: addNodes }] : [])
                             ]
                         }
@@ -1541,6 +1772,6 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     res.status(200).send();
 });
 
-app.listen(serverConfig.port, serverConfig.host, () => {
+server.listen(serverConfig.port, serverConfig.host, () => {
     console.log(`OpenMailStack webmail backend listening on ${serverConfig.host}:${serverConfig.port}`);
 });

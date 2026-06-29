@@ -209,11 +209,15 @@ async function handleReport(req, res, user) {
     if (requestedUids.size > 0) {
         contacts = contacts.filter(contact => requestedUids.has(contact.dav_uid || `contact-${contact.id}`));
     }
-    const responses = (await Promise.all(contacts.map(contact => contactResourceResponse(user, contact, true)))).join('');
+    const rawBody = req.body ? req.body.toString('utf-8') : '';
+    const includeData = rawBody.includes('address-data') || rawBody.includes('addressbook-multiget');
+    const responses = (await Promise.all(contacts.map(contact => contactResourceResponse(user, contact, includeData)))).join('');
+    const syncToken = await (0, contact_utils_1.addressBookSyncToken)(user);
     res.set('Content-Type', 'application/xml; charset=utf-8');
     const xml = `<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
 ${responses}
+  <D:sync-token>http://openmailstack.local/carddav/${(0, contact_utils_1.xmlEscape)(syncToken)}</D:sync-token>
 </D:multistatus>`;
     return res.status(207).send(xml);
 }

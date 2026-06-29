@@ -35,6 +35,7 @@ export interface CalendarSettings {
     defaultReminderMinutes: 0 | 5 | 10 | 15 | 30 | 60 | 1440;
     weekStartsOn: 0 | 1 | 6;
     timeZone: string;
+    clockFormat: '12h' | '24h';
 }
 export interface ContactsSettings {
     nameFormat: 'firstLast' | 'lastFirst';
@@ -81,6 +82,7 @@ export declare const settingsDefaults: {
         defaultReminderMinutes: 10;
         weekStartsOn: 0;
         timeZone: string;
+        clockFormat: "12h";
     };
     contacts: {
         nameFormat: "firstLast";

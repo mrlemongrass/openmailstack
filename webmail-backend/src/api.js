@@ -55,6 +55,15 @@ const admin_settings_1 = require("./admin-settings");
 const branding_1 = require("./branding");
 const search_worker_1 = require("./search-worker");
 exports.apiRouter = (0, express_1.Router)();
+// Auth failure log for fail2ban integration
+const AUTH_LOG = '/var/log/openmailstack/auth.log';
+const logAuthFailure = (ip, username, reason) => {
+    try {
+        const ts = new Date().toISOString();
+        fs_1.default.appendFileSync(AUTH_LOG, `${ts} [${ip}] failed login for "${username}": ${reason}\n`);
+    }
+    catch { }
+};
 const requireAuth = auth_1.requireSession;
 const requireAdmin = auth_1.requireAdminSession;
 const execPromise = util_1.default.promisify(child_process_1.exec);
@@ -72,6 +81,21 @@ const httpConnectionsGauge = new promClient.Gauge({ name: 'openmailstack_network
 const rspamdScannedGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_scanned_total', help: 'Total emails scanned by Rspamd' });
 const rspamdSpamGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_spam_total', help: 'Total spam emails detected' });
 const rspamdRejectedGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_rejected_total', help: 'Total emails rejected' });
+// System resource gauges
+const systemCpuLoad1mGauge = new promClient.Gauge({ name: 'openmailstack_system_cpu_load_1m', help: 'System CPU load 1-minute average' });
+const systemCpuLoad5mGauge = new promClient.Gauge({ name: 'openmailstack_system_cpu_load_5m', help: 'System CPU load 5-minute average' });
+const systemCpuLoad15mGauge = new promClient.Gauge({ name: 'openmailstack_system_cpu_load_15m', help: 'System CPU load 15-minute average' });
+const systemMemoryTotalGauge = new promClient.Gauge({ name: 'openmailstack_system_memory_total_bytes', help: 'System total memory in bytes' });
+const systemMemoryFreeGauge = new promClient.Gauge({ name: 'openmailstack_system_memory_free_bytes', help: 'System free memory in bytes' });
+const systemDiskTotalGauge = new promClient.Gauge({ name: 'openmailstack_system_disk_total_bytes', help: 'System disk total bytes', labelNames: ['mountpoint'] });
+const systemDiskUsedGauge = new promClient.Gauge({ name: 'openmailstack_system_disk_used_bytes', help: 'System disk used bytes', labelNames: ['mountpoint'] });
+// Service health gauges (1=running, 0=stopped)
+const servicePostfixGauge = new promClient.Gauge({ name: 'openmailstack_service_postfix_status', help: 'Postfix service status (1=running)' });
+const serviceDovecotGauge = new promClient.Gauge({ name: 'openmailstack_service_dovecot_status', help: 'Dovecot service status (1=running)' });
+const serviceRspamdGauge = new promClient.Gauge({ name: 'openmailstack_service_rspamd_status', help: 'Rspamd service status (1=running)' });
+const serviceFail2banGauge = new promClient.Gauge({ name: 'openmailstack_service_fail2ban_status', help: 'Fail2ban service status (1=running)' });
+// Fail2ban per-jail banned IP count
+const fail2banBannedGauge = new promClient.Gauge({ name: 'openmailstack_fail2ban_banned_total', help: 'Currently banned IPs per jail', labelNames: ['jail'] });
 setInterval(async () => {
     try {
         try {
@@ -106,6 +130,57 @@ setInterval(async () => {
                     rspamdSpamGauge.set(data.spam_count);
                 if (data.actions && data.actions.reject !== undefined)
                     rspamdRejectedGauge.set(data.actions.reject);
+            }
+        }
+        catch (e) { }
+        // System resources: CPU load, memory, disk
+        try {
+            const [load1, load5, load15] = os_1.default.loadavg();
+            systemCpuLoad1mGauge.set(load1);
+            systemCpuLoad5mGauge.set(load5);
+            systemCpuLoad15mGauge.set(load15);
+            systemMemoryTotalGauge.set(os_1.default.totalmem());
+            systemMemoryFreeGauge.set(os_1.default.freemem());
+            const { stdout: dfOut } = await execPromise('df -B1 / | tail -1');
+            const dfParts = dfOut.trim().split(/\s+/);
+            const diskTotal = parseInt(dfParts[1], 10); // 1K blocks in bytes
+            const diskUsed = parseInt(dfParts[2], 10);
+            systemDiskTotalGauge.set({ mountpoint: '/' }, diskTotal);
+            systemDiskUsedGauge.set({ mountpoint: '/' }, diskUsed);
+        }
+        catch (e) { }
+        // Service health status
+        try {
+            const services = ['postfix', 'dovecot', 'rspamd', 'fail2ban'];
+            const gauges = {
+                postfix: servicePostfixGauge,
+                dovecot: serviceDovecotGauge,
+                rspamd: serviceRspamdGauge,
+                fail2ban: serviceFail2banGauge,
+            };
+            for (const svc of services) {
+                try {
+                    await execPromise(`systemctl is-active --quiet ${svc}`);
+                    gauges[svc].set(1);
+                }
+                catch {
+                    gauges[svc].set(0);
+                }
+            }
+        }
+        catch (e) { }
+        // Fail2ban banned IP counts per jail
+        try {
+            const jails = ['sshd', 'postfix', 'dovecot', 'openmailstack-webmail'];
+            for (const jail of jails) {
+                try {
+                    const { stdout } = await execPromise(`sudo fail2ban-client status ${jail} 2>/dev/null`);
+                    const match = stdout.match(/Currently banned:\s*(\d+)/);
+                    fail2banBannedGauge.set({ jail }, match ? parseInt(match[1], 10) : 0);
+                }
+                catch {
+                    fail2banBannedGauge.set({ jail }, 0);
+                }
             }
         }
         catch (e) { }
@@ -503,9 +578,11 @@ exports.apiRouter.get('/branding', async (_req, res) => {
 exports.apiRouter.post('/auth/login', async (req, res) => {
     const { username, password } = req.body;
     const normalizedUsername = (0, config_1.normalizeMailboxUsername)(username || '');
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     try {
         const [rows] = await db_1.pool.query('SELECT password FROM mailbox WHERE username = ? AND active = 1', [normalizedUsername]);
         if (rows.length === 0) {
+            logAuthFailure(clientIp, normalizedUsername, 'unknown user');
             return res.status(401).json({ success: false, error: 'Invalid credentials' });
         }
         const dbHash = rows[0].password;
@@ -527,6 +604,7 @@ exports.apiRouter.post('/auth/login', async (req, res) => {
             res.json({ success: true, isAdmin, username: normalizedUsername });
         }
         else {
+            logAuthFailure(clientIp, normalizedUsername, 'invalid password');
             res.status(401).json({ success: false, error: 'Invalid credentials' });
         }
     }
@@ -1724,6 +1802,133 @@ exports.apiRouter.get('/admin/telemetry/logs/live', requireAuth, requireAdmin, (
     req.on('close', () => {
         journalctl.kill();
     });
+});
+// System Health snapshot for dashboard
+exports.apiRouter.get('/admin/telemetry/system-health', requireAuth, requireAdmin, async (_req, res) => {
+    try {
+        const [load1, load5, load15] = os_1.default.loadavg();
+        const memTotal = os_1.default.totalmem();
+        const memFree = os_1.default.freemem();
+        const { stdout: dfOut } = await execPromise('df -B1 / | tail -1');
+        const dfParts = dfOut.trim().split(/\s+/);
+        const diskTotal = parseInt(dfParts[1], 10);
+        const diskUsed = parseInt(dfParts[2], 10);
+        const services = {};
+        for (const svc of ['postfix', 'dovecot', 'rspamd', 'fail2ban']) {
+            try {
+                await execPromise(`systemctl is-active --quiet ${svc}`);
+                services[svc] = true;
+            }
+            catch {
+                services[svc] = false;
+            }
+        }
+        let mailQueue = 0;
+        try {
+            const { stdout } = await execPromise('postqueue -j 2>/dev/null || true');
+            mailQueue = stdout.split('\n').filter((l) => l.trim().length > 0).length;
+        }
+        catch { }
+        let connections = { imap: 0, smtp: 0, http: 0 };
+        try {
+            const { stdout: ssOut } = await execPromise('ss -tn state established 2>/dev/null');
+            ssOut.split('\n').forEach((line) => {
+                if (line.includes(':993 ') || line.includes(':143 '))
+                    connections.imap++;
+                else if (line.includes(':25 ') || line.includes(':465 ') || line.includes(':587 '))
+                    connections.smtp++;
+                else if (line.includes(':80 ') || line.includes(':443 ') || line.includes(':20000 '))
+                    connections.http++;
+            });
+        }
+        catch { }
+        res.json({
+            success: true,
+            cpu: { load1, load5, load15 },
+            memory: {
+                total: memTotal,
+                free: memFree,
+                used: memTotal - memFree,
+                usedPercent: Math.round(((memTotal - memFree) / memTotal) * 100),
+            },
+            disk: {
+                total: diskTotal,
+                used: diskUsed,
+                usedPercent: Math.round((diskUsed / diskTotal) * 100),
+            },
+            services,
+            mailQueue,
+            connections,
+        });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+// Fail2ban status with jail details
+exports.apiRouter.get('/admin/telemetry/fail2ban/status', requireAuth, requireAdmin, async (_req, res) => {
+    try {
+        const { stdout: statusOut } = await execPromise('sudo fail2ban-client status 2>/dev/null || echo "NOT_INSTALLED"');
+        if (statusOut.includes('NOT_INSTALLED') || statusOut.includes('command not found')) {
+            return res.json({ success: true, installed: false, jails: [] });
+        }
+        // Parse jail list from "|- Number of jail: N" and list of jail names
+        const jailMatch = statusOut.match(/\|- Number of jail:\s*(\d+)/);
+        if (!jailMatch || parseInt(jailMatch[1], 10) === 0) {
+            return res.json({ success: true, installed: true, jails: [] });
+        }
+        const jailListMatch = statusOut.match(/Jail list:\s*(.+)/);
+        const jailNames = jailListMatch ? jailListMatch[1].split(',').map((j) => j.trim()).filter(Boolean) : [];
+        const jails = [];
+        for (const name of jailNames) {
+            try {
+                const { stdout: jailOut } = await execPromise(`sudo fail2ban-client status ${name} 2>/dev/null`);
+                const currentlyFailed = parseInt((jailOut.match(/Currently failed:\s*(\d+)/) || [])[1] || '0', 10);
+                const totalFailed = parseInt((jailOut.match(/Total failed:\s*(\d+)/) || [])[1] || '0', 10);
+                const currentlyBanned = parseInt((jailOut.match(/Currently banned:\s*(\d+)/) || [])[1] || '0', 10);
+                // Extract banned IPs
+                const bannedMatch = jailOut.match(/Banned IP list:\s*([\s\S]*?)(?:\n\s*\n|$)/);
+                const bannedIPs = [];
+                if (bannedMatch && bannedMatch[1].trim()) {
+                    bannedIPs.push(...bannedMatch[1].trim().split(/\s+/).filter(Boolean));
+                }
+                jails.push({
+                    name,
+                    enabled: true,
+                    currentlyFailed,
+                    totalFailed,
+                    currentlyBanned,
+                    bannedIPs,
+                });
+            }
+            catch {
+                jails.push({ name, enabled: false, currentlyFailed: 0, totalFailed: 0, currentlyBanned: 0, bannedIPs: [] });
+            }
+        }
+        res.json({ success: true, installed: true, jails });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+// Unban a specific IP from a jail
+exports.apiRouter.post('/admin/telemetry/fail2ban/unban', requireAuth, requireAdmin, async (req, res) => {
+    try {
+        const { jail, ip } = req.body;
+        if (!jail || !ip) {
+            return res.status(400).json({ success: false, error: 'Missing jail or ip' });
+        }
+        // Validate IP format to prevent command injection
+        if (!/^[a-zA-Z0-9.-]+$/.test(jail) || !/^[0-9a-fA-F.:]+$/.test(ip)) {
+            return res.status(400).json({ success: false, error: 'Invalid jail or ip format' });
+        }
+        await execPromise(`sudo fail2ban-client set ${jail} unbanip ${ip} 2>/dev/null`);
+        await logAdminAction(req, 'fail2ban.unban', jail, ip, { jail, ip });
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
 });
 // Audit Logs
 exports.apiRouter.get('/admin/logs', requireAuth, requireAdmin, async (req, res) => {

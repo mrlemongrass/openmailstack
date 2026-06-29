@@ -33,6 +33,13 @@ export function TelemetryPanel() {
                if (key.startsWith('openmailstack_rspamd_scanned_total')) point.rspamdScanned = parseFloat(val);
                if (key.startsWith('openmailstack_rspamd_spam_total')) point.rspamdSpam = parseFloat(val);
                if (key.startsWith('openmailstack_rspamd_rejected_total')) point.rspamdRejected = parseFloat(val);
+               // System resource metrics
+               if (key.startsWith('openmailstack_system_cpu_load_1m')) point.cpuLoad1 = parseFloat(val);
+               if (key.startsWith('openmailstack_system_cpu_load_5m')) point.cpuLoad5 = parseFloat(val);
+               if (key.startsWith('openmailstack_system_cpu_load_15m')) point.cpuLoad15 = parseFloat(val);
+               if (key.startsWith('openmailstack_system_memory_total_bytes')) point.memTotal = parseFloat(val) / (1024 * 1024 * 1024);
+               if (key.startsWith('openmailstack_system_memory_free_bytes')) point.memFree = parseFloat(val) / (1024 * 1024 * 1024);
+               if (key.startsWith('openmailstack_system_disk_used_bytes')) point.diskUsed = parseFloat(val) / (1024 * 1024 * 1024);
              });
              setHistory(prev => [...prev.slice(-30), point]);
           })
@@ -228,11 +235,71 @@ export function TelemetryPanel() {
             </div>
           </div>
 
+          <div className="settings-section">
+            <h3 style={{ marginBottom: '16px' }}>System CPU Load (1m / 5m / 15m)</h3>
+            <div style={{ height: '200px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={history}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                  <XAxis dataKey="time" stroke="#888" tick={{fontSize: 12}} />
+                  <YAxis stroke="#888" tick={{fontSize: 12}} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }} />
+                  <Line type="monotone" dataKey="cpuLoad1" name="1m avg" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="cpuLoad5" name="5m avg" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="cpuLoad15" name="15m avg" stroke="#06b6d4" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <h3 style={{ marginBottom: '16px' }}>System Memory Usage (GB)</h3>
+            <div style={{ height: '200px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={history}>
+                  <defs>
+                    <linearGradient id="colorSysMem" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.8}/>
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                  <XAxis dataKey="time" stroke="#888" tick={{fontSize: 12}} />
+                  <YAxis stroke="#888" tick={{fontSize: 12}} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }} />
+                  <Area type="monotone" dataKey="memTotal" name="Total" stroke="#f59e0b" fillOpacity={0.15} />
+                  <Area type="monotone" dataKey="memFree" name="Free" stroke="#10b981" fillOpacity={0.3} fill="url(#colorSysMem)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <h3 style={{ marginBottom: '16px' }}>Disk Usage (GB, /)</h3>
+            <div style={{ height: '200px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={history}>
+                  <defs>
+                    <linearGradient id="colorDisk" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.8}/>
+                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                  <XAxis dataKey="time" stroke="#888" tick={{fontSize: 12}} />
+                  <YAxis stroke="#888" tick={{fontSize: 12}} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }} />
+                  <Area type="monotone" dataKey="diskUsed" name="Used" stroke="#ef4444" fillOpacity={1} fill="url(#colorDisk)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto' }}>
-            <a 
-              href="/api/admin/telemetry/metrics" 
-              target="_blank" 
-              rel="noreferrer" 
+            <a
+              href="/api/admin/telemetry/metrics"
+              target="_blank"
+              rel="noreferrer"
               className="btn btn-secondary"
             >
               <Download size={16} /> View Raw Prometheus Endpoint

@@ -198,16 +198,46 @@ cat <<EOF >> /etc/dovecot/local.conf
 ssl = required
 EOF
 
+	# Install webmail auth filter
+	install -m 0644 "${REPO_DIR}/packaging/fail2ban/openmailstack-webmail.conf" /etc/fail2ban/filter.d/openmailstack-webmail.conf
+	# Create auth log directory
+	mkdir -p /var/log/openmailstack
+	chown openmailstack:adm /var/log/openmailstack
+	chmod 750 /var/log/openmailstack
+	touch /var/log/openmailstack/auth.log
+	chown openmailstack:adm /var/log/openmailstack/auth.log
+	chmod 640 /var/log/openmailstack/auth.log
+
 if [[ "$DOVECOT_VERSION" == "2.4" ]]; then
 cat <<EOF >> /etc/dovecot/local.conf
 ssl_server_cert_file = ${CERT_FILE}
 ssl_server_key_file = ${KEY_FILE}
 EOF
+
+	# Install webmail auth filter
+	install -m 0644 "${REPO_DIR}/packaging/fail2ban/openmailstack-webmail.conf" /etc/fail2ban/filter.d/openmailstack-webmail.conf
+	# Create auth log directory
+	mkdir -p /var/log/openmailstack
+	chown openmailstack:adm /var/log/openmailstack
+	chmod 750 /var/log/openmailstack
+	touch /var/log/openmailstack/auth.log
+	chown openmailstack:adm /var/log/openmailstack/auth.log
+	chmod 640 /var/log/openmailstack/auth.log
 else
 cat <<EOF >> /etc/dovecot/local.conf
 ssl_cert = <${CERT_FILE}
 ssl_key = <${KEY_FILE}
 EOF
+
+	# Install webmail auth filter
+	install -m 0644 "${REPO_DIR}/packaging/fail2ban/openmailstack-webmail.conf" /etc/fail2ban/filter.d/openmailstack-webmail.conf
+	# Create auth log directory
+	mkdir -p /var/log/openmailstack
+	chown openmailstack:adm /var/log/openmailstack
+	chmod 750 /var/log/openmailstack
+	touch /var/log/openmailstack/auth.log
+	chown openmailstack:adm /var/log/openmailstack/auth.log
+	chmod 640 /var/log/openmailstack/auth.log
 fi
 
 # 6. Configure the Firewall (UFW)
@@ -288,7 +318,26 @@ logpath = ${MAIL_LOG_PATH}
 enabled = true
 port = pop3,pop3s,imap,imaps,submission
 logpath = ${MAIL_LOG_PATH}
+
+[openmailstack-webmail]
+enabled = true
+port = http,https
+filter = openmailstack-webmail
+logpath = /var/log/openmailstack/auth.log
+maxretry = 10
+findtime = 5m
+bantime = 30m
 EOF
+
+	# Install webmail auth filter
+	install -m 0644 "${REPO_DIR}/packaging/fail2ban/openmailstack-webmail.conf" /etc/fail2ban/filter.d/openmailstack-webmail.conf
+	# Create auth log directory
+	mkdir -p /var/log/openmailstack
+	chown openmailstack:adm /var/log/openmailstack
+	chmod 750 /var/log/openmailstack
+	touch /var/log/openmailstack/auth.log
+	chown openmailstack:adm /var/log/openmailstack/auth.log
+	chmod 640 /var/log/openmailstack/auth.log
 else
     openmailstack_record_soft_error "Fail2ban is not installed on ${OPENMAILSTACK_OS_LABEL}; intrusion protection setup skipped."
 fi

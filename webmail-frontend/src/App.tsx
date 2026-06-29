@@ -13,6 +13,8 @@ import { defaultCalendarSettings, defaultContactsSettings, defaultMailSettings, 
 import { BrandingPanel } from './admin/BrandingPanel';
 import { AdminSettingsPanel } from './admin/AdminSettingsPanel';
 import { TelemetryPanel } from './admin/TelemetryPanel';
+import { SystemHealthDashboard } from './admin/SystemHealthDashboard';
+import { Fail2banPanel } from './admin/Fail2banPanel';
 import { CreateDomainModal, CreateMailboxModal, CreateAliasModal, CreateApiKeyModal, ChangePasswordModal, CreateRoutingModal, PromoteAdminModal } from './admin/AdminModals';
 import { defaultAdminSettings, getAdminSettings, saveAdminSettings, type AdminSettingsMap } from './admin/adminSettingsApi';
 import { applyBrandingToDocument, defaultBranding, fetchBranding, saveAdminBranding, type BrandingSettings } from './branding';
@@ -2918,15 +2920,6 @@ function App() {
     }
   };
 
-  const handleExportContacts = (format: 'vcard' | 'csv') => {
-    // Generate a temporary link to download the file directly via the browser
-    const a = document.createElement('a');
-    a.href = `/api/apps/contacts-export?format=${format}&token=${localStorage.getItem('oms_token')}`;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
 
   const handleImportContacts = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -3843,6 +3836,9 @@ function App() {
               <div className={`nav-item ${activeTab === 'admin_telemetry' ? 'active' : ''}`} onClick={() => setActiveTab('admin_telemetry')}>
                 <Activity size={18} /> Telemetry & Logs
               </div>
+              <div className={`nav-item ${activeTab === 'admin_fail2ban' ? 'active' : ''}`} onClick={() => setActiveTab('admin_fail2ban')}>
+                <ShieldAlert size={18} /> Intrusion Detection
+              </div>
               <div className={`nav-item ${activeTab === 'admin_apikeys' ? 'active' : ''}`} onClick={() => setActiveTab('admin_apikeys')}>
                 <Lock size={18} /> API Keys
               </div>
@@ -3856,7 +3852,7 @@ function App() {
 
         <main className="content-area">
           {appMode === 'webmail' && activeTab === 'inbox' && (
-            <PanelGroup id="oms-webmail-v7" orientation="horizontal" defaultLayout={webmailPanelLayout.defaultLayout} onLayoutChanged={webmailPanelLayout.onLayoutChanged} style={{ width: '100%', height: '100%', minHeight: 0 }}>
+            <PanelGroup id="oms-webmail-v7" orientation="horizontal" defaultLayout={webmailPanelLayout.defaultLayout} onLayoutChanged={webmailPanelLayout.onLayoutChanged} style={{ width: '100%', height: '100%', minHeight: 0, minWidth: 0 }}>
               <Panel id="webmail-sidebar" defaultSize={20} minSize={10}>
                 <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                   <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
@@ -4178,13 +4174,13 @@ function App() {
                 <div style={{ position: 'absolute', top: 0, bottom: 0, left: '6px', right: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px' }} />
               </PanelResizeHandle>
               <Panel id="message-view" defaultSize={50} minSize={20}>
-                <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
                   {!viewingThread ? (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-secondary)' }}>
                       Select an item to read
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto', padding: '24px', gap: '24px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto', padding: '24px', gap: '24px', minWidth: 0 }}>
                       <h2 style={{ marginTop: 0, marginBottom: '10px' }}>{viewingThread[0]?.subject}</h2>
                       {viewingThread.map((msg) => (
                         <div key={msg.uid} style={{ display: 'flex', flexDirection: 'column', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '20px' }}>
@@ -4274,34 +4270,7 @@ function App() {
             </div>
           )}
 
-          {activeTab === 'admin_dashboard' && (
-            <div className="glass-panel" style={{ padding: '30px' }}>
-              <div className="content-header" style={{ marginBottom: '20px' }}>
-                <h2>System Health Dashboard</h2>
-                <span style={{ background: 'var(--accent-primary)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>ADMIN</span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '30px' }}>
-                <div className="glass-panel" style={{ padding: '20px' }}>
-                  <h3>System Services</h3>
-                  <ul style={{ listStyle: 'none', padding: 0, marginTop: '10px' }}>
-                    <li style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}><span>Dovecot (IMAP)</span> <span style={{ color: 'var(--success)' }}>Active</span></li>
-                    <li style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}><span>Postfix (SMTP)</span> <span style={{ color: 'var(--success)' }}>Active</span></li>
-                    <li style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}><span>Rspamd</span> <span style={{ color: 'var(--success)' }}>Active</span></li>
-                  </ul>
-                </div>
-                <div className="glass-panel" style={{ padding: '20px', gridColumn: 'span 2' }}>
-                  <h3>Server Resources</h3>
-                  <div style={{ marginTop: '10px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}><span>CPU Load</span> <span>0.15, 0.10, 0.05</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', marginTop: '10px' }}><span>Memory Usage</span> <span>1024 MB / 4096 MB (25%)</span></div>
-                    <div style={{ width: '100%', height: '8px', background: 'var(--border-glass)', borderRadius: '4px' }}><div style={{ width: '25%', height: '100%', background: 'var(--primary)', borderRadius: '4px' }}></div></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', marginTop: '10px' }}><span>Disk Usage (/)</span> <span>20 GB / 100 GB (20%)</span></div>
-                    <div style={{ width: '100%', height: '8px', background: 'var(--border-glass)', borderRadius: '4px' }}><div style={{ width: '20%', height: '100%', background: 'var(--primary)', borderRadius: '4px' }}></div></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          {activeTab === 'admin_dashboard' && <SystemHealthDashboard />}
 
           {activeTab === 'admin_domains' && (
             <div className="glass-panel" style={{ padding: '30px' }}>
@@ -4517,6 +4486,8 @@ function App() {
           )}
 
           {activeTab === 'admin_telemetry' && <TelemetryPanel />}
+
+          {activeTab === 'admin_fail2ban' && <Fail2banPanel />}
 
           {activeTab === 'admin_apikeys' && (
             <div className="glass-panel" style={{ padding: '30px' }}>
@@ -5022,15 +4993,15 @@ function App() {
                       <button className="btn btn-primary" onClick={() => { setEditingContact(null); setIsContactModalOpen(true); }} title="Create a new contact">
                         <UserPlus size={16} /> Add Contact
                       </button>
+                      <input type="file" id="contact-import-upload" style={{ display: 'none' }} accept=".vcf,.vcard,.csv,text/vcard,text/x-vcard,text/csv,text/directory" onChange={handleImportContacts} />
                       <div className="dropdown" style={{ position: 'relative' }}>
                         <button className="btn" style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }} title="Import Address Book" onClick={() => setActiveDropdown(activeDropdown === 'contacts-import' ? null : 'contacts-import')}>
                           <Download size={16} /> Import <ChevronDown size={14} />
                         </button>
                         {activeDropdown === 'contacts-import' && (
                           <div className="glass-panel" style={{ position: 'absolute', top: '100%', right: 0, zIndex: 100, minWidth: '180px', padding: '8px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}>
-                            <input type="file" id="contact-import-upload" style={{ display: 'none' }} accept=".vcf,.vcard,.csv" onChange={handleImportContacts} />
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('contact-import-upload')?.click(); }}>Import from vCard (.vcf)</div>
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('contact-import-upload')?.click(); }}>Import from CSV</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); setTimeout(() => document.getElementById('contact-import-upload')?.click(), 10); }}>Import from vCard (.vcf)</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); setTimeout(() => document.getElementById('contact-import-upload')?.click(), 10); }}>Import from CSV</div>
                           </div>
                         )}
                       </div>
@@ -5041,8 +5012,8 @@ function App() {
                         </button>
                         {activeDropdown === 'contacts-export' && (
                           <div className="glass-panel" style={{ position: 'absolute', top: '100%', right: 0, zIndex: 100, minWidth: '180px', padding: '8px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}>
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); handleExportContacts('vcard'); }}>Export as vCard (.vcf)</div>
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); handleExportContacts('csv'); }}>Export as CSV</div>
+                            <a href="/api/apps/contacts-export?format=vcard" download="contacts.vcf" className="nav-item" style={{ display: 'block', textDecoration: 'none', color: 'inherit' }} onClick={() => setActiveDropdown(null)}>Export as vCard (.vcf)</a>
+                            <a href="/api/apps/contacts-export?format=csv" download="contacts.csv" className="nav-item" style={{ display: 'block', textDecoration: 'none', color: 'inherit' }} onClick={() => setActiveDropdown(null)}>Export as CSV</a>
                           </div>
                         )}
                       </div>
@@ -5244,17 +5215,17 @@ function App() {
                     </h2>
                     
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input type="file" id="note-import-upload" style={{ display: 'none' }} accept=".html,.pdf,.md,.json" onChange={handleImportNotes} />
                       <div className="dropdown" style={{ position: 'relative' }}>
                         <button className="btn" style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }} title="Import Notes" onClick={() => setActiveDropdown(activeDropdown === 'notes-import' ? null : 'notes-import')}>
                           <Download size={16} /> Import <ChevronDown size={14} />
                         </button>
                         {activeDropdown === 'notes-import' && (
                           <div className="glass-panel" style={{ position: 'absolute', top: '100%', right: 0, zIndex: 100, minWidth: '180px', padding: '8px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}>
-                            <input type="file" id="note-import-upload" style={{ display: 'none' }} accept=".html,.pdf,.md,.json" onChange={handleImportNotes} />
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('note-import-upload')?.click(); }}>Import from Apple Notes (HTML)</div>
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('note-import-upload')?.click(); }}>Import from PDF</div>
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('note-import-upload')?.click(); }}>Import from Markdown</div>
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); document.getElementById('note-import-upload')?.click(); }}>Import from JSON</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); setTimeout(() => document.getElementById('note-import-upload')?.click(), 10); }}>Import from Apple Notes (HTML)</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); setTimeout(() => document.getElementById('note-import-upload')?.click(), 10); }}>Import from PDF</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); setTimeout(() => document.getElementById('note-import-upload')?.click(), 10); }}>Import from Markdown</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); setTimeout(() => document.getElementById('note-import-upload')?.click(), 10); }}>Import from JSON</div>
                           </div>
                         )}
                       </div>
@@ -5265,9 +5236,9 @@ function App() {
                         </button>
                         {activeDropdown === 'notes-export' && (
                           <div className="glass-panel" style={{ position: 'absolute', top: '100%', right: 0, zIndex: 100, minWidth: '180px', padding: '8px', borderRadius: '8px', marginTop: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}>
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); handleExportNotes('pdf'); }}>Export to PDF</div>
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); handleExportNotes('md'); }}>Export to Markdown</div>
-                            <div className="nav-item" onClick={() => { setActiveDropdown(null); handleExportNotes('json'); }}>Export to JSON</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); setTimeout(() => handleExportNotes('pdf'), 10); }}>Export to PDF</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); setTimeout(() => handleExportNotes('md'), 10); }}>Export to Markdown</div>
+                            <div className="nav-item" onClick={() => { setActiveDropdown(null); setTimeout(() => handleExportNotes('json'), 10); }}>Export to JSON</div>
                           </div>
                         )}
                       </div>

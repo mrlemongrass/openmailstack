@@ -1007,9 +1007,10 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     }
                 }
                 let addNodes = [];
-                let nextSyncKeyInt = await (0, notes_utils_1.getNotesSyncToken)(creds.user);
+                let dbToken = await (0, notes_utils_1.getNotesSyncToken)(creds.user);
+                let nextSyncKey = `notes-${dbToken}`;
                 if (syncKey === '0') {
-                    nextSyncKeyInt = 1;
+                    nextSyncKey = "1";
                 }
                 else if (syncKey === '1') {
                     const allNotes = await (0, notes_utils_1.listNotes)(creds.user);
@@ -1023,8 +1024,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     }
                 }
                 else {
-                    const currentSyncKey = parseInt(syncKey) || 1;
-                    if (currentSyncKey !== nextSyncKeyInt) {
+                    const currentSyncKey = parseInt(syncKey.replace('notes-', '')) || 1;
+                    if (currentSyncKey !== dbToken) {
                         const allNotes = await (0, notes_utils_1.listNotes)(creds.user, true);
                         const changedNotes = allNotes.filter(n => n.sync_token > currentSyncKey);
                         for (const note of changedNotes) {
@@ -1055,7 +1056,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                         { tag: "Collections", page: 0, children: [
                                 { tag: "Collection", page: 0, children: [
                                         { tag: "Class", page: 0, content: "Notes" },
-                                        { tag: "SyncKey", page: 0, content: nextSyncKeyInt.toString() },
+                                        { tag: "SyncKey", page: 0, content: nextSyncKey },
                                         { tag: "CollectionId", page: 0, content: collectionId },
                                         { tag: "Status", page: 0, content: "1" },
                                         ...(responses.length > 0 ? [{ tag: "Responses", page: 0, children: responses }] : []),

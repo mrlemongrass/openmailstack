@@ -39,11 +39,11 @@ export function NotesLayout() {
         onLayoutChange={notesPanelLayout.onLayoutChange}
         style={{ width: '100%', height: '100%', minHeight: 0, minWidth: 0 }}
       >
-        <Panel id="notes-sidebar" defaultSize={20} minSize={15} maxSize={30}>
+        <Panel id="notes-sidebar" defaultSize={20} minSize={8} maxSize={35}>
           <NotesSidebar notesCtx={notesCtx} />
         </Panel>
         <ResizeHandle />
-        <Panel id="notes-view" defaultSize={80} minSize={40}>
+        <Panel id="notes-view" defaultSize={80} minSize={25}>
           <NotesGrid notesCtx={notesCtx} />
         </Panel>
       </PanelGroup>

@@ -46,8 +46,8 @@ export function MailLayout({ mail }: MailLayoutProps) {
         onLayoutChange={webmailPanelLayout.onLayoutChange}
         style={{ width: '100%', height: '100%', minHeight: 0, minWidth: 0 }}
       >
-        <Panel id="webmail-sidebar" defaultSize={20} minSize={15} maxSize={30}>
-          <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <Panel id="webmail-sidebar" defaultSize={20} minSize={10} maxSize={35}>
+          <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, overflow: 'hidden' }}>
             <FolderSidebar folders={mail.folders} activeFolder={mail.activeFolder}
               expandedFolders={mail.expandedFolders}
               onToggleExpand={(path) => mail.setExpandedFolders((prev) => ({ ...prev, [path]: !prev[path] }))}
@@ -57,8 +57,8 @@ export function MailLayout({ mail }: MailLayoutProps) {
 
         <ResizeHandle />
 
-        <Panel id="message-list" defaultSize={35} minSize={18}>
-          <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <Panel id="message-list" defaultSize={35} minSize={15}>
+          <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, overflow: 'hidden' }}>
             <Outlet />
           </div>
         </Panel>
@@ -66,8 +66,8 @@ export function MailLayout({ mail }: MailLayoutProps) {
         {showViewer && (
           <>
             <ResizeHandle />
-            <Panel id="message-view" defaultSize={45} minSize={22}>
-              <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <Panel id="message-view" defaultSize={45} minSize={18}>
+              <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, overflow: 'hidden' }}>
                 <MessageViewer mail={mail} />
               </div>
             </Panel>

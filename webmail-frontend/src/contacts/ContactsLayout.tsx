@@ -42,7 +42,7 @@ export function ContactsLayout() {
         onLayoutChange={contactsPanelLayout.onLayoutChange}
         style={{ width: '100%', height: '100%', minHeight: 0, minWidth: 0 }}
       >
-        <Panel id="contacts-sidebar" defaultSize={20} minSize={15} maxSize={30}>
+        <Panel id="contacts-sidebar" defaultSize={20} minSize={10} maxSize={35}>
           <ContactSidebar contacts={contacts} />
         </Panel>
         <ResizeHandle />

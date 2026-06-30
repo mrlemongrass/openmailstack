@@ -44,11 +44,11 @@ export function CalendarLayout() {
         onLayoutChange={calendarPanelLayout.onLayoutChange}
         style={{ width: '100%', height: '100%', minHeight: 0, minWidth: 0 }}
       >
-        <Panel id="calendar-sidebar" defaultSize={20} minSize={15} maxSize={30}>
+        <Panel id="calendar-sidebar" defaultSize={20} minSize={8} maxSize={35}>
           <CalendarSidebar cal={cal} />
         </Panel>
         <ResizeHandle />
-        <Panel id="calendar-view" defaultSize={80} minSize={40}>
+        <Panel id="calendar-view" defaultSize={80} minSize={25}>
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <CalendarToolbar cal={cal} />
             {cal.isLoading ? <Skeleton count={12} height={60} /> : <MonthView cal={cal} />}

@@ -31,6 +31,15 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* Allow resizable panels to shrink below content width */
+[data-panel] {
+  overflow: hidden;
+}
+[data-panel] > * {
+  min-width: 0;
+  overflow: hidden;
+}
+
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: var(--app-font-size);

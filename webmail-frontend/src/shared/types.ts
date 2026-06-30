@@ -186,6 +186,7 @@ export interface Contact {
   department?: string;
   birthday?: string;
   website_url?: string;
+  deleted_at?: string;
 }
 
 export type DisplayContact = Contact & { displayName: string; _parsedName?: any };

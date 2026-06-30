@@ -220,6 +220,42 @@ export async function mergeContacts(primaryId: number, duplicateIds: number[]): 
   });
 }
 
+export async function restoreContact(id: number | string): Promise<void> {
+    await fetch(`/api/apps/contacts/${id}/restore`, { method: 'POST' });
+}
+
+export async function permanentDeleteContact(id: number | string): Promise<void> {
+    await fetch(`/api/apps/contacts/${id}/permanent`, { method: 'DELETE' });
+}
+
+export async function fetchTrashContacts(): Promise<ContactsResponse> {
+    const res = await fetch('/api/apps/contacts/trash');
+    return res.json();
+}
+
+export async function fetchContactActivity(id: number | string): Promise<{
+    success: boolean;
+    emails?: Array<{ subject: string; received_at: string; snippet: string; id: number }>;
+    meetings?: Array<{ title: string; start: string; id: string }>;
+}> {
+    const res = await fetch(`/api/apps/contacts/${id}/activity`);
+    return res.json();
+}
+
+export async function shareContact(id: number | string, recipientEmail: string, message?: string): Promise<{
+    success: boolean;
+    vcard?: string;
+    mailtoSubject?: string;
+    mailtoBody?: string;
+}> {
+    const res = await fetch(`/api/apps/contacts/${id}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipientEmail, message }),
+    });
+    return res.json();
+}
+
 // ---- Calendar ----
 export async function fetchCalendars(): Promise<CalendarsResponse> {
   const res = await fetch('/api/apps/calendars');

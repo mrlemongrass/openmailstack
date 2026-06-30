@@ -16,6 +16,10 @@ const authenticateApp = (req: Request, res: Response, next: NextFunction) => {
 
 appsApiRouter.use(authenticateApp);
 
+async function purgeExpiredTrash(): Promise<void> {
+    await pool.query("DELETE FROM contacts WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL 30 DAY");
+}
+
 // ==========================================
 // CONTACTS API
 // ==========================================
@@ -24,13 +28,14 @@ appsApiRouter.get('/contacts', async (req: Request, res: Response) => {
     const offset = parseInt(req.query.offset as string || '0', 10) || 0;
     const limit = Math.min(parseInt(req.query.limit as string || '200', 10) || 200, 500);
     try {
+        await purgeExpiredTrash();
         const [rows]: any = await pool.query(
             `SELECT id, username, name, email, phone, dav_uid, sync_token, updated_at,
                     emails_json, phones_json, addresses_json, job_title, organization,
                     notes, labels_json, photo_url, is_favorite,
                     prefix, first_name, middle_name, last_name, suffix, nickname,
                     department, birthday, website_url
-             FROM contacts WHERE username = ?
+             FROM contacts WHERE username = ? AND deleted_at IS NULL
              ORDER BY is_favorite DESC, name ASC, email ASC, id ASC
              LIMIT ? OFFSET ?`,
             [user, limit + 1, offset]
@@ -111,7 +116,7 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url } = req.body;
     try {
-        const [existing]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=?', [req.params.id as string, user]);
+        const [existing]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL', [req.params.id as string, user]);
         if (existing.length === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
 
         const existingContact = existing[0];
@@ -159,11 +164,11 @@ appsApiRouter.put('/contacts/:id/favorite', async (req: Request, res: Response) 
     const user = (req as any).username;
     try {
         const [result]: any = await pool.query(
-            'UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1) WHERE id = ? AND username = ?',
+            'UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1) WHERE id = ? AND username = ? AND deleted_at IS NULL',
             [req.params.id, user]
         );
         if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
-        const [rows]: any = await pool.query('SELECT is_favorite FROM contacts WHERE id = ?', [req.params.id]);
+        const [rows]: any = await pool.query('SELECT is_favorite FROM contacts WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
         res.json({ success: true, is_favorite: rows[0]?.is_favorite === 1 });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -177,7 +182,7 @@ appsApiRouter.post('/contacts/bulk-delete', async (req: Request, res: Response) 
     try {
         const placeholders = ids.map(() => '?').join(',');
         const [result]: any = await pool.query(
-            `DELETE FROM contacts WHERE id IN (${placeholders}) AND username = ?`,
+            `UPDATE contacts SET deleted_at = NOW() WHERE id IN (${placeholders}) AND username = ? AND deleted_at IS NULL`,
             [...ids, user]
         );
         res.json({ success: true, deleted: result.affectedRows });
@@ -189,7 +194,53 @@ appsApiRouter.post('/contacts/bulk-delete', async (req: Request, res: Response) 
 appsApiRouter.delete('/contacts/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        await pool.query('DELETE FROM contacts WHERE id=? AND username=?', [req.params.id as string, user]);
+        await pool.query(
+            'UPDATE contacts SET deleted_at = NOW() WHERE id=? AND username=? AND deleted_at IS NULL',
+            [req.params.id as string, user]
+        );
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+appsApiRouter.get('/contacts/trash', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    try {
+        await purgeExpiredTrash();
+        const [rows]: any = await pool.query(
+            `SELECT id, name, email, phone, deleted_at
+             FROM contacts WHERE username = ? AND deleted_at IS NOT NULL
+             ORDER BY deleted_at DESC`,
+            [user]
+        );
+        res.json({ success: true, contacts: rows });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+appsApiRouter.post('/contacts/:id/restore', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    try {
+        const [result]: any = await pool.query(
+            'UPDATE contacts SET deleted_at = NULL WHERE id=? AND username=? AND deleted_at IS NOT NULL',
+            [req.params.id as string, user]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Contact not found in trash' });
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    try {
+        await pool.query(
+            'DELETE FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
+            [req.params.id as string, user]
+        );
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -200,7 +251,7 @@ appsApiRouter.get('/contacts-export', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const format = req.query.format as string || 'vcard';
     try {
-        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE username = ?', [user]);
+        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL', [user]);
         if (format === 'csv') {
             res.setHeader('Content-Type', 'text/csv');
             res.setHeader('Content-Disposition', 'attachment; filename="contacts.csv"');
@@ -303,7 +354,7 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
 appsApiRouter.get('/contacts-duplicates', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE username = ?', [user]);
+        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL', [user]);
         const duplicates: any[][] = [];
         const seen = new Set<number>();
 
@@ -344,7 +395,7 @@ appsApiRouter.get('/contacts-merge-preview', async (req: Request, res: Response)
     const ids = (req.query.ids as string || '').split(',').map(Number).filter(Boolean);
     if (ids.length < 2) return res.status(400).json({ success: false, error: 'Need at least 2 contact IDs' });
     try {
-        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=?', [ids, user]);
+        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=? AND deleted_at IS NULL', [ids, user]);
         if (rows.length < 2) return res.status(404).json({ success: false, error: 'Contacts not found' });
         // Build field-by-field preview showing source of each value
         const fieldSources: Record<string, { value: any; fromId: number; fromName: string }> = {};
@@ -374,11 +425,11 @@ appsApiRouter.post('/contacts-merge', async (req: Request, res: Response) => {
     }
 
     try {
-        const [primaryRows]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=?', [primaryId, user]);
+        const [primaryRows]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL', [primaryId, user]);
         if (primaryRows.length === 0) return res.status(404).json({ success: false, error: 'Primary contact not found' });
         const primary = primaryRows[0];
         
-        const [dupRows]: any = await pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=?', [duplicateIds, user]);
+        const [dupRows]: any = await pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=? AND deleted_at IS NULL', [duplicateIds, user]);
         if (dupRows.length === 0) return res.json({ success: true });
         
         let emails = primary.emails_json ? (typeof primary.emails_json === 'string' ? JSON.parse(primary.emails_json) : primary.emails_json) : [];
@@ -549,7 +600,7 @@ appsApiRouter.get('/contact-groups/:id/members', async (req: Request, res: Respo
     try {
         const [rows]: any = await pool.query(
             `SELECT m.contact_id, c.name, c.email FROM contact_group_members m
-             JOIN contacts c ON c.id = m.contact_id
+             JOIN contacts c ON c.id = m.contact_id AND c.deleted_at IS NULL
              JOIN contact_groups g ON g.id = m.group_id
              WHERE m.group_id = ? AND g.username = ?`,
             [req.params.id, user]

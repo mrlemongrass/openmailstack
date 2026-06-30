@@ -158,6 +158,10 @@ export async function ensureContactsSchema(): Promise<void> {
                 }
             }
 
+            if (!columnNames.has('deleted_at')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN deleted_at TIMESTAMP NULL AFTER website_url');
+            }
+
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS contact_groups (
                     id INT AUTO_INCREMENT PRIMARY KEY,

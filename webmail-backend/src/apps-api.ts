@@ -313,8 +313,17 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                 if (!name && !email) { skippedNoFields++; continue; }
                 try {
                     const [result]: any = await pool.query(
-                        'INSERT IGNORE INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                        [user, name, email, phone, jobTitle, organization, notes]
+                        `INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, dav_uid)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, CONCAT('import-csv-', UNIX_TIMESTAMP(), '-', ?))
+                         ON DUPLICATE KEY UPDATE
+                           name = VALUES(name),
+                           phone = VALUES(phone),
+                           job_title = VALUES(job_title),
+                           organization = VALUES(organization),
+                           notes = VALUES(notes),
+                           deleted_at = NULL,
+                           sync_token = sync_token + 1`,
+                        [user, name, email, phone, jobTitle, organization, notes, imported]
                     );
                     if (result.affectedRows > 0) imported++; else skippedDuplicate++;
                 } catch { skippedDuplicate++; }
@@ -330,16 +339,32 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                 const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p: string) => ({ value: p, label: 'Other' }))) : null;
                 try {
                     const [result]: any = await pool.query(
-                        `INSERT IGNORE INTO contacts
+                        `INSERT INTO contacts
                          (username, name, email, phone, job_title, organization, notes,
                           emails_json, phones_json, vcard_data,
-                          prefix, first_name, middle_name, last_name, suffix)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          prefix, first_name, middle_name, last_name, suffix, dav_uid)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CONCAT('import-vcard-', UNIX_TIMESTAMP(), '-', ?))
+                         ON DUPLICATE KEY UPDATE
+                           name = VALUES(name),
+                           phone = VALUES(phone),
+                           job_title = VALUES(job_title),
+                           organization = VALUES(organization),
+                           notes = VALUES(notes),
+                           emails_json = VALUES(emails_json),
+                           phones_json = VALUES(phones_json),
+                           vcard_data = VALUES(vcard_data),
+                           prefix = VALUES(prefix),
+                           first_name = VALUES(first_name),
+                           middle_name = VALUES(middle_name),
+                           last_name = VALUES(last_name),
+                           suffix = VALUES(suffix),
+                           deleted_at = NULL,
+                           sync_token = sync_token + 1`,
                         [user, parsed.name || '', parsed.email || '', parsed.phone || '',
                          parsed.title || '', parsed.organization || '', parsed.note || '',
                          emailsJson, phonesJson, vcard,
                          parsed.prefix || null, parsed.firstName || null, parsed.middleName || null,
-                         parsed.lastName || null, parsed.suffix || null]
+                         parsed.lastName || null, parsed.suffix || null, imported]
                     );
                     if (result.affectedRows > 0) imported++; else skippedDuplicate++;
                 } catch { skippedDuplicate++; }
@@ -542,8 +567,10 @@ appsApiRouter.get('/contact-groups', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
         const [groups]: any = await pool.query(
-            `SELECT g.*, COUNT(m.contact_id) as member_count
-             FROM contact_groups g LEFT JOIN contact_group_members m ON g.id = m.group_id
+            `SELECT g.*, COUNT(c.id) as member_count
+             FROM contact_groups g
+             LEFT JOIN contact_group_members m ON g.id = m.group_id
+             LEFT JOIN contacts c ON c.id = m.contact_id AND c.deleted_at IS NULL
              WHERE g.username = ? GROUP BY g.id ORDER BY g.name`,
             [user]
         );

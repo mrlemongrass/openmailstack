@@ -2917,15 +2917,33 @@ function App() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [isComposing, composeTo, composeSubject, composeBody, composeFrom, composeCc, composeBcc]);
 
+  const CONTACTS_PAGE_SIZE = 200;
+  const [contactsHasMore, setContactsHasMore] = useState(false);
+
   const refreshContacts = useCallback(() => {
     return Promise.all([
-      fetch(`/api/apps/contacts`, { headers: getHeaders() }).then(r => r.json()),
+      fetch(`/api/apps/contacts?limit=${CONTACTS_PAGE_SIZE}&offset=0`, { headers: getHeaders() }).then(r => r.json()),
       fetch(`/api/apps/contacts-duplicates`, { headers: getHeaders() }).then(r => r.json()).catch(() => ({ success: false }))
     ]).then(([contactsData, duplicatesData]) => {
-      if (contactsData.success) setContacts(contactsData.contacts || []);
+      if (contactsData.success) {
+        setContacts(contactsData.contacts || []);
+        setContactsHasMore(contactsData.hasMore || false);
+      }
       if (duplicatesData.success) setDuplicateGroups(duplicatesData.duplicates || []);
     });
   }, []);
+
+  const loadMoreContacts = useCallback(async () => {
+    const offset = contacts.length;
+    try {
+      const res = await fetch(`/api/apps/contacts?limit=${CONTACTS_PAGE_SIZE}&offset=${offset}`, { headers: getHeaders() });
+      const data = await res.json();
+      if (data.success && data.contacts) {
+        setContacts(prev => [...prev, ...data.contacts]);
+        setContactsHasMore(data.hasMore || false);
+      }
+    } catch {}
+  }, [contacts.length]);
 
   const refreshDirectoryContacts = useCallback((query?: string) => {
     const qs = query ? `?q=${encodeURIComponent(query)}` : '';
@@ -5673,6 +5691,13 @@ function App() {
                           </div>
                         ))
                       )}
+                    </div>
+                  )}
+                  {contactsHasMore && contactsView === 'personal' && !contactSearchQuery && (
+                    <div style={{ textAlign: 'center', padding: '16px' }}>
+                      <button className="btn btn-ghost" onClick={loadMoreContacts} style={{ padding: '8px 24px' }}>
+                        Load More Contacts ({contacts.length} loaded)
+                      </button>
                     </div>
                   )}
                   {/* Alphabet scrubber */}

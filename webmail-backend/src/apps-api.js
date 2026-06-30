@@ -20,9 +20,21 @@ exports.appsApiRouter.use(authenticateApp);
 // ==========================================
 exports.appsApiRouter.get('/contacts', async (req, res) => {
     const user = req.username;
+    const offset = parseInt(req.query.offset || '0', 10) || 0;
+    const limit = Math.min(parseInt(req.query.limit || '200', 10) || 200, 500);
     try {
-        const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ?', [user]);
-        res.json({ success: true, contacts: rows });
+        const [rows] = await db_1.pool.query(`SELECT id, username, name, email, phone, dav_uid, sync_token, updated_at,
+                    emails_json, phones_json, addresses_json, job_title, organization,
+                    notes, labels_json, photo_url, is_favorite,
+                    prefix, first_name, middle_name, last_name, suffix, nickname,
+                    department, birthday, website_url
+             FROM contacts WHERE username = ?
+             ORDER BY is_favorite DESC, name ASC, email ASC, id ASC
+             LIMIT ? OFFSET ?`, [user, limit + 1, offset]);
+        const hasMore = rows.length > limit;
+        if (hasMore)
+            rows.pop();
+        res.json({ success: true, contacts: rows, hasMore });
     }
     catch (e) {
         res.status(500).json({ success: false, error: e.message });

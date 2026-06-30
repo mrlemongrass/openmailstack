@@ -5415,8 +5415,9 @@ function App() {
                     <h3 style={{ margin: 0 }}>Address Books</h3>
                   </div>
                   <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-                    <div className={`nav-item ${contactsView === 'personal' && !selectedLabel && !selectedGroupId ? 'active' : ''}`} onClick={() => { setContactsView('personal'); setSelectedLabel(null); setSelectedGroupId(null); }}>
-                      <Users size={18} style={{ marginRight: '8px' }} /> Personal Contacts
+                    <div className={`nav-item ${contactsView === 'personal' && !selectedLabel && !selectedGroupId ? 'active' : ''}`} onClick={() => { setContactsView('personal'); setSelectedLabel(null); setSelectedGroupId(null); }} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center' }}><Users size={18} style={{ marginRight: '8px' }} /> Personal Contacts</div>
+                      <span style={{ fontSize: '0.75rem', opacity: 0.5, fontWeight: 600 }}>{contacts.length}</span>
                     </div>
                     <div className={`nav-item ${contactsView === 'directory' ? 'active' : ''}`} onClick={() => { setContactsView('directory'); setSelectedLabel(null); }}>
                       <Users size={18} style={{ marginRight: '8px' }} /> Global Directory (GAL)
@@ -5497,7 +5498,7 @@ function App() {
                 <div className="glass-panel" style={{ padding: '30px', height: '100%', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      {contactsView === 'directory' ? 'Global Directory' : 'Address Book'}
+                      {contactsView === 'directory' ? 'Global Directory' : `Address Book (${displayContacts.length}${contactsHasMore ? '+' : ''})`}
                       {(contactsView === 'directory' || contactsView === 'personal') && (
                         <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.05)', borderRadius: '20px', padding: '4px 12px' }}>
                           <Search size={16} color="var(--text-secondary)" />

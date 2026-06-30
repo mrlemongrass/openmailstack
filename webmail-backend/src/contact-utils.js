@@ -225,20 +225,29 @@ function allVCardValues(lines, propertyName) {
 function parseVCard(vcard) {
     const lines = unfoldVCard(vcard);
     const fn = firstVCardValue(lines, 'FN');
-    const n = firstVCardValue(lines, 'N')
-        .split(';')
-        .filter(Boolean)
-        .join(' ')
-        .trim();
+    const nRaw = firstVCardValue(lines, 'N');
+    // Parse structured N: LastName;FirstName;MiddleName;Prefix;Suffix
+    const nParts = nRaw.split(';').map(s => vcardUnescape(s.trim()));
+    const lastName = nParts[0] || '';
+    const firstName = nParts[1] || '';
+    const middleName = nParts[2] || '';
+    const prefix = nParts[3] || '';
+    const suffix = nParts[4] || '';
+    const fallbackName = [prefix, firstName, middleName, lastName, suffix].filter(Boolean).join(' ');
     // Extract all emails and phones (iOS uses item1.EMAIL, item2.EMAIL, etc.)
     const emails = allVCardValues(lines, 'EMAIL');
     const phones = allVCardValues(lines, 'TEL');
     const primaryEmail = emails[0] || '';
     const primaryPhone = phones[0] || '';
     return {
-        name: fn || n,
+        name: fn || fallbackName,
         email: primaryEmail,
         phone: primaryPhone,
+        lastName: lastName || undefined,
+        firstName: firstName || undefined,
+        middleName: middleName || undefined,
+        prefix: prefix || undefined,
+        suffix: suffix || undefined,
         emails: emails.length > 1 ? emails : [],
         phones: phones.length > 1 ? phones : [],
         organization: firstVCardValue(lines, 'ORG'),

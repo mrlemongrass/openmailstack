@@ -43,6 +43,11 @@ export interface ParsedVCardContact {
     title?: string;
     note?: string;
     address?: string;
+    lastName?: string;
+    firstName?: string;
+    middleName?: string;
+    prefix?: string;
+    suffix?: string;
 }
 export declare function ensureContactsSchema(): Promise<void>;
 export declare function xmlEscape(value: string): string;

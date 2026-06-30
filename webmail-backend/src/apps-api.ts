@@ -262,8 +262,16 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                     const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p: string) => ({ value: p, label: 'Other' }))) : null;
                     try {
                         await pool.query(
-                            'INSERT IGNORE INTO contacts (username, name, email, phone, job_title, organization, notes, emails_json, phones_json, vcard_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                            [user, parsed.name || '', parsed.email || '', parsed.phone || '', parsed.title || '', parsed.organization || '', parsed.note || '', emailsJson, phonesJson, vcard]
+                            `INSERT IGNORE INTO contacts
+                             (username, name, email, phone, job_title, organization, notes,
+                              emails_json, phones_json, vcard_data,
+                              prefix, first_name, middle_name, last_name, suffix)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            [user, parsed.name || '', parsed.email || '', parsed.phone || '',
+                             parsed.title || '', parsed.organization || '', parsed.note || '',
+                             emailsJson, phonesJson, vcard,
+                             parsed.prefix || null, parsed.firstName || null, parsed.middleName || null,
+                             parsed.lastName || null, parsed.suffix || null]
                         );
                         imported++;
                     } catch {}

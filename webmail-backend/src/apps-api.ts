@@ -16,6 +16,64 @@ const authenticateApp = (req: Request, res: Response, next: NextFunction) => {
 
 appsApiRouter.use(authenticateApp);
 
+async function purgeExpiredTrash(): Promise<void> {
+    await pool.query("DELETE FROM contacts WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL 30 DAY");
+}
+
+async function syncBirthdayEvent(user: string, contactName: string, contactEmail: string, birthday: string | null): Promise<void> {
+    // Find or create Birthdays calendar
+    const [calRows]: any = await pool.query(
+        "SELECT id FROM calendars WHERE user_id = ? AND (dav_slug = 'birthdays' OR name = 'Birthdays') LIMIT 1",
+        [user]
+    );
+    let calendarId: number;
+    if (calRows.length === 0) {
+        const cal = await createCalendar(user, 'Birthdays', { slug: 'birthdays', color: '#e91e63', components: 'VEVENT' });
+        calendarId = cal.id;
+    } else {
+        calendarId = calRows[0].id;
+    }
+
+    // Build event UID from contact identity
+    const uid = `birthday-${Buffer.from(contactEmail || contactName).toString('hex').slice(0, 32)}@openmailstack`;
+
+    if (!birthday) {
+        // Remove birthday if cleared
+        await pool.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [calendarId, uid]);
+        return;
+    }
+
+    // Parse birthday (expects YYYY-MM-DD or MM-DD)
+    const parts = birthday.split('-');
+    let month: string, day: string;
+    if (parts.length >= 3) { month = parts[1]; day = parts[2]; }
+    else if (parts.length === 2) { month = parts[0]; day = parts[1]; }
+    else return;
+
+    const dtstart = `1970${month.padStart(2, '0')}${day.padStart(2, '0')}`;
+    const summary = `${contactName || contactEmail}'s Birthday`;
+
+    const ical = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//OpenMailStack//Birthdays//EN',
+        'BEGIN:VEVENT',
+        `UID:${uid}`,
+        `DTSTART;VALUE=DATE:${dtstart}`,
+        `DTEND;VALUE=DATE:${dtstart}`,
+        'RRULE:FREQ=YEARLY',
+        `SUMMARY:${summary}`,
+        'TRANSP:TRANSPARENT',
+        'END:VEVENT',
+        'END:VCALENDAR',
+    ].join('\r\n');
+
+    await pool.query(
+        'INSERT INTO events (calendar_id, uid, ical_data, sync_token) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE ical_data=?, sync_token=sync_token+1',
+        [calendarId, uid, ical, ical]
+    );
+}
+
 // ==========================================
 // CONTACTS API
 // ==========================================
@@ -24,13 +82,14 @@ appsApiRouter.get('/contacts', async (req: Request, res: Response) => {
     const offset = parseInt(req.query.offset as string || '0', 10) || 0;
     const limit = Math.min(parseInt(req.query.limit as string || '200', 10) || 200, 500);
     try {
+        await purgeExpiredTrash();
         const [rows]: any = await pool.query(
             `SELECT id, username, name, email, phone, dav_uid, sync_token, updated_at,
                     emails_json, phones_json, addresses_json, job_title, organization,
                     notes, labels_json, photo_url, is_favorite,
                     prefix, first_name, middle_name, last_name, suffix, nickname,
                     department, birthday, website_url
-             FROM contacts WHERE username = ?
+             FROM contacts WHERE username = ? AND deleted_at IS NULL
              ORDER BY is_favorite DESC, name ASC, email ASC, id ASC
              LIMIT ? OFFSET ?`,
             [user, limit + 1, offset]
@@ -101,6 +160,10 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
                 websiteUrl || null
             ]
         );
+        if (birthday !== undefined) {
+            const savedName = fullName || email || '';
+            await syncBirthdayEvent(user, savedName, email || '', birthday || null);
+        }
         res.json({ success: true, id: result.insertId });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -111,7 +174,7 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url } = req.body;
     try {
-        const [existing]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=?', [req.params.id as string, user]);
+        const [existing]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL', [req.params.id as string, user]);
         if (existing.length === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
 
         const existingContact = existing[0];
@@ -149,6 +212,10 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
         queryParams.push(req.params.id as string, user);
 
         await pool.query(updateSql, queryParams);
+        const savedName = fullName || existingContact.email || '';
+        const savedEmail = email || existingContact.email || '';
+        const savedBirthday = birthday !== undefined ? (birthday || null) : existingContact.birthday || null;
+        await syncBirthdayEvent(user, savedName, savedEmail, savedBirthday);
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -159,11 +226,11 @@ appsApiRouter.put('/contacts/:id/favorite', async (req: Request, res: Response) 
     const user = (req as any).username;
     try {
         const [result]: any = await pool.query(
-            'UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1) WHERE id = ? AND username = ?',
+            'UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1) WHERE id = ? AND username = ? AND deleted_at IS NULL',
             [req.params.id, user]
         );
         if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
-        const [rows]: any = await pool.query('SELECT is_favorite FROM contacts WHERE id = ?', [req.params.id]);
+        const [rows]: any = await pool.query('SELECT is_favorite FROM contacts WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
         res.json({ success: true, is_favorite: rows[0]?.is_favorite === 1 });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -177,7 +244,7 @@ appsApiRouter.post('/contacts/bulk-delete', async (req: Request, res: Response) 
     try {
         const placeholders = ids.map(() => '?').join(',');
         const [result]: any = await pool.query(
-            `DELETE FROM contacts WHERE id IN (${placeholders}) AND username = ?`,
+            `UPDATE contacts SET deleted_at = NOW() WHERE id IN (${placeholders}) AND username = ? AND deleted_at IS NULL`,
             [...ids, user]
         );
         res.json({ success: true, deleted: result.affectedRows });
@@ -189,8 +256,150 @@ appsApiRouter.post('/contacts/bulk-delete', async (req: Request, res: Response) 
 appsApiRouter.delete('/contacts/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        await pool.query('DELETE FROM contacts WHERE id=? AND username=?', [req.params.id as string, user]);
+        await pool.query(
+            'UPDATE contacts SET deleted_at = NOW() WHERE id=? AND username=? AND deleted_at IS NULL',
+            [req.params.id as string, user]
+        );
         res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+appsApiRouter.get('/contacts/trash', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    try {
+        await purgeExpiredTrash();
+        const [rows]: any = await pool.query(
+            `SELECT id, name, email, phone, deleted_at
+             FROM contacts WHERE username = ? AND deleted_at IS NOT NULL
+             ORDER BY deleted_at DESC`,
+            [user]
+        );
+        res.json({ success: true, contacts: rows });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+appsApiRouter.post('/contacts/:id/restore', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    try {
+        const [result]: any = await pool.query(
+            'UPDATE contacts SET deleted_at = NULL WHERE id=? AND username=? AND deleted_at IS NOT NULL',
+            [req.params.id as string, user]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Contact not found in trash' });
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    try {
+        const [contactToDelete]: any = await pool.query(
+            'SELECT name, email FROM contacts WHERE id=? AND username=?',
+            [req.params.id as string, user]
+        );
+        if (contactToDelete.length > 0) {
+            await syncBirthdayEvent(user, contactToDelete[0].name, contactToDelete[0].email, null);
+        }
+        await pool.query(
+            'DELETE FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
+            [req.params.id as string, user]
+        );
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+appsApiRouter.get('/contacts/:id/activity', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    try {
+        const [contactRows]: any = await pool.query(
+            'SELECT email, emails_json FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL',
+            [req.params.id as string, user]
+        );
+        if (contactRows.length === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
+
+        const contact = contactRows[0];
+        const emails: string[] = [contact.email];
+        if (contact.emails_json) {
+            const parsed = typeof contact.emails_json === 'string' ? JSON.parse(contact.emails_json) : contact.emails_json;
+            if (Array.isArray(parsed)) {
+                for (const item of parsed) {
+                    if (item.value && !emails.includes(item.value)) emails.push(item.value);
+                }
+            }
+        }
+        const emailPlaceholders = emails.map(() => '?').join(',');
+
+        const [emailRows]: any = await pool.query(
+            `SELECT subject, received_at, id, snippet(subject, body) AS snippet
+             FROM messages
+             WHERE username = ? AND (from_addr IN (${emailPlaceholders}) OR to_addrs REGEXP ? OR cc_addrs REGEXP ?)
+             ORDER BY received_at DESC LIMIT 20`,
+            [user, ...emails, emails.join('|'), emails.join('|')]
+        );
+
+        const [meetingRows]: any = await pool.query(
+            `SELECT e.uid AS id, e.ical_data, MIN(eo.start) AS start
+             FROM events e
+             JOIN events_occurrences eo ON eo.event_id = e.id
+             JOIN event_attendees ea ON ea.event_id = e.id
+             WHERE ea.email IN (${emailPlaceholders}) AND eo.start >= NOW()
+             GROUP BY e.id, e.uid, e.ical_data
+             ORDER BY eo.start ASC LIMIT 10`,
+            [...emails]
+        );
+
+        const meetings = meetingRows.map((r: any) => {
+            const titleMatch = r.ical_data?.match(/SUMMARY:([^\r\n]*)/);
+            return {
+                id: r.id,
+                title: titleMatch ? titleMatch[1].trim() : 'Meeting',
+                start: r.start,
+            };
+        });
+
+        res.json({ success: true, emails: emailRows, meetings });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+appsApiRouter.post('/contacts/:id/share', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    const shareTo = req.body.recipientEmail as string;
+    const shareMsg = (req.body.message as string) || '';
+
+    if (!shareTo || !shareTo.includes('@')) {
+        return res.status(400).json({ success: false, error: 'Valid recipient email is required' });
+    }
+
+    try {
+        const [rows]: any = await pool.query(
+            'SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL',
+            [req.params.id as string, user]
+        );
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
+
+        const c = rows[0];
+        const vcard = normalizeVCardData(
+            c.vcard_data || '',
+            c.dav_uid || `contact-${c.id}`,
+            { name: c.name, email: c.email, phone: c.phone }
+        );
+
+        res.json({
+            success: true,
+            vcard,
+            mailtoSubject: `Contact: ${c.name || c.email}`,
+            mailtoBody: `${shareMsg}\n\n`,
+        });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -200,7 +409,22 @@ appsApiRouter.get('/contacts-export', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const format = req.query.format as string || 'vcard';
     try {
-        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE username = ?', [user]);
+        const idsParam = req.query.ids as string;
+        let rows: any;
+        if (idsParam) {
+            const ids = idsParam.split(',').map(Number).filter(n => !isNaN(n));
+            if (ids.length === 0) {
+                rows = [];
+            } else {
+                const placeholders = ids.map(() => '?').join(',');
+                [rows] = await pool.query(
+                    `SELECT * FROM contacts WHERE username = ? AND id IN (${placeholders}) AND deleted_at IS NULL`,
+                    [user, ...ids]
+                );
+            }
+        } else {
+            [rows] = await pool.query('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL', [user]);
+        }
         if (format === 'csv') {
             res.setHeader('Content-Type', 'text/csv');
             res.setHeader('Content-Disposition', 'attachment; filename="contacts.csv"');
@@ -262,8 +486,17 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                 if (!name && !email) { skippedNoFields++; continue; }
                 try {
                     const [result]: any = await pool.query(
-                        'INSERT IGNORE INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                        [user, name, email, phone, jobTitle, organization, notes]
+                        `INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, dav_uid)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, CONCAT('import-csv-', UNIX_TIMESTAMP(), '-', ?))
+                         ON DUPLICATE KEY UPDATE
+                           name = VALUES(name),
+                           phone = VALUES(phone),
+                           job_title = VALUES(job_title),
+                           organization = VALUES(organization),
+                           notes = VALUES(notes),
+                           deleted_at = NULL,
+                           sync_token = sync_token + 1`,
+                        [user, name, email, phone, jobTitle, organization, notes, imported]
                     );
                     if (result.affectedRows > 0) imported++; else skippedDuplicate++;
                 } catch { skippedDuplicate++; }
@@ -279,16 +512,32 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                 const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p: string) => ({ value: p, label: 'Other' }))) : null;
                 try {
                     const [result]: any = await pool.query(
-                        `INSERT IGNORE INTO contacts
+                        `INSERT INTO contacts
                          (username, name, email, phone, job_title, organization, notes,
                           emails_json, phones_json, vcard_data,
-                          prefix, first_name, middle_name, last_name, suffix)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          prefix, first_name, middle_name, last_name, suffix, dav_uid)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CONCAT('import-vcard-', UNIX_TIMESTAMP(), '-', ?))
+                         ON DUPLICATE KEY UPDATE
+                           name = VALUES(name),
+                           phone = VALUES(phone),
+                           job_title = VALUES(job_title),
+                           organization = VALUES(organization),
+                           notes = VALUES(notes),
+                           emails_json = VALUES(emails_json),
+                           phones_json = VALUES(phones_json),
+                           vcard_data = VALUES(vcard_data),
+                           prefix = VALUES(prefix),
+                           first_name = VALUES(first_name),
+                           middle_name = VALUES(middle_name),
+                           last_name = VALUES(last_name),
+                           suffix = VALUES(suffix),
+                           deleted_at = NULL,
+                           sync_token = sync_token + 1`,
                         [user, parsed.name || '', parsed.email || '', parsed.phone || '',
                          parsed.title || '', parsed.organization || '', parsed.note || '',
                          emailsJson, phonesJson, vcard,
                          parsed.prefix || null, parsed.firstName || null, parsed.middleName || null,
-                         parsed.lastName || null, parsed.suffix || null]
+                         parsed.lastName || null, parsed.suffix || null, imported]
                     );
                     if (result.affectedRows > 0) imported++; else skippedDuplicate++;
                 } catch { skippedDuplicate++; }
@@ -303,7 +552,7 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
 appsApiRouter.get('/contacts-duplicates', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE username = ?', [user]);
+        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL', [user]);
         const duplicates: any[][] = [];
         const seen = new Set<number>();
 
@@ -344,7 +593,7 @@ appsApiRouter.get('/contacts-merge-preview', async (req: Request, res: Response)
     const ids = (req.query.ids as string || '').split(',').map(Number).filter(Boolean);
     if (ids.length < 2) return res.status(400).json({ success: false, error: 'Need at least 2 contact IDs' });
     try {
-        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=?', [ids, user]);
+        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=? AND deleted_at IS NULL', [ids, user]);
         if (rows.length < 2) return res.status(404).json({ success: false, error: 'Contacts not found' });
         // Build field-by-field preview showing source of each value
         const fieldSources: Record<string, { value: any; fromId: number; fromName: string }> = {};
@@ -374,11 +623,11 @@ appsApiRouter.post('/contacts-merge', async (req: Request, res: Response) => {
     }
 
     try {
-        const [primaryRows]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=?', [primaryId, user]);
+        const [primaryRows]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL', [primaryId, user]);
         if (primaryRows.length === 0) return res.status(404).json({ success: false, error: 'Primary contact not found' });
         const primary = primaryRows[0];
         
-        const [dupRows]: any = await pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=?', [duplicateIds, user]);
+        const [dupRows]: any = await pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=? AND deleted_at IS NULL', [duplicateIds, user]);
         if (dupRows.length === 0) return res.json({ success: true });
         
         let emails = primary.emails_json ? (typeof primary.emails_json === 'string' ? JSON.parse(primary.emails_json) : primary.emails_json) : [];
@@ -491,8 +740,10 @@ appsApiRouter.get('/contact-groups', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
         const [groups]: any = await pool.query(
-            `SELECT g.*, COUNT(m.contact_id) as member_count
-             FROM contact_groups g LEFT JOIN contact_group_members m ON g.id = m.group_id
+            `SELECT g.*, COUNT(c.id) as member_count
+             FROM contact_groups g
+             LEFT JOIN contact_group_members m ON g.id = m.group_id
+             LEFT JOIN contacts c ON c.id = m.contact_id AND c.deleted_at IS NULL
              WHERE g.username = ? GROUP BY g.id ORDER BY g.name`,
             [user]
         );
@@ -549,7 +800,7 @@ appsApiRouter.get('/contact-groups/:id/members', async (req: Request, res: Respo
     try {
         const [rows]: any = await pool.query(
             `SELECT m.contact_id, c.name, c.email FROM contact_group_members m
-             JOIN contacts c ON c.id = m.contact_id
+             JOIN contacts c ON c.id = m.contact_id AND c.deleted_at IS NULL
              JOIN contact_groups g ON g.id = m.group_id
              WHERE m.group_id = ? AND g.username = ?`,
             [req.params.id, user]

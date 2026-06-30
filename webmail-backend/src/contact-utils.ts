@@ -158,6 +158,10 @@ export async function ensureContactsSchema(): Promise<void> {
                 }
             }
 
+            if (!columnNames.has('deleted_at')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN deleted_at TIMESTAMP NULL AFTER website_url');
+            }
+
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS contact_groups (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -438,7 +442,7 @@ export function contactEtag(contact: ContactRow): string {
 export async function listContacts(user: string): Promise<ContactRow[]> {
     await ensureContactsSchema();
     const [rows]: any = await pool.query(
-        'SELECT * FROM contacts WHERE username = ? ORDER BY is_favorite DESC, name ASC, email ASC, id ASC',
+        'SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL ORDER BY is_favorite DESC, name ASC, email ASC, id ASC',
         [user]
     );
     return rows;
@@ -447,7 +451,7 @@ export async function listContacts(user: string): Promise<ContactRow[]> {
 export async function getContactByDavUid(user: string, davUid: string): Promise<ContactRow | null> {
     await ensureContactsSchema();
     const [rows]: any = await pool.query(
-        'SELECT * FROM contacts WHERE username = ? AND dav_uid = ? ORDER BY id ASC LIMIT 1',
+        'SELECT * FROM contacts WHERE username = ? AND dav_uid = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1',
         [user, davUid]
     );
     return rows.length > 0 ? rows[0] : null;
@@ -492,7 +496,7 @@ export async function addressBookSyncToken(user: string): Promise<string> {
                 COALESCE(MAX(sync_token), 1) AS max_sync_token,
                 COALESCE(UNIX_TIMESTAMP(MAX(updated_at)), 1) AS max_updated_at
          FROM contacts
-         WHERE username = ?`,
+         WHERE username = ? AND deleted_at IS NULL`,
         [user]
     );
     const row = rows[0] || {};

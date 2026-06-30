@@ -1,14 +1,22 @@
-import { Users, Building2, Plus } from 'lucide-react';
+import { Users, Building2, Plus, ScanLine, Trash2 } from 'lucide-react';
 import type { useContacts } from './hooks/useContacts';
 
 export function ContactSidebar({ contacts: c }: { contacts: ReturnType<typeof useContacts> }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 12 }}>
-      <button className="btn btn-primary" style={{ width: '100%', marginBottom: 16 }}
-        onClick={() => c.setContactsView('personal')}>
-        <Plus size={16} /> New Contact
-      </button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <button className="btn btn-primary" style={{ flex: 1 }}
+          onClick={() => c.setContactsView('personal')}>
+          <Plus size={16} /> New
+        </button>
+        <button className="btn btn-ghost" style={{ padding: '6px 10px' }}
+          onClick={() => c.refreshDuplicates()}
+          disabled={c.isDedupLoading}
+          title="Find Duplicates">
+          <ScanLine size={16} />
+        </button>
+      </div>
 
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase',
@@ -55,7 +63,7 @@ export function ContactSidebar({ contacts: c }: { contacts: ReturnType<typeof us
         ))}
       </div>
 
-      <div>
+      <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase',
           color: 'var(--text-secondary)', marginBottom: 8, letterSpacing: '0.05em' }}>Groups</div>
         {c.contactGroups.map((group) => (
@@ -71,6 +79,25 @@ export function ContactSidebar({ contacts: c }: { contacts: ReturnType<typeof us
             )}
           </div>
         ))}
+      </div>
+
+      <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border-glass)' }}>
+        <div className="nav-item" style={{ display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 10px', borderRadius: 'var(--radius-md)', cursor: 'pointer',
+          background: c.contactsView === 'trash' ? 'rgba(239,68,68,0.12)' : 'transparent',
+          fontWeight: c.contactsView === 'trash' ? 600 : 400 }}
+          onClick={() => {
+            c.setContactsView('trash');
+            c.refreshTrash();
+          }}>
+          <Trash2 size={16} color={c.contactsView === 'trash' ? 'var(--danger)' : 'currentColor'} />
+          <span>Trash</span>
+          {c.trashContacts.length > 0 && (
+            <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+              {c.trashContacts.length}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

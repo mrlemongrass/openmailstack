@@ -846,6 +846,7 @@ function App() {
   const [contactGroups, setContactGroups] = useState<ContactGroup[]>([]);
   const [editingContactGroup, setEditingContactGroup] = useState<Partial<ContactGroup> | null>(null);
   const [groupMemberIds, setGroupMemberIds] = useState<Set<number>>(new Set());
+  const [selectedContactIds, setSelectedContactIds] = useState<Set<number>>(new Set());
   const [contactSearchQuery, setContactSearchQuery] = useState('');
   const [contactViewMode, setContactViewMode] = useState<'grid' | 'list'>('grid');
   const [mergePreviewData, setMergePreviewData] = useState<any>(null);
@@ -3223,6 +3224,43 @@ function App() {
     e.target.value = ''; // Reset input
   };
 
+  const toggleContactSelect = (id: number) => {
+    setSelectedContactIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllContacts = () => {
+    setSelectedContactIds(new Set(displayContacts.map(c => Number(c.id))));
+  };
+
+  const deselectAllContacts = () => {
+    setSelectedContactIds(new Set());
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedContactIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedContactIds.size} selected contacts?`)) return;
+    setContactsActionStatus(`Deleting ${selectedContactIds.size} contacts...`);
+    setContactsActionError('');
+    try {
+      const res = await fetch('/api/apps/contacts/bulk-delete', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ ids: Array.from(selectedContactIds) })
+      });
+      const d = await res.json();
+      if (!res.ok || !d.success) throw new Error(d.error || 'Delete failed');
+      setSelectedContactIds(new Set());
+      await refreshContacts();
+      setContactsActionStatus(`Deleted ${d.deleted} contacts.`);
+    } catch (err) {
+      setContactsActionError(err instanceof Error ? err.message : 'Bulk delete failed.');
+    }
+  };
+
   const handleToggleFavorite = async (contactId: number) => {
     try {
       const res = await fetch(`/api/apps/contacts/${contactId}/favorite`, { method: 'PUT', headers: getHeaders() });
@@ -5484,6 +5522,18 @@ function App() {
                           <button className={`btn ${contactViewMode === 'list' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 8px' }} onClick={() => setContactViewMode('list')} title="List view"><List size={16} /></button>
                         </div>
                       )}
+                      {contactsView === 'personal' && (
+                        <>
+                          <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={selectedContactIds.size > 0 ? deselectAllContacts : selectAllContacts}>
+                            {selectedContactIds.size > 0 ? `Deselect (${selectedContactIds.size})` : 'Select All'}
+                          </button>
+                          {selectedContactIds.size > 0 && (
+                            <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: '0.8rem', color: 'var(--accent-error)' }} onClick={handleBulkDelete}>
+                              <Trash2 size={14} /> Delete Selected ({selectedContactIds.size})
+                            </button>
+                          )}
+                        </>
+                      )}
                       <button className="btn btn-primary" onClick={() => { setEditingContact(null); setIsContactModalOpen(true); }} title="Create a new contact">
                         <UserPlus size={16} /> Add Contact
                       </button>
@@ -5546,13 +5596,20 @@ function App() {
                           boxShadow: '0 4px 20px rgba(0,0,0,0.1)', transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)'
                         }}>
                           {contactsView === 'personal' && (
-                            <button
-                              onClick={(ev) => { ev.stopPropagation(); handleToggleFavorite(Number(contact.id)); }}
-                              style={{ position: 'absolute', top: '8px', right: '8px', background: 'transparent', border: 'none', color: (contact as any).is_favorite ? '#f59e0b' : 'rgba(255,255,255,0.2)', cursor: 'pointer', padding: '4px', borderRadius: '4px', zIndex: 2 }}
-                              title={(contact as any).is_favorite ? 'Remove from favorites' : 'Add to favorites'}
-                            >
-                              <Star size={16} fill={(contact as any).is_favorite ? '#f59e0b' : 'none'} />
-                            </button>
+                            <>
+                              <input type="checkbox"
+                                checked={selectedContactIds.has(Number(contact.id))}
+                                onChange={(e) => { e.stopPropagation(); toggleContactSelect(Number(contact.id)); }}
+                                style={{ position: 'absolute', top: '8px', left: '8px', cursor: 'pointer', zIndex: 2, width: '16px', height: '16px', accentColor: 'var(--accent-primary)' }}
+                              />
+                              <button
+                                onClick={(ev) => { ev.stopPropagation(); handleToggleFavorite(Number(contact.id)); }}
+                                style={{ position: 'absolute', top: '8px', right: '8px', background: 'transparent', border: 'none', color: (contact as any).is_favorite ? '#f59e0b' : 'rgba(255,255,255,0.2)', cursor: 'pointer', padding: '4px', borderRadius: '4px', zIndex: 2 }}
+                                title={(contact as any).is_favorite ? 'Remove from favorites' : 'Add to favorites'}
+                              >
+                                <Star size={16} fill={(contact as any).is_favorite ? '#f59e0b' : 'none'} />
+                              </button>
+                            </>
                           )}
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
                             <div style={{

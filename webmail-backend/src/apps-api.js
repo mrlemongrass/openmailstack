@@ -159,6 +159,20 @@ exports.appsApiRouter.put('/contacts/:id/favorite', async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 });
+exports.appsApiRouter.post('/contacts/bulk-delete', async (req, res) => {
+    const user = req.username;
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0)
+        return res.status(400).json({ success: false, error: 'ids array required' });
+    try {
+        const placeholders = ids.map(() => '?').join(',');
+        const [result] = await db_1.pool.query(`DELETE FROM contacts WHERE id IN (${placeholders}) AND username = ?`, [...ids, user]);
+        res.json({ success: true, deleted: result.affectedRows });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 exports.appsApiRouter.delete('/contacts/:id', async (req, res) => {
     const user = req.username;
     try {

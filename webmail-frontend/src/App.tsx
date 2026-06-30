@@ -3196,7 +3196,7 @@ function App() {
               });
               const data = await response.json();
               if (response.ok && data.success) {
-                totalImported += data.count;
+                totalImported += data.imported || data.count || 0;
               }
             } catch {}
           }
@@ -3208,13 +3208,17 @@ function App() {
           });
           const data = await response.json();
           if (!response.ok || !data.success) throw new Error(data.error || 'Could not import contacts.');
-          totalImported = data.count;
+          totalImported = data.imported || data.count || 0;
         }
 
         await refreshContacts();
-        setContactsActionStatus(`Successfully imported ${totalImported} contacts.`);
-        if (format === 'vcard' && totalImported < vcardCount) {
-          setContactsActionError(`${vcardCount - totalImported} contacts were skipped (duplicates or missing name/email).`);
+        const totalAttempted = vcardCount || (text.split('\n').length - 1);
+        const skipped = totalAttempted - totalImported;
+        let statusMsg = `Successfully imported ${totalImported} contacts.`;
+        if (skipped > 0) statusMsg += ` ${skipped} skipped (duplicates or missing name/email).`;
+        setContactsActionStatus(statusMsg);
+        if (skipped > 0) {
+          setContactsActionError('');
         }
       } catch (err) {
         setContactsActionError(err instanceof Error ? err.message : 'Import failed.');

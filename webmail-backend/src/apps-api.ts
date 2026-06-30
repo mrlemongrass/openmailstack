@@ -232,6 +232,8 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
 
     try {
         let imported = 0;
+        let skippedNoFields = 0;
+        let skippedDuplicate = 0;
         if (format === 'csv') {
             const lines = data.split('\n');
             const headers = lines[0].toLowerCase().split(',').map((h: string) => h.trim().replace(/"/g, ''));
@@ -257,15 +259,14 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                 const organization = orgIdx >= 0 ? cols[orgIdx] || '' : '';
                 const notes = notesIdx >= 0 ? cols[notesIdx] || '' : '';
 
-                if (name || email) {
-                    try {
-                        await pool.query(
-                            'INSERT IGNORE INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                            [user, name, email, phone, jobTitle, organization, notes]
-                        );
-                        imported++;
-                    } catch {}
-                }
+                if (!name && !email) { skippedNoFields++; continue; }
+                try {
+                    const [result]: any = await pool.query(
+                        'INSERT IGNORE INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [user, name, email, phone, jobTitle, organization, notes]
+                    );
+                    if (result.affectedRows > 0) imported++; else skippedDuplicate++;
+                } catch { skippedDuplicate++; }
             }
         } else {
             // vCard import
@@ -273,28 +274,27 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
             for (const vcard of vcards) {
                 if (!vcard.trim().toUpperCase().startsWith('BEGIN:VCARD')) continue;
                 const parsed = parseVCard(vcard);
-                if (parsed.name || parsed.email) {
-                    const emailsJson = (parsed.emails && parsed.emails.length > 0) ? JSON.stringify(parsed.emails.map((e: string) => ({ value: e, label: 'Other' }))) : null;
-                    const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p: string) => ({ value: p, label: 'Other' }))) : null;
-                    try {
-                        await pool.query(
-                            `INSERT IGNORE INTO contacts
-                             (username, name, email, phone, job_title, organization, notes,
-                              emails_json, phones_json, vcard_data,
-                              prefix, first_name, middle_name, last_name, suffix)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                            [user, parsed.name || '', parsed.email || '', parsed.phone || '',
-                             parsed.title || '', parsed.organization || '', parsed.note || '',
-                             emailsJson, phonesJson, vcard,
-                             parsed.prefix || null, parsed.firstName || null, parsed.middleName || null,
-                             parsed.lastName || null, parsed.suffix || null]
-                        );
-                        imported++;
-                    } catch {}
-                }
+                if (!parsed.name && !parsed.email) { skippedNoFields++; continue; }
+                const emailsJson = (parsed.emails && parsed.emails.length > 0) ? JSON.stringify(parsed.emails.map((e: string) => ({ value: e, label: 'Other' }))) : null;
+                const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p: string) => ({ value: p, label: 'Other' }))) : null;
+                try {
+                    const [result]: any = await pool.query(
+                        `INSERT IGNORE INTO contacts
+                         (username, name, email, phone, job_title, organization, notes,
+                          emails_json, phones_json, vcard_data,
+                          prefix, first_name, middle_name, last_name, suffix)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [user, parsed.name || '', parsed.email || '', parsed.phone || '',
+                         parsed.title || '', parsed.organization || '', parsed.note || '',
+                         emailsJson, phonesJson, vcard,
+                         parsed.prefix || null, parsed.firstName || null, parsed.middleName || null,
+                         parsed.lastName || null, parsed.suffix || null]
+                    );
+                    if (result.affectedRows > 0) imported++; else skippedDuplicate++;
+                } catch { skippedDuplicate++; }
             }
         }
-        res.json({ success: true, count: imported });
+        res.json({ success: true, imported, skippedDuplicate, skippedNoFields, total: imported + skippedDuplicate + skippedNoFields });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }

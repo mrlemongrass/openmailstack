@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, BellOff } from 'lucide-react';
 import { format } from 'date-fns';
@@ -16,6 +16,17 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showRaw, setShowRaw] = useState(false);
   const [showSnooze, setShowSnooze] = useState(false);
   const [showMoveTo, setShowMoveTo] = useState(false);
+
+  // Fetch full message body when message is selected
+  useEffect(() => {
+    if (uid && folder) {
+      const messageUid = parseInt(uid, 10);
+      const msg = mail.messages.find((m) => m.uid === messageUid);
+      if (msg && !msg.html && !msg.text) {
+        mail.fetchMessageBody(messageUid, decodeURIComponent(folder));
+      }
+    }
+  }, [uid, folder]);
 
   if (!uid) {
     return (

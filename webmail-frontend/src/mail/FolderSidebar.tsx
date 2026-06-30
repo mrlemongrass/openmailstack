@@ -43,7 +43,6 @@ const ICON_MAP: Record<string, React.ComponentType<any>> = {
 export function FolderSidebar({
   folders, activeFolder, expandedFolders, onToggleExpand, onCompose, quota,
 }: FolderSidebarProps) {
-  const navigate = useNavigate();
   const tree = buildFolderTree(folders);
 
   return (
@@ -55,7 +54,6 @@ export function FolderSidebar({
         {tree.map((node) => (
           <FolderItem key={node.fullPath} node={node} activeFolder={activeFolder}
             expandedFolders={expandedFolders} onToggleExpand={onToggleExpand}
-            onClick={() => navigate(`/mail/${encodeURIComponent(node.fullPath)}`)}
             depth={0} />
         ))}
       </nav>
@@ -76,16 +74,21 @@ export function FolderSidebar({
   );
 }
 
-function FolderItem({ node, activeFolder, expandedFolders, onToggleExpand, onClick, depth }: {
+function FolderItem({ node, activeFolder, expandedFolders, onToggleExpand, depth }: {
   node: FolderTreeNode; activeFolder: string;
   expandedFolders: Record<string, boolean>;
   onToggleExpand: (path: string) => void;
-  onClick: () => void; depth: number;
+  depth: number;
 }) {
+  const navigate = useNavigate();
   const isExpanded = expandedFolders[node.fullPath];
   const hasChildren = Object.keys(node.children).length > 0;
   const IconComp = ICON_MAP[node.name] || FolderOpen;
   const isActive = activeFolder === node.fullPath;
+
+  const handleNavigate = () => {
+    navigate(`/mail/${encodeURIComponent(node.fullPath)}`);
+  };
 
   return (
     <div>
@@ -93,11 +96,20 @@ function FolderItem({ node, activeFolder, expandedFolders, onToggleExpand, onCli
         style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
           paddingLeft: 12 + depth * 16, borderRadius: 'var(--radius-md)', cursor: 'pointer',
           fontWeight: isActive ? 600 : 400, background: isActive ? 'rgba(59,130,246,0.15)' : 'transparent',
-          color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)', fontSize: '0.9rem' }}
-        onClick={() => { if (hasChildren) onToggleExpand(node.fullPath); onClick(); }}>
-        {hasChildren && <span style={{ fontSize: '0.7rem', width: 12 }}>{isExpanded ? '▼' : '▶'}</span>}
-        <IconComp size={16} />
-        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</span>
+          color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)', fontSize: '0.9rem' }}>
+        {hasChildren ? (
+          <span style={{ fontSize: '0.7rem', width: 12, cursor: 'pointer' }}
+            onClick={(e) => { e.stopPropagation(); onToggleExpand(node.fullPath); }}>
+            {isExpanded ? '▼' : '▶'}
+          </span>
+        ) : (
+          <span style={{ fontSize: '0.7rem', width: 12 }} />
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}
+          onClick={handleNavigate}>
+          <IconComp size={16} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</span>
+        </div>
         {node.unseen > 0 && (
           <span style={{ background: 'var(--accent-primary)', color: 'white', borderRadius: 999,
             padding: '1px 6px', fontSize: '0.7rem', fontWeight: 600 }}>{node.unseen}</span>
@@ -106,7 +118,7 @@ function FolderItem({ node, activeFolder, expandedFolders, onToggleExpand, onCli
       {isExpanded && hasChildren && Object.values(node.children).map((child: any) => (
         <FolderItem key={child.fullPath} node={child} activeFolder={activeFolder}
           expandedFolders={expandedFolders} onToggleExpand={onToggleExpand}
-          onClick={() => {}} depth={depth + 1} />
+          depth={depth + 1} />
       ))}
     </div>
   );

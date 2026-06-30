@@ -64,6 +64,26 @@ export function useMail(_opts: UseMailOptions) {
   const [draftSaveStatus, setDraftSaveStatus] = useState<'saving' | 'saved' | 'error' | null>(null);
   const [sending, setSending] = useState(false);
 
+  // Inline reply state
+  const [replyText, setReplyText] = useState('');
+  const [replySending, setReplySending] = useState(false);
+
+  const sendReply = useCallback(async (to: string, subject: string, inReplyTo: string, references: string) => {
+    setReplySending(true);
+    try {
+      const formData = new FormData();
+      formData.append('to', to);
+      formData.append('subject', subject.startsWith('Re:') ? subject : `Re: ${subject}`);
+      formData.append('body', replyText);
+      formData.append('inReplyTo', inReplyTo);
+      formData.append('references', references);
+      await api.sendMessage(formData);
+      setReplyText('');
+      return true;
+    } catch (e) { console.error('Reply failed', e); return false; }
+    finally { setReplySending(false); }
+  }, [replyText]);
+
   // Other mail state
   const [signatures, setSignatures] = useState<Signature[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
@@ -200,7 +220,7 @@ export function useMail(_opts: UseMailOptions) {
     composeMode, setComposeMode,
     draftUid, setDraftUid, draftId, setDraftId,
     draftSaveStatus, setDraftSaveStatus,
-    sending, setSending,
+    sending, setSending, replyText, setReplyText, replySending, sendReply,
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
     fetchFolders, fetchMessages, loadOlderMessages, refreshMessages,

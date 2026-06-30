@@ -2,6 +2,7 @@ import { useParams, useNavigate } from 'react-router';
 import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail } from 'lucide-react';
 import { format } from 'date-fns';
 import { AttachmentCard } from './components/AttachmentCard';
+import { InlineReply } from './components/InlineReply';
 import { Skeleton } from '../shared/components/Skeleton';
 import type { useMail } from './hooks/useMail';
 
@@ -81,6 +82,25 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           </div>
         )}
       </div>
+      <InlineReply
+        replyText={mail.replyText || ''}
+        replySending={(mail as any).replySending || false}
+        onReplyTextChange={mail.setReplyText || (() => {})}
+        onSend={() => {
+          if (message) {
+            const to = message.from?.match(/<(.+?)>/)?.at(1) || message.from;
+            (mail as any).sendReply?.(to, message.subject || '', message.messageId || '', (message.references || []).join(' '));
+          }
+        }}
+        onOpenFullCompose={() => {
+          if (message) {
+            mail.setComposeTo(message.from);
+            mail.setComposeSubject(`Re: ${message.subject}`);
+            mail.setComposeBody(mail.replyText || '');
+            mail.setIsComposing(true);
+          }
+        }}
+      />
     </div>
   );
 }

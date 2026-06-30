@@ -216,6 +216,8 @@ export interface CalendarEvent {
   recurrence?: string;
   recurrenceLabel?: string;
   rawIcal?: string;
+  guests?: string[];
+  attachments?: { name: string; size: number }[];
 }
 
 export interface Calendar {

@@ -1029,3 +1029,78 @@ appsApiRouter.delete('/events/:calendar_id/:uid', async (req: Request, res: Resp
         res.status(500).json({ success: false, error: e.message });
     }
 });
+
+// #2 Free/busy lookup
+appsApiRouter.get('/calendars/freebusy', async (req: Request, res: Response) => {
+    try {
+        const users = (req.query.users as string || '').split(',').filter(Boolean);
+        const start = new Date(req.query.start as string);
+        const end = new Date(req.query.end as string);
+        if (!users.length || isNaN(start.getTime()) || isNaN(end.getTime())) {
+            return res.status(400).json({ error: 'Missing users, start, or end' });
+        }
+        const busy: Record<string, { start: string; end: string }[]> = {};
+        for (const user of users) {
+            const [rows]: any = await pool.query(
+                `SELECT cal_events.ics_data FROM cal_events
+                 JOIN calendars ON cal_events.calendar_id = calendars.id
+                 WHERE calendars.owner = ? OR calendars.id IN
+                   (SELECT calendar_id FROM calendar_shares WHERE user_email = ?)`,
+                [user, user]
+            );
+            const userBusy: { start: string; end: string }[] = [];
+            for (const row of rows || []) {
+                try {
+                    const evt = parseIcalEvent('freebusy', row.ics_data);
+                    if (!evt) continue;
+                    if (row.ics_data.includes('TRANSP:TRANSPARENT')) continue;
+                    const eStart = new Date(evt.start);
+                    const eEnd = new Date(evt.end);
+                    if (eEnd > start && eStart < end) {
+                        userBusy.push({ start: eStart.toISOString(), end: eEnd.toISOString() });
+                    }
+                } catch (e) {}
+            }
+            busy[user] = userBusy;
+        }
+        res.json({ success: true, busy });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// #11 Birthdays calendar
+appsApiRouter.get('/calendars/birthdays', async (req: Request, res: Response) => {
+    try {
+        const username = (req as any).username;
+        const [contacts]: any = await pool.query(
+            `SELECT c.first_name, c.last_name, c.name, c.email, c.birthday
+             FROM contacts c
+             JOIN contact_owners co ON c.id = co.contact_id
+             WHERE co.username = ? AND c.birthday IS NOT NULL AND c.birthday != ''`,
+            [username]
+        );
+        const events: any[] = [];
+        for (const c of contacts || []) {
+            const name = c.first_name ? `${c.first_name || ''} ${c.last_name || ''}`.trim() : (c.name || c.email);
+            const parts = (c.birthday || '').split('-');
+            const month = parseInt(parts[1]);
+            const day = parseInt(parts[2]);
+            if (!month || !day) continue;
+            const eventDate = new Date(new Date().getFullYear(), month - 1, day);
+            events.push({
+                id: `bday-${c.email || c.name}`,
+                title: `🎂 ${name}'s Birthday`,
+                start: eventDate.toISOString(),
+                end: eventDate.toISOString(),
+                isAllDay: true,
+                recurrence: 'yearly',
+                calendarId: 'birthdays',
+                calendarColor: '#ec4899',
+            });
+        }
+        res.json({ success: true, events });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});

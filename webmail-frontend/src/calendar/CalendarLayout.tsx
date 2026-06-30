@@ -4,6 +4,7 @@ import { useCalendar } from './hooks/useCalendar';
 import { CalendarSidebar } from './CalendarSidebar';
 import { MonthView } from './views/MonthView';
 import { CalendarToolbar } from './CalendarToolbar';
+import { EventModal } from './EventModal';
 import { Skeleton } from '../shared/components/Skeleton';
 
 export function CalendarLayout() {
@@ -15,6 +16,7 @@ export function CalendarLayout() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <CalendarToolbar cal={cal} />
         {cal.isLoading ? <Skeleton count={12} height={60} /> : <MonthView cal={cal} />}
+        <EventModal cal={cal} />
       </div>
     );
   }
@@ -33,6 +35,7 @@ export function CalendarLayout() {
           </div>
         </Panel>
       </PanelGroup>
+      <EventModal cal={cal} />
     </div>
   );
 }

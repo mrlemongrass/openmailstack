@@ -969,4 +969,77 @@ exports.appsApiRouter.delete('/events/:calendar_id/:uid', async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 });
+// #2 Free/busy lookup
+exports.appsApiRouter.get('/calendars/freebusy', async (req, res) => {
+    try {
+        const users = (req.query.users || '').split(',').filter(Boolean);
+        const start = new Date(req.query.start);
+        const end = new Date(req.query.end);
+        if (!users.length || isNaN(start.getTime()) || isNaN(end.getTime())) {
+            return res.status(400).json({ error: 'Missing users, start, or end' });
+        }
+        const busy = {};
+        for (const user of users) {
+            const [rows] = await db_1.pool.query(`SELECT cal_events.ics_data FROM cal_events
+                 JOIN calendars ON cal_events.calendar_id = calendars.id
+                 WHERE calendars.owner = ? OR calendars.id IN
+                   (SELECT calendar_id FROM calendar_shares WHERE user_email = ?)`, [user, user]);
+            const userBusy = [];
+            for (const row of rows || []) {
+                try {
+                    const evt = (0, calendar_utils_1.parseIcalEvent)('freebusy', row.ics_data);
+                    if (!evt)
+                        continue;
+                    if (row.ics_data.includes('TRANSP:TRANSPARENT'))
+                        continue;
+                    const eStart = new Date(evt.start);
+                    const eEnd = new Date(evt.end);
+                    if (eEnd > start && eStart < end) {
+                        userBusy.push({ start: eStart.toISOString(), end: eEnd.toISOString() });
+                    }
+                }
+                catch (e) { }
+            }
+            busy[user] = userBusy;
+        }
+        res.json({ success: true, busy });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+// #11 Birthdays calendar
+exports.appsApiRouter.get('/calendars/birthdays', async (req, res) => {
+    try {
+        const username = req.username;
+        const [contacts] = await db_1.pool.query(`SELECT c.first_name, c.last_name, c.name, c.email, c.birthday
+             FROM contacts c
+             JOIN contact_owners co ON c.id = co.contact_id
+             WHERE co.username = ? AND c.birthday IS NOT NULL AND c.birthday != ''`, [username]);
+        const events = [];
+        for (const c of contacts || []) {
+            const name = c.first_name ? `${c.first_name || ''} ${c.last_name || ''}`.trim() : (c.name || c.email);
+            const parts = (c.birthday || '').split('-');
+            const month = parseInt(parts[1]);
+            const day = parseInt(parts[2]);
+            if (!month || !day)
+                continue;
+            const eventDate = new Date(new Date().getFullYear(), month - 1, day);
+            events.push({
+                id: `bday-${c.email || c.name}`,
+                title: `🎂 ${name}'s Birthday`,
+                start: eventDate.toISOString(),
+                end: eventDate.toISOString(),
+                isAllDay: true,
+                recurrence: 'yearly',
+                calendarId: 'birthdays',
+                calendarColor: '#ec4899',
+            });
+        }
+        res.json({ success: true, events });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 //# sourceMappingURL=apps-api.js.map

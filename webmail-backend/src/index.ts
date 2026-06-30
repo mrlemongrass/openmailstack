@@ -73,7 +73,12 @@ app.use(bodyParser.raw({
 }));
 
 import * as path from 'path';
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+import { requireSession } from './auth';
+app.use('/uploads', (req, res, next) => {
+    requireSession(req, res, () => {
+        next();
+    });
+}, express.static(path.join(__dirname, '..', 'uploads')));
 
 import caldavRouter from './caldav';
 import carddavRouter from './carddav';

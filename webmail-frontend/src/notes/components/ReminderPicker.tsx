@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Clock, X } from 'lucide-react';
 import { fetchNoteReminder, saveNoteReminder, deleteNoteReminder } from '../../shared/api';
 
@@ -11,11 +11,15 @@ export function ReminderPicker({ noteId }: ReminderPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  const abortedRef = useRef(false);
+
   useEffect(() => {
     if (!noteId || noteId === 'new') return;
+    abortedRef.current = false;
     fetchNoteReminder(noteId).then((r) => {
-      if (r) setRemindAt(r.remind_at);
-    }).catch(() => {});
+      if (!abortedRef.current && r) setRemindAt(r.remind_at);
+    }).catch((e) => { console.error('Failed to fetch reminder', e); });
+    return () => { abortedRef.current = true; };
   }, [noteId]);
 
   const handleSet = useCallback(async (datetime: string) => {

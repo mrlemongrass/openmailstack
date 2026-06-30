@@ -1,8 +1,8 @@
 import Quill from 'react-quill-new';
 
-const Inline = Quill.import('blots/inline') as any;
+const Block = Quill.import('blots/block') as any;
 
-class ChecklistBlot extends Inline {
+class ChecklistBlot extends Block {
   static blotName = 'checklist-item';
   static tagName = 'li';
   static className = 'ql-checklist-item';
@@ -15,6 +15,16 @@ class ChecklistBlot extends Inline {
     checkbox.className = 'ql-checkbox';
     checkbox.contentEditable = 'false';
     checkbox.innerHTML = value ? '✓' : '';
+    // Click handler to toggle checked state
+    checkbox.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const blot = Quill.find(node);
+      if (blot) {
+        const current = node.getAttribute('data-checked') === 'true';
+        blot.format('checklist-item', !current);
+      }
+    });
     node.insertBefore(checkbox, node.firstChild);
     return node;
   }

@@ -47,7 +47,6 @@ export declare function ensureAttachmentsSchema(): Promise<void>;
 export declare function listNoteAttachments(noteId: string, owner: string): Promise<NoteAttachmentRow[]>;
 export declare function saveNoteAttachment(attachment: NoteAttachmentRow, owner: string): Promise<void>;
 export declare function deleteNoteAttachment(attachmentId: string, owner: string): Promise<NoteAttachmentRow | null>;
-export declare function ensureAllNotesSchemas(): Promise<void>;
 export declare function listNotesWithReminders(owner: string): Promise<(NoteRow & {
     remind_at: string | null;
 })[]>;

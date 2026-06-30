@@ -23,10 +23,15 @@ export function AttachmentList({ noteId }: AttachmentListProps) {
   const uploading = uploadingCount > 0;
   const [isDragOver, setIsDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const abortedRef = useRef(false);
 
   useEffect(() => {
     if (!noteId || noteId === 'new') return;
-    fetchNoteAttachments(noteId).then(setAttachments).catch((e) => { console.error('Failed to fetch attachments', e); });
+    abortedRef.current = false;
+    fetchNoteAttachments(noteId).then((data) => {
+      if (!abortedRef.current) setAttachments(data);
+    }).catch((e) => { console.error('Failed to fetch attachments', e); });
+    return () => { abortedRef.current = true; };
   }, [noteId]);
 
   const handleUpload = useCallback(async (file: File) => {

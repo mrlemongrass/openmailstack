@@ -17,7 +17,6 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
   if (!n.isNoteModalOpen) return null;
 
   const note = n.editingNote;
-  const isNew = !note.id;
 
   const handleClose = useCallback(() => {
     n.setIsNoteModalOpen(false);
@@ -33,20 +32,30 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     n.setEditingNote((prev: any) => ({ ...prev, content }));
     // Auto-save debounced
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    // Capture values at call time to avoid stale closure over n.editingNote
+    const noteId = n.editingNote.id;
+    const title = titleRef.current?.value || '';
+    const color = n.editingNote.color;
+    const isPinned = n.editingNote.is_pinned;
+    const isLocked = n.editingNote.is_locked;
+    const folder = n.editingNote.folder;
+    const labelsJson = n.editingNote.labels_json;
     saveTimerRef.current = setTimeout(async () => {
-      if (n.editingNote.title || n.editingNote.content) {
+      if (title || content) {
         try {
-          await saveNote({
-            id: n.editingNote.id,
-            title: n.editingNote.title || 'Untitled',
-            content: n.editingNote.content || '',
-            color: n.editingNote.color,
-            is_pinned: n.editingNote.is_pinned,
-            is_locked: n.editingNote.is_locked,
-            folder: n.editingNote.folder || 'notes',
-            labels_json: n.editingNote.labels_json || '[]',
+          const saved = await saveNote({
+            id: noteId,
+            title: title || 'Untitled',
+            content: content || '',
+            color,
+            is_pinned: isPinned,
+            is_locked: isLocked,
+            folder: folder || 'notes',
+            labels_json: labelsJson || '[]',
           } as any);
-          if (isNew) {
+          // For new notes, update editingNote.id with the returned saved.id
+          if (!noteId && saved?.id) {
+            n.setEditingNote((prev: any) => ({ ...prev, id: saved.id }));
             n.fetchNotes();
           }
         } catch (e) {
@@ -65,10 +74,10 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
 
   // Focus title on new note
   useEffect(() => {
-    if (isNew && titleRef.current) {
+    if (!note.id && titleRef.current) {
       titleRef.current.focus();
     }
-  }, [isNew]);
+  }, [note.id]);
 
   return (
     <div className="note-modal-overlay" onClick={(e) => {

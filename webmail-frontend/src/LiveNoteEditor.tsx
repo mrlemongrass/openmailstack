@@ -49,15 +49,22 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
 
     const binding = new QuillBinding(ytext, editor, provider.awareness);
 
-    if (initialContent && ytext.length === 0) {
-      editor.clipboard.dangerouslyPasteHTML(initialContent);
-    }
+    // Short debounce to allow CRDT sync before checking for initial content
+    setTimeout(() => {
+      if (initialContent && ytext.length === 0) {
+        // Use dangerouslyPasteHTML for table support — Quill's native insertText
+        // does not handle complex HTML structures like tables.
+        editor.clipboard.dangerouslyPasteHTML(initialContent);
+      }
+    }, 200);
 
-    editor.on('text-change', () => {
+    const handleTextChange = () => {
       onChange(editor.root.innerHTML);
-    });
+    };
+    editor.on('text-change', handleTextChange);
 
     return () => {
+      editor.off('text-change', handleTextChange);
       binding.destroy();
       provider.destroy();
       ydoc.destroy();
@@ -109,7 +116,7 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
     const editor = quillRef.current?.getEditor();
     if (!editor) return;
     const range = editor.getSelection(true);
-    editor.formatText(range.index, range.length, 'code-block', 'plaintext');
+    editor.formatText(range.index, range.length, 'syntax-code-block', 'plaintext');
   }, []);
 
   const modules = React.useMemo(() => ({
@@ -119,13 +126,13 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
         [{ 'header': [1, 2, 3, false] }],
         ['bold', 'italic', 'underline', 'strike', 'blockquote'],
         [{ 'list': 'checklist' }, { 'list': 'ordered' }, { 'list': 'bullet' }, { 'indent': '-1' }, { 'indent': '+1' }],
-        ['code-block', 'link', 'image'],
+        ['syntax-code-block', 'link', 'image'],
         ['table', 'clean']
       ],
       handlers: {
         'image': handleImageUpload,
         'table': handleInsertTable,
-        'code-block': handleCodeBlock,
+        'syntax-code-block': handleCodeBlock,
         'undo': () => quillRef.current?.getEditor()?.history?.undo(),
         'redo': () => quillRef.current?.getEditor()?.history?.redo(),
       },
@@ -135,14 +142,16 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
         handleEnterOnChecklist: {
           key: 'Enter',
           format: { list: 'checklist' },
-          handler: function(this: any, range: any, context: any) {
-            const [line] = this.quill.getLine(range.index);
+          handler: (range: any, _context: any) => {
+            const editor = quillRef.current?.getEditor();
+            if (!editor) return false;
+            const [line] = editor.getLine(range.index);
             const text = line.domNode.textContent?.trim();
             if (!text || text === '✓') {
-              this.quill.format('list', false);
+              editor.format('list', false);
               return false;
             }
-            this.quill.format('list', 'checklist');
+            editor.format('list', 'checklist');
             return false;
           },
         },

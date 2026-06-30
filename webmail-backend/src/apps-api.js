@@ -937,14 +937,16 @@ if (!fs.existsSync(notesUploadDir)) {
 }
 const notesImageUpload = (0, multer_1.default)({
     storage: multer_1.default.diskStorage({
-        destination: notesUploadDir,
-        filename: (_req, file, cb) => {
+        destination: (_req, _file, cb) => {
             const user = _req.username || 'unknown';
             const userDir = path.join(notesUploadDir, user);
             if (!fs.existsSync(userDir))
                 fs.mkdirSync(userDir, { recursive: true });
-            const ext = path.extname(file.originalname) || '.png';
-            cb(null, path.join(user, `${crypto.randomUUID()}${ext}`));
+            cb(null, userDir);
+        },
+        filename: (_req, file, cb) => {
+            const uniqueName = `${crypto.randomUUID()}${path.extname(file.originalname) || '.png'}`;
+            cb(null, uniqueName);
         }
     }),
     limits: { fileSize: 5 * 1024 * 1024 },
@@ -963,7 +965,8 @@ exports.appsApiRouter.post('/notes/upload', notesImageUpload.single('file'), asy
         res.status(400).json({ success: false, error: 'No file uploaded' });
         return;
     }
-    const url = `/uploads/notes/${req.file.filename}`;
+    const user = req.username || 'unknown';
+    const url = `/uploads/notes/${user}/${req.file.filename}`;
     res.json({ success: true, url });
 });
 // ---- Notes: Reminders ----
@@ -985,6 +988,10 @@ exports.appsApiRouter.get('/notes/:id/reminder', async (req, res) => {
 exports.appsApiRouter.post('/notes/:id/reminder', async (req, res) => {
     const user = req.username;
     try {
+        if (!req.body.remind_at) {
+            res.status(400).json({ success: false, error: 'remind_at is required' });
+            return;
+        }
         await (0, notes_utils_2.saveNoteReminder)(req.params.id, req.body.remind_at, user);
         res.json({ success: true });
     }
@@ -1024,7 +1031,11 @@ exports.appsApiRouter.get('/notes/:id/attachments', async (req, res) => {
     const user = req.username;
     try {
         const attachments = await (0, notes_utils_3.listNoteAttachments)(req.params.id, user);
-        res.json({ success: true, attachments });
+        const attachmentsWithUrl = attachments.map((att) => ({
+            ...att,
+            url: `/uploads/${att.storage_path}`,
+        }));
+        res.json({ success: true, attachments: attachmentsWithUrl });
     }
     catch (e) {
         res.status(500).json({ success: false, error: e.message });
@@ -1051,6 +1062,16 @@ exports.appsApiRouter.post('/notes/:id/attachments', attachmentsUpload.single('f
         res.json({ success: true, attachment });
     }
     catch (e) {
+        // Clean up uploaded file on DB error to avoid orphaned files
+        try {
+            if (req.file) {
+                const filePath = path.join(notesUploadDir, user, req.file.filename);
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                }
+            }
+        }
+        catch { } // Best-effort cleanup
         res.status(500).json({ success: false, error: e.message });
     }
 });
@@ -1432,5 +1453,14 @@ exports.appsApiRouter.get('/calendars/birthdays', async (req, res) => {
     catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
+});
+// Multer error handler — catches MulterError and returns JSON instead of HTML
+exports.appsApiRouter.use((err, _req, res, _next) => {
+    if (err && err.code && err.message) {
+        // MulterError has a code field (e.g. 'LIMIT_FILE_SIZE', 'LIMIT_UNEXPECTED_FILE')
+        res.status(400).json({ success: false, error: err.message });
+        return;
+    }
+    res.status(500).json({ success: false, error: 'Internal server error' });
 });
 //# sourceMappingURL=apps-api.js.map

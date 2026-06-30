@@ -118,6 +118,28 @@ export async function saveNote(note: Partial<NoteRow> & { owner: string, imap_ui
 
 export async function deleteNote(id: string, owner: string): Promise<void> {
     await pool.query('UPDATE notes SET is_deleted = 1, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner = ?', [id, owner]);
+    // Clean up associated reminders and attachments
+    try {
+        await pool.query('DELETE FROM note_reminders WHERE note_id = ?', [id]);
+        // Delete attachment files from disk before removing DB records
+        const [attachments]: any = await pool.query(
+            `SELECT a.storage_path FROM note_attachments a
+             JOIN notes n ON n.id = a.note_id
+             WHERE a.note_id = ? AND n.owner = ?`,
+            [id, owner]
+        );
+        if (attachments && attachments.length > 0) {
+            const path = require('path');
+            const fs = require('fs');
+            for (const att of attachments) {
+                try {
+                    const filePath = path.join(__dirname, '..', 'uploads', att.storage_path);
+                    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                } catch {}
+            }
+        }
+        await pool.query('DELETE a FROM note_attachments a JOIN notes n ON n.id = a.note_id WHERE a.note_id = ? AND n.owner = ?', [id, owner]);
+    } catch {}
     try {
         const { io } = require('./index');
         io.to(owner).emit('note_deleted', { noteId: id });
@@ -239,7 +261,7 @@ export async function deleteNoteAttachment(attachmentId: string, owner: string):
 
 // ---- Schema migration helper ----
 
-export async function ensureAllNotesSchemas(): Promise<void> {
+async function ensureAllNotesSchemas(): Promise<void> {
     await ensureNotesSchema();
     await ensureRemindersSchema();
     await ensureAttachmentsSchema();

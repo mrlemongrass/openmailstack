@@ -316,6 +316,7 @@ export async function unshareCalendar(calendarId: number, email: string): Promis
 // ---- Notes ----
 export async function fetchNotesApi(): Promise<Note[]> {
   const res = await fetch(`/api/notes?t=${Date.now()}`);
+  if (!res.ok) throw new Error('Failed to fetch notes');
   const data = await res.json();
   return data.notes || [];
 }
@@ -328,12 +329,14 @@ export async function saveNote(note: Partial<Note>): Promise<Note> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(note),
   });
+  if (!res.ok) throw new Error('Failed to save note');
   const data = await res.json();
   return data.note;
 }
 
 export async function deleteNoteApi(id: string): Promise<void> {
-  await fetch(`/api/notes/${id}`, { method: 'DELETE' });
+  const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete note');
 }
 
 // ---- Notes: Image upload ----
@@ -357,15 +360,17 @@ export async function fetchNoteReminder(noteId: string): Promise<{ remind_at: st
 }
 
 export async function saveNoteReminder(noteId: string, remindAt: string): Promise<void> {
-  await fetch(`/api/notes/${noteId}/reminder`, {
+  const res = await fetch(`/api/notes/${noteId}/reminder`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ remind_at: remindAt }),
   });
+  if (!res.ok) throw new Error('Failed to save reminder');
 }
 
 export async function deleteNoteReminder(noteId: string): Promise<void> {
-  await fetch(`/api/notes/${noteId}/reminder`, { method: 'DELETE' });
+  const res = await fetch(`/api/notes/${noteId}/reminder`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete reminder');
 }
 
 // ---- Notes: Attachments ----
@@ -386,7 +391,8 @@ export async function uploadNoteAttachment(noteId: string, file: File): Promise<
 }
 
 export async function deleteNoteAttachment(noteId: string, attachmentId: string): Promise<void> {
-  await fetch(`/api/notes/${noteId}/attachments/${attachmentId}`, { method: 'DELETE' });
+  const res = await fetch(`/api/notes/${noteId}/attachments/${attachmentId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete attachment');
 }
 
 // ---- Settings ----

@@ -6,12 +6,17 @@ import type { Note } from '../shared/types';
 
 export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNotes> }) {
   const filtered = n.notes.filter((note) => {
-    if (n.notesView === 'pinned') return note.is_pinned;
-    if (n.notesView === 'locked') return note.is_locked;
-    if (n.notesView === 'archive') return note.folder === 'archive';
-    if (n.notesView === 'trash') return note.folder === 'trash';
-    if (n.notesView === 'notes') return note.folder !== 'trash' && note.folder !== 'archive';
-    if (n.notesLabels.includes(n.notesView)) {
+    if (n.notesView === 'pinned') {
+      return note.is_pinned;
+    } else if (n.notesView === 'locked') {
+      return note.is_locked;
+    } else if (n.notesView === 'archive') {
+      return note.folder === 'archive';
+    } else if (n.notesView === 'trash') {
+      return note.folder === 'trash';
+    } else if (n.notesView === 'notes') {
+      return note.folder !== 'trash' && note.folder !== 'archive';
+    } else if (n.notesLabels.includes(n.notesView)) {
       try { return JSON.parse(note.labels_json || '[]').includes(n.notesView); } catch { return false; }
     }
     return true;
@@ -25,11 +30,11 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
     if (!a.is_pinned && b.is_pinned) return 1;
     // Then apply selected sort
     switch (n.notesSort) {
-      case 'created': return new Date(b.created_at || '').getTime() - new Date(a.created_at || '').getTime();
+      case 'created': return new Date(b.created_at || '1970-01-01').getTime() - new Date(a.created_at || '1970-01-01').getTime();
       case 'title_asc': return (a.title || '').localeCompare(b.title || '');
       case 'title_desc': return (b.title || '').localeCompare(a.title || '');
       case 'updated':
-      default: return new Date(b.updated_at || '').getTime() - new Date(a.updated_at || '').getTime();
+      default: return new Date(b.updated_at || '1970-01-01').getTime() - new Date(a.updated_at || '1970-01-01').getTime();
     }
   });
 
@@ -61,7 +66,7 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
 }
 
 function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
-  try { note.labels_json = note.labels_json || '[]'; } catch { note.labels_json = '[]'; }
+  note.labels_json = note.labels_json || '[]';
   let labels: string[] = [];
   try { labels = JSON.parse(note.labels_json); } catch { labels = []; }
 

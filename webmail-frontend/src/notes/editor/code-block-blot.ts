@@ -3,9 +3,9 @@ import Quill from 'react-quill-new';
 const Block = Quill.import('blots/block') as any;
 
 class CodeBlockBlot extends Block {
-  static blotName = 'code-block';
+  static blotName = 'syntax-code-block';
   static tagName = 'pre';
-  static className = 'ql-code-block-container';
+  static className = 'ql-syntax-code-block-container';
 
   static create(value: any) {
     const node = super.create(value);
@@ -24,7 +24,7 @@ class CodeBlockBlot extends Block {
   }
 
   format(name: string, value: any): void {
-    if (name === 'code-block') {
+    if (name === 'syntax-code-block') {
       this.domNode.setAttribute('data-language', value || '');
       const code = this.domNode.querySelector('code');
       if (code) {

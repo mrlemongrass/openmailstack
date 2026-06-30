@@ -99,7 +99,12 @@ app.use(body_parser_1.default.raw({
     limit: `${config_1.serverConfig.uploadLimitBytes}b`
 }));
 const path = __importStar(require("path"));
-app.use('/uploads', express_1.default.static(path.join(__dirname, '..', 'uploads')));
+const auth_1 = require("./auth");
+app.use('/uploads', (req, res, next) => {
+    (0, auth_1.requireSession)(req, res, () => {
+        next();
+    });
+}, express_1.default.static(path.join(__dirname, '..', 'uploads')));
 const caldav_1 = __importDefault(require("./caldav"));
 const carddav_1 = __importDefault(require("./carddav"));
 const apps_api_1 = require("./apps-api");

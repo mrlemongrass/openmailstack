@@ -983,13 +983,15 @@ if (!fs.existsSync(notesUploadDir)) {
 
 const notesImageUpload = multer({
     storage: multer.diskStorage({
-        destination: notesUploadDir,
-        filename: (_req, file, cb) => {
+        destination: (_req, _file, cb) => {
             const user = (_req as any).username || 'unknown';
             const userDir = path.join(notesUploadDir, user);
             if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
-            const ext = path.extname(file.originalname) || '.png';
-            cb(null, path.join(user, `${crypto.randomUUID()}${ext}`));
+            cb(null, userDir);
+        },
+        filename: (_req, file, cb) => {
+            const uniqueName = `${crypto.randomUUID()}${path.extname(file.originalname) || '.png'}`;
+            cb(null, uniqueName);
         }
     }),
     limits: { fileSize: 5 * 1024 * 1024 },
@@ -1008,7 +1010,8 @@ appsApiRouter.post('/notes/upload', notesImageUpload.single('file'), async (req:
         res.status(400).json({ success: false, error: 'No file uploaded' });
         return;
     }
-    const url = `/uploads/notes/${(req.file as any).filename}`;
+    const user = (req as any).username || 'unknown';
+    const url = `/uploads/notes/${user}/${(req.file as any).filename}`;
     res.json({ success: true, url });
 });
 
@@ -1032,6 +1035,10 @@ appsApiRouter.get('/notes/:id/reminder', async (req: Request, res: Response) => 
 appsApiRouter.post('/notes/:id/reminder', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
+        if (!req.body.remind_at) {
+            res.status(400).json({ success: false, error: 'remind_at is required' });
+            return;
+        }
         await saveNoteReminder(req.params.id as string, req.body.remind_at, user);
         res.json({ success: true });
     } catch (e: any) {
@@ -1072,7 +1079,11 @@ appsApiRouter.get('/notes/:id/attachments', async (req: Request, res: Response) 
     const user = (req as any).username;
     try {
         const attachments = await listNoteAttachments(req.params.id as string, user);
-        res.json({ success: true, attachments });
+        const attachmentsWithUrl = attachments.map((att: any) => ({
+            ...att,
+            url: `/uploads/${att.storage_path}`,
+        }));
+        res.json({ success: true, attachments: attachmentsWithUrl });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -1098,6 +1109,15 @@ appsApiRouter.post('/notes/:id/attachments', attachmentsUpload.single('file'), a
         await saveNoteAttachment(attachment as any, user);
         res.json({ success: true, attachment });
     } catch (e: any) {
+        // Clean up uploaded file on DB error to avoid orphaned files
+        try {
+            if (req.file) {
+                const filePath = path.join(notesUploadDir, user, (req.file as any).filename);
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                }
+            }
+        } catch {} // Best-effort cleanup
         res.status(500).json({ success: false, error: e.message });
     }
 });
@@ -1505,4 +1525,14 @@ appsApiRouter.get('/calendars/birthdays', async (req: Request, res: Response) =>
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
+});
+
+// Multer error handler — catches MulterError and returns JSON instead of HTML
+appsApiRouter.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    if (err && err.code && err.message) {
+        // MulterError has a code field (e.g. 'LIMIT_FILE_SIZE', 'LIMIT_UNEXPECTED_FILE')
+        res.status(400).json({ success: false, error: err.message });
+        return;
+    }
+    res.status(500).json({ success: false, error: 'Internal server error' });
 });

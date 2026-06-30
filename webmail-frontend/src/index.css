@@ -1286,3 +1286,31 @@ li[data-checked="true"] .ql-checkbox {
 .ql-editor li.ql-checklist-item::before {
   display: none;
 }
+
+/* ---- Code Block ---- */
+.ql-code-block-container {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin: 8px 0;
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ql-code-block-container code {
+  font-family: inherit;
+  font-size: inherit;
+  background: none;
+  padding: 0;
+}
+
+/* Code block in editor (bubble theme) */
+.ql-bubble .ql-code-block-container {
+  background: #1e1e1e;
+  color: #d4d4d4;
+}

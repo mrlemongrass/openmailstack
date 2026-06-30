@@ -5473,6 +5473,7 @@ function App() {
                       <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.85rem' }} onClick={() => setIsDuplicateModalOpen(true)}>Review & Merge</button>
                     </div>
                   )}
+                  {contactViewMode === 'grid' && (
                   <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${contactDensity.minCardWidth}px, 1fr))`, gap: `${contactDensity.gap}px`, overflowY: 'auto', padding: '4px' }}>
                     {displayContacts.length === 0 ? (
                       <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '60px 40px', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px dashed rgba(255,255,255,0.1)' }}>
@@ -5559,6 +5560,16 @@ function App() {
                           )}
                           
                           <div className="contact-card-actions" style={{ position: 'absolute', top: '16px', right: '16px', display: 'flex', gap: '4px', background: 'var(--bg-panel)', borderRadius: '8px', padding: '2px', boxShadow: '0 2px 8px rgba(0,0,0,0.2)', opacity: 0, transition: 'opacity 0.2s', border: '1px solid rgba(255,255,255,0.1)' }}>
+                            {contact.email && (
+                              <a href={`mailto:${contact.email}`} className="btn btn-ghost" style={{ padding: '6px', textDecoration: 'none', color: 'inherit' }} title="Send Email" onClick={e => e.stopPropagation()}>
+                                <Mail size={14} />
+                              </a>
+                            )}
+                            {contact.phone && (
+                              <a href={`tel:${contact.phone.replace(/[^0-9+]/g, '')}`} className="btn btn-ghost" style={{ padding: '6px', textDecoration: 'none', color: 'inherit' }} title="Call" onClick={e => e.stopPropagation()}>
+                                <Phone size={14} />
+                              </a>
+                            )}
                             {contactsView === 'directory' && (
                               <button className="btn btn-ghost" style={{ padding: '6px' }} onClick={() => handleAddDirectoryContact(contact)} title="Save to Personal Contacts">
                                 <UserPlus size={14} />
@@ -5579,6 +5590,79 @@ function App() {
                       ))
                     )}
                   </div>
+                  )}
+                  {contactViewMode === 'list' && (
+                    <div style={{ overflowY: 'auto', flex: 1 }}>
+                      {displayContacts.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '60px 40px', color: 'var(--text-secondary)' }}>
+                          No contacts found.
+                        </div>
+                      ) : (
+                        displayContacts.map((contact, index) => (
+                          <div key={contact.id || contact.email || index}
+                            className="contact-list-row"
+                            onDoubleClick={() => { if (contactsView === 'personal') { setEditingContact(contact); setIsContactModalOpen(true); } }}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: '16px', padding: `${contactDensity.cardPadding * 0.5}px ${contactDensity.cardPadding}px`,
+                              borderBottom: '1px solid rgba(255,255,255,0.04)', cursor: 'pointer',
+                              transition: 'background 0.15s'
+                            }}>
+                            <div style={{
+                              width: '36px', height: '36px', borderRadius: '50%',
+                              background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, #3b82f6) 100%)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontWeight: 'bold', fontSize: '0.9rem', flexShrink: 0
+                            }}>
+                              {(contact as any).photo_url ? (
+                                <img src={(contact as any).photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+                              ) : (
+                                contact.displayName !== 'Unknown Name' ? contact.displayName.charAt(0).toUpperCase() : contact.email.charAt(0).toUpperCase()
+                              )}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '0.95rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {contactsView === 'personal' && (contact as any).is_favorite ? '★ ' : ''}{contact.displayName}
+                              </div>
+                              <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{contact.email}</div>
+                            </div>
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', whiteSpace: 'nowrap', minWidth: '120px', textAlign: 'right' }}>{contact.phone || ''}</div>
+                            {contactsView === 'personal' && (
+                              <div style={{ display: 'flex', gap: '4px', opacity: 0.4 }} className="list-row-actions">
+                                <button className="btn btn-ghost" style={{ padding: '4px' }} onClick={(ev) => { ev.stopPropagation(); handleToggleFavorite(Number(contact.id)); }}>
+                                  <Star size={14} fill={(contact as any).is_favorite ? '#f59e0b' : 'none'} color={(contact as any).is_favorite ? '#f59e0b' : undefined} />
+                                </button>
+                                <button className="btn btn-ghost" style={{ padding: '4px' }} onClick={(ev) => { ev.stopPropagation(); setEditingContact(contact); setIsContactModalOpen(true); }}>
+                                  <Edit2 size={14} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                  {/* Alphabet scrubber */}
+                  {contactsView === 'personal' && contactViewMode === 'grid' && displayContacts.length > 10 && (
+                    <div style={{ position: 'absolute', right: '4px', top: '120px', bottom: '40px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '1px', zIndex: 5, fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-secondary)' }}>
+                      {'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(letter => {
+                        const hasContact = displayContacts.some(c => (c.displayName || c.name || 'A').charAt(0).toUpperCase() === letter);
+                        return (
+                          <button key={letter}
+                            onClick={() => {
+                              const el = document.querySelector(`[data-letter="${letter}"]`);
+                              el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }}
+                            style={{
+                              background: 'transparent', border: 'none', cursor: hasContact ? 'pointer' : 'default',
+                              color: hasContact ? 'var(--accent-primary)' : 'rgba(255,255,255,0.1)',
+                              padding: '1px 4px', lineHeight: 1
+                            }}>
+                            {letter}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </Panel>
             </PanelGroup>

@@ -19,6 +19,16 @@ export interface ContactRow {
     notes?: string;
     labels_json?: any;
     photo_url?: string;
+    is_favorite?: number;
+    prefix?: string;
+    first_name?: string;
+    middle_name?: string;
+    last_name?: string;
+    suffix?: string;
+    nickname?: string;
+    department?: string;
+    birthday?: string;
+    website_url?: string;
 }
 
 export interface ContactLabelRow {
@@ -125,6 +135,22 @@ export async function ensureContactsSchema(): Promise<void> {
             }
             if (!columnNames.has('is_favorite')) {
                 await pool.query('ALTER TABLE contacts ADD COLUMN is_favorite TINYINT(1) NOT NULL DEFAULT 0 AFTER photo_url');
+            }
+            const structuredCols = [
+                ['prefix', 'VARCHAR(32) NULL AFTER is_favorite'],
+                ['first_name', 'VARCHAR(128) NULL AFTER prefix'],
+                ['middle_name', 'VARCHAR(128) NULL AFTER first_name'],
+                ['last_name', 'VARCHAR(128) NULL AFTER middle_name'],
+                ['suffix', 'VARCHAR(32) NULL AFTER last_name'],
+                ['nickname', 'VARCHAR(128) NULL AFTER suffix'],
+                ['department', 'VARCHAR(255) NULL AFTER nickname'],
+                ['birthday', 'VARCHAR(16) NULL AFTER department'],
+                ['website_url', 'VARCHAR(500) NULL AFTER birthday'],
+            ];
+            for (const [col, def] of structuredCols) {
+                if (!columnNames.has(col)) {
+                    await pool.query(`ALTER TABLE contacts ADD COLUMN ${col} ${def}`);
+                }
             }
 
             await pool.query(`
@@ -319,9 +345,11 @@ export function patchVCardData(vcard: string, davUid: string, updates: any): str
         lines.splice(versionIndex >= 0 ? versionIndex + 1 : 1, 0, `UID:${vcardEscape(davUid)}`);
     }
 
-    const nameParts = (updates.name || '').trim().split(/\s+/).filter(Boolean);
-    const firstName = nameParts.length <= 1 ? (nameParts[0] || '') : nameParts.slice(0, -1).join(' ');
-    const lastName = nameParts.length <= 1 ? '' : nameParts[nameParts.length - 1];
+    const firstName = updates.first_name || '';
+    const lastName = updates.last_name || '';
+    const middleName = updates.middle_name || '';
+    const prefix = updates.prefix || '';
+    const suffix = updates.suffix || '';
 
     let newLines: string[] = [];
     let existingN = ['', '', '', '', ''];
@@ -331,9 +359,12 @@ export function patchVCardData(vcard: string, davUid: string, updates: any): str
         const parts = val.split(/(?<!\\);/).map(vcardUnescape);
         for (let i = 0; i < 5; i++) if (parts[i]) existingN[i] = parts[i];
     }
-    
-    existingN[0] = lastName;
-    existingN[1] = firstName;
+
+    if (lastName) existingN[0] = lastName;
+    if (firstName) existingN[1] = firstName;
+    if (middleName) existingN[2] = middleName;
+    if (prefix) existingN[3] = prefix;
+    if (suffix) existingN[4] = suffix;
 
     for (const line of lines) {
         if (line.toUpperCase().startsWith('BEGIN:') || line.toUpperCase().startsWith('END:') || line.toUpperCase().startsWith('VERSION:') || line.toUpperCase().startsWith('UID:')) {

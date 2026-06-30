@@ -116,6 +116,17 @@ export interface Contact {
   addresses_json?: ContactItem[];
   labels_json?: number[];
   vcard_data?: string;
+  photo_url?: string;
+  is_favorite?: number;
+  prefix?: string;
+  first_name?: string;
+  middle_name?: string;
+  last_name?: string;
+  suffix?: string;
+  nickname?: string;
+  department?: string;
+  birthday?: string;
+  website_url?: string;
 }
 
 interface Note {
@@ -1184,6 +1195,16 @@ function App() {
   }, [currentUsername, userIdentities.address, userIdentities.aliases]);
 
   const parseContactName = (contact: Contact) => {
+    // Prefer structured name fields from DB
+    if (contact.first_name || contact.last_name) {
+      return {
+        firstName: contact.first_name || '',
+        lastName: contact.last_name || '',
+        middleName: contact.middle_name || '',
+        prefix: contact.prefix || '',
+        suffix: contact.suffix || ''
+      };
+    }
     let firstName = '', lastName = '', middleName = '', prefix = '', suffix = '';
     if (contact.vcard_data) {
       const nLine = contact.vcard_data.split('\\n').find((l: string) => l.toUpperCase().startsWith('N:') || l.toUpperCase().startsWith('N;'));
@@ -1210,15 +1231,16 @@ function App() {
   };
 
   const formatContactName = (contact: Contact, parsed: ReturnType<typeof parseContactName>, nameFormat: 'firstLast' | 'lastFirst') => {
-    if (!parsed.firstName && !parsed.lastName) return contact.email || 'Unknown Contact';
+    if (!parsed.firstName && !parsed.lastName) return contact.nickname || contact.email || 'Unknown Contact';
     const { firstName, lastName, middleName, prefix, suffix } = parsed;
     let display = '';
     if (nameFormat === 'lastFirst' && lastName) {
-      display = `${lastName}, ${[prefix, firstName, middleName, suffix].filter(Boolean).join(' ')}`;
+      display = `${lastName}, ${[prefix, firstName, middleName].filter(Boolean).join(' ')}${suffix ? `, ${suffix}` : ''}`;
     } else {
-      display = [prefix, firstName, middleName, lastName, suffix].filter(Boolean).join(' ');
+      display = [prefix, firstName, middleName, lastName].filter(Boolean).join(' ');
+      if (suffix) display += `, ${suffix}`;
     }
-    return display.trim() || 'Unknown Contact';
+    return display.trim() || contact.nickname || 'Unknown Contact';
   };
 
   const displayContacts = useMemo((): DisplayContact[] => {
@@ -3046,7 +3068,7 @@ function App() {
         method,
         headers: getHeaders(),
         body: JSON.stringify({
-          name: contact.name || '',
+          name: [contact.prefix, contact.first_name, contact.middle_name, contact.last_name, contact.suffix].filter(Boolean).join(' ') || contact.name || '',
           email: contact.email || '',
           phone: contact.phone || '',
           emails_json: contact.emails_json || [],
@@ -3056,7 +3078,16 @@ function App() {
           organization: contact.organization || '',
           notes: contact.notes || '',
           labels_json: contact.labels_json || [],
-          photo_url: (contact as any).photo_url || ''
+          photo_url: (contact as any).photo_url || '',
+          prefix: contact.prefix || '',
+          first_name: contact.first_name || '',
+          middle_name: contact.middle_name || '',
+          last_name: contact.last_name || '',
+          suffix: contact.suffix || '',
+          nickname: contact.nickname || '',
+          department: contact.department || '',
+          birthday: contact.birthday || '',
+          website_url: contact.website_url || ''
         })
       });
       
@@ -6889,9 +6920,86 @@ function App() {
             </div>
             <div className="sync-setup-body" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div style={{ gridColumn: 'span 2' }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Name</label>
-                  <input className="glass-input" value={editingContact.name || ''} onChange={e => setEditingContact({...editingContact, name: e.target.value})} autoFocus />
+                <div className="settings-section" style={{ gridColumn: 'span 2', marginBottom: 0 }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem' }}>Name</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Prefix</label>
+                      <select className="glass-input glass-select" value={editingContact.prefix || ''} onChange={e => setEditingContact({...editingContact, prefix: e.target.value})}>
+                        <option value=""></option>
+                        <option value="Mr.">Mr.</option>
+                        <option value="Mrs.">Mrs.</option>
+                        <option value="Ms.">Ms.</option>
+                        <option value="Dr.">Dr.</option>
+                        <option value="Prof.">Prof.</option>
+                        <option value="Capt.">Capt.</option>
+                        <option value="Lt.">Lt.</option>
+                        <option value="Maj.">Maj.</option>
+                        <option value="Col.">Col.</option>
+                        <option value="Gen.">Gen.</option>
+                        <option value="Adm.">Adm.</option>
+                        <option value="Sgt.">Sgt.</option>
+                        <option value="Cpl.">Cpl.</option>
+                        <option value="Rev.">Rev.</option>
+                        <option value="Hon.">Hon.</option>
+                        <option value="Sir">Sir</option>
+                        <option value="Lady">Lady</option>
+                        <option value="Lord">Lord</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>First Name</label>
+                      <input className="glass-input" value={editingContact.first_name || ''} onChange={e => setEditingContact({...editingContact, first_name: e.target.value})} autoFocus placeholder="First" />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Middle</label>
+                      <input className="glass-input" value={editingContact.middle_name || ''} onChange={e => setEditingContact({...editingContact, middle_name: e.target.value})} placeholder="Middle" />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Last Name</label>
+                      <input className="glass-input" value={editingContact.last_name || ''} onChange={e => setEditingContact({...editingContact, last_name: e.target.value})} placeholder="Last" />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Suffix</label>
+                      <select className="glass-input glass-select" value={editingContact.suffix || ''} onChange={e => setEditingContact({...editingContact, suffix: e.target.value})}>
+                        <option value=""></option>
+                        <option value="Jr.">Jr.</option>
+                        <option value="Sr.">Sr.</option>
+                        <option value="II">II</option>
+                        <option value="III">III</option>
+                        <option value="IV">IV</option>
+                        <option value="V">V</option>
+                        <option value="Esq.">Esq.</option>
+                        <option value="PhD">PhD</option>
+                        <option value="MD">MD</option>
+                        <option value="DDS">DDS</option>
+                        <option value="CPA">CPA</option>
+                        <option value="Ret.">Ret.</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Nickname</label>
+                      <input className="glass-input" value={editingContact.nickname || ''} onChange={e => setEditingContact({...editingContact, nickname: e.target.value})} placeholder="Nickname" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="settings-section" style={{ gridColumn: 'span 2', marginBottom: 0 }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem' }}>Details</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Department</label>
+                      <input className="glass-input" value={editingContact.department || ''} onChange={e => setEditingContact({...editingContact, department: e.target.value})} placeholder="Department" />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Birthday</label>
+                      <input className="glass-input" type="date" value={editingContact.birthday || ''} onChange={e => setEditingContact({...editingContact, birthday: e.target.value})} />
+                    </div>
+                    <div style={{ gridColumn: 'span 2' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Website</label>
+                      <input className="glass-input" type="url" value={editingContact.website_url || ''} onChange={e => setEditingContact({...editingContact, website_url: e.target.value})} placeholder="https://" />
+                    </div>
+                  </div>
                 </div>
                 
                 <div style={{ gridColumn: 'span 2' }}>

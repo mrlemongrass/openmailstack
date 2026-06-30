@@ -33,14 +33,25 @@ exports.appsApiRouter.post('/contacts', async (req, res) => {
     const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url } = req.body;
     try {
         const davUid = `contact-${Date.now()}`;
+        const prefix = req.body.prefix || '';
+        const firstName = req.body.first_name || '';
+        const middleName = req.body.middle_name || '';
+        const lastName = req.body.last_name || '';
+        const suffix = req.body.suffix || '';
+        const nickname = req.body.nickname || '';
+        const department = req.body.department || '';
+        const birthday = req.body.birthday || '';
+        const websiteUrl = req.body.website_url || '';
+        const fullName = name || [prefix, firstName, middleName, lastName, suffix].filter(Boolean).join(' ') || email;
         const newVcardData = vcard_data || (0, contact_utils_1.patchVCardData)('', davUid, {
-            name, email, phone, emails_json, phones_json, job_title, organization, notes
+            name: fullName, first_name: firstName, last_name: lastName, middle_name: middleName,
+            prefix, suffix, email, phone, emails_json, phones_json, job_title, organization, notes
         });
-        const [result] = await db_1.pool.query(`INSERT INTO contacts 
-            (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, sync_token) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`, [
+        const [result] = await db_1.pool.query(`INSERT INTO contacts
+            (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, sync_token, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
             user,
-            name || '',
+            fullName || '',
             email || '',
             phone || '',
             newVcardData,
@@ -52,7 +63,16 @@ exports.appsApiRouter.post('/contacts', async (req, res) => {
             organization || null,
             notes || null,
             labels_json ? JSON.stringify(labels_json) : null,
-            photo_url || null
+            photo_url || null,
+            prefix || null,
+            firstName || null,
+            middleName || null,
+            lastName || null,
+            suffix || null,
+            nickname || null,
+            department || null,
+            birthday || null,
+            websiteUrl || null
         ]);
         res.json({ success: true, id: result.insertId });
     }
@@ -62,20 +82,21 @@ exports.appsApiRouter.post('/contacts', async (req, res) => {
 });
 exports.appsApiRouter.put('/contacts/:id', async (req, res) => {
     const user = req.username;
-    const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url } = req.body;
+    const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url } = req.body;
     try {
         const [existing] = await db_1.pool.query('SELECT * FROM contacts WHERE id=? AND username=?', [req.params.id, user]);
         if (existing.length === 0)
             return res.status(404).json({ success: false, error: 'Contact not found' });
         const existingContact = existing[0];
+        const fullName = name || [prefix, first_name, middle_name, last_name, suffix].filter(Boolean).join(' ') || email;
         let newVcardData = vcard_data;
         if (typeof vcard_data !== 'string') {
             newVcardData = (0, contact_utils_1.patchVCardData)(existingContact.vcard_data || '', existingContact.dav_uid || `contact-${existingContact.id}`, {
-                name, email, phone, emails_json, phones_json, job_title, organization, notes
+                name: fullName, first_name, last_name, middle_name, prefix, suffix, email, phone, emails_json, phones_json, job_title, organization, notes
             });
         }
         const queryParams = [
-            name || '',
+            fullName || '',
             email || '',
             phone || '',
             newVcardData || '',
@@ -87,11 +108,12 @@ exports.appsApiRouter.put('/contacts/:id', async (req, res) => {
             notes || null,
             labels_json ? JSON.stringify(labels_json) : null,
         ];
-        let updateSql = `UPDATE contacts SET name=?, email=?, phone=?, vcard_data=?, emails_json=?, phones_json=?, addresses_json=?, job_title=?, organization=?, notes=?, labels_json=?, sync_token = sync_token + 1`;
+        let updateSql = `UPDATE contacts SET name=?, email=?, phone=?, vcard_data=?, emails_json=?, phones_json=?, addresses_json=?, job_title=?, organization=?, notes=?, labels_json=?, first_name=?, last_name=?, middle_name=?, prefix=?, suffix=?, nickname=?, department=?, birthday=?, website_url=?, sync_token = sync_token + 1`;
         if (photo_url !== undefined) {
             updateSql += `, photo_url=?`;
             queryParams.push(photo_url || null);
         }
+        queryParams.push(first_name || null, last_name || null, middle_name || null, prefix || null, suffix || null, nickname || null, department || null, birthday || null, website_url || null);
         updateSql += ` WHERE id=? AND username=?`;
         queryParams.push(req.params.id, user);
         await db_1.pool.query(updateSql, queryParams);

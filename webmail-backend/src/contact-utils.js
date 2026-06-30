@@ -100,6 +100,22 @@ async function ensureContactsSchema() {
             if (!columnNames.has('is_favorite')) {
                 await db_1.pool.query('ALTER TABLE contacts ADD COLUMN is_favorite TINYINT(1) NOT NULL DEFAULT 0 AFTER photo_url');
             }
+            const structuredCols = [
+                ['prefix', 'VARCHAR(32) NULL AFTER is_favorite'],
+                ['first_name', 'VARCHAR(128) NULL AFTER prefix'],
+                ['middle_name', 'VARCHAR(128) NULL AFTER first_name'],
+                ['last_name', 'VARCHAR(128) NULL AFTER middle_name'],
+                ['suffix', 'VARCHAR(32) NULL AFTER last_name'],
+                ['nickname', 'VARCHAR(128) NULL AFTER suffix'],
+                ['department', 'VARCHAR(255) NULL AFTER nickname'],
+                ['birthday', 'VARCHAR(16) NULL AFTER department'],
+                ['website_url', 'VARCHAR(500) NULL AFTER birthday'],
+            ];
+            for (const [col, def] of structuredCols) {
+                if (!columnNames.has(col)) {
+                    await db_1.pool.query(`ALTER TABLE contacts ADD COLUMN ${col} ${def}`);
+                }
+            }
             await db_1.pool.query(`
                 CREATE TABLE IF NOT EXISTS contact_groups (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -278,9 +294,11 @@ function patchVCardData(vcard, davUid, updates) {
         const versionIndex = lines.findIndex(line => line.toUpperCase().startsWith('VERSION:'));
         lines.splice(versionIndex >= 0 ? versionIndex + 1 : 1, 0, `UID:${vcardEscape(davUid)}`);
     }
-    const nameParts = (updates.name || '').trim().split(/\s+/).filter(Boolean);
-    const firstName = nameParts.length <= 1 ? (nameParts[0] || '') : nameParts.slice(0, -1).join(' ');
-    const lastName = nameParts.length <= 1 ? '' : nameParts[nameParts.length - 1];
+    const firstName = updates.first_name || '';
+    const lastName = updates.last_name || '';
+    const middleName = updates.middle_name || '';
+    const prefix = updates.prefix || '';
+    const suffix = updates.suffix || '';
     let newLines = [];
     let existingN = ['', '', '', '', ''];
     const nLine = lines.find(l => l.toUpperCase().startsWith('N:') || l.toUpperCase().startsWith('N;'));
@@ -291,8 +309,16 @@ function patchVCardData(vcard, davUid, updates) {
             if (parts[i])
                 existingN[i] = parts[i];
     }
-    existingN[0] = lastName;
-    existingN[1] = firstName;
+    if (lastName)
+        existingN[0] = lastName;
+    if (firstName)
+        existingN[1] = firstName;
+    if (middleName)
+        existingN[2] = middleName;
+    if (prefix)
+        existingN[3] = prefix;
+    if (suffix)
+        existingN[4] = suffix;
     for (const line of lines) {
         if (line.toUpperCase().startsWith('BEGIN:') || line.toUpperCase().startsWith('END:') || line.toUpperCase().startsWith('VERSION:') || line.toUpperCase().startsWith('UID:')) {
             newLines.push(line);

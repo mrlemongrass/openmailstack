@@ -16,6 +16,16 @@ export interface ContactRow {
     notes?: string;
     labels_json?: any;
     photo_url?: string;
+    is_favorite?: number;
+    prefix?: string;
+    first_name?: string;
+    middle_name?: string;
+    last_name?: string;
+    suffix?: string;
+    nickname?: string;
+    department?: string;
+    birthday?: string;
+    website_url?: string;
 }
 export interface ContactLabelRow {
     id: number;

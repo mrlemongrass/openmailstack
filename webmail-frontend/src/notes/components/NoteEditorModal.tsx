@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { LiveNoteEditor } from '../../LiveNoteEditor';
+import { ReminderPicker } from './ReminderPicker';
 import type { useNotes } from '../hooks/useNotes';
 import { saveNote } from '../../shared/api';
 
@@ -82,6 +83,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             value={note.title || ''}
             onChange={handleTitleChange}
           />
+          <ReminderPicker noteId={note.id} />
           <div className="note-modal-actions">
             <button className="btn btn-ghost btn-sm" onClick={handleClose} title="Close">
               <X size={18} />

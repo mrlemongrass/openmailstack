@@ -1,18 +1,26 @@
-## Fix: Add recipientEmail validation to POST /contacts/:id/share
+# Task 5 Report: Editor Toolbar Enhancement
 
-**Date:** 2026-06-30
-**File:** `webmail-backend/src/apps-api.ts` (line 376)
+**Status:** Complete
+**Commit:** f25cd25
 
-**Issue:** The `POST /contacts/:id/share` route read `recipientEmail` from the request body but never validated it was present or well-formed. A request with a missing, null, or empty `recipientEmail` would proceed and return a 200 with vCard data but no actual sharing would occur — misleading the client.
+## Changes
 
-**Fix:** Added a guard clause after the variable declarations:
+### webmail-frontend/src/LiveNoteEditor.tsx (full rewrite)
+- Registered `ChecklistBlot` and `CodeBlockBlot` custom blots from Tasks 3-4
+- Added custom list type configuration for checklist format
+- Added image upload handler using `uploadNoteImage` from shared API (Task 1)
+- Added table insert helper (3x3 table with inline styles)
+- Added code block insert handler
+- Added checklist toggle handler
+- Added undo/redo state tracking via Quill history stack
+- Extended toolbar config with: undo/redo buttons, checklist list type, code-block, and table buttons
+- Added custom toolbar handlers for image, table, code-block, undo, redo
+- Added keyboard binding: Enter key on empty checklist item exits the checklist format
 
-```typescript
-if (!shareTo || !shareTo.includes('@')) {
-    return res.status(400).json({ success: false, error: 'Valid recipient email is required' });
-}
-```
+### webmail-frontend/src/index.css (appended)
+- Added `.ql-editor table` styles for border-collapse and width
+- Added `.ql-editor td` styles for border, padding, and min-width
 
-This returns a 400 status with a clear error message if `recipientEmail` is missing, empty, or doesn't look like an email address (missing `@`), preventing the endpoint from silently succeeding without a valid target.
-
-**Verification:** `npx tsc --noEmit` passes with zero errors.
+## Verification
+- `npx tsc --noEmit`: passed with no errors
+- All imports resolve: `checklist-blot`, `code-block-blot`, `uploadNoteImage` from `shared/api`

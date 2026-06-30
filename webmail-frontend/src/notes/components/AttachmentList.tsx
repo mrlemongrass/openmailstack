@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Paperclip, X, FileText, Image, Download } from 'lucide-react';
+import { Paperclip, X, FileText, Image } from 'lucide-react';
 import { fetchNoteAttachments, uploadNoteAttachment, deleteNoteAttachment } from '../../shared/api';
 import type { NoteAttachment } from '../../shared/types';
 
@@ -19,25 +19,27 @@ function isImage(mimeType: string): boolean {
 
 export function AttachmentList({ noteId }: AttachmentListProps) {
   const [attachments, setAttachments] = useState<NoteAttachment[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const uploading = uploadingCount > 0;
   const [isDragOver, setIsDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!noteId || noteId === 'new') return;
-    fetchNoteAttachments(noteId).then(setAttachments).catch(() => {});
+    fetchNoteAttachments(noteId).then(setAttachments).catch((e) => { console.error('Failed to fetch attachments', e); });
   }, [noteId]);
 
   const handleUpload = useCallback(async (file: File) => {
     if (!noteId || noteId === 'new') return;
-    setUploading(true);
+    setUploadingCount((c) => c + 1);
     try {
       const attachment = await uploadNoteAttachment(noteId, file);
       setAttachments((prev) => [...prev, attachment]);
     } catch (e) {
       console.error('Upload failed', e);
+    } finally {
+      setUploadingCount((c) => c - 1);
     }
-    setUploading(false);
   }, [noteId]);
 
   const handleDelete = useCallback(async (attachmentId: string) => {

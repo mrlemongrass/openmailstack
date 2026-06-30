@@ -22,7 +22,7 @@ export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       {/* Day headers */}
-      <div style={{ display: 'grid', gridTemplateColumns: '24px repeat(7, 1fr)',
+      <div style={{ display: 'grid', gridTemplateColumns: '24px repeat(7, minmax(0, 1fr))',
         borderBottom: '1px solid var(--border-glass)', padding: '4px 0' }}>
         <div />{/* #8 week number column */}
         {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((name) => (
@@ -31,7 +31,7 @@ export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
         ))}
       </div>
       {/* Day grid */}
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '24px repeat(7, 1fr)',
+      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '24px repeat(7, minmax(0, 1fr))',
         gridTemplateRows: 'repeat(6, 1fr)' }}>
         {Array.from({ length: 6 }).map((_, weekIdx) => {
           const weekDays = days.slice(weekIdx * 7, (weekIdx + 1) * 7);
@@ -74,17 +74,21 @@ export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                       textAlign: 'center', marginBottom: 1 }}>
                       {format(day, 'd')}
                     </div>
-                    {dayEvents.slice(0, 3).map((evt) => (
+                    {dayEvents.slice(0, 3).map((evt) => {
+                      const fullText = (!evt.isAllDay ? format(new Date(evt.start), 'HH:mm') + ' ' : '') + evt.title;
+                      return (
                       <div key={evt.id + (evt.occurrenceId || '')} draggable
                         onDragStart={() => setDragEvent(evt)}
                         onClick={(e) => { e.stopPropagation(); cal.editExistingEvent(evt); }}
+                        title={fullText}
                         style={{ fontSize: '0.6rem', padding: '1px 3px', borderRadius: 2, cursor: 'grab',
                           background: `${cal.calendars.find((c) => c.id === evt.calendarId)?.color || '#3B82F6'}33`,
                           color: 'var(--text-primary)', overflow: 'hidden',
                           textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 1 }}>
-                        {!evt.isAllDay && format(new Date(evt.start), 'HH:mm') + ' '}{evt.title}
+                        {fullText}
                       </div>
-                    ))}
+                      );
+                    })}
                     {dayEvents.length > 3 && (
                       <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>+{dayEvents.length - 3}</div>
                     )}

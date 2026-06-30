@@ -116,6 +116,9 @@ async function ensureContactsSchema() {
                     await db_1.pool.query(`ALTER TABLE contacts ADD COLUMN ${col} ${def}`);
                 }
             }
+            if (!columnNames.has('deleted_at')) {
+                await db_1.pool.query('ALTER TABLE contacts ADD COLUMN deleted_at TIMESTAMP NULL AFTER website_url');
+            }
             await db_1.pool.query(`
                 CREATE TABLE IF NOT EXISTS contact_groups (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -384,12 +387,12 @@ function contactEtag(contact) {
 }
 async function listContacts(user) {
     await ensureContactsSchema();
-    const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ? ORDER BY is_favorite DESC, name ASC, email ASC, id ASC', [user]);
+    const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL ORDER BY is_favorite DESC, name ASC, email ASC, id ASC', [user]);
     return rows;
 }
 async function getContactByDavUid(user, davUid) {
     await ensureContactsSchema();
-    const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ? AND dav_uid = ? ORDER BY id ASC LIMIT 1', [user, davUid]);
+    const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ? AND dav_uid = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1', [user, davUid]);
     return rows.length > 0 ? rows[0] : null;
 }
 async function saveContactFromVCard(user, davUid, vcard) {
@@ -420,7 +423,7 @@ async function addressBookSyncToken(user) {
                 COALESCE(MAX(sync_token), 1) AS max_sync_token,
                 COALESCE(UNIX_TIMESTAMP(MAX(updated_at)), 1) AS max_updated_at
          FROM contacts
-         WHERE username = ?`, [user]);
+         WHERE username = ? AND deleted_at IS NULL`, [user]);
     const row = rows[0] || {};
     return `${row.contact_count || 0}-${row.max_sync_token || 1}-${row.max_updated_at || 1}`;
 }

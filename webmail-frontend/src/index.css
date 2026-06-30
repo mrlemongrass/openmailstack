@@ -1160,3 +1160,55 @@ body {
     grid-template-columns: 1fr !important;
   }
 }
+
+/* ---- Print Styles ---- */
+@media print {
+  .app-shell-header,
+  .mobile-tab-bar,
+  [data-panel-group-direction] > :first-child,
+  [data-panel-resize-handle],
+  .mail-toolbar,
+  .message-viewer-toolbar,
+  .inline-reply-box,
+  .compose-modal-overlay,
+  .snooze-popover {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 12pt !important;
+    font-family: Georgia, 'Times New Roman', serif !important;
+  }
+
+  .glass-panel {
+    background: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+  }
+
+  .message-body {
+    color: black !important;
+    line-height: 1.5 !important;
+  }
+
+  .message-body a {
+    color: black !important;
+    text-decoration: underline !important;
+  }
+
+  a[href]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.8em;
+    color: #666;
+  }
+
+  @page {
+    margin: 1.5cm;
+  }
+}

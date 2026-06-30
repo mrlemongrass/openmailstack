@@ -3,6 +3,7 @@ import { useMediaQuery } from '../shared/hooks/useMediaQuery';
 import { useNotes } from './hooks/useNotes';
 import { NotesSidebar } from './NotesSidebar';
 import { NotesGrid } from './NotesGrid';
+import { NoteEditorModal } from './components/NoteEditorModal';
 
 function ResizeHandle() {
   return (
@@ -26,6 +27,7 @@ export function NotesLayout() {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <NotesGrid notesCtx={notesCtx} />
+        <NoteEditorModal notesCtx={notesCtx} />
       </div>
     );
   }
@@ -47,6 +49,7 @@ export function NotesLayout() {
           <NotesGrid notesCtx={notesCtx} />
         </Panel>
       </PanelGroup>
+      <NoteEditorModal notesCtx={notesCtx} />
     </div>
   );
 }

@@ -247,6 +247,61 @@ appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Respon
     }
 });
 
+appsApiRouter.get('/contacts/:id/activity', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    try {
+        const [contactRows]: any = await pool.query(
+            'SELECT email, emails_json FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL',
+            [req.params.id as string, user]
+        );
+        if (contactRows.length === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
+
+        const contact = contactRows[0];
+        const emails: string[] = [contact.email];
+        if (contact.emails_json) {
+            const parsed = typeof contact.emails_json === 'string' ? JSON.parse(contact.emails_json) : contact.emails_json;
+            if (Array.isArray(parsed)) {
+                for (const item of parsed) {
+                    if (item.value && !emails.includes(item.value)) emails.push(item.value);
+                }
+            }
+        }
+        const emailPlaceholders = emails.map(() => '?').join(',');
+
+        const [emailRows]: any = await pool.query(
+            `SELECT subject, received_at, id, snippet(subject, body) AS snippet
+             FROM messages
+             WHERE username = ? AND (from_addr IN (${emailPlaceholders}) OR to_addrs REGEXP ? OR cc_addrs REGEXP ?)
+             ORDER BY received_at DESC LIMIT 20`,
+            [user, ...emails, emails.join('|'), emails.join('|')]
+        );
+
+        const [meetingRows]: any = await pool.query(
+            `SELECT e.uid AS id, e.ical_data, MIN(eo.start) AS start
+             FROM events e
+             JOIN events_occurrences eo ON eo.event_id = e.id
+             JOIN event_attendees ea ON ea.event_id = e.id
+             WHERE ea.email IN (${emailPlaceholders}) AND eo.start >= NOW()
+             GROUP BY e.id, e.uid, e.ical_data
+             ORDER BY eo.start ASC LIMIT 10`,
+            [...emails]
+        );
+
+        const meetings = meetingRows.map((r: any) => {
+            const titleMatch = r.ical_data?.match(/SUMMARY:([^\r\n]*)/);
+            return {
+                id: r.id,
+                title: titleMatch ? titleMatch[1].trim() : 'Meeting',
+                start: r.start,
+            };
+        });
+
+        res.json({ success: true, emails: emailRows, meetings });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 appsApiRouter.get('/contacts-export', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const format = req.query.format as string || 'vcard';

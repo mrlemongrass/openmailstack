@@ -6873,7 +6873,7 @@ function App() {
 
       {isContactModalOpen && editingContact && (
         <div className="sync-setup-overlay" role="dialog" aria-modal="true" onClick={() => setIsContactModalOpen(false)}>
-          <div className="glass-panel sync-setup-modal" style={{ width: 'min(600px, 95vw)' }} onClick={e => e.stopPropagation()}>
+          <div className="glass-panel sync-setup-modal" style={{ width: '640px', minWidth: '400px', maxWidth: '95vw', maxHeight: '90vh', resize: 'both', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
             <div className="sync-setup-header" style={{ alignItems: 'flex-start', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '20px', marginBottom: '20px' }}>
               <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
                 <div 
@@ -6920,90 +6920,70 @@ function App() {
             </div>
             <div className="sync-setup-body" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div className="settings-section" style={{ gridColumn: 'span 2', marginBottom: 0 }}>
-                  <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem' }}>Name</h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                <div className="contact-form-section" style={{ gridColumn: 'span 2' }}>
+                  <h4>Name</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Prefix</label>
-                      <select className="glass-input glass-select" value={editingContact.prefix || ''} onChange={e => setEditingContact({...editingContact, prefix: e.target.value})}>
-                        <option value=""></option>
-                        <option value="Mr.">Mr.</option>
-                        <option value="Mrs.">Mrs.</option>
-                        <option value="Ms.">Ms.</option>
-                        <option value="Dr.">Dr.</option>
-                        <option value="Prof.">Prof.</option>
-                        <option value="Capt.">Capt.</option>
-                        <option value="Lt.">Lt.</option>
-                        <option value="Maj.">Maj.</option>
-                        <option value="Col.">Col.</option>
-                        <option value="Gen.">Gen.</option>
-                        <option value="Adm.">Adm.</option>
-                        <option value="Sgt.">Sgt.</option>
-                        <option value="Cpl.">Cpl.</option>
-                        <option value="Rev.">Rev.</option>
-                        <option value="Hon.">Hon.</option>
-                        <option value="Sir">Sir</option>
-                        <option value="Lady">Lady</option>
-                        <option value="Lord">Lord</option>
-                      </select>
+                      <label className="contact-field-label">Prefix</label>
+                      <input className="glass-input" list="prefix-suggestions" value={editingContact.prefix || ''} onChange={e => setEditingContact({...editingContact, prefix: e.target.value})} placeholder="e.g. Capt., Dr." />
+                      <datalist id="prefix-suggestions">
+                        <option value="Mr." /><option value="Mrs." /><option value="Ms." /><option value="Dr." />
+                        <option value="Prof." /><option value="Capt." /><option value="Lt." /><option value="Maj." />
+                        <option value="Col." /><option value="Gen." /><option value="Adm." /><option value="Sgt." />
+                        <option value="Cpl." /><option value="Rev." /><option value="Hon." /><option value="Sir" />
+                        <option value="Lady" /><option value="Lord" /><option value="Chief" /><option value="Deputy" />
+                      </datalist>
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>First Name</label>
-                      <input className="glass-input" value={editingContact.first_name || ''} onChange={e => setEditingContact({...editingContact, first_name: e.target.value})} autoFocus placeholder="First" />
+                      <label className="contact-field-label">First Name *</label>
+                      <input className="glass-input" value={editingContact.first_name || ''} onChange={e => setEditingContact({...editingContact, first_name: e.target.value})} autoFocus placeholder="First name" />
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Middle</label>
-                      <input className="glass-input" value={editingContact.middle_name || ''} onChange={e => setEditingContact({...editingContact, middle_name: e.target.value})} placeholder="Middle" />
+                      <label className="contact-field-label">Middle</label>
+                      <input className="glass-input" value={editingContact.middle_name || ''} onChange={e => setEditingContact({...editingContact, middle_name: e.target.value})} placeholder="Middle name" />
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Last Name</label>
-                      <input className="glass-input" value={editingContact.last_name || ''} onChange={e => setEditingContact({...editingContact, last_name: e.target.value})} placeholder="Last" />
+                      <label className="contact-field-label">Last Name *</label>
+                      <input className="glass-input" value={editingContact.last_name || ''} onChange={e => setEditingContact({...editingContact, last_name: e.target.value})} placeholder="Last name" />
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Suffix</label>
-                      <select className="glass-input glass-select" value={editingContact.suffix || ''} onChange={e => setEditingContact({...editingContact, suffix: e.target.value})}>
-                        <option value=""></option>
-                        <option value="Jr.">Jr.</option>
-                        <option value="Sr.">Sr.</option>
-                        <option value="II">II</option>
-                        <option value="III">III</option>
-                        <option value="IV">IV</option>
-                        <option value="V">V</option>
-                        <option value="Esq.">Esq.</option>
-                        <option value="PhD">PhD</option>
-                        <option value="MD">MD</option>
-                        <option value="DDS">DDS</option>
-                        <option value="CPA">CPA</option>
-                        <option value="Ret.">Ret.</option>
-                      </select>
+                      <label className="contact-field-label">Suffix</label>
+                      <input className="glass-input" list="suffix-suggestions" value={editingContact.suffix || ''} onChange={e => setEditingContact({...editingContact, suffix: e.target.value})} placeholder="e.g. PhD, Jr." />
+                      <datalist id="suffix-suggestions">
+                        <option value="Jr." /><option value="Sr." /><option value="II" /><option value="III" />
+                        <option value="IV" /><option value="V" /><option value="Esq." /><option value="PhD" />
+                        <option value="MD" /><option value="DDS" /><option value="CPA" /><option value="Ret." />
+                        <option value="MBA" /><option value="RN" /><option value="PE" /><option value="USN (Ret.)" />
+                        <option value="USA (Ret.)" /><option value="USAF (Ret.)" /><option value="USMC (Ret.)" />
+                      </datalist>
                     </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Nickname</label>
+                    <div style={{ gridColumn: 'span 2' }}>
+                      <label className="contact-field-label">Nickname</label>
                       <input className="glass-input" value={editingContact.nickname || ''} onChange={e => setEditingContact({...editingContact, nickname: e.target.value})} placeholder="Nickname" />
                     </div>
                   </div>
                 </div>
 
-                <div className="settings-section" style={{ gridColumn: 'span 2', marginBottom: 0 }}>
-                  <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem' }}>Details</h4>
+                <div className="contact-form-section" style={{ gridColumn: 'span 2' }}>
+                  <h4>Details</h4>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Department</label>
+                      <label className="contact-field-label">Department</label>
                       <input className="glass-input" value={editingContact.department || ''} onChange={e => setEditingContact({...editingContact, department: e.target.value})} placeholder="Department" />
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Birthday</label>
+                      <label className="contact-field-label">Birthday</label>
                       <input className="glass-input" type="date" value={editingContact.birthday || ''} onChange={e => setEditingContact({...editingContact, birthday: e.target.value})} />
                     </div>
                     <div style={{ gridColumn: 'span 2' }}>
-                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '2px' }}>Website</label>
+                      <label className="contact-field-label">Website</label>
                       <input className="glass-input" type="url" value={editingContact.website_url || ''} onChange={e => setEditingContact({...editingContact, website_url: e.target.value})} placeholder="https://" />
                     </div>
                   </div>
                 </div>
                 
                 <div style={{ gridColumn: 'span 2' }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Emails</label>
+                  <label className="contact-field-label" style={{ fontSize: '0.85rem' }}>Emails</label>
                   <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                     <div style={{ width: '80px', flexShrink: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', alignSelf: 'center' }}>Primary</div>
                     <input className="glass-input" type="email" style={{ flex: 1 }} value={editingContact.email || ''} onChange={e => setEditingContact({...editingContact, email: e.target.value})} placeholder="Primary Email" />
@@ -7037,7 +7017,7 @@ function App() {
                 </div>
 
                 <div style={{ gridColumn: 'span 2' }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone Numbers</label>
+                  <label className="contact-field-label" style={{ fontSize: '0.85rem' }}>Phone Numbers</label>
                   <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                     <div style={{ width: '80px', flexShrink: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', alignSelf: 'center' }}>Primary</div>
                     <input className="glass-input" type="tel" style={{ flex: 1 }} value={editingContact.phone || ''} onChange={e => setEditingContact({...editingContact, phone: e.target.value})} placeholder="Primary Phone" />
@@ -7072,16 +7052,16 @@ function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Job Title</label>
+                  <label className="contact-field-label" style={{ fontSize: '0.85rem' }}>Job Title</label>
                   <input className="glass-input" value={editingContact.jobTitle || ''} onChange={e => setEditingContact({...editingContact, jobTitle: e.target.value})} />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Organization</label>
+                  <label className="contact-field-label" style={{ fontSize: '0.85rem' }}>Organization</label>
                   <input className="glass-input" value={editingContact.organization || editingContact.company || ''} onChange={e => setEditingContact({...editingContact, organization: e.target.value})} />
                 </div>
 
                 <div style={{ gridColumn: 'span 2' }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Addresses</label>
+                  <label className="contact-field-label" style={{ fontSize: '0.85rem' }}>Addresses</label>
                   <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                     <div style={{ width: '80px', flexShrink: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', alignSelf: 'center' }}>Primary</div>
                     <input className="glass-input" style={{ flex: 1 }} value={editingContact.address || ''} onChange={e => setEditingContact({...editingContact, address: e.target.value})} placeholder="Primary Address" />
@@ -7115,7 +7095,7 @@ function App() {
                 </div>
                 
                 <div style={{ gridColumn: 'span 2' }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Notes</label>
+                  <label className="contact-field-label" style={{ fontSize: '0.85rem' }}>Notes</label>
                   <textarea className="glass-input" rows={3} value={editingContact.notes || ''} onChange={e => setEditingContact({...editingContact, notes: e.target.value})} />
                 </div>
                 {contactLabels.length > 0 && (
@@ -7154,10 +7134,10 @@ function App() {
                 )}
               </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
               <button className="btn btn-ghost" onClick={() => setIsContactModalOpen(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={() => handleSaveContact(editingContact)} disabled={!editingContact.name && !editingContact.email}>
-                Save Contact
+              <button className="btn btn-primary" style={{ padding: '10px 24px' }} onClick={() => handleSaveContact(editingContact)} disabled={!editingContact.first_name && !editingContact.last_name && !editingContact.email}>
+                {editingContact.id ? 'Save Changes' : 'Create Contact'}
               </button>
             </div>
           </div>

@@ -376,6 +376,10 @@ appsApiRouter.post('/contacts/:id/share', async (req: Request, res: Response) =>
     const shareTo = req.body.recipientEmail as string;
     const shareMsg = (req.body.message as string) || '';
 
+    if (!shareTo || !shareTo.includes('@')) {
+        return res.status(400).json({ success: false, error: 'Valid recipient email is required' });
+    }
+
     try {
         const [rows]: any = await pool.query(
             'SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL',

@@ -1,10 +1,8 @@
 import { Routes, Route, Navigate } from 'react-router';
 import { AuthGate } from './shared/layouts/AuthGate';
 import { AppShell } from './shared/layouts/AppShell';
+import { MailRoutes } from './mail/routes';
 
-function MailPlaceholder() {
-  return <div className="glass-panel" style={{ margin: 20, padding: 40, textAlign: 'center', color: 'var(--text-secondary)' }}>Mail — coming soon</div>;
-}
 function CalendarPlaceholder() {
   return <div className="glass-panel" style={{ margin: 20, padding: 40, textAlign: 'center', color: 'var(--text-secondary)' }}>Calendar — coming soon</div>;
 }
@@ -29,7 +27,7 @@ export default function App() {
     <Routes>
       <Route element={<AuthGate />}>
         <Route element={<AppShell />}>
-          <Route path="mail/*" element={<MailPlaceholder />} />
+          <Route path="mail/*" element={<MailRoutes />} />
           <Route path="calendar/*" element={<CalendarPlaceholder />} />
           <Route path="contacts/*" element={<ContactsPlaceholder />} />
           <Route path="notes/*" element={<NotesPlaceholder />} />

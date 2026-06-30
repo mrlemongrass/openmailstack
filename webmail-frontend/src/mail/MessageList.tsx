@@ -85,7 +85,17 @@ export function MessageList({ mail, density }: MessageListProps) {
                 isSelected={mail.selectedMessages.includes(msg.uid)}
                 isThreaded={false} density={density}
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
-                onSelect={handleSelect} onClick={handleClick} onStar={handleStar} />
+                onSelect={handleSelect} onClick={handleClick} onStar={handleStar}
+                onArchive={(uid) => mail.messageAction('archive', [uid])}
+                onDelete={(uid) => mail.messageAction('delete', [uid])}
+                onMarkRead={(uid) => {
+                  const m = mail.messages.find((msg) => msg.uid === uid);
+                  if (m) mail.messageAction(m.isRead ? 'unread' : 'read', [uid]);
+                }}
+                onSnooze={(uid) => {
+                  const m = mail.messages.find((msg) => msg.uid === uid);
+                  if (m) mail.messageAction('archive', [uid]);
+                }} />
             );
           })}
         </div>

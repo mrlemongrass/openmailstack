@@ -1,4 +1,4 @@
-import { Star, Paperclip } from 'lucide-react';
+import { Star, Paperclip, Archive, Trash2, Mail, MailOpen, Clock } from 'lucide-react';
 import type { Message } from '../shared/types';
 import { format, isToday, isYesterday } from 'date-fns';
 
@@ -11,13 +11,18 @@ interface MessageRowProps {
   onSelect: (uid: number, shift: boolean) => void;
   onClick: (uid: number) => void;
   onStar: (uid: number) => void;
+  onArchive: (uid: number) => void;
+  onDelete: (uid: number) => void;
+  onMarkRead: (uid: number) => void;
+  onSnooze: (uid: number) => void;
   forwardedRef?: React.RefCallback<HTMLDivElement>;
 }
 
 export const DENSITY_HEIGHTS = { compact: 48, cozy: 64, comfortable: 80 };
 
 export function MessageRow({
-  message, isSelected, density, style, onSelect, onClick, onStar, forwardedRef,
+  message, isSelected, density, style, onSelect, onClick, onStar,
+  onArchive, onDelete, onMarkRead, onSnooze, forwardedRef,
 }: MessageRowProps) {
   const padding = density === 'compact' ? '4px 8px' : density === 'cozy' ? '8px 12px' : '12px 16px';
   const dateObj = typeof message.date === 'string' ? new Date(message.date) : message.date;
@@ -61,8 +66,17 @@ export function MessageRow({
             color: message.isRead ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
             {message.from?.split('<')[0]?.trim() || message.from}
           </span>
-          <span style={{ flexShrink: 0, marginLeft: 8, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-            {dateStr}
+          <span style={{ flexShrink: 0, marginLeft: 8, display: 'flex', gap: 4, alignItems: 'center' }}>
+            <span className="message-row-date">{dateStr}</span>
+            {message.hasAttachments && <Paperclip size={12} />}
+            <span className="message-row-actions" style={{ display: 'flex', gap: 2, opacity: 0, transition: 'opacity 0.15s ease' }}>
+              <ActionButton icon={Archive} title="Archive" onClick={() => onArchive(message.uid)} />
+              <ActionButton icon={Trash2} title="Delete" onClick={() => onDelete(message.uid)} />
+              <ActionButton icon={message.isRead ? Mail : MailOpen} title={message.isRead ? 'Mark unread' : 'Mark read'}
+                onClick={() => onMarkRead(message.uid)} />
+              <ActionButton icon={Star} title="Star" onClick={() => onStar(message.uid)} />
+              <ActionButton icon={Clock} title="Snooze" onClick={() => onSnooze(message.uid)} />
+            </span>
           </span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2,
@@ -71,11 +85,20 @@ export function MessageRow({
             fontWeight: message.isRead ? 400 : 500 }}>
             {message.subject || '(no subject)'}
           </span>
-          <span style={{ flexShrink: 0, marginLeft: 8, display: 'flex', gap: 4, alignItems: 'center' }}>
-            {message.hasAttachments && <Paperclip size={12} />}
-          </span>
         </div>
       </div>
     </div>
+  );
+}
+
+function ActionButton({ icon: Icon, title, onClick }: {
+  icon: React.ComponentType<any>; title: string; onClick: () => void;
+}) {
+  return (
+    <button className="btn btn-ghost" title={title}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      style={{ padding: '2px 4px', borderRadius: 4 }}>
+      <Icon size={14} />
+    </button>
   );
 }

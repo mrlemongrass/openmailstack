@@ -1155,6 +1155,15 @@ body {
   }
 }
 
+/* ---- Hover Actions ---- */
+.message-row:hover .message-row-actions {
+  opacity: 1 !important;
+}
+
+.message-row:hover .message-row-date {
+  display: none;
+}
+
 @media (max-width: 400px) {
   .notes-grid-mobile {
     grid-template-columns: 1fr !important;

@@ -1314,3 +1314,15 @@ li[data-checked="true"] .ql-checkbox {
   background: #1e1e1e;
   color: #d4d4d4;
 }
+
+/* ---- Tables ---- */
+.ql-editor table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.ql-editor td {
+  border: 1px solid var(--border-glass);
+  padding: 6px 10px;
+  min-width: 80px;
+}

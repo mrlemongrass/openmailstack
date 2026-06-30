@@ -437,6 +437,16 @@ const ensureAdminAuditSchema = async () => {
                     INDEX idx_snooze_until (snooze_until)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
+
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS muted_threads (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    owner VARCHAR(255) NOT NULL,
+                    imap_uid INT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY idx_muted_owner_uid (owner, imap_uid)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
         })();
     }
     return adminAuditSchemaPromise;
@@ -1050,6 +1060,30 @@ async function restoreExpiredSnoozes(user: string, imapService: any) {
             await pool.execute(`DELETE FROM snooze_queue WHERE owner = ? AND snooze_until <= NOW()`, [user]);
         }
     } catch (e) {}
+}
+
+// Mute thread
+apiRouter.post('/messages/mute', requireAuth, async (req: any, res) => {
+    try {
+        const { uids } = req.body;
+        if (!uids || !uids.length) return res.status(400).json({ error: 'Missing uids' });
+        const user = req.user.username;
+        await pool.execute(
+            `INSERT IGNORE INTO muted_threads (owner, imap_uid) VALUES ${uids.map(() => '(?, ?)').join(', ')}`,
+            uids.flatMap((uid: number) => [user, uid])
+        );
+        res.json({ success: true });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message || 'Mute failed' });
+    }
+});
+
+// Check muted UIDs for filtering
+async function getMutedUids(user: string): Promise<Set<number>> {
+    try {
+        const [rows]: any = await pool.execute('SELECT imap_uid FROM muted_threads WHERE owner = ?', [user]);
+        return new Set((rows || []).map((r: any) => r.imap_uid));
+    } catch { return new Set(); }
 }
 
 apiRouter.get('/messages/search/index/status', requireAuth, async (req: any, res) => {

@@ -124,6 +124,17 @@ export function useMail(_opts: UseMailOptions) {
     } catch (e) { console.error('Snooze failed', e); }
   }, [activeFolder, fetchMessages, fetchFolders]);
 
+  // Mute thread
+  const muteThread = useCallback(async (uids: number[]) => {
+    try {
+      await fetch('/api/messages/mute', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uids }),
+      });
+      await fetchMessages();
+    } catch (e) { console.error('Mute failed', e); }
+  }, [fetchMessages]);
+
   const loadOlderMessages = useCallback(async () => {
     if (loadingOlderMessages || !mailMoreAvailable || !mailLowestUid) return;
     setLoadingOlderMessages(true);
@@ -236,7 +247,7 @@ export function useMail(_opts: UseMailOptions) {
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
     fetchFolders, fetchMessages, loadOlderMessages, refreshMessages,
-    messageAction, undoAction, doSearch, snoozeMessages,
+    messageAction, undoAction, doSearch, snoozeMessages, muteThread,
   };
 }
 

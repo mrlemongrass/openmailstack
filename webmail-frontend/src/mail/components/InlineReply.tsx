@@ -1,4 +1,4 @@
-import { Send, Maximize2 } from 'lucide-react';
+import { Send, Maximize2, Archive } from 'lucide-react';
 import { useState } from 'react';
 
 interface InlineReplyProps {
@@ -6,11 +6,12 @@ interface InlineReplyProps {
   replySending: boolean;
   onReplyTextChange: (text: string) => void;
   onSend: () => void;
+  onSendAndArchive: () => void;
   onOpenFullCompose: () => void;
 }
 
 export function InlineReply({
-  replyText, replySending, onReplyTextChange, onSend, onOpenFullCompose,
+  replyText, replySending, onReplyTextChange, onSend, onSendAndArchive, onOpenFullCompose,
 }: InlineReplyProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -39,6 +40,10 @@ export function InlineReply({
           <button className="btn btn-primary" disabled={!replyText.trim() || replySending}
             onClick={onSend} style={{ fontSize: '0.85rem', padding: '6px 14px' }}>
             <Send size={14} /> {replySending ? 'Sending...' : 'Send'}
+          </button>
+          <button className="btn btn-ghost" disabled={!replyText.trim() || replySending}
+            onClick={onSendAndArchive} style={{ fontSize: '0.8rem' }} title="Send & Archive">
+            <Archive size={14} /> Send & Archive
           </button>
           <button className="btn btn-ghost" onClick={onOpenFullCompose} style={{ fontSize: '0.8rem' }}>
             <Maximize2 size={14} /> Rich editor

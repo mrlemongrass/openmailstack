@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail, Code, Clock } from 'lucide-react';
+import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, BellOff } from 'lucide-react';
 import { format } from 'date-fns';
 import { AttachmentCard } from './components/AttachmentCard';
 import { InlineReply } from './components/InlineReply';
 import { RawMessageModal } from './components/RawMessageModal';
 import { SnoozePopover } from './components/SnoozePopover';
+import { MoveToPopover } from './components/MoveToPopover';
 import { Skeleton } from '../shared/components/Skeleton';
 import type { useMail } from './hooks/useMail';
 
@@ -14,6 +15,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const navigate = useNavigate();
   const [showRaw, setShowRaw] = useState(false);
   const [showSnooze, setShowSnooze] = useState(false);
+  const [showMoveTo, setShowMoveTo] = useState(false);
 
   if (!uid) {
     return (
@@ -64,8 +66,20 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         <button className="btn btn-ghost" onClick={() => mail.messageAction('star', [message.uid])}>
           <Star size={16} fill={message.isStarred ? '#f59e0b' : 'none'} color={message.isStarred ? '#f59e0b' : undefined} />
         </button>
+        <button className="btn btn-ghost" onClick={() => { mail.messageAction('unread', [message.uid]); navigate(`/mail/${encodeURIComponent(folder || 'INBOX')}`); }} title="Mark unread">
+          <MailOpen size={16} />
+        </button>
         <button className="btn btn-ghost" onClick={() => mail.messageAction('archive', [message.uid])}>
           <Archive size={16} />
+        </button>
+        <div style={{ position: 'relative' }}>
+          <button className="btn btn-ghost" onClick={() => setShowMoveTo(!showMoveTo)} title="Move to folder">
+            <FolderOpen size={16} />
+          </button>
+          {showMoveTo && <MoveToPopover folders={mail.folders} onMove={(_f) => { mail.messageAction('move', [message.uid]); setShowMoveTo(false); }} onClose={() => setShowMoveTo(false)} />}
+        </div>
+        <button className="btn btn-ghost" onClick={() => { if (mail.muteThread) mail.muteThread([message.uid]); }} title="Mute thread">
+          <BellOff size={16} />
         </button>
         <button className="btn btn-danger" onClick={() => mail.messageAction('delete', [message.uid])}>
           <Trash2 size={16} />
@@ -104,6 +118,13 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           if (message) {
             const to = message.from?.match(/<(.+?)>/)?.at(1) || message.from;
             mail.sendReply(to, message.subject || '', message.messageId || '', (message.references || []).join(' '));
+          }
+        }}
+        onSendAndArchive={async () => {
+          if (message) {
+            const to = message.from?.match(/<(.+?)>/)?.at(1) || message.from;
+            const ok = await mail.sendReply(to, message.subject || '', message.messageId || '', (message.references || []).join(' '));
+            if (ok) mail.messageAction('archive', [message.uid]);
           }
         }}
         onOpenFullCompose={() => {

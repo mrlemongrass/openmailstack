@@ -371,11 +371,56 @@ appsApiRouter.get('/contacts/:id/activity', async (req: Request, res: Response) 
     }
 });
 
+appsApiRouter.post('/contacts/:id/share', async (req: Request, res: Response) => {
+    const user = (req as any).username;
+    const shareTo = req.body.recipientEmail as string;
+    const shareMsg = (req.body.message as string) || '';
+
+    try {
+        const [rows]: any = await pool.query(
+            'SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL',
+            [req.params.id as string, user]
+        );
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
+
+        const c = rows[0];
+        const vcard = normalizeVCardData(
+            c.vcard_data || '',
+            c.dav_uid || `contact-${c.id}`,
+            { name: c.name, email: c.email, phone: c.phone }
+        );
+
+        res.json({
+            success: true,
+            vcard,
+            mailtoSubject: `Contact: ${c.name || c.email}`,
+            mailtoBody: `${shareMsg}\n\n`,
+        });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 appsApiRouter.get('/contacts-export', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const format = req.query.format as string || 'vcard';
     try {
-        const [rows]: any = await pool.query('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL', [user]);
+        const idsParam = req.query.ids as string;
+        let rows: any;
+        if (idsParam) {
+            const ids = idsParam.split(',').map(Number).filter(n => !isNaN(n));
+            if (ids.length === 0) {
+                rows = [];
+            } else {
+                const placeholders = ids.map(() => '?').join(',');
+                [rows] = await pool.query(
+                    `SELECT * FROM contacts WHERE username = ? AND id IN (${placeholders}) AND deleted_at IS NULL`,
+                    [user, ...ids]
+                );
+            }
+        } else {
+            [rows] = await pool.query('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL', [user]);
+        }
         if (format === 'csv') {
             res.setHeader('Content-Type', 'text/csv');
             res.setHeader('Content-Disposition', 'attachment; filename="contacts.csv"');

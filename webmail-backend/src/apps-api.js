@@ -101,6 +101,19 @@ exports.appsApiRouter.put('/contacts/:id', async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 });
+exports.appsApiRouter.put('/contacts/:id/favorite', async (req, res) => {
+    const user = req.username;
+    try {
+        const [result] = await db_1.pool.query('UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1) WHERE id = ? AND username = ?', [req.params.id, user]);
+        if (result.affectedRows === 0)
+            return res.status(404).json({ success: false, error: 'Contact not found' });
+        const [rows] = await db_1.pool.query('SELECT is_favorite FROM contacts WHERE id = ?', [req.params.id]);
+        res.json({ success: true, is_favorite: rows[0]?.is_favorite === 1 });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 exports.appsApiRouter.delete('/contacts/:id', async (req, res) => {
     const user = req.username;
     try {
@@ -231,6 +244,35 @@ exports.appsApiRouter.get('/contacts-duplicates', async (req, res) => {
             seen.add(rows[i].id);
         }
         res.json({ success: true, duplicates });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.get('/contacts-merge-preview', async (req, res) => {
+    const user = req.username;
+    const ids = (req.query.ids || '').split(',').map(Number).filter(Boolean);
+    if (ids.length < 2)
+        return res.status(400).json({ success: false, error: 'Need at least 2 contact IDs' });
+    try {
+        const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=?', [ids, user]);
+        if (rows.length < 2)
+            return res.status(404).json({ success: false, error: 'Contacts not found' });
+        // Build field-by-field preview showing source of each value
+        const fieldSources = {};
+        const mergeFields = ['name', 'email', 'phone', 'job_title', 'organization', 'notes', 'photo_url'];
+        for (const field of mergeFields) {
+            for (const r of rows) {
+                if (r[field]) {
+                    fieldSources[field] = { value: r[field], fromId: r.id, fromName: r.name || r.email };
+                    break;
+                }
+            }
+        }
+        const merged = { name: '', email: '', phone: '', job_title: '', organization: '', notes: '', photo_url: '' };
+        for (const field of mergeFields)
+            merged[field] = fieldSources[field]?.value || '';
+        res.json({ success: true, contacts: rows, fieldSources, merged });
     }
     catch (e) {
         res.status(500).json({ success: false, error: e.message });

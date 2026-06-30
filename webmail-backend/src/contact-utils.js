@@ -97,6 +97,9 @@ async function ensureContactsSchema() {
             if (!columnNames.has('photo_url')) {
                 await db_1.pool.query('ALTER TABLE contacts ADD COLUMN photo_url MEDIUMTEXT NULL AFTER labels_json');
             }
+            if (!columnNames.has('is_favorite')) {
+                await db_1.pool.query('ALTER TABLE contacts ADD COLUMN is_favorite TINYINT(1) NOT NULL DEFAULT 0 AFTER photo_url');
+            }
             await db_1.pool.query(`
                 CREATE TABLE IF NOT EXISTS contact_groups (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -346,7 +349,7 @@ function contactEtag(contact) {
 }
 async function listContacts(user) {
     await ensureContactsSchema();
-    const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ? ORDER BY name ASC, email ASC, id ASC', [user]);
+    const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ? ORDER BY is_favorite DESC, name ASC, email ASC, id ASC', [user]);
     return rows;
 }
 async function getContactByDavUid(user, davUid) {

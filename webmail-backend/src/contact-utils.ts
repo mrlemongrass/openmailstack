@@ -123,6 +123,9 @@ export async function ensureContactsSchema(): Promise<void> {
             if (!columnNames.has('photo_url')) {
                 await pool.query('ALTER TABLE contacts ADD COLUMN photo_url MEDIUMTEXT NULL AFTER labels_json');
             }
+            if (!columnNames.has('is_favorite')) {
+                await pool.query('ALTER TABLE contacts ADD COLUMN is_favorite TINYINT(1) NOT NULL DEFAULT 0 AFTER photo_url');
+            }
 
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS contact_groups (
@@ -390,7 +393,7 @@ export function contactEtag(contact: ContactRow): string {
 export async function listContacts(user: string): Promise<ContactRow[]> {
     await ensureContactsSchema();
     const [rows]: any = await pool.query(
-        'SELECT * FROM contacts WHERE username = ? ORDER BY name ASC, email ASC, id ASC',
+        'SELECT * FROM contacts WHERE username = ? ORDER BY is_favorite DESC, name ASC, email ASC, id ASC',
         [user]
     );
     return rows;

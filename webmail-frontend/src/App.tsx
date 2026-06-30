@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import { io } from 'socket.io-client';
-import { Activity, Mail, MailOpen, Users, Settings, X, Plus, Filter, Search, Star, Trash2, Maximize2, Minimize2, Send, Reply, ReplyAll, Forward, Inbox, ChevronRight, ChevronLeft, ChevronDown, ShieldAlert, Edit, Edit2, Share2, Save, Lock, User, UserPlus, RefreshCw, Paperclip, Eye, Download, Upload, Copy, Check, Smartphone, Monitor, Link2, Image, SlidersHorizontal, Undo2, Phone, Briefcase, MapPin, StickyNote, Clock, HelpCircle, Zap, FileText, Calendar, HardDrive, FolderOpen } from 'lucide-react';
+import { Activity, Mail, MailOpen, Users, Settings, X, Plus, Filter, Search, LayoutGrid, List, Star, Trash2, Maximize2, Minimize2, Send, Reply, ReplyAll, Forward, Inbox, ChevronRight, ChevronLeft, ChevronDown, ShieldAlert, Edit, Edit2, Share2, Save, Lock, User, UserPlus, RefreshCw, Paperclip, Eye, Download, Upload, Copy, Check, Smartphone, Monitor, Link2, Image, SlidersHorizontal, Undo2, Phone, Briefcase, MapPin, StickyNote, Clock, HelpCircle, Zap, FileText, Calendar, HardDrive, FolderOpen } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultLayout } from 'react-resizable-panels';
 import DOMPurify from 'dompurify';
 import 'react-quill-new/dist/quill.snow.css';
@@ -835,6 +835,10 @@ function App() {
   const [contactGroups, setContactGroups] = useState<ContactGroup[]>([]);
   const [editingContactGroup, setEditingContactGroup] = useState<Partial<ContactGroup> | null>(null);
   const [groupMemberIds, setGroupMemberIds] = useState<Set<number>>(new Set());
+  const [contactSearchQuery, setContactSearchQuery] = useState('');
+  const [contactViewMode, setContactViewMode] = useState<'grid' | 'list'>('grid');
+  const [mergePreviewData, setMergePreviewData] = useState<any>(null);
+  const [mergePrimaryId, setMergePrimaryId] = useState<number | null>(null);
   const [contactsActionStatus, setContactsActionStatus] = useState('');
   const [contactsActionError, setContactsActionError] = useState('');
   const [calendarActionStatus, setCalendarActionStatus] = useState('');
@@ -1219,13 +1223,25 @@ function App() {
 
   const displayContacts = useMemo((): DisplayContact[] => {
     const sourceContacts = contactsView === 'directory' ? directoryContacts : contacts;
-    const filteredContacts = (selectedLabel || selectedGroupId) && contactsView === 'personal'
-      ? sourceContacts.filter(c => {
+    const filteredContacts = (() => {
+      let result = sourceContacts;
+      if ((selectedLabel || selectedGroupId) && contactsView === 'personal') {
+        result = result.filter(c => {
           if (selectedLabel && !c.labels_json?.includes(selectedLabel)) return false;
           if (selectedGroupId && !groupMemberIds.has(Number(c.id))) return false;
           return true;
-        })
-      : sourceContacts;
+        });
+      }
+      if (contactSearchQuery.trim()) {
+        const q = contactSearchQuery.toLowerCase();
+        result = result.filter(c =>
+          (c.name || '').toLowerCase().includes(q) ||
+          (c.email || '').toLowerCase().includes(q) ||
+          (c.phone || '').toLowerCase().includes(q)
+        );
+      }
+      return result;
+    })();
 
     return [...filteredContacts]
       .map(contact => {
@@ -1254,7 +1270,7 @@ function App() {
         if (cmp !== 0) return cmp;
         return a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
       });
-  }, [contacts, contactsSettings.nameFormat, contactsSettings.sortBy, contactsView, directoryContacts, selectedLabel, selectedGroupId, groupMemberIds]);
+  }, [contacts, contactsSettings.nameFormat, contactsSettings.sortBy, contactsView, directoryContacts, selectedLabel, selectedGroupId, groupMemberIds, contactSearchQuery]);
 
   const recipientContacts = useMemo(() => {
     const seen = new Set<string>();
@@ -3149,27 +3165,44 @@ function App() {
     e.target.value = ''; // Reset input
   };
 
-  const handleMergeContactGroup = async (group: Contact[]) => {
-    if (group.length < 2) return;
-    const primaryId = group[0].id;
-    const duplicateIds = group.slice(1).map(c => c.id);
-    
-    setContactsActionStatus('Merging contacts...');
-    setContactsActionError('');
+  const handleToggleFavorite = async (contactId: number) => {
+    try {
+      const res = await fetch(`/api/apps/contacts/${contactId}/favorite`, { method: 'PUT', headers: getHeaders() });
+      const d = await res.json();
+      if (d.success) await refreshContacts();
+    } catch {}
+  };
+
+  const handleMergePreview = async (group: Contact[]) => {
+    const ids = group.map(c => c.id).join(',');
+    try {
+      const res = await fetch(`/api/apps/contacts-merge-preview?ids=${ids}`, { headers: getHeaders() });
+      const d = await res.json();
+      if (d.success) {
+        setMergePreviewData(d);
+        setMergePrimaryId(Number(group[0].id));
+        // merge preview loaded
+      }
+    } catch (err) {
+      setContactsActionError('Failed to load merge preview.');
+    }
+  };
+
+  const handleMergeCommit = async () => {
+    if (!mergePreviewData || !mergePrimaryId) return;
+    const duplicateIds = mergePreviewData.contacts.filter((c: any) => c.id !== mergePrimaryId).map((c: any) => c.id);
     try {
       const response = await fetch('/api/apps/contacts-merge', {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ primaryId, duplicateIds })
+        body: JSON.stringify({ primaryId: mergePrimaryId, duplicateIds })
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Could not merge contacts.');
-      
       await refreshContacts();
+      setMergePreviewData(null);
+      setIsDuplicateModalOpen(false);
       setContactsActionStatus('Contacts merged successfully.');
-      if (duplicateGroups.length <= 1) {
-        setIsDuplicateModalOpen(false);
-      }
     } catch (err) {
       setContactsActionError(err instanceof Error ? err.message : 'Merge failed.');
     }
@@ -5369,21 +5402,30 @@ function App() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '16px' }}>
                       {contactsView === 'directory' ? 'Global Directory' : 'Address Book'}
-                      {contactsView === 'directory' && (
+                      {(contactsView === 'directory' || contactsView === 'personal') && (
                         <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.05)', borderRadius: '20px', padding: '4px 12px' }}>
                           <Search size={16} color="var(--text-secondary)" />
-                          <input 
+                          <input
                             type="text"
-                            placeholder="Search directory..."
-                            value={directorySearchQuery}
-                            onChange={(e) => setDirectorySearchQuery(e.target.value)}
+                            placeholder={contactsView === 'directory' ? 'Search directory...' : 'Search contacts...'}
+                            value={contactsView === 'directory' ? directorySearchQuery : contactSearchQuery}
+                            onChange={(e) => contactsView === 'directory' ? setDirectorySearchQuery(e.target.value) : setContactSearchQuery(e.target.value)}
                             style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', padding: '4px 8px', fontSize: '0.9rem', width: '200px' }}
                           />
+                          {(contactsView === 'personal' && contactSearchQuery) && (
+                            <button className="btn btn-ghost" style={{ padding: '2px' }} onClick={() => setContactSearchQuery('')}><X size={14} /></button>
+                          )}
                         </div>
                       )}
                     </h2>
-                    
+
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      {contactsView === 'personal' && (
+                        <div style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', padding: '2px', marginRight: '8px' }}>
+                          <button className={`btn ${contactViewMode === 'grid' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 8px' }} onClick={() => setContactViewMode('grid')} title="Grid view"><LayoutGrid size={16} /></button>
+                          <button className={`btn ${contactViewMode === 'list' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '4px 8px' }} onClick={() => setContactViewMode('list')} title="List view"><List size={16} /></button>
+                        </div>
+                      )}
                       <button className="btn btn-primary" onClick={() => { setEditingContact(null); setIsContactModalOpen(true); }} title="Create a new contact">
                         <UserPlus size={16} /> Add Contact
                       </button>
@@ -5440,10 +5482,19 @@ function App() {
                       displayContacts.map((contact, index) => (
                         <div key={contact.id || contact.email || index} className="contact-card" style={{
                           position: 'relative', display: 'flex', flexDirection: 'column', gap: `${Math.round(contactDensity.cardPadding * 0.67)}px`, padding: `${contactDensity.cardPadding}px`,
-                          background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', 
+                          background: 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
                           border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px',
                           boxShadow: '0 4px 20px rgba(0,0,0,0.1)', transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)'
                         }}>
+                          {contactsView === 'personal' && (
+                            <button
+                              onClick={(ev) => { ev.stopPropagation(); handleToggleFavorite(Number(contact.id)); }}
+                              style={{ position: 'absolute', top: '8px', right: '8px', background: 'transparent', border: 'none', color: (contact as any).is_favorite ? '#f59e0b' : 'rgba(255,255,255,0.2)', cursor: 'pointer', padding: '4px', borderRadius: '4px', zIndex: 2 }}
+                              title={(contact as any).is_favorite ? 'Remove from favorites' : 'Add to favorites'}
+                            >
+                              <Star size={16} fill={(contact as any).is_favorite ? '#f59e0b' : 'none'} />
+                            </button>
+                          )}
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
                             <div style={{
                               width: `${contactDensity.avatarSize}px`, height: `${contactDensity.avatarSize}px`, borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, #3b82f6) 100%)',
@@ -6975,7 +7026,37 @@ function App() {
             </div>
             
             <div className="sync-setup-body" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              {duplicateGroups.length === 0 ? (
+              {mergePreviewData ? (
+                <div>
+                  <div style={{ fontWeight: 'bold', marginBottom: '12px' }}>Merge Preview</div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                    Select which contact to keep as primary. Fields from duplicates will be merged in where the primary has empty values.
+                  </div>
+                  {mergePreviewData.contacts.map((c: any) => (
+                    <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', marginBottom: '8px', background: mergePrimaryId === c.id ? 'rgba(var(--accent-primary-rgb, 59,130,246), 0.15)' : 'rgba(255,255,255,0.03)', border: mergePrimaryId === c.id ? '1px solid var(--accent-primary)' : '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', cursor: 'pointer' }}>
+                      <input type="radio" name="merge-primary" checked={mergePrimaryId === c.id} onChange={() => setMergePrimaryId(c.id)} />
+                      <div>
+                        <div style={{ fontWeight: 'bold' }}>{c.name || 'Unnamed'}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{c.email} {c.phone ? '· ' + c.phone : ''}</div>
+                      </div>
+                    </label>
+                  ))}
+                  <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '8px' }}>Merged Result Preview</div>
+                    {Object.entries(mergePreviewData.fieldSources).map(([field, info]: [string, any]) => (
+                      <div key={field} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '0.85rem', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                        <span style={{ color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{field.replace(/_/g, ' ')}</span>
+                        <span>{String(info.value).slice(0, 60)}{String(info.value).length > 60 ? '...' : ''}</span>
+                        <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>from {info.fromName}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+                    <button className="btn btn-ghost" onClick={() => { setMergePreviewData(null); setMergePrimaryId(null); }}>Back</button>
+                    <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleMergeCommit}>Merge Contacts</button>
+                  </div>
+                </div>
+              ) : duplicateGroups.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)' }}>
                   <Check size={48} color="#10b981" style={{ margin: '0 auto 16px', display: 'block' }} />
                   No duplicates found. Your address book is clean!
@@ -6985,8 +7066,8 @@ function App() {
                   <div key={idx} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                       <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>Group {idx + 1}</div>
-                      <button className="btn btn-primary" onClick={() => handleMergeContactGroup(group)} style={{ padding: '6px 12px', fontSize: '0.85rem' }}>
-                        Merge This Group
+                      <button className="btn btn-primary" onClick={() => handleMergePreview(group)} style={{ padding: '6px 12px', fontSize: '0.85rem' }}>
+                        Review & Merge
                       </button>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

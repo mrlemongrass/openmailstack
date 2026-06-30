@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { LiveNoteEditor } from '../../LiveNoteEditor';
 import { ReminderPicker } from './ReminderPicker';
+import { AttachmentList } from './AttachmentList';
 import type { useNotes } from '../hooks/useNotes';
 import { saveNote } from '../../shared/api';
 
@@ -97,6 +98,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             onChange={handleContentChange}
           />
         </div>
+        <AttachmentList noteId={note.id} />
       </div>
     </div>
   );

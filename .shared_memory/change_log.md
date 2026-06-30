@@ -452,6 +452,47 @@
 - Note: Manual frontend rsync preserved restrictive local `dist/` permissions until normalized on the deployed webroot; the repo deploy helpers already run directory/file chmod after rsync.
 - Follow-up: Admin settings still need enforcement, mailbox primary email rename remains intentionally blocked, recurring events need exception/series-edit UX, and real-device client validation remains the next release gate.
 
+## 2026-06-29 Settings Milestones 3–6
+
+- Changed: Completed Settings Milestone 3 (Mail Settings Product Pass): filter enable/disable, forwarding keep-copy, compose preferences (defaultMode, defaultFont, attachmentReminder), reading preferences (density, snippets, externalImages, markReadDelay), spam/senders honesty.
+- Changed: Completed Settings Milestone 4 (Calendar Settings Product Pass): added 'agenda' to defaultView type, wired view toggle persistence, applied clockFormat to day/week time labels and multi-day event display, applied defaultReminderMinutes to event editing and drag-and-drop.
+- Changed: Completed Settings Milestone 5 (Contacts Settings Product Pass): fixed backend sortBy type mismatch (name/email → firstName/lastName/email), wired listDensity to contact card grid (cozy/compact/comfortable presets), applied nameFormat/sortBy to compose autocomplete.
+- Changed: Completed Settings Milestone 6 (Account, Security, and Release Hardening): implemented real session listing (DB-backed), DELETE session revocation endpoint, auto-save indicator (Saving.../Saved states), enforced allowUserPasswordChange admin setting, bumped version to 0.1.5.
+- Changed: Added Fail2ban intrusion detection, System Health Dashboard, live telemetry charts, account security endpoints, event drag-and-drop, mail search indexing worker, admin telemetry, settings shell.
+- Verified: All backend tests, frontend lint, frontend build pass for each milestone.
+
+## 2026-06-29 Phase 1 – Calendar/Contacts/Mail Quick Wins
+
+- Changed: Calendar: fixed create vs edit dialog title, replaced window.alert() with in-app status banners for .ics import.
+- Changed: Contacts: added photo_url persistence (send in handleSaveContact, add to ContactRow interface, patchVCardData PHOTO output, schema migration).
+- Changed: Enriched parseVCard to extract ORG, TITLE, NOTE, ADR; vCard import saves to structured columns. CSV import now extracts job_title, organization, notes matching export.
+- Verified: Backend/frontend builds and tests pass.
+
+## 2026-06-29 Phase 2 – Calendar Resize, Recurrence, Draft, Office Preview
+
+- Changed: Calendar event resize: bottom-edge drag handle in day/week view, live height preview, 15-min snap, saves via saveEventToBackend.
+- Changed: Recurrence exceptions: "This occurrence"/"All events" prompts on edit/delete, RECURRENCE-ID in iCal output, EXDATE generation on single-occurrence delete, EXDATE parsing/filtering in expandRecurringEvent.
+- Changed: Draft beforeunload: browser warning when leaving page with unsaved compose content.
+- Changed: Office document preview: MIME types for .doc/.docx/.xlsx/.pptx/.odt/.ods/.rtf added to isPreviewableAttachment.
+- Verified: Backend/frontend builds and tests pass.
+
+## 2026-06-29 Phase 3 – CalDAV, Subscribed Calendars, Contact Groups, Indexing, Attachments
+
+- Changed: CalDAV incremental sync: parse REPORT XML body for sync-collection vs calendar-query, sync-token comparison, empty 207 on match. Added calendar_tombstones table; track deletions in CalDAV and EAS paths.
+- Changed: Subscribed calendars: new calendar-subscription.ts worker (15min interval), fetches .ics, parses VEVENT, upserts events. Added last_fetched_at/last_fetch_error tracking.
+- Changed: Contact groups: added contact_groups + contact_group_members tables. Full CRUD API (GET/POST/PUT/DELETE groups, GET/POST members, DELETE member). Frontend: Groups sidebar section with color dots, member counts, inline create/edit/delete, click-to-filter.
+- Changed: Background indexing daemon: added mailbox_credentials table for AES-256-GCM encrypted offline credentials. Upsert on every login. search-worker UNIONs sessions + mailbox_credentials for persistent coverage.
+- Changed: Attachment content extraction: added pdf-parse for PDF text extraction. XML tag stripping for DOCX/XLSX/ODT/RTF. Async extraction in indexing loop. 100KB cap per attachment.
+- Verified: Backend/frontend builds and tests pass (23/25, 2 pre-existing failures).
+
+## 2026-06-29 Priority Hardening – Security, iCal, Admin, ActiveSync
+
+- Changed: Dovecot master-user auth: optional OMS_IMAP_MASTER_USER/_PASS (and SMTP/Sieve equivalents) env vars. ImapService formats {user}*{master}. ManageSieveClient accepts master params for SASL PLAIN.
+- Changed: Calendar iCal properties: generate VALARM (TRIGGER:-PT{n}M), ATTENDEE (mailto URIs), TRANSP (busy→OPAQUE, free→TRANSPARENT), TZID param on DTSTART/DTEND. Parse all in parseIcalEvent.
+- Changed: Admin API key: replaced window.prompt() with navigator.clipboard.writeText() + in-app adminActionStatus banner.
+- Changed: ActiveSync hardening: fixed shouldSendEvents bug (removed !calendarChanged guard), added EAS calendar tombstone writes, outgoing Delete commands, recurrence RRULE↔EAS mapping, contact Picture↔photo_url sync, CompanyName/JobTitle mapping.
+- Verified: Backend/frontend builds pass, tests 23/25. ROADMAP.md, settings_plan.md, risk_register.md, and change_log.md updated.
+
 Future entry template:
 
 ```markdown

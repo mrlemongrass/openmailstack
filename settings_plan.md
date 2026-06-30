@@ -1,6 +1,7 @@
 # Settings Plan
 
-Last updated: 2026-06-21
+Last updated: 2026-06-29
+Status: ALL MILESTONES COMPLETE
 
 ## Goal
 
@@ -222,7 +223,9 @@ Verified so far:
 - Built backend was synced to `/opt/openmailstack-backend` and `openmailstack.service` was restarted; built frontend was deployed to `/var/www/openmailstack`.
 - `rtk bash ./tests/integration/staging_smoke.sh ./config.conf` passes after deployment.
 
-## Milestone 3: Mail Settings Product Pass
+## Milestone 3: Mail Settings Product Pass ✅
+
+Status: completed 2026-06-29.
 
 Purpose: bring Mail settings close to Gmail/Outlook/Proton expectations using the new persistence foundation.
 
@@ -270,7 +273,9 @@ Exit criteria before moving on:
 - Manual smoke: login, open Settings > Mail, edit signature, compose, send draft or test mail, reload, verify values remain.
 - Frontend lint/build and backend test/build pass.
 
-## Milestone 4: Calendar Settings Product Pass
+## Milestone 4: Calendar Settings Product Pass ✅
+
+Status: completed 2026-06-29.
 
 Purpose: make Calendar settings affect the actual calendar experience instead of only existing as standalone preferences.
 
@@ -295,7 +300,9 @@ Exit criteria before moving on:
 - CalDAV smoke checks still pass.
 - Frontend lint/build and backend test/build pass.
 
-## Milestone 5: Contacts Settings Product Pass
+## Milestone 5: Contacts Settings Product Pass ✅
+
+Status: completed 2026-06-29.
 
 Purpose: make Contacts settings useful for daily address-book management and mail composition.
 
@@ -320,7 +327,9 @@ Exit criteria before moving on:
 - Existing contacts CRUD still works.
 - Frontend lint/build and backend test/build pass.
 
-## Milestone 6: Account, Security, And Release Hardening
+## Milestone 6: Account, Security, And Release Hardening ✅
+
+Status: completed 2026-06-29.
 
 Purpose: make the Settings area trustworthy enough to ship as a normal part of the webmail suite.
 

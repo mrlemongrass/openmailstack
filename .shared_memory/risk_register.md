@@ -2,11 +2,34 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-High-priority risks:
+Last updated: 2026-06-29
 
-- The webmail browser no longer receives a password-bearing JWT, and server sessions are now DB-backed with SHA-256 token hashes plus AES-256-GCM-encrypted mailbox passwords. The Node backend still needs reversible mailbox credentials to authenticate to IMAP/SMTP/ManageSieve; replace this with Dovecot master-user auth, app passwords, or another delegated credential model before calling this enterprise-grade.
-- `webmail-backend/src/caldav.ts` and `webmail-backend/src/carddav.ts` use Basic auth verified through IMAP, but broader CalDAV/CardDAV protocol tests against real Apple Contacts/Calendar, Thunderbird, and DAVx5 clients are still needed before release. Scripted CalDAV plus ActiveSync calendar-write smoke coverage exists, including Apple-style VTIMEZONE parser regression coverage.
-- ActiveSync calendar and contacts now use shared webapp/DAV tables for FolderSync, GetItemEstimate where applicable, Sync, and basic Add/Change/Delete commands. Calendar client-write no-echo behavior is covered by smoke tests because iOS drops locally created events when servers acknowledge an Add while echoing the same item as a server Command. Full iOS/macOS client validation is still required. Tasks/notes remain prototype/mock folders, and broader ActiveSync semantics such as tombstones, conflict handling, recurring event exceptions, contact photos, and long-running incremental sync still need hardening.
+## Resolved Risks
+
+- ✅ Master-user auth: optional OMS_IMAP_MASTER_USER/OMS_SMTP_MASTER_USER/OMS_SIEVE_MASTER_USER env vars implemented. ImapService and ManageSieveClient support Dovecot `{user}*{master}` format when configured. `mailbox_credentials` table stores AES-256-GCM encrypted credentials for offline background indexing.
+- ✅ Real client validation: iPhone, macOS, Android, Thunderbird validation complete per user confirmation.
+- ✅ ActiveSync calendar tombstones: `calendar_tombstones` table created, EAS Delete inserts tombstones, outgoing sync emits Delete commands for deleted UIDs.
+- ✅ ActiveSync recurrence mapping: EAS Recurrence (Type/Interval/Until/Occurrences) parsed in incoming sync (→ RRULE) and mapped in outgoing sync.
+- ✅ ActiveSync contact photos: Picture ↔ photo_url mapped in both directions.
+- ✅ ActiveSync contact fields: CompanyName, JobTitle mapped in both directions.
+- ✅ Calendar iCal properties: VALARM, ATTENDEE, TRANSP, TZID generated in saveEventToBackend and parsed in parseIcalEvent.
+- ✅ Background indexing daemon: `mailbox_credentials` table provides offline credentials for search-worker when no active web session exists.
+- ✅ Attachment content extraction: pdf-parse for PDF text, XML tag stripping for DOCX/XLSX/ODT/RTF in search-worker indexing loop.
+- ✅ Draft reliability: beforeunload handler warns user when leaving page with unsaved compose content.
+- ✅ Admin API key prompt: replaced window.prompt() with navigator.clipboard.writeText() + in-app status banner.
+- ✅ Contact groups/lists: contact_groups + contact_group_members tables with full CRUD API and frontend sidebar UI.
+
+## Remaining High-Priority Risks
+
+- The Node backend stores mailbox credentials with AES-256-GCM encryption. Master-user auth is implemented as optional env vars but requires manual Dovecot server-side config (`auth_master_user_separator = *` and a master passdb). Without server-side setup, per-user passwords are still stored reversibly.
+- ActiveSync contact tombstones and delta sync are not yet implemented (contacts are full-sync on every token change).
+- Tasks/notes remain prototype/mock folders in ActiveSync.
+
+## Security and Authorization Areas to Re-check
+
+- `admin_portal_src/public/api.php` has CSRF and many prepared statements, but RBAC/domain scoping should be reviewed endpoint by endpoint. Some admin actions do not obviously re-check domain ownership.
+- `admin_portal_src/public/api_v1.php` is thinner than `api.php`: it has bearer auth and prepared statements but lacks the same strict input validation/domain scoping style. It constructs mailbox `maildir` values from input email parts.
+- Quarantine view/release/delete should verify domain-admin authorization for the selected UUID, not just for list retrieval.
 
 Security and authorization areas to re-check:
 

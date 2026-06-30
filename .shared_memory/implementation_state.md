@@ -1,6 +1,22 @@
 # Implementation State
 
-Last reviewed: 2026-06-21.
+Last reviewed: 2026-06-29. All 6 settings milestones complete. Major feature passes delivered across calendar, contacts, mail, security, admin, and ActiveSync.
+
+## 2026-06-29 Additions
+
+**Settings**: All 6 milestones (M1–M6) plus M2A (Admin Branding) complete. Server-backed settings for mail/calendar/contacts/appearance with debounced auto-save, save-state indicators, real session listing/revocation, and allowUserPasswordChange enforcement.
+
+**Calendar**: Modal-based calendar creation/edit, event drag-and-drop and resize with 15-min snap, recurrence exceptions (EXDATE/RECURRENCE-ID), VALARM/ATTENDEE/TRANSP/TZID iCal properties, subscribed calendar background fetch worker (15min), CalDAV sync-collection REPORT with tombstone tracking (calendar_tombstones table), agenda/list view, .ics import/export with in-app feedback.
+
+**Contacts**: Full contact CRUD modal with photo persistence, enriched vCard/CSV import (ORG/TITLE/NOTE/ADR), contact groups/lists (contact_groups + group_members tables, sidebar UI, inline CRUD, click-to-filter), list density presets (cozy/compact/comfortable), nameFormat/sortBy in compose autocomplete.
+
+**Mail**: Session-independent background indexing (mailbox_credentials for offline access), PDF/Office attachment text extraction (pdf-parse + XML stripping), draft beforeunload warning, office document MIME types in isPreviewableAttachment.
+
+**Security**: Optional Dovecot master-user auth (OMS_IMAP/SMTP/SIEVE_MASTER_USER/_PASS env vars, {user}*{master} format in ImapService/ManageSieveClient). Credentials remain AES-256-GCM encrypted.
+
+**Admin**: API key prompt replaced with clipboard copy. Creation modals fully functional. window.confirm() still used for deletion safety (acceptable pattern).
+
+**ActiveSync**: Calendar tombstone tracking in EAS path, outgoing tombstone Delete commands, recurrence RRULE↔EAS mapping, contact Picture↔photo_url sync, CompanyName/JobTitle mapping, fixed shouldSendEvents bug.
 
 Product direction:
 

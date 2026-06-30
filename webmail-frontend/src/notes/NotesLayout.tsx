@@ -18,7 +18,7 @@ export function NotesLayout() {
   const isMobile = useMediaQuery('(max-width: 767px)');
 
   const notesPanelLayout = useDefaultLayout({
-    id: 'oms-notes-v10',
+    id: 'oms-notes-v11',
     panelIds: ['notes-sidebar', 'notes-view'],
   });
 
@@ -33,17 +33,17 @@ export function NotesLayout() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       <PanelGroup
-        id="oms-notes-v10"
+        id="oms-notes-v11"
         orientation="horizontal"
         defaultLayout={notesPanelLayout.defaultLayout}
         onLayoutChange={notesPanelLayout.onLayoutChange}
         style={{ width: '100%', height: '100%', minHeight: 0, minWidth: 0 }}
       >
-        <Panel id="notes-sidebar" defaultSize={20} minSize={8} maxSize={35}>
+        <Panel id="notes-sidebar" defaultSize="20%" minSize="8%" maxSize="35%">
           <NotesSidebar notesCtx={notesCtx} />
         </Panel>
         <ResizeHandle />
-        <Panel id="notes-view" defaultSize={80} minSize={25}>
+        <Panel id="notes-view" defaultSize="80%" minSize="25%">
           <NotesGrid notesCtx={notesCtx} />
         </Panel>
       </PanelGroup>

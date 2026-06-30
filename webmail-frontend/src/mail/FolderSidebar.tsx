@@ -21,7 +21,7 @@ interface FolderTreeNode {
 function buildFolderTree(folders: MailFolder[]): FolderTreeNode[] {
   const root: Record<string, FolderTreeNode> = {};
   for (const f of folders) {
-    const parts = f.path.split('/').filter(Boolean);
+    const parts = f.path.split(/[./]/).filter(Boolean);
     if (parts.length === 0) continue;
     let current = root;
     for (let i = 0; i < parts.length; i++) {

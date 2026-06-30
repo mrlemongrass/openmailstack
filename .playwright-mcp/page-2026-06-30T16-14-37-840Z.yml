@@ -1,0 +1,255 @@
+- generic [ref=e16]:
+  - banner [ref=e17]:
+    - navigation [ref=e18]:
+      - generic [ref=e19]: OpenMailStack
+      - link "Mail" [ref=e20] [cursor=pointer]:
+        - /url: /mail/inbox
+      - link "Calendar" [ref=e21] [cursor=pointer]:
+        - /url: /calendar/month
+      - link "Contacts" [ref=e22] [cursor=pointer]:
+        - /url: /contacts
+      - link "Notes" [ref=e23] [cursor=pointer]:
+        - /url: /notes
+    - generic [ref=e24]:
+      - link "Sync" [ref=e25] [cursor=pointer]:
+        - /url: /sync
+        - img [ref=e26]
+        - text: Sync
+      - link [ref=e28] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e29]
+      - link [ref=e32] [cursor=pointer]:
+        - /url: /admin
+        - img [ref=e33]
+      - generic [ref=e35]: localtest@housevo.us
+      - button "Logout" [ref=e36] [cursor=pointer]
+  - main [ref=e37]:
+    - generic [ref=e39]:
+      - generic [ref=e43]:
+        - button "Compose" [ref=e44] [cursor=pointer]: Compose
+        - navigation [ref=e46]:
+          - generic [ref=e48] [cursor=pointer]:
+            - generic: INBOX
+            - generic [ref=e51]: "9"
+          - generic [ref=e53] [cursor=pointer]:
+            - generic: Sent
+          - generic [ref=e57] [cursor=pointer]:
+            - generic: Drafts
+          - generic [ref=e60] [cursor=pointer]:
+            - generic: Archive
+          - generic [ref=e64] [cursor=pointer]:
+            - generic: Junk
+          - generic [ref=e67] [cursor=pointer]:
+            - generic: Trash
+      - separator [ref=e70]
+      - generic [ref=e75]:
+        - generic [ref=e76]:
+          - checkbox "Select all" [ref=e77]
+          - textbox "Search messages..." [ref=e78]
+        - generic [ref=e80]:
+          - generic [ref=e81] [cursor=pointer]:
+            - checkbox [ref=e82]
+            - button [ref=e83]:
+              - img [ref=e84]
+            - generic [ref=e86]: "\""
+            - generic [ref=e87]:
+              - generic [ref=e88]:
+                - generic [ref=e89]: "\"Local Test\""
+                - generic [ref=e90]:
+                  - generic [ref=e91]: Jun 21
+                  - img [ref=e92]
+                  - generic [ref=e94]:
+                    - button "Archive" [ref=e95]:
+                      - img [ref=e96]
+                    - button "Delete" [ref=e99]:
+                      - img [ref=e100]
+                    - button "Mark read" [ref=e103]:
+                      - img [ref=e104]
+                    - button "Star" [ref=e107]:
+                      - img [ref=e108]
+                    - button "Snooze" [ref=e110]:
+                      - img [ref=e111]
+              - generic [ref=e115]: OMS webmail smoke 1782062542161
+          - generic [ref=e116] [cursor=pointer]:
+            - checkbox [ref=e117]
+            - button [ref=e118]:
+              - img [ref=e119]
+            - generic [ref=e121]: L
+            - generic [ref=e122]:
+              - generic [ref=e123]:
+                - generic [ref=e124]: localtest@housevo.us
+                - generic [ref=e125]:
+                  - generic [ref=e126]: Jun 21
+                  - img [ref=e127]
+                  - generic [ref=e129]:
+                    - button "Archive" [ref=e130]:
+                      - img [ref=e131]
+                    - button "Delete" [ref=e134]:
+                      - img [ref=e135]
+                    - button "Mark read" [ref=e138]:
+                      - img [ref=e139]
+                    - button "Star" [ref=e142]:
+                      - img [ref=e143]
+                    - button "Snooze" [ref=e145]:
+                      - img [ref=e146]
+              - generic [ref=e150]: OMS direct SMTP smoke 1782062542161
+          - generic [ref=e151] [cursor=pointer]:
+            - checkbox [ref=e152]
+            - button [ref=e153]:
+              - img [ref=e154]
+            - generic [ref=e156]: L
+            - generic [ref=e157]:
+              - generic [ref=e158]:
+                - generic [ref=e159]: localtest@housevo.us
+                - generic [ref=e160]:
+                  - generic [ref=e161]: Jun 21
+                  - img [ref=e162]
+                  - generic [ref=e164]:
+                    - button "Archive" [ref=e165]:
+                      - img [ref=e166]
+                    - button "Delete" [ref=e169]:
+                      - img [ref=e170]
+                    - button "Mark read" [ref=e173]:
+                      - img [ref=e174]
+                    - button "Star" [ref=e177]:
+                      - img [ref=e178]
+                    - button "Snooze" [ref=e180]:
+                      - img [ref=e181]
+              - generic [ref=e185]: OMS direct SMTP smoke 1782062508950
+          - generic [ref=e186] [cursor=pointer]:
+            - checkbox [ref=e187]
+            - button [ref=e188]:
+              - img [ref=e189]
+            - generic [ref=e191]: "\""
+            - generic [ref=e192]:
+              - generic [ref=e193]:
+                - generic [ref=e194]: "\"Local Test\""
+                - generic [ref=e195]:
+                  - generic [ref=e196]: Jun 21
+                  - img [ref=e197]
+                  - generic [ref=e199]:
+                    - button "Archive" [ref=e200]:
+                      - img [ref=e201]
+                    - button "Delete" [ref=e204]:
+                      - img [ref=e205]
+                    - button "Mark read" [ref=e208]:
+                      - img [ref=e209]
+                    - button "Star" [ref=e212]:
+                      - img [ref=e213]
+                    - button "Snooze" [ref=e215]:
+                      - img [ref=e216]
+              - generic [ref=e220]: OMS webmail smoke 1782055021485
+          - generic [ref=e221] [cursor=pointer]:
+            - checkbox [ref=e222]
+            - button [ref=e223]:
+              - img [ref=e224]
+            - generic [ref=e226]: L
+            - generic [ref=e227]:
+              - generic [ref=e228]:
+                - generic [ref=e229]: localtest@housevo.us
+                - generic [ref=e230]:
+                  - img [ref=e231]
+                  - generic [ref=e233]:
+                    - button "Archive" [ref=e234]:
+                      - img [ref=e235]
+                    - button "Delete" [ref=e238]:
+                      - img [ref=e239]
+                    - button "Mark read" [ref=e242]:
+                      - img [ref=e243]
+                    - button "Star" [ref=e246]:
+                      - img [ref=e247]
+                    - button "Snooze" [ref=e249]:
+                      - img [ref=e250]
+              - generic [ref=e254]: OMS direct SMTP smoke 1782055021485
+          - generic [ref=e255] [cursor=pointer]:
+            - checkbox [ref=e256]
+            - button [ref=e257]:
+              - img [ref=e258]
+            - generic [ref=e260]: "\""
+            - generic [ref=e261]:
+              - generic [ref=e262]:
+                - generic [ref=e263]: "\"Local Test\""
+                - generic [ref=e264]:
+                  - generic [ref=e265]: Jun 21
+                  - img [ref=e266]
+                  - generic [ref=e268]:
+                    - button "Archive" [ref=e269]:
+                      - img [ref=e270]
+                    - button "Delete" [ref=e273]:
+                      - img [ref=e274]
+                    - button "Mark read" [ref=e277]:
+                      - img [ref=e278]
+                    - button "Star" [ref=e281]:
+                      - img [ref=e282]
+                    - button "Snooze" [ref=e284]:
+                      - img [ref=e285]
+              - generic [ref=e289]: OMS webmail smoke 1782054990708
+          - generic [ref=e290] [cursor=pointer]:
+            - checkbox [ref=e291]
+            - button [ref=e292]:
+              - img [ref=e293]
+            - generic [ref=e295]: L
+            - generic [ref=e296]:
+              - generic [ref=e297]:
+                - generic [ref=e298]: localtest@housevo.us
+                - generic [ref=e299]:
+                  - generic [ref=e300]: Jun 21
+                  - img [ref=e301]
+                  - generic [ref=e303]:
+                    - button "Archive" [ref=e304]:
+                      - img [ref=e305]
+                    - button "Delete" [ref=e308]:
+                      - img [ref=e309]
+                    - button "Mark read" [ref=e312]:
+                      - img [ref=e313]
+                    - button "Star" [ref=e316]:
+                      - img [ref=e317]
+                    - button "Snooze" [ref=e319]:
+                      - img [ref=e320]
+              - generic [ref=e324]: OMS direct SMTP smoke 1782054990708
+          - generic [ref=e325] [cursor=pointer]:
+            - checkbox [ref=e326]
+            - button [ref=e327]:
+              - img [ref=e328]
+            - generic [ref=e330]: "\""
+            - generic [ref=e331]:
+              - generic [ref=e332]:
+                - generic [ref=e333]: "\"Local Test\""
+                - generic [ref=e334]:
+                  - generic [ref=e335]: Jun 21
+                  - img [ref=e336]
+                  - generic [ref=e338]:
+                    - button "Archive" [ref=e339]:
+                      - img [ref=e340]
+                    - button "Delete" [ref=e343]:
+                      - img [ref=e344]
+                    - button "Mark read" [ref=e347]:
+                      - img [ref=e348]
+                    - button "Star" [ref=e351]:
+                      - img [ref=e352]
+                    - button "Snooze" [ref=e354]:
+                      - img [ref=e355]
+              - generic [ref=e359]: OMS webmail smoke 1782054582028
+          - generic [ref=e360] [cursor=pointer]:
+            - checkbox [ref=e361]
+            - button [ref=e362]:
+              - img [ref=e363]
+            - generic [ref=e365]: L
+            - generic [ref=e366]:
+              - generic [ref=e367]:
+                - generic [ref=e368]: localtest@housevo.us
+                - generic [ref=e369]:
+                  - generic [ref=e370]: Jun 21
+                  - img [ref=e371]
+                  - generic [ref=e373]:
+                    - button "Archive" [ref=e374]:
+                      - img [ref=e375]
+                    - button "Delete" [ref=e378]:
+                      - img [ref=e379]
+                    - button "Mark read" [ref=e382]:
+                      - img [ref=e383]
+                    - button "Star" [ref=e386]:
+                      - img [ref=e387]
+                    - button "Snooze" [ref=e389]:
+                      - img [ref=e390]
+              - generic [ref=e394]: OMS direct SMTP smoke 1782054582028

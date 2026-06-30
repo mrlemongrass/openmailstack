@@ -21,7 +21,7 @@ export function ContactsLayout() {
   const density = (appearance.density as 'compact' | 'cozy' | 'comfortable') || 'cozy';
 
   const contactsPanelLayout = useDefaultLayout({
-    id: 'oms-contacts-v10',
+    id: 'oms-contacts-v11',
     panelIds: ['contacts-sidebar', 'contacts-view'],
   });
 
@@ -36,17 +36,17 @@ export function ContactsLayout() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       <PanelGroup
-        id="oms-contacts-v10"
+        id="oms-contacts-v11"
         orientation="horizontal"
         defaultLayout={contactsPanelLayout.defaultLayout}
         onLayoutChange={contactsPanelLayout.onLayoutChange}
         style={{ width: '100%', height: '100%', minHeight: 0, minWidth: 0 }}
       >
-        <Panel id="contacts-sidebar" defaultSize={20} minSize={10} maxSize={35}>
+        <Panel id="contacts-sidebar" defaultSize="20%" minSize="10%" maxSize="35%">
           <ContactSidebar contacts={contacts} />
         </Panel>
         <ResizeHandle />
-        <Panel id="contacts-view" defaultSize={80} minSize={40}>
+        <Panel id="contacts-view" defaultSize="80%" minSize="40%">
           <ContactGrid contacts={contacts} density={density} />
         </Panel>
       </PanelGroup>

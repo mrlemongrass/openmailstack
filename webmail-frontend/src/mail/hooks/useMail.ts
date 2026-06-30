@@ -216,10 +216,14 @@ export function useMail(_opts: UseMailOptions) {
   // ---- Initial load ----
   useEffect(() => {
     fetchFolders();
-    fetchMessages();
     api.fetchSignatures().then(setSignatures).catch(() => {});
     api.fetchRules().then(setRules).catch(() => {});
   }, []);
+
+  // Refetch messages when folder changes
+  useEffect(() => {
+    fetchMessages();
+  }, [activeFolder]);
 
   return {
     folders, activeFolder, setActiveFolder, expandedFolders, setExpandedFolders,

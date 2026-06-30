@@ -1,6 +1,10 @@
 # Implementation State
 
-Last reviewed: 2026-06-29. All 6 settings milestones complete. Major feature passes delivered across calendar, contacts, mail, security, admin, and ActiveSync.
+Last reviewed: 2026-06-30. All 6 settings milestones complete. Major feature passes delivered across calendar, contacts, mail, security, admin, and ActiveSync.
+
+## 2026-06-30 Additions
+
+**Resizable panels**: Mail, Calendar, Contacts, and Notes use `react-resizable-panels` v4. Pass percentage sizes as strings (`"20%"`), not numbers, because v4 interprets numeric `defaultSize`/`minSize`/`maxSize` values as pixels. The active app layout IDs are `oms-webmail-v11`, `oms-cal-v11`, `oms-contacts-v11`, and `oms-notes-v11` to bypass bad v10 localStorage layouts created from pixel-sized panels.
 
 ## 2026-06-29 Additions
 

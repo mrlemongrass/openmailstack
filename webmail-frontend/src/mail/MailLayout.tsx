@@ -25,7 +25,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
 
   // Persist layout sizes — matches original app pattern
   const webmailPanelLayout = useDefaultLayout({
-    id: 'oms-webmail-v10',
+    id: 'oms-webmail-v11',
     panelIds: showViewer ? ['webmail-sidebar', 'message-list', 'message-view'] : ['webmail-sidebar', 'message-list'],
   });
 
@@ -40,13 +40,13 @@ export function MailLayout({ mail }: MailLayoutProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       <PanelGroup
-        id="oms-webmail-v10"
+        id="oms-webmail-v11"
         orientation="horizontal"
         defaultLayout={webmailPanelLayout.defaultLayout}
         onLayoutChange={webmailPanelLayout.onLayoutChange}
         style={{ width: '100%', height: '100%', minHeight: 0, minWidth: 0 }}
       >
-        <Panel id="webmail-sidebar" defaultSize={20} minSize={10} maxSize={35}>
+        <Panel id="webmail-sidebar" defaultSize="20%" minSize="10%" maxSize="35%">
           <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, overflow: 'hidden' }}>
             <FolderSidebar folders={mail.folders} activeFolder={mail.activeFolder}
               expandedFolders={mail.expandedFolders}
@@ -57,7 +57,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
 
         <ResizeHandle />
 
-        <Panel id="message-list" defaultSize={35} minSize={15}>
+        <Panel id="message-list" defaultSize={showViewer ? '35%' : '80%'} minSize="15%">
           <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, overflow: 'hidden' }}>
             <Outlet />
           </div>
@@ -66,7 +66,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
         {showViewer && (
           <>
             <ResizeHandle />
-            <Panel id="message-view" defaultSize={45} minSize={18}>
+            <Panel id="message-view" defaultSize="45%" minSize="18%">
               <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, overflow: 'hidden' }}>
                 <MessageViewer mail={mail} />
               </div>

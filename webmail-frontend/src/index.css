@@ -31,7 +31,8 @@ html, body, #root {
   overflow: hidden;
 }
 
-/* Allow resizable panels to shrink — critical for react-resizable-panels */
+/* Allow resizable panels to shrink - critical for react-resizable-panels. */
+[data-group],
 [data-panel-group-direction] {
   min-height: 0;
   min-width: 0;
@@ -46,6 +47,7 @@ html, body, #root {
   min-width: 0;
   overflow: hidden;
 }
+[data-separator],
 [data-panel-resize-handle] {
   flex-shrink: 0;
 }
@@ -1197,6 +1199,8 @@ body {
 @media print {
   .app-shell-header,
   .mobile-tab-bar,
+  [data-group] > :first-child,
+  [data-separator],
   [data-panel-group-direction] > :first-child,
   [data-panel-resize-handle],
   .mail-toolbar,

@@ -1,5 +1,15 @@
 # Shared Memory Change Log
 
+## 2026-06-30 Resizable Panel Sizing Fix
+
+- Observed: Mail, Calendar, Contacts, and Notes pane resize handles appeared broken after the frontend was migrated to `react-resizable-panels` v4.
+- Root cause: v4 treats numeric `Panel` sizes as pixels, not percentages. Existing props such as `defaultSize={20}`, `minSize={10}`, and `maxSize={35}` constrained sidebars to roughly 10-35px and persisted tiny percentage layouts in localStorage.
+- Changed: Updated all active app layouts to pass percentage strings for `defaultSize`, `minSize`, and `maxSize`; bumped layout IDs from `v10` to `v11` so users discard bad pixel-derived saved layouts; changed Mail's two-pane default to `20% / 80%`; updated global CSS selectors for v4 `[data-group]` and `[data-separator]` attributes.
+- Deployed: Ran `rtk ./functions/deploy_webmail_frontend.sh` to rebuild and sync the frontend to `/var/www/openmailstack`.
+- Verified: Playwright against local Vite confirmed resize dragging changes panel widths in Mail list view, Mail three-pane reader view, Calendar, Contacts, and Notes; Playwright against deployed `https://mail.housevo.us/mail/inbox` confirmed the live Mail handle moves from `20/80` to roughly `33/67`.
+- Verified: `rtk npm --prefix webmail-frontend run build` passed; deploy script build passed; deployed `index.html` matches `webmail-frontend/dist/index.html`; host-header HTTPS probe for `mail.housevo.us` returned `200`.
+- Known gap: `rtk npm --prefix webmail-frontend run lint` still fails on pre-existing repo-wide lint debt unrelated to this patch.
+
 ## 2026-06-21
 
 - Created `.shared_memory/`.

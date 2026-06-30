@@ -5,6 +5,8 @@ export class ManageSieveClient {
     private resolveData: ((data: string) => void) | null = null;
     private rejectError: ((err: Error) => void) | null = null;
     private dataBuffer = '';
+    private literalBytesRemaining = 0;
+    private receiveTimer: NodeJS.Timeout | null = null;
 
     constructor(
         private host: string = 'localhost',
@@ -13,16 +15,48 @@ export class ManageSieveClient {
         private masterPass?: string
     ) {
         this.client = new net.Socket();
-        
+        this.client.setTimeout(30000);
+
+        this.client.on('timeout', () => {
+            if (this.rejectError) {
+                this.rejectError(new Error('ManageSieve connection timed out'));
+                this.resolveData = null;
+                this.rejectError = null;
+            }
+            this.client.destroy();
+        });
+
         this.client.on('data', (data) => {
             this.dataBuffer += data.toString('utf8');
-            // Check if we received a full response (OK or NO or BYE)
+
+            // Handle {size+} literal: read exactly size bytes before looking for status
+            if (this.literalBytesRemaining > 0) {
+                this.literalBytesRemaining -= data.length;
+                if (this.literalBytesRemaining > 0) return; // still waiting for more literal data
+            }
+
+            // Check for literal size prefix: {size}\r\n or {size+}\r\n
+            const literalMatch = this.dataBuffer.match(/^\{(\d+)\+?\}\r\n/);
+            if (literalMatch && !this.literalBytesRemaining) {
+                const size = parseInt(literalMatch[1], 10);
+                const afterPrefix = this.dataBuffer.slice(literalMatch[0].length);
+                if (afterPrefix.length >= size) {
+                    // Literal data already fully received; consume it and continue
+                    this.literalBytesRemaining = 0;
+                } else {
+                    this.literalBytesRemaining = size - afterPrefix.length;
+                    return; // wait for more data
+                }
+            }
+
+            // Check if we received a full response (last line starts with OK/NO/BYE)
             const lines = this.dataBuffer.trim().split('\r\n');
             const lastLine = lines[lines.length - 1];
             if (lastLine.startsWith('OK') || lastLine.startsWith('NO') || lastLine.startsWith('BYE')) {
                 if (this.resolveData) {
                     const response = this.dataBuffer;
                     this.dataBuffer = '';
+                    this.literalBytesRemaining = 0;
                     this.resolveData(response);
                     this.resolveData = null;
                     this.rejectError = null;

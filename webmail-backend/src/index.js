@@ -323,7 +323,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     if (req.method === 'OPTIONS') {
         res.set('MS-Server-ActiveSync', '14.1');
         res.set('MS-ASProtocolVersions', '14.0,14.1');
-        res.set('MS-ASProtocolCommands', 'Sync,SendMail,SmartForward,SmartReply,GetAttachment,GetHierarchy,CreateCollection,DeleteCollection,MoveCollection,FolderSync,FolderCreate,FolderDelete,FolderUpdate,MoveItems,GetItemEstimate,MeetingResponse,Search,Settings,Ping,ItemOperations,ResolveRecipients,ValidateCert');
+        res.set('MS-ASProtocolCommands', 'Sync,SendMail,SmartForward,SmartReply,FolderSync,FolderCreate,FolderDelete,FolderUpdate,GetItemEstimate,Settings,Ping,Provision');
         res.set('Public', 'OPTIONS,POST');
         return res.status(200).send();
     }
@@ -499,6 +499,96 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         console.log("Sending FolderSync response.");
         res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
         return res.status(200).send(outBuffer);
+    }
+    if (cmd === 'FolderCreate') {
+        const auth = getAuthCredentials();
+        if (!auth)
+            return res.status(401).send();
+        const decoded = new parser_1.WbxmlParser(req.body).parse();
+        const parentId = childText(decoded, 'ParentId') || '0';
+        const displayName = childText(decoded, 'DisplayName') || 'New Folder';
+        try {
+            const imap = new imap_1.ImapService(auth.user, auth.pass);
+            await imap.connect();
+            const separator = '/';
+            const parentPath = parentId === '0' ? '' : parentId;
+            const folderPath = parentPath ? `${parentPath}${separator}${displayName}` : displayName;
+            await imap.client.mailboxCreate(folderPath);
+            await imap.logout();
+            const writer = new writer_1.WbxmlWriter();
+            writer.writeNode({
+                tag: 'FolderCreate', page: 7, children: [
+                    { tag: 'Status', page: 7, content: '1' },
+                    { tag: 'ServerId', page: 7, content: folderPath },
+                    { tag: 'ParentId', page: 7, content: parentId },
+                    { tag: 'DisplayName', page: 7, content: displayName },
+                    { tag: 'Type', page: 7, content: '1' }
+                ]
+            });
+            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+            return res.status(200).send(writer.getBuffer());
+        }
+        catch (e) {
+            const writer = new writer_1.WbxmlWriter();
+            writer.writeNode({ tag: 'FolderCreate', page: 7, children: [{ tag: 'Status', page: 7, content: '8' }] });
+            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+            return res.status(200).send(writer.getBuffer());
+        }
+    }
+    if (cmd === 'FolderDelete') {
+        const auth = getAuthCredentials();
+        if (!auth)
+            return res.status(401).send();
+        const decoded = new parser_1.WbxmlParser(req.body).parse();
+        const serverId = childText(decoded, 'ServerId') || '';
+        try {
+            const imap = new imap_1.ImapService(auth.user, auth.pass);
+            await imap.connect();
+            await imap.client.mailboxDelete(serverId);
+            await imap.logout();
+            const writer = new writer_1.WbxmlWriter();
+            writer.writeNode({ tag: 'FolderDelete', page: 7, children: [{ tag: 'Status', page: 7, content: '1' }] });
+            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+            return res.status(200).send(writer.getBuffer());
+        }
+        catch (e) {
+            const writer = new writer_1.WbxmlWriter();
+            writer.writeNode({ tag: 'FolderDelete', page: 7, children: [{ tag: 'Status', page: 7, content: '8' }] });
+            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+            return res.status(200).send(writer.getBuffer());
+        }
+    }
+    if (cmd === 'FolderUpdate') {
+        const auth = getAuthCredentials();
+        if (!auth)
+            return res.status(401).send();
+        const decoded = new parser_1.WbxmlParser(req.body).parse();
+        const serverId = childText(decoded, 'ServerId') || '';
+        const newName = childText(decoded, 'DisplayName') || '';
+        try {
+            const imap = new imap_1.ImapService(auth.user, auth.pass);
+            await imap.connect();
+            const separator = '/';
+            const parts = serverId.split(separator);
+            parts[parts.length - 1] = newName;
+            const newPath = parts.join(separator);
+            await imap.client.mailboxRename(serverId, newPath);
+            await imap.logout();
+            const writer = new writer_1.WbxmlWriter();
+            writer.writeNode({ tag: 'FolderUpdate', page: 7, children: [
+                    { tag: 'Status', page: 7, content: '1' },
+                    { tag: 'ServerId', page: 7, content: newPath },
+                    { tag: 'DisplayName', page: 7, content: newName }
+                ] });
+            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+            return res.status(200).send(writer.getBuffer());
+        }
+        catch (e) {
+            const writer = new writer_1.WbxmlWriter();
+            writer.writeNode({ tag: 'FolderUpdate', page: 7, children: [{ tag: 'Status', page: 7, content: '8' }] });
+            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+            return res.status(200).send(writer.getBuffer());
+        }
     }
     if (cmd === 'Provision') {
         let policyKey = "0";
@@ -746,17 +836,31 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     }
                 }
                 const nextSyncKey = `contacts-${await (0, contact_utils_1.addressBookSyncToken)(creds.user)}`;
-                const shouldSendContacts = syncKey === '0' || syncKey === '1' || syncKey !== nextSyncKey;
-                const addNodes = shouldSendContacts
-                    ? (await (0, contact_utils_1.listContacts)(creds.user)).map(contact => ({
-                        tag: 'Add',
-                        page: 0,
-                        children: [
-                            { tag: 'ServerId', page: 0, content: (0, contact_utils_1.getContactDavUid)(contact) },
-                            { tag: 'ApplicationData', page: 0, children: contactToActiveSyncApplicationData(contact) }
-                        ]
-                    }))
-                    : [];
+                const isInitialSync = syncKey === '0' || syncKey === '1';
+                const shouldSendContacts = isInitialSync || syncKey !== nextSyncKey;
+                const addNodes = [];
+                if (shouldSendContacts) {
+                    let contacts;
+                    if (isInitialSync) {
+                        contacts = await (0, contact_utils_1.listContacts)(creds.user);
+                    }
+                    else {
+                        // Delta: only send contacts updated since last sync
+                        const lastSyncToken = parseInt(syncKey.replace(/[^0-9]/g, '').slice(-8), 10) || 0;
+                        const [deltaContacts] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ? AND sync_token > ? ORDER BY id ASC', [creds.user, lastSyncToken]);
+                        contacts = deltaContacts;
+                    }
+                    for (const contact of contacts) {
+                        addNodes.push({
+                            tag: 'Add',
+                            page: 0,
+                            children: [
+                                { tag: 'ServerId', page: 0, content: (0, contact_utils_1.getContactDavUid)(contact) },
+                                { tag: 'ApplicationData', page: 0, children: contactToActiveSyncApplicationData(contact) }
+                            ]
+                        });
+                    }
+                }
                 const responseAst = {
                     tag: 'Sync',
                     page: 0,
@@ -866,17 +970,22 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                         const serverId = childText(commandNode, 'ServerId');
                         if (serverId && applicationData) {
                             const uid = normalizeCalendarEventUid(serverId);
-                            const [existingRows] = await db_1.pool.query('SELECT ical_data FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1', [calendar.id, uid]);
-                            const ical = activeSyncCalendarApplicationDataToIcal(uid, applicationData, existingRows[0]?.ical_data || '');
-                            calendarChanged = (await saveActiveSyncCalendarEvent(calendar.id, uid, ical)) || calendarChanged;
-                            responses.push({
-                                tag: 'Change',
-                                page: 0,
-                                children: [
-                                    { tag: 'ServerId', page: 0, content: uid },
-                                    { tag: 'Status', page: 0, content: '1' }
-                                ]
-                            });
+                            const [existingRows] = await db_1.pool.query('SELECT ical_data, updated_at FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1', [calendar.id, uid]);
+                            if (existingRows.length === 0) {
+                                responses.push({ tag: 'Change', page: 0, children: [{ tag: 'ServerId', page: 0, content: uid }, { tag: 'Status', page: 0, content: '8' }] });
+                            }
+                            else {
+                                const ical = activeSyncCalendarApplicationDataToIcal(uid, applicationData, existingRows[0]?.ical_data || '');
+                                calendarChanged = (await saveActiveSyncCalendarEvent(calendar.id, uid, ical)) || calendarChanged;
+                                responses.push({
+                                    tag: 'Change',
+                                    page: 0,
+                                    children: [
+                                        { tag: 'ServerId', page: 0, content: uid },
+                                        { tag: 'Status', page: 0, content: '1' }
+                                    ]
+                                });
+                            }
                         }
                         else {
                             responses.push({
@@ -938,7 +1047,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                             { tag: "EndTime", page: 4, content: (0, calendar_utils_1.formatActiveSyncDate)(parsed.end) },
                             { tag: "DtStamp", page: 4, content: (0, calendar_utils_1.formatActiveSyncDate)(parsed.dtstamp) },
                             { tag: "AllDayEvent", page: 4, content: parsed.isAllDay ? "1" : "0" },
-                            { tag: "BusyStatus", page: 4, content: "2" },
+                            { tag: "BusyStatus", page: 4, content: parsed.busyStatus === 'free' ? "0" : "2" },
                             { tag: "Sensitivity", page: 4, content: "0" },
                             { tag: "MeetingStatus", page: 4, content: "0" }
                         ];

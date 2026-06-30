@@ -410,6 +410,20 @@ const ensureAdminAuditSchema = async () => {
                     KEY idx_admin_audit_target (target_type, target_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS webhook_deliveries (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    endpoint VARCHAR(500) NOT NULL,
+                    action VARCHAR(128) NOT NULL DEFAULT '',
+                    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                    response_code INT NOT NULL DEFAULT 0,
+                    error TEXT NULL,
+                    duration_ms INT NOT NULL DEFAULT 0,
+                    KEY idx_webhook_deliveries_created (created_at),
+                    KEY idx_webhook_deliveries_status (status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
         })();
     }
     return adminAuditSchemaPromise;
@@ -464,12 +478,32 @@ const logAdminAction = async (
                         details,
                         ip_address: req.ip || req.socket?.remoteAddress
                     });
+                    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                    if (serverConfig.webhookSecret) {
+                        const hmac = crypto.createHmac('sha256', serverConfig.webhookSecret).update(payload).digest('hex');
+                        headers['X-Webhook-Signature'] = `sha256=${hmac}`;
+                    }
                     for (const endpoint of hookSettings.endpoints) {
+                        const startTime = Date.now();
                         fetch(endpoint, {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: payload
-                        }).catch(e => console.error(`Webhook to ${endpoint} failed:`, e));
+                            headers,
+                            body: payload,
+                            signal: AbortSignal.timeout(10000)
+                        }).then(async res => {
+                            const logStatus = res.ok ? 'delivered' : 'failed';
+                            pool.query(
+                                `INSERT INTO webhook_deliveries (endpoint, action, status, response_code, duration_ms)
+                                 VALUES (?, ?, ?, ?, ?)`,
+                                [endpoint.slice(0, 500), action.slice(0, 128), logStatus, res.status, Date.now() - startTime]
+                            ).catch(() => {});
+                        }).catch(e => {
+                            pool.query(
+                                `INSERT INTO webhook_deliveries (endpoint, action, status, response_code, error, duration_ms)
+                                 VALUES (?, ?, 'failed', 0, ?, ?)`,
+                                [endpoint.slice(0, 500), action.slice(0, 128), String(e.message).slice(0, 500), Date.now() - startTime]
+                            ).catch(() => {});
+                        });
                     }
                 }
             }

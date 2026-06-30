@@ -34,6 +34,7 @@ exports.serverConfig = {
     sessionSecret: optional('OMS_SESSION_SECRET', required('OMS_DB_PASSWORD')),
     cookieSecure: parseBoolean('OMS_COOKIE_SECURE', process.env.NODE_ENV === 'production'),
     uploadLimitBytes: parseNumber('OMS_UPLOAD_LIMIT_BYTES', 25 * 1024 * 1024),
+    webhookSecret: optional('OMS_WEBHOOK_SECRET'),
 };
 exports.dbConfig = {
     host: optional('OMS_DB_HOST', '127.0.0.1'),

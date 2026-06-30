@@ -7,6 +7,7 @@ export declare const serverConfig: {
     sessionSecret: string;
     cookieSecure: boolean;
     uploadLimitBytes: number;
+    webhookSecret: string;
 };
 export declare const dbConfig: {
     host: string;

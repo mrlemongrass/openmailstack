@@ -1,6 +1,7 @@
 import { useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate, useParams, Outlet } from 'react-router';
+import { addDays, startOfDay, setHours } from 'date-fns';
 import { MessageRow, DENSITY_HEIGHTS } from './MessageRow';
 import { MessageListSkeleton } from './components/MessageListSkeleton';
 import { MailToolbar } from './MailToolbar';
@@ -93,8 +94,7 @@ export function MessageList({ mail, density }: MessageListProps) {
                   if (m) mail.messageAction(m.isRead ? 'unread' : 'read', [uid]);
                 }}
                 onSnooze={(uid) => {
-                  const m = mail.messages.find((msg) => msg.uid === uid);
-                  if (m) mail.messageAction('archive', [uid]);
+                  mail.snoozeMessages([uid], setHours(startOfDay(addDays(new Date(), 1)), 8));
                 }} />
             );
           })}

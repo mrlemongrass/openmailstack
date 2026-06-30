@@ -426,6 +426,18 @@ const ensureAdminAuditSchema = async () => {
                     KEY idx_webhook_deliveries_status (status)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
+            await db_1.pool.query(`
+                CREATE TABLE IF NOT EXISTS snooze_queue (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    owner VARCHAR(255) NOT NULL,
+                    original_folder VARCHAR(255) NOT NULL,
+                    imap_uid INT NOT NULL,
+                    snooze_until DATETIME NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_snooze_owner (owner),
+                    INDEX idx_snooze_until (snooze_until)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
         })();
     }
     return adminAuditSchemaPromise;
@@ -892,6 +904,7 @@ exports.apiRouter.get('/folders/:folder/messages', requireAuth, async (req, res)
         const simpleParser = require('mailparser').simpleParser;
         const imap = new ImapService(user, pass);
         await imap.connect();
+        await restoreExpiredSnoozes(user, imap);
         const { messages, uidNext, lowestUid, moreAvailable } = await imap.getMessages(folder, undefined, fetchOlderThan);
         await imap.logout();
         const parsedMessages = [];
@@ -921,6 +934,72 @@ exports.apiRouter.get('/folders/:folder/messages', requireAuth, async (req, res)
         res.status(500).json({ success: false, error: err.message });
     }
 });
+// GET raw message source
+exports.apiRouter.get('/folders/:folder/messages/:uid/raw', requireAuth, async (req, res) => {
+    try {
+        const { ImapService } = require('./imap');
+        const imap = new ImapService(req.user.username, req.user.password);
+        await imap.connect();
+        await imap.client.mailboxOpen(req.params.folder);
+        const msg = await imap.client.fetchOne(req.params.uid, { source: true });
+        await imap.logout();
+        if (!msg || !msg.source)
+            return res.status(404).json({ error: 'Message not found' });
+        res.set('Content-Type', 'text/plain; charset=utf-8');
+        res.send(msg.source.toString());
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to fetch raw message' });
+    }
+});
+// Snooze messages
+exports.apiRouter.post('/messages/snooze', requireAuth, async (req, res) => {
+    try {
+        const { ImapService } = require('./imap');
+        const { folder, uids, until } = req.body;
+        if (!uids || !uids.length || !until)
+            return res.status(400).json({ error: 'Missing uids or until' });
+        const untilDate = new Date(until);
+        if (isNaN(untilDate.getTime()))
+            return res.status(400).json({ error: 'Invalid until date' });
+        const imap = new ImapService(req.user.username, req.user.password);
+        await imap.connect();
+        try {
+            await imap.client.mailboxCreate('Snoozed');
+        }
+        catch (e) { /* may exist */ }
+        await imap.client.mailboxOpen(folder);
+        await imap.client.messageMove(uids.map(String), 'Snoozed');
+        await db_1.pool.execute(`INSERT INTO snooze_queue (owner, original_folder, imap_uid, snooze_until) VALUES ${uids.map(() => '(?, ?, ?, ?)').join(', ')}`, uids.flatMap((uid) => [req.user.username, folder, uid, untilDate.toISOString()]));
+        await imap.logout();
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message || 'Snooze failed' });
+    }
+});
+// Restore expired snoozes (best-effort)
+async function restoreExpiredSnoozes(user, imapService) {
+    try {
+        const [expired] = await db_1.pool.execute(`SELECT id, original_folder, imap_uid FROM snooze_queue WHERE owner = ? AND snooze_until <= NOW()`, [user]);
+        if (Array.isArray(expired) && expired.length > 0) {
+            try {
+                await imapService.client.mailboxOpen('Snoozed');
+            }
+            catch (e) {
+                return;
+            }
+            for (const row of expired) {
+                try {
+                    await imapService.client.messageMove([String(row.imap_uid)], row.original_folder);
+                }
+                catch (e) { }
+            }
+            await db_1.pool.execute(`DELETE FROM snooze_queue WHERE owner = ? AND snooze_until <= NOW()`, [user]);
+        }
+    }
+    catch (e) { }
+}
 exports.apiRouter.get('/messages/search/index/status', requireAuth, async (req, res) => {
     try {
         const status = await (0, search_index_1.getMailSearchIndexStatus)(req.user.username);

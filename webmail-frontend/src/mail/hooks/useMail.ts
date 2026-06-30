@@ -112,6 +112,18 @@ export function useMail(_opts: UseMailOptions) {
     setMailLoading(false);
   }, [activeFolder]);
 
+  // Snooze
+  const snoozeMessages = useCallback(async (uids: number[], until: Date) => {
+    try {
+      await fetch('/api/messages/snooze', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: activeFolder, uids, until: until.toISOString() }),
+      });
+      await fetchMessages();
+      await fetchFolders();
+    } catch (e) { console.error('Snooze failed', e); }
+  }, [activeFolder, fetchMessages, fetchFolders]);
+
   const loadOlderMessages = useCallback(async () => {
     if (loadingOlderMessages || !mailMoreAvailable || !mailLowestUid) return;
     setLoadingOlderMessages(true);
@@ -224,7 +236,7 @@ export function useMail(_opts: UseMailOptions) {
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
     fetchFolders, fetchMessages, loadOlderMessages, refreshMessages,
-    messageAction, undoAction, doSearch,
+    messageAction, undoAction, doSearch, snoozeMessages,
   };
 }
 

@@ -1,14 +1,19 @@
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail } from 'lucide-react';
+import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail, Code, Clock } from 'lucide-react';
 import { format } from 'date-fns';
 import { AttachmentCard } from './components/AttachmentCard';
 import { InlineReply } from './components/InlineReply';
+import { RawMessageModal } from './components/RawMessageModal';
+import { SnoozePopover } from './components/SnoozePopover';
 import { Skeleton } from '../shared/components/Skeleton';
 import type { useMail } from './hooks/useMail';
 
 export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const { folder, uid } = useParams<{ folder: string; uid: string }>();
   const navigate = useNavigate();
+  const [showRaw, setShowRaw] = useState(false);
+  const [showSnooze, setShowSnooze] = useState(false);
 
   if (!uid) {
     return (
@@ -46,6 +51,15 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         </button>
         <button className="btn btn-ghost" title="Reply All"><ReplyAll size={16} /></button>
         <button className="btn btn-ghost" title="Forward"><Forward size={16} /></button>
+        <button className="btn btn-ghost" onClick={() => setShowRaw(true)} title="Show original"><Code size={16} /></button>
+        <div style={{ position: 'relative' }}>
+          <button className="btn btn-ghost" onClick={() => setShowSnooze(!showSnooze)} title="Snooze"><Clock size={16} /></button>
+          {showSnooze && (
+            <SnoozePopover
+              onSelect={(until) => { mail.snoozeMessages([message!.uid], until); setShowSnooze(false); }}
+              onClose={() => setShowSnooze(false)} />
+          )}
+        </div>
         <div style={{ flex: 1 }} />
         <button className="btn btn-ghost" onClick={() => mail.messageAction('star', [message.uid])}>
           <Star size={16} fill={message.isStarred ? '#f59e0b' : 'none'} color={message.isStarred ? '#f59e0b' : undefined} />
@@ -84,12 +98,12 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
       </div>
       <InlineReply
         replyText={mail.replyText || ''}
-        replySending={(mail as any).replySending || false}
-        onReplyTextChange={mail.setReplyText || (() => {})}
+        replySending={mail.replySending}
+        onReplyTextChange={mail.setReplyText}
         onSend={() => {
           if (message) {
             const to = message.from?.match(/<(.+?)>/)?.at(1) || message.from;
-            (mail as any).sendReply?.(to, message.subject || '', message.messageId || '', (message.references || []).join(' '));
+            mail.sendReply(to, message.subject || '', message.messageId || '', (message.references || []).join(' '));
           }
         }}
         onOpenFullCompose={() => {
@@ -101,6 +115,9 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           }
         }}
       />
+      {showRaw && message && (
+        <RawMessageModal folder={folder || 'INBOX'} uid={message.uid} onClose={() => setShowRaw(false)} />
+      )}
     </div>
   );
 }

@@ -69,3 +69,10 @@ This roadmap tracks the remaining product and release work for the modern OpenMa
 - ❌ Add clearer upgrade/rollback docs that explicitly preserve live mail data.
 - 🟡 Improve monitoring for Rspamd proxy health, Postfix milter timeouts, Dovecot auth, disk space, queues, and certificate expiry (Fail2ban implemented, milter timeouts configured, System Health Dashboard live).
 - ❌ Remove or clearly mark deprecated scaffold directories once the migration is complete.
+
+## 9. OpenMailStack Sync (External CardDAV Bridge) ❌
+
+- ❌ **Rust Sync Daemon**: Build a standalone, high-performance background daemon using Rust (`tokio`, `quick-xml`) to handle XML parsing, delta syncing (`sync-collection`), and conflict resolution (Last Writer Wins).
+- ❌ **Control Plane (Node.js)**: Build API endpoints to manage credentials and sync jobs, securely storing encrypted App-Specific Passwords (AES-256-GCM) in MySQL.
+- ❌ **Settings UI (React)**: Create a React-based connection wizard in the settings panel to allow users to link iCloud, Google Contacts, and custom CardDAV servers.
+- ❌ **Continuous Syncing**: Complete engine implementation to successfully push, pull, and merge vCards continuously in the background, serving as a native, free alternative to premium services like sync.blue.

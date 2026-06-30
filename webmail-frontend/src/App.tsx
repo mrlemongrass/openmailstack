@@ -3080,24 +3080,67 @@ function App() {
     const file = e.target.files?.[0];
     if (!file) return;
     const format = file.name.toLowerCase().endsWith('.csv') ? 'csv' : 'vcard';
-    
-    setContactsActionStatus('Importing contacts...');
+
+    setContactsActionStatus(`Reading ${(file.size / 1024).toFixed(0)}KB file...`);
     setContactsActionError('');
-    
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
         const text = evt.target?.result as string;
-        const response = await fetch('/api/apps/contacts-import', {
-          method: 'POST',
-          headers: getHeaders(),
-          body: JSON.stringify({ data: text, format })
-        });
-        const data = await response.json();
-        if (!response.ok || !data.success) throw new Error(data.error || 'Could not import contacts.');
-        
+        // Count expected contacts for progress context
+        const vcardCount = format === 'vcard' ? (text.match(/BEGIN:VCARD/gi) || []).length : (text.split('\n').length - 1);
+        const importLabel = format === 'vcard' ? `${vcardCount} contacts` : `${vcardCount} rows`;
+        setContactsActionStatus(`Importing ${importLabel}...`);
+
+        // Process in batches for large files to show visual progress
+        const BATCH_SIZE = 25;
+        let totalImported = 0;
+
+        if (format === 'vcard' && vcardCount > BATCH_SIZE) {
+          const vcards = text.split(/(?=BEGIN:VCARD)/i);
+          const batches: string[] = [];
+          let currentBatch = '';
+          let batchItems = 0;
+          for (const vc of vcards) {
+            if (!vc.trim().toUpperCase().startsWith('BEGIN:VCARD')) continue;
+            currentBatch += vc;
+            batchItems++;
+            if (batchItems >= BATCH_SIZE) {
+              batches.push(currentBatch);
+              currentBatch = '';
+              batchItems = 0;
+            }
+          }
+          if (currentBatch) batches.push(currentBatch);
+
+          for (let i = 0; i < batches.length; i++) {
+            setContactsActionStatus(`Importing ${totalImported + 1}-${Math.min(totalImported + BATCH_SIZE, vcardCount)} of ${vcardCount} contacts...`);
+            const response = await fetch('/api/apps/contacts-import', {
+              method: 'POST',
+              headers: getHeaders(),
+              body: JSON.stringify({ data: batches[i], format: 'vcard' })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.error || 'Import failed.');
+            totalImported += data.count;
+          }
+        } else {
+          const response = await fetch('/api/apps/contacts-import', {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ data: text, format })
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) throw new Error(data.error || 'Could not import contacts.');
+          totalImported = data.count;
+        }
+
         await refreshContacts();
-        setContactsActionStatus(`Successfully imported ${data.count} contacts.`);
+        setContactsActionStatus(`Successfully imported ${totalImported} contacts.`);
+        if (format === 'vcard' && totalImported < vcardCount) {
+          setContactsActionError(`${vcardCount - totalImported} contacts were skipped (duplicates or missing name/email).`);
+        }
       } catch (err) {
         setContactsActionError(err instanceof Error ? err.message : 'Import failed.');
       }

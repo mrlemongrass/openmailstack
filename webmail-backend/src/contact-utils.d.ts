@@ -27,6 +27,8 @@ export interface ParsedVCardContact {
     name: string;
     email: string;
     phone: string;
+    emails?: string[];
+    phones?: string[];
     organization?: string;
     title?: string;
     note?: string;

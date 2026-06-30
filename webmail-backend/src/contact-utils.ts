@@ -32,6 +32,8 @@ export interface ParsedVCardContact {
     name: string;
     email: string;
     phone: string;
+    emails?: string[];
+    phones?: string[];
     organization?: string;
     title?: string;
     note?: string;
@@ -193,7 +195,11 @@ function firstVCardValue(lines: string[], propertyName: string): string {
     const line = lines.find(candidate => {
         const separatorIndex = candidate.indexOf(':');
         if (separatorIndex < 0) return false;
-        const name = candidate.slice(0, separatorIndex).split(';')[0].toUpperCase();
+        const raw = candidate.slice(0, separatorIndex);
+        // Strip group prefix (e.g. "item1.EMAIL" -> "EMAIL") before matching
+        const baseName = raw.split(';')[0].toUpperCase();
+        const dotIndex = baseName.indexOf('.');
+        const name = dotIndex >= 0 ? baseName.slice(dotIndex + 1) : baseName;
         return name === upperName;
     });
     if (!line) return '';
@@ -213,6 +219,23 @@ function vCardAddress(lines: string[]): string {
     return vals.join(' | ') || '';
 }
 
+function allVCardValues(lines: string[], propertyName: string): string[] {
+    const upperName = propertyName.toUpperCase();
+    const results: string[] = [];
+    for (const candidate of lines) {
+        const separatorIndex = candidate.indexOf(':');
+        if (separatorIndex < 0) continue;
+        const raw = candidate.slice(0, separatorIndex);
+        const baseName = raw.split(';')[0].toUpperCase();
+        const dotIndex = baseName.indexOf('.');
+        const name = dotIndex >= 0 ? baseName.slice(dotIndex + 1) : baseName;
+        if (name === upperName) {
+            results.push(vcardUnescape(candidate.slice(separatorIndex + 1).trim()));
+        }
+    }
+    return results;
+}
+
 export function parseVCard(vcard: string): ParsedVCardContact {
     const lines = unfoldVCard(vcard);
     const fn = firstVCardValue(lines, 'FN');
@@ -222,10 +245,18 @@ export function parseVCard(vcard: string): ParsedVCardContact {
         .join(' ')
         .trim();
 
+    // Extract all emails and phones (iOS uses item1.EMAIL, item2.EMAIL, etc.)
+    const emails = allVCardValues(lines, 'EMAIL');
+    const phones = allVCardValues(lines, 'TEL');
+    const primaryEmail = emails[0] || '';
+    const primaryPhone = phones[0] || '';
+
     return {
         name: fn || n,
-        email: firstVCardValue(lines, 'EMAIL'),
-        phone: firstVCardValue(lines, 'TEL'),
+        email: primaryEmail,
+        phone: primaryPhone,
+        emails: emails.length > 1 ? emails : [],
+        phones: phones.length > 1 ? phones : [],
         organization: firstVCardValue(lines, 'ORG'),
         title: firstVCardValue(lines, 'TITLE'),
         note: firstVCardValue(lines, 'NOTE'),

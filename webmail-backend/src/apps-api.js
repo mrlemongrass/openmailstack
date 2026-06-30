@@ -185,7 +185,9 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                     continue;
                 const parsed = (0, contact_utils_1.parseVCard)(vcard);
                 if (parsed.name || parsed.email) {
-                    await db_1.pool.query('INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, vcard_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [user, parsed.name || '', parsed.email || '', parsed.phone || '', parsed.title || '', parsed.organization || '', parsed.note || '', vcard]);
+                    const emailsJson = (parsed.emails && parsed.emails.length > 0) ? JSON.stringify(parsed.emails.map((e) => ({ value: e, label: 'Other' }))) : null;
+                    const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p) => ({ value: p, label: 'Other' }))) : null;
+                    await db_1.pool.query('INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, emails_json, phones_json, vcard_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [user, parsed.name || '', parsed.email || '', parsed.phone || '', parsed.title || '', parsed.organization || '', parsed.note || '', emailsJson, phonesJson, vcard]);
                     imported++;
                 }
             }

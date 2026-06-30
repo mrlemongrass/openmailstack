@@ -1130,3 +1130,33 @@ body {
   animation: skeleton-shimmer 1.8s ease-in-out infinite;
   border-radius: var(--radius-sm);
 }
+
+/* ---- Mobile Responsive ---- */
+@media (max-width: 767px) {
+  .app-shell-header {
+    display: none;
+  }
+
+  .mobile-tab-bar {
+    display: flex;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 56px;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    background: var(--bg-glass);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border-glass);
+    z-index: 100;
+  }
+
+  .main-content {
+    padding-bottom: 56px;
+  }
+}
+
+@media (max-width: 400px) {
+  .notes-grid-mobile {
+    grid-template-columns: 1fr !important;
+  }
+}

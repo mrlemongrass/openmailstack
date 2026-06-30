@@ -164,15 +164,22 @@ async function ensureRemindersSchema() {
         )
     `);
 }
-async function getNoteReminder(noteId) {
-    const [results] = await db_1.pool.query('SELECT * FROM note_reminders WHERE note_id = ?', [noteId]);
+async function getNoteReminder(noteId, owner) {
+    const [results] = await db_1.pool.query(`SELECT r.* FROM note_reminders r
+         JOIN notes n ON n.id = r.note_id
+         WHERE r.note_id = ? AND n.owner = ?`, [noteId, owner]);
     return results.length > 0 ? results[0] : null;
 }
-async function saveNoteReminder(noteId, remindAt) {
+async function saveNoteReminder(noteId, remindAt, owner) {
+    const note = await getNote(noteId, owner);
+    if (!note)
+        throw new Error('Note not found');
     await db_1.pool.query('INSERT INTO note_reminders (note_id, remind_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE remind_at = VALUES(remind_at), notified = 0', [noteId, remindAt]);
 }
-async function deleteNoteReminder(noteId) {
-    await db_1.pool.query('DELETE FROM note_reminders WHERE note_id = ?', [noteId]);
+async function deleteNoteReminder(noteId, owner) {
+    await db_1.pool.query(`DELETE r FROM note_reminders r
+         JOIN notes n ON n.id = r.note_id
+         WHERE r.note_id = ? AND n.owner = ?`, [noteId, owner]);
 }
 async function ensureAttachmentsSchema() {
     await db_1.pool.query(`
@@ -189,15 +196,23 @@ async function ensureAttachmentsSchema() {
         )
     `);
 }
-async function listNoteAttachments(noteId) {
-    const [results] = await db_1.pool.query('SELECT * FROM note_attachments WHERE note_id = ? ORDER BY created_at ASC', [noteId]);
+async function listNoteAttachments(noteId, owner) {
+    const [results] = await db_1.pool.query(`SELECT a.* FROM note_attachments a
+         JOIN notes n ON n.id = a.note_id
+         WHERE a.note_id = ? AND n.owner = ?
+         ORDER BY a.created_at ASC`, [noteId, owner]);
     return results;
 }
-async function saveNoteAttachment(attachment) {
+async function saveNoteAttachment(attachment, owner) {
+    const note = await getNote(attachment.note_id, owner);
+    if (!note)
+        throw new Error('Note not found');
     await db_1.pool.query('INSERT INTO note_attachments (id, note_id, filename, mime_type, size_bytes, storage_path) VALUES (?, ?, ?, ?, ?, ?)', [attachment.id, attachment.note_id, attachment.filename, attachment.mime_type, attachment.size_bytes, attachment.storage_path]);
 }
-async function deleteNoteAttachment(attachmentId) {
-    const [results] = await db_1.pool.query('SELECT * FROM note_attachments WHERE id = ?', [attachmentId]);
+async function deleteNoteAttachment(attachmentId, owner) {
+    const [results] = await db_1.pool.query(`SELECT a.* FROM note_attachments a
+         JOIN notes n ON n.id = a.note_id
+         WHERE a.id = ? AND n.owner = ?`, [attachmentId, owner]);
     if (results.length === 0)
         return null;
     await db_1.pool.query('DELETE FROM note_attachments WHERE id = ?', [attachmentId]);

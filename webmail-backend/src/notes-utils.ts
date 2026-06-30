@@ -149,23 +149,32 @@ export async function ensureRemindersSchema(): Promise<void> {
     `);
 }
 
-export async function getNoteReminder(noteId: string): Promise<NoteReminder | null> {
+export async function getNoteReminder(noteId: string, owner: string): Promise<NoteReminder | null> {
     const [results]: any = await pool.query(
-        'SELECT * FROM note_reminders WHERE note_id = ?',
-        [noteId]
+        `SELECT r.* FROM note_reminders r
+         JOIN notes n ON n.id = r.note_id
+         WHERE r.note_id = ? AND n.owner = ?`,
+        [noteId, owner]
     );
     return results.length > 0 ? results[0] : null;
 }
 
-export async function saveNoteReminder(noteId: string, remindAt: string): Promise<void> {
+export async function saveNoteReminder(noteId: string, remindAt: string, owner: string): Promise<void> {
+    const note = await getNote(noteId, owner);
+    if (!note) throw new Error('Note not found');
     await pool.query(
         'INSERT INTO note_reminders (note_id, remind_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE remind_at = VALUES(remind_at), notified = 0',
         [noteId, remindAt]
     );
 }
 
-export async function deleteNoteReminder(noteId: string): Promise<void> {
-    await pool.query('DELETE FROM note_reminders WHERE note_id = ?', [noteId]);
+export async function deleteNoteReminder(noteId: string, owner: string): Promise<void> {
+    await pool.query(
+        `DELETE r FROM note_reminders r
+         JOIN notes n ON n.id = r.note_id
+         WHERE r.note_id = ? AND n.owner = ?`,
+        [noteId, owner]
+    );
 }
 
 // ---- Attachments ----
@@ -196,23 +205,33 @@ export async function ensureAttachmentsSchema(): Promise<void> {
     `);
 }
 
-export async function listNoteAttachments(noteId: string): Promise<NoteAttachmentRow[]> {
+export async function listNoteAttachments(noteId: string, owner: string): Promise<NoteAttachmentRow[]> {
     const [results]: any = await pool.query(
-        'SELECT * FROM note_attachments WHERE note_id = ? ORDER BY created_at ASC',
-        [noteId]
+        `SELECT a.* FROM note_attachments a
+         JOIN notes n ON n.id = a.note_id
+         WHERE a.note_id = ? AND n.owner = ?
+         ORDER BY a.created_at ASC`,
+        [noteId, owner]
     );
     return results as NoteAttachmentRow[];
 }
 
-export async function saveNoteAttachment(attachment: NoteAttachmentRow): Promise<void> {
+export async function saveNoteAttachment(attachment: NoteAttachmentRow, owner: string): Promise<void> {
+    const note = await getNote(attachment.note_id, owner);
+    if (!note) throw new Error('Note not found');
     await pool.query(
         'INSERT INTO note_attachments (id, note_id, filename, mime_type, size_bytes, storage_path) VALUES (?, ?, ?, ?, ?, ?)',
         [attachment.id, attachment.note_id, attachment.filename, attachment.mime_type, attachment.size_bytes, attachment.storage_path]
     );
 }
 
-export async function deleteNoteAttachment(attachmentId: string): Promise<NoteAttachmentRow | null> {
-    const [results]: any = await pool.query('SELECT * FROM note_attachments WHERE id = ?', [attachmentId]);
+export async function deleteNoteAttachment(attachmentId: string, owner: string): Promise<NoteAttachmentRow | null> {
+    const [results]: any = await pool.query(
+        `SELECT a.* FROM note_attachments a
+         JOIN notes n ON n.id = a.note_id
+         WHERE a.id = ? AND n.owner = ?`,
+        [attachmentId, owner]
+    );
     if (results.length === 0) return null;
     await pool.query('DELETE FROM note_attachments WHERE id = ?', [attachmentId]);
     return results[0];

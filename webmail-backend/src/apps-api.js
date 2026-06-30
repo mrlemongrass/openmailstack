@@ -969,8 +969,9 @@ exports.appsApiRouter.post('/notes/upload', notesImageUpload.single('file'), asy
 // ---- Notes: Reminders ----
 const notes_utils_2 = require("./notes-utils");
 exports.appsApiRouter.get('/notes/:id/reminder', async (req, res) => {
+    const user = req.username;
     try {
-        const reminder = await (0, notes_utils_2.getNoteReminder)(req.params.id);
+        const reminder = await (0, notes_utils_2.getNoteReminder)(req.params.id, user);
         if (!reminder) {
             res.status(404).json({ success: false, reminder: null });
             return;
@@ -982,8 +983,9 @@ exports.appsApiRouter.get('/notes/:id/reminder', async (req, res) => {
     }
 });
 exports.appsApiRouter.post('/notes/:id/reminder', async (req, res) => {
+    const user = req.username;
     try {
-        await (0, notes_utils_2.saveNoteReminder)(req.params.id, req.body.remind_at);
+        await (0, notes_utils_2.saveNoteReminder)(req.params.id, req.body.remind_at, user);
         res.json({ success: true });
     }
     catch (e) {
@@ -991,8 +993,9 @@ exports.appsApiRouter.post('/notes/:id/reminder', async (req, res) => {
     }
 });
 exports.appsApiRouter.delete('/notes/:id/reminder', async (req, res) => {
+    const user = req.username;
     try {
-        await (0, notes_utils_2.deleteNoteReminder)(req.params.id);
+        await (0, notes_utils_2.deleteNoteReminder)(req.params.id, user);
         res.json({ success: true });
     }
     catch (e) {
@@ -1018,8 +1021,9 @@ const attachmentsUpload = (0, multer_1.default)({
     limits: { fileSize: 25 * 1024 * 1024 },
 });
 exports.appsApiRouter.get('/notes/:id/attachments', async (req, res) => {
+    const user = req.username;
     try {
-        const attachments = await (0, notes_utils_3.listNoteAttachments)(req.params.id);
+        const attachments = await (0, notes_utils_3.listNoteAttachments)(req.params.id, user);
         res.json({ success: true, attachments });
     }
     catch (e) {
@@ -1027,13 +1031,13 @@ exports.appsApiRouter.get('/notes/:id/attachments', async (req, res) => {
     }
 });
 exports.appsApiRouter.post('/notes/:id/attachments', attachmentsUpload.single('file'), async (req, res) => {
+    const user = req.username;
     try {
         if (!req.file) {
             res.status(400).json({ success: false, error: 'No file uploaded' });
             return;
         }
         const id = crypto.randomUUID();
-        const user = req.username || 'unknown';
         const storagePath = path.join('notes', user, req.file.filename);
         const attachment = {
             id,
@@ -1043,7 +1047,7 @@ exports.appsApiRouter.post('/notes/:id/attachments', attachmentsUpload.single('f
             size_bytes: req.file.size,
             storage_path: storagePath,
         };
-        await (0, notes_utils_3.saveNoteAttachment)(attachment);
+        await (0, notes_utils_3.saveNoteAttachment)(attachment, user);
         res.json({ success: true, attachment });
     }
     catch (e) {
@@ -1051,8 +1055,9 @@ exports.appsApiRouter.post('/notes/:id/attachments', attachmentsUpload.single('f
     }
 });
 exports.appsApiRouter.delete('/notes/:id/attachments/:attachmentId', async (req, res) => {
+    const user = req.username;
     try {
-        const deleted = await (0, notes_utils_3.deleteNoteAttachment)(req.params.attachmentId);
+        const deleted = await (0, notes_utils_3.deleteNoteAttachment)(req.params.attachmentId, user);
         if (!deleted) {
             res.status(404).json({ success: false, error: 'Attachment not found' });
             return;

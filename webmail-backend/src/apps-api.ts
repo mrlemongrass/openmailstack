@@ -903,7 +903,7 @@ appsApiRouter.delete('/tasks/:id', async (req: Request, res: Response) => {
 // ==========================================
 // NOTES API
 // ==========================================
-import { listNotes, listNotesWithReminders, saveNote, deleteNote } from './notes-utils';
+import { listNotesWithReminders, saveNote, deleteNote } from './notes-utils';
 import { syncNotesWithImap } from './notes-imap-sync';
 
 appsApiRouter.get('/notes', async (req: Request, res: Response) => {
@@ -1016,8 +1016,9 @@ appsApiRouter.post('/notes/upload', notesImageUpload.single('file'), async (req:
 import { getNoteReminder, saveNoteReminder, deleteNoteReminder } from './notes-utils';
 
 appsApiRouter.get('/notes/:id/reminder', async (req: Request, res: Response) => {
+    const user = (req as any).username;
     try {
-        const reminder = await getNoteReminder(req.params.id as string);
+        const reminder = await getNoteReminder(req.params.id as string, user);
         if (!reminder) {
             res.status(404).json({ success: false, reminder: null });
             return;
@@ -1029,8 +1030,9 @@ appsApiRouter.get('/notes/:id/reminder', async (req: Request, res: Response) => 
 });
 
 appsApiRouter.post('/notes/:id/reminder', async (req: Request, res: Response) => {
+    const user = (req as any).username;
     try {
-        await saveNoteReminder(req.params.id as string, req.body.remind_at);
+        await saveNoteReminder(req.params.id as string, req.body.remind_at, user);
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -1038,8 +1040,9 @@ appsApiRouter.post('/notes/:id/reminder', async (req: Request, res: Response) =>
 });
 
 appsApiRouter.delete('/notes/:id/reminder', async (req: Request, res: Response) => {
+    const user = (req as any).username;
     try {
-        await deleteNoteReminder(req.params.id as string);
+        await deleteNoteReminder(req.params.id as string, user);
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -1066,8 +1069,9 @@ const attachmentsUpload = multer({
 });
 
 appsApiRouter.get('/notes/:id/attachments', async (req: Request, res: Response) => {
+    const user = (req as any).username;
     try {
-        const attachments = await listNoteAttachments(req.params.id as string);
+        const attachments = await listNoteAttachments(req.params.id as string, user);
         res.json({ success: true, attachments });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -1075,13 +1079,13 @@ appsApiRouter.get('/notes/:id/attachments', async (req: Request, res: Response) 
 });
 
 appsApiRouter.post('/notes/:id/attachments', attachmentsUpload.single('file'), async (req: Request, res: Response) => {
+    const user = (req as any).username;
     try {
         if (!req.file) {
             res.status(400).json({ success: false, error: 'No file uploaded' });
             return;
         }
         const id = crypto.randomUUID();
-        const user = (req as any).username || 'unknown';
         const storagePath = path.join('notes', user, (req.file as any).filename);
         const attachment = {
             id,
@@ -1091,7 +1095,7 @@ appsApiRouter.post('/notes/:id/attachments', attachmentsUpload.single('file'), a
             size_bytes: req.file.size,
             storage_path: storagePath,
         };
-        await saveNoteAttachment(attachment as any);
+        await saveNoteAttachment(attachment as any, user);
         res.json({ success: true, attachment });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -1099,8 +1103,9 @@ appsApiRouter.post('/notes/:id/attachments', attachmentsUpload.single('file'), a
 });
 
 appsApiRouter.delete('/notes/:id/attachments/:attachmentId', async (req: Request, res: Response) => {
+    const user = (req as any).username;
     try {
-        const deleted = await deleteNoteAttachment(req.params.attachmentId as string);
+        const deleted = await deleteNoteAttachment(req.params.attachmentId as string, user);
         if (!deleted) {
             res.status(404).json({ success: false, error: 'Attachment not found' });
             return;

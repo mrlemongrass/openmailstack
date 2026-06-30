@@ -31,9 +31,9 @@ export interface NoteReminder {
     created_at: string;
 }
 export declare function ensureRemindersSchema(): Promise<void>;
-export declare function getNoteReminder(noteId: string): Promise<NoteReminder | null>;
-export declare function saveNoteReminder(noteId: string, remindAt: string): Promise<void>;
-export declare function deleteNoteReminder(noteId: string): Promise<void>;
+export declare function getNoteReminder(noteId: string, owner: string): Promise<NoteReminder | null>;
+export declare function saveNoteReminder(noteId: string, remindAt: string, owner: string): Promise<void>;
+export declare function deleteNoteReminder(noteId: string, owner: string): Promise<void>;
 export interface NoteAttachmentRow {
     id: string;
     note_id: string;
@@ -44,9 +44,9 @@ export interface NoteAttachmentRow {
     created_at: string;
 }
 export declare function ensureAttachmentsSchema(): Promise<void>;
-export declare function listNoteAttachments(noteId: string): Promise<NoteAttachmentRow[]>;
-export declare function saveNoteAttachment(attachment: NoteAttachmentRow): Promise<void>;
-export declare function deleteNoteAttachment(attachmentId: string): Promise<NoteAttachmentRow | null>;
+export declare function listNoteAttachments(noteId: string, owner: string): Promise<NoteAttachmentRow[]>;
+export declare function saveNoteAttachment(attachment: NoteAttachmentRow, owner: string): Promise<void>;
+export declare function deleteNoteAttachment(attachmentId: string, owner: string): Promise<NoteAttachmentRow | null>;
 export declare function ensureAllNotesSchemas(): Promise<void>;
 export declare function listNotesWithReminders(owner: string): Promise<(NoteRow & {
     remind_at: string | null;

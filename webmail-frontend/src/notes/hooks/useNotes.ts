@@ -14,6 +14,7 @@ export function useNotes() {
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [editingNote, setEditingNote] = useState<Partial<Note>>({});
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [notesSort, setNotesSort] = useState<string>('updated');
 
   const fetchNotes = useCallback(async () => {
     setIsLoading(true);
@@ -36,6 +37,7 @@ export function useNotes() {
     notesLabels, setNotesLabels, isLoading,
     selectedNote, setSelectedNote, editingNote, setEditingNote,
     isNoteModalOpen, setIsNoteModalOpen,
+    notesSort, setNotesSort,
     fetchNotes, saveNote, deleteNote,
   };
 }

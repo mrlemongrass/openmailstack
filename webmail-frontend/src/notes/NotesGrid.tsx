@@ -1,5 +1,6 @@
 import { Star, Lock, StickyNote } from 'lucide-react';
 import { NoteSkeleton } from './components/NoteSkeleton';
+import { SortDropdown } from './components/SortDropdown';
 import type { useNotes } from './hooks/useNotes';
 import type { Note } from '../shared/types';
 
@@ -7,8 +8,9 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
   const filtered = n.notes.filter((note) => {
     if (n.notesView === 'pinned') return note.is_pinned;
     if (n.notesView === 'locked') return note.is_locked;
+    if (n.notesView === 'archive') return note.folder === 'archive';
     if (n.notesView === 'trash') return note.folder === 'trash';
-    if (n.notesView === 'notes') return note.folder !== 'trash';
+    if (n.notesView === 'notes') return note.folder !== 'trash' && note.folder !== 'archive';
     if (n.notesLabels.includes(n.notesView)) {
       try { return JSON.parse(note.labels_json || '[]').includes(n.notesView); } catch { return false; }
     }
@@ -17,16 +19,29 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
     if (!n.notesSearchQuery) return true;
     const q = n.notesSearchQuery.toLowerCase();
     return note.title.toLowerCase().includes(q) || note.content.toLowerCase().includes(q);
+  }).sort((a, b) => {
+    // Pinned always on top
+    if (a.is_pinned && !b.is_pinned) return -1;
+    if (!a.is_pinned && b.is_pinned) return 1;
+    // Then apply selected sort
+    switch (n.notesSort) {
+      case 'created': return new Date(b.created_at || '').getTime() - new Date(a.created_at || '').getTime();
+      case 'title_asc': return (a.title || '').localeCompare(b.title || '');
+      case 'title_desc': return (b.title || '').localeCompare(a.title || '');
+      case 'updated':
+      default: return new Date(b.updated_at || '').getTime() - new Date(a.updated_at || '').getTime();
+    }
   });
 
   if (n.isLoading && n.notes.length === 0) return <NoteSkeleton count={12} />;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)' }}>
+      <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)', alignItems: 'center' }}>
         <input type="text" className="glass-input" placeholder="Search notes..."
           value={n.notesSearchQuery} onChange={(e) => n.setNotesSearchQuery(e.target.value)}
           style={{ flex: 1, fontSize: '0.85rem' }} />
+        <SortDropdown value={n.notesSort} onChange={n.setNotesSort} />
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 16,
         display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16,

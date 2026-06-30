@@ -267,6 +267,7 @@ export interface Note {
   is_locked: number;
   folder: string;
   labels_json: string;
+  created_at: string;
   updated_at: string;
   remind_at?: string;
   attachments?: NoteAttachment[];

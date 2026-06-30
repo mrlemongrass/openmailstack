@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultLayout } from 'react-resizable-panels';
+import type { Contact } from '../shared/types';
 import { useMediaQuery } from '../shared/hooks/useMediaQuery';
 import { useContacts } from './hooks/useContacts';
 import { ContactSidebar } from './ContactSidebar';
@@ -7,6 +8,7 @@ import { ContactGrid } from './ContactGrid';
 import { ContactDetail } from './ContactDetail';
 import { ContactTrash } from './ContactTrash';
 import { ContactShareModal } from './ContactShareModal';
+import { ContactEditModal } from './ContactEditModal';
 import { useAppearance } from '../shared/hooks/useAppearance';
 
 function ResizeHandle() {
@@ -24,6 +26,7 @@ export function ContactsLayout() {
     const { appearance } = useAppearance();
     const density = (appearance.density as 'compact' | 'cozy' | 'comfortable') || 'cozy';
     const [showShare, setShowShare] = useState(false);
+    const [editingContact, setEditingContact] = useState<Contact | null>(null);
 
     const contactsPanelLayout = useDefaultLayout({
         id: 'oms-contacts-v12',
@@ -38,13 +41,23 @@ export function ContactsLayout() {
                     <ContactDetail
                         contact={contacts.selectedContact}
                         onClose={() => contacts.setSelectedContact(null)}
-                        onEdit={() => { /* open edit modal */ }}
+                        onEdit={() => setEditingContact(contacts.selectedContact)}
                         onShare={() => setShowShare(true)}
                     />
                     {showShare && contacts.selectedContact && (
                         <ContactShareModal
                             contact={contacts.selectedContact}
                             onClose={() => setShowShare(false)}
+                        />
+                    )}
+                    {editingContact && (
+                        <ContactEditModal
+                            contact={editingContact}
+                            onClose={() => setEditingContact(null)}
+                            onSaved={() => {
+                                contacts.refreshContacts();
+                                contacts.setSelectedContact(null);
+                            }}
                         />
                     )}
                 </div>
@@ -107,7 +120,7 @@ export function ContactsLayout() {
                             <ContactDetail
                                 contact={contacts.selectedContact}
                                 onClose={() => contacts.setSelectedContact(null)}
-                                onEdit={() => { /* open edit modal */ }}
+                                onEdit={() => setEditingContact(contacts.selectedContact)}
                                 onShare={() => setShowShare(true)}
                             />
                         </Panel>
@@ -118,6 +131,16 @@ export function ContactsLayout() {
                 <ContactShareModal
                     contact={contacts.selectedContact}
                     onClose={() => setShowShare(false)}
+                />
+            )}
+            {editingContact && (
+                <ContactEditModal
+                    contact={editingContact}
+                    onClose={() => setEditingContact(null)}
+                    onSaved={() => {
+                        contacts.refreshContacts();
+                        contacts.setSelectedContact(null);
+                    }}
                 />
             )}
         </div>

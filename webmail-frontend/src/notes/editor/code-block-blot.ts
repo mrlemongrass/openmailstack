@@ -14,6 +14,7 @@ class CodeBlockBlot extends Block {
 
     const code = document.createElement('code');
     code.className = value ? `language-${value}` : '';
+    node.appendChild(code);
 
     return node;
   }

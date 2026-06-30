@@ -20,6 +20,60 @@ async function purgeExpiredTrash(): Promise<void> {
     await pool.query("DELETE FROM contacts WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL 30 DAY");
 }
 
+async function syncBirthdayEvent(user: string, contactName: string, contactEmail: string, birthday: string | null): Promise<void> {
+    // Find or create Birthdays calendar
+    const [calRows]: any = await pool.query(
+        "SELECT id FROM calendars WHERE user_id = ? AND (dav_slug = 'birthdays' OR name = 'Birthdays') LIMIT 1",
+        [user]
+    );
+    let calendarId: number;
+    if (calRows.length === 0) {
+        const cal = await createCalendar(user, 'Birthdays', { slug: 'birthdays', color: '#e91e63', components: 'VEVENT' });
+        calendarId = cal.id;
+    } else {
+        calendarId = calRows[0].id;
+    }
+
+    // Build event UID from contact identity
+    const uid = `birthday-${Buffer.from(contactEmail || contactName).toString('hex').slice(0, 32)}@openmailstack`;
+
+    if (!birthday) {
+        // Remove birthday if cleared
+        await pool.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [calendarId, uid]);
+        return;
+    }
+
+    // Parse birthday (expects YYYY-MM-DD or MM-DD)
+    const parts = birthday.split('-');
+    let month: string, day: string;
+    if (parts.length >= 3) { month = parts[1]; day = parts[2]; }
+    else if (parts.length === 2) { month = parts[0]; day = parts[1]; }
+    else return;
+
+    const dtstart = `1970${month.padStart(2, '0')}${day.padStart(2, '0')}`;
+    const summary = `${contactName || contactEmail}'s Birthday`;
+
+    const ical = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//OpenMailStack//Birthdays//EN',
+        'BEGIN:VEVENT',
+        `UID:${uid}`,
+        `DTSTART;VALUE=DATE:${dtstart}`,
+        `DTEND;VALUE=DATE:${dtstart}`,
+        'RRULE:FREQ=YEARLY',
+        `SUMMARY:${summary}`,
+        'TRANSP:TRANSPARENT',
+        'END:VEVENT',
+        'END:VCALENDAR',
+    ].join('\r\n');
+
+    await pool.query(
+        'INSERT INTO events (calendar_id, uid, ical_data, sync_token) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE ical_data=?, sync_token=sync_token+1',
+        [calendarId, uid, ical, ical]
+    );
+}
+
 // ==========================================
 // CONTACTS API
 // ==========================================
@@ -106,6 +160,10 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
                 websiteUrl || null
             ]
         );
+        if (birthday !== undefined) {
+            const savedName = fullName || email || '';
+            await syncBirthdayEvent(user, savedName, email || '', birthday || null);
+        }
         res.json({ success: true, id: result.insertId });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -154,6 +212,10 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
         queryParams.push(req.params.id as string, user);
 
         await pool.query(updateSql, queryParams);
+        const savedName = fullName || existingContact.email || '';
+        const savedEmail = email || existingContact.email || '';
+        const savedBirthday = birthday !== undefined ? (birthday || null) : existingContact.birthday || null;
+        await syncBirthdayEvent(user, savedName, savedEmail, savedBirthday);
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -237,6 +299,13 @@ appsApiRouter.post('/contacts/:id/restore', async (req: Request, res: Response) 
 appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
+        const [contactToDelete]: any = await pool.query(
+            'SELECT name, email FROM contacts WHERE id=? AND username=?',
+            [req.params.id as string, user]
+        );
+        if (contactToDelete.length > 0) {
+            await syncBirthdayEvent(user, contactToDelete[0].name, contactToDelete[0].email, null);
+        }
         await pool.query(
             'DELETE FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
             [req.params.id as string, user]

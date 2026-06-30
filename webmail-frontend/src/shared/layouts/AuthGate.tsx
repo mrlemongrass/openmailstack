@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { Mail } from 'lucide-react';
 
 export function AuthGate() {
-  const { isLoading, isAuthenticated } = useAuth();
+  const { isLoading, isAuthenticated, login } = useAuth();
 
   if (isLoading) {
     return (
@@ -17,13 +17,14 @@ export function AuthGate() {
     );
   }
 
-  if (!isAuthenticated) return <LoginPage />;
+  if (!isAuthenticated) {
+    return <LoginPage login={login} />;
+  }
 
   return <Outlet />;
 }
 
-function LoginPage() {
-  const { login } = useAuth();
+function LoginPage({ login }: { login: (email: string, password: string) => Promise<boolean> }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');

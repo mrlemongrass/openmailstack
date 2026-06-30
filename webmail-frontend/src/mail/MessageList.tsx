@@ -1,6 +1,6 @@
 import { useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useNavigate, useParams, Outlet } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { addDays, startOfDay, setHours } from 'date-fns';
 import { MessageRow, DENSITY_HEIGHTS } from './MessageRow';
 import { MessageListSkeleton } from './components/MessageListSkeleton';
@@ -107,7 +107,6 @@ export function MessageList({ mail, density }: MessageListProps) {
           </div>
         )}
       </div>
-      <Outlet />
     </div>
   );
 }

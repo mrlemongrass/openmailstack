@@ -22,8 +22,8 @@ export function useAuth(): AuthState & {
       const res = await fetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
-        if (data.email) {
-          setUser({ email: data.email, name: data.name || data.email });
+        if (data.user?.username) {
+          setUser({ email: data.user.username, name: data.user.username });
           const identRes = await fetch('/api/user/identities');
           if (identRes.ok) {
             const identData = await identRes.json();
@@ -48,7 +48,7 @@ export function useAuth(): AuthState & {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ username: email, password }),
     });
     if (res.ok) { await fetchMe(); return true; }
     return false;

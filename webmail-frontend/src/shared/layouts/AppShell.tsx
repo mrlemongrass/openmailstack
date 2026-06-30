@@ -28,7 +28,7 @@ export function AppShell() {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       {!isMobile && (
         <header style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',

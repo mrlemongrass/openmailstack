@@ -21,14 +21,17 @@ interface FolderTreeNode {
 function buildFolderTree(folders: MailFolder[]): FolderTreeNode[] {
   const root: Record<string, FolderTreeNode> = {};
   for (const f of folders) {
-    const parts = f.path.split(/[./]/).filter(Boolean);
+    const delimiter = f.delimiter || (f.path.includes('/') ? '/' : f.path.includes('.') ? '.' : '');
+    const parts = delimiter ? f.path.split(delimiter).filter(Boolean) : [f.path].filter(Boolean);
     if (parts.length === 0) continue;
     let current = root;
     for (let i = 0; i < parts.length; i++) {
       const name = parts[i];
+      const fullPath = delimiter ? parts.slice(0, i + 1).join(delimiter) : name;
       if (!current[name]) {
-        current[name] = { name, fullPath: parts.slice(0, i + 1).join('/'), children: {}, unseen: 0 };
+        current[name] = { name, fullPath, children: {}, unseen: 0 };
       }
+      current[name].fullPath = fullPath;
       if (i === parts.length - 1) current[name].unseen = f.unseen;
       current = current[name].children;
     }

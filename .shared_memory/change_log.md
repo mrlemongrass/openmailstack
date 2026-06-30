@@ -1,5 +1,14 @@
 # Shared Memory Change Log
 
+## 2026-06-30 Nested Mail Folder Routing Fix
+
+- Observed: Clicking nested Inbox folders rendered main Inbox messages instead of the selected subfolder.
+- Root cause: The frontend folder tree split paths on both `.` and `/` and rebuilt nested paths with `/`, which corrupted Dovecot dot-delimited folders such as `INBOX.Child`. Initial Inbox fetches could also race the selected-folder fetch and overwrite rows.
+- Changed: `/api/folders` now returns each IMAP folder delimiter; the sidebar preserves exact server folder paths; folder message/raw/attachment API routes accept wildcard folder params; route-to-folder state sync moved into an effect; `useMail` ignores stale folder fetch responses after the active folder changes.
+- Deployed: Rebuilt and synced the backend to `/opt/openmailstack-backend`, restarted `openmailstack.service`, and deployed the frontend with `functions/deploy_webmail_frontend.sh`.
+- Verified: Live browser/API smoke created a temporary dot-delimited nested folder, appended one message, opened `/mail/INBOX.<temp-folder>`, and confirmed the UI showed that nested message only with the API reporting the exact nested folder path. The temporary Maildir and subscription entry were removed afterward.
+- Known gap: `rtk npm --prefix webmail-backend test` still fails in `calendar-format` and `user-settings` suites, and `rtk npm --prefix webmail-frontend run lint` still fails on broad existing frontend lint debt.
+
 ## 2026-06-30 Resizable Panel Sizing Fix
 
 - Observed: Mail, Calendar, Contacts, and Notes pane resize handles appeared broken after the frontend was migrated to `react-resizable-panels` v4.

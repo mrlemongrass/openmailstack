@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type {
   Message, MailFolder, Signature, Rule, SavedSearch,
   MailUndoState,
@@ -16,7 +16,22 @@ export function useMail(_opts: UseMailOptions) {
   // Folder state
   const [folders, setFolders] = useState<MailFolder[]>([]);
   const [activeFolder, setActiveFolder] = useState('INBOX');
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const activeFolderRef = useRef(activeFolder);
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('oms_expanded_folders');
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+
+  // Persist expanded state to localStorage
+  const setExpandedPersisted = (updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
+    setExpandedFolders((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try { localStorage.setItem('oms_expanded_folders', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
 
   // Message state
   const [messages, setMessages] = useState<Message[]>([]);
@@ -100,16 +115,18 @@ export function useMail(_opts: UseMailOptions) {
   }, []);
 
   const fetchMessages = useCallback(async () => {
+    const folder = activeFolder;
     setMailLoading(true);
     try {
-      const data = await api.fetchMessages(activeFolder);
+      const data = await api.fetchMessages(folder);
       if (data.messages) {
+        if (activeFolderRef.current !== folder) return;
         setMessages(data.messages);
         setMailLowestUid(data.lowestUid || null);
         setMailMoreAvailable(data.moreAvailable || false);
       }
     } catch (e) { console.error('Failed to fetch messages', e); }
-    setMailLoading(false);
+    if (activeFolderRef.current === folder) setMailLoading(false);
   }, [activeFolder]);
 
   // Fetch a single message body (full content)
@@ -242,11 +259,12 @@ export function useMail(_opts: UseMailOptions) {
 
   // Refetch messages when folder changes
   useEffect(() => {
+    activeFolderRef.current = activeFolder;
     fetchMessages();
   }, [activeFolder]);
 
   return {
-    folders, activeFolder, setActiveFolder, expandedFolders, setExpandedFolders,
+    folders, activeFolder, setActiveFolder, expandedFolders, setExpandedFolders: setExpandedPersisted,
     messages, setMessages, selectedMessages, setSelectedMessages,
     viewingThread, setViewingThread,
     mailLowestUid, mailMoreAvailable,

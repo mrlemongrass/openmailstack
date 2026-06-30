@@ -1,9 +1,0 @@
-- generic [ref=e4]:
-  - generic [ref=e5]:
-    - img [ref=e7]
-    - heading "OpenMailStack" [level=1] [ref=e10]
-    - paragraph [ref=e11]: Sign in to your account
-  - generic [ref=e12]:
-    - textbox "Email address" [active] [ref=e13]
-    - textbox "Password" [ref=e14]
-    - button "Sign In" [ref=e15] [cursor=pointer]

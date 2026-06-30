@@ -38,9 +38,9 @@ export class ImapService {
         for (const f of folders) {
             try {
                 const status = await this.client.status(f.path, { unseen: true });
-                results.push({ path: f.path, unseen: status.unseen || 0 });
+                results.push({ path: f.path, delimiter: f.delimiter, unseen: status.unseen || 0 });
             } catch (e) {
-                results.push({ path: f.path, unseen: 0 });
+                results.push({ path: f.path, delimiter: f.delimiter, unseen: 0 });
             }
         }
         return results;

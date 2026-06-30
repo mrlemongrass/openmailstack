@@ -296,6 +296,10 @@ const parsedMailToIndexRow = (folder, msg, parsed) => ({
     messageSize: msg.source ? msg.source.length : 0
 });
 const allowedSearchFields = ['all', 'from', 'to', 'subject', 'body', 'attachments', 'unread', 'starred'];
+function folderParam(req) {
+    const folder = req.params.folder;
+    return Array.isArray(folder) ? folder.join('/') : String(folder || '');
+}
 const isBlankAllowedSearchField = (field) => ['unread', 'starred'].includes(field);
 const domainPattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 const localPartPattern = /^[a-z0-9._%+-]+$/i;
@@ -875,10 +879,10 @@ exports.apiRouter.get('/events', requireAuth, async (req, res) => {
         res.end();
     }
 });
-exports.apiRouter.get('/folders/:folder/messages', requireAuth, async (req, res) => {
+exports.apiRouter.get('/folders/*folder/messages', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
-    const folder = req.params.folder;
+    const folder = folderParam(req);
     const olderThan = parseInt(String(req.query.olderThan || ''), 10);
     const fetchOlderThan = Number.isFinite(olderThan) && olderThan > 1 ? olderThan : undefined;
     if (folder === 'SCHEDULED') {
@@ -944,12 +948,13 @@ exports.apiRouter.get('/folders/:folder/messages', requireAuth, async (req, res)
     }
 });
 // GET raw message source
-exports.apiRouter.get('/folders/:folder/messages/:uid/raw', requireAuth, async (req, res) => {
+exports.apiRouter.get('/folders/*folder/messages/:uid/raw', requireAuth, async (req, res) => {
     try {
+        const folder = folderParam(req);
         const { ImapService } = require('./imap');
         const imap = new ImapService(req.user.username, req.user.password);
         await imap.connect();
-        await imap.client.mailboxOpen(req.params.folder);
+        await imap.client.mailboxOpen(folder);
         const msg = await imap.client.fetchOne(req.params.uid, { source: true });
         await imap.logout();
         if (!msg || !msg.source)
@@ -1510,10 +1515,10 @@ exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
-exports.apiRouter.get('/folders/:folder/messages/:uid/attachments/:attachmentId', requireAuth, async (req, res) => {
+exports.apiRouter.get('/folders/*folder/messages/:uid/attachments/:attachmentId', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
-    const folder = req.params.folder;
+    const folder = folderParam(req);
     const uid = parseInt(req.params.uid, 10);
     const attachmentId = parseInt(req.params.attachmentId, 10);
     const forceDownload = req.query.download === '1';
@@ -1555,10 +1560,10 @@ exports.apiRouter.get('/folders/:folder/messages/:uid/attachments/:attachmentId'
         catch (e) { }
     }
 });
-exports.apiRouter.get('/folders/:folder/messages/:uid', requireAuth, async (req, res) => {
+exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
-    const folder = req.params.folder;
+    const folder = folderParam(req);
     const uid = parseInt(req.params.uid);
     if (folder === 'SCHEDULED') {
         try {

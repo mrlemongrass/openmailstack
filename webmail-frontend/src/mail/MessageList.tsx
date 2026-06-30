@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate, useParams } from 'react-router';
 import { addDays, startOfDay, setHours } from 'date-fns';
@@ -18,10 +18,15 @@ export function MessageList({ mail, density }: MessageListProps) {
   const navigate = useNavigate();
   const parentRef = useRef<HTMLDivElement>(null);
   const decodedFolder = folder ? decodeURIComponent(folder) : 'INBOX';
+  const { activeFolder, setActiveFolder, setIsSearchActive, setSelectedMessages } = mail;
 
-  if (decodedFolder !== mail.activeFolder) {
-    mail.setActiveFolder(decodedFolder);
-  }
+  useEffect(() => {
+    if (decodedFolder !== activeFolder) {
+      setActiveFolder(decodedFolder);
+      setSelectedMessages([]);
+      setIsSearchActive(false);
+    }
+  }, [activeFolder, decodedFolder, setActiveFolder, setIsSearchActive, setSelectedMessages]);
 
   const rowVirtualizer = useVirtualizer({
     count: mail.messages.length,

@@ -6,6 +6,8 @@ Last reviewed: 2026-06-30. All 6 settings milestones complete. Major feature pas
 
 **Resizable panels**: Mail, Calendar, Contacts, and Notes use `react-resizable-panels` v4. Pass percentage sizes as strings (`"20%"`), not numbers, because v4 interprets numeric `defaultSize`/`minSize`/`maxSize` values as pixels. The active app layout IDs are `oms-webmail-v11`, `oms-cal-v11`, `oms-contacts-v11`, and `oms-notes-v11` to bypass bad v10 localStorage layouts created from pixel-sized panels.
 
+**Nested mail folders**: `/api/folders` returns each IMAP folder delimiter and the frontend must preserve the exact folder `path` reported by the server. Do not rebuild nested folder full paths with a hardcoded `/`; Dovecot mailboxes on this host can be dot-delimited, for example `INBOX.Child`. Mail fetching also guards against stale active-folder responses so an initial Inbox request cannot overwrite selected subfolder rows.
+
 ## 2026-06-29 Additions
 
 **Settings**: All 6 milestones (M1–M6) plus M2A (Admin Branding) complete. Server-backed settings for mail/calendar/contacts/appearance with debounced auto-save, save-state indicators, real session listing/revocation, and allowUserPasswordChange enforcement.

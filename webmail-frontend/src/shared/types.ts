@@ -13,6 +13,7 @@ export interface Rule {
 export interface MailFolder {
   path: string;
   unseen: number;
+  delimiter?: string;
 }
 
 export interface FolderTreeNode {

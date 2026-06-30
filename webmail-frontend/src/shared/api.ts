@@ -336,6 +336,59 @@ export async function deleteNoteApi(id: string): Promise<void> {
   await fetch(`/api/notes/${id}`, { method: 'DELETE' });
 }
 
+// ---- Notes: Image upload ----
+export async function uploadNoteImage(file: File): Promise<{ url: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch('/api/notes/upload', { method: 'POST', body: formData });
+  if (!res.ok) throw new Error('Image upload failed');
+  return res.json();
+}
+
+// ---- Notes: Reminders ----
+export async function fetchNoteReminder(noteId: string): Promise<{ remind_at: string } | null> {
+  const res = await fetch(`/api/notes/${noteId}/reminder`);
+  if (!res.ok) {
+    if (res.status === 404) return null;
+    throw new Error('Failed to fetch reminder');
+  }
+  const data = await res.json();
+  return data.reminder || null;
+}
+
+export async function saveNoteReminder(noteId: string, remindAt: string): Promise<void> {
+  await fetch(`/api/notes/${noteId}/reminder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ remind_at: remindAt }),
+  });
+}
+
+export async function deleteNoteReminder(noteId: string): Promise<void> {
+  await fetch(`/api/notes/${noteId}/reminder`, { method: 'DELETE' });
+}
+
+// ---- Notes: Attachments ----
+export async function fetchNoteAttachments(noteId: string): Promise<NoteAttachment[]> {
+  const res = await fetch(`/api/notes/${noteId}/attachments`);
+  if (!res.ok) throw new Error('Failed to fetch attachments');
+  const data = await res.json();
+  return data.attachments || [];
+}
+
+export async function uploadNoteAttachment(noteId: string, file: File): Promise<NoteAttachment> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`/api/notes/${noteId}/attachments`, { method: 'POST', body: formData });
+  if (!res.ok) throw new Error('Attachment upload failed');
+  const data = await res.json();
+  return data.attachment;
+}
+
+export async function deleteNoteAttachment(noteId: string, attachmentId: string): Promise<void> {
+  await fetch(`/api/notes/${noteId}/attachments/${attachmentId}`, { method: 'DELETE' });
+}
+
 // ---- Settings ----
 export async function fetchUserSettings(namespace: string): Promise<any> {
   const res = await fetch(`/api/settings/${namespace}`);

@@ -268,4 +268,16 @@ export interface Note {
   folder: string;
   labels_json: string;
   updated_at: string;
+  remind_at?: string;
+  attachments?: NoteAttachment[];
+}
+
+export interface NoteAttachment {
+  id: string;
+  note_id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  storage_path: string;
+  created_at: string;
 }

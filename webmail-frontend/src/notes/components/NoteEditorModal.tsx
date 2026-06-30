@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { X, Save } from 'lucide-react';
+import { X } from 'lucide-react';
 import { LiveNoteEditor } from '../../LiveNoteEditor';
 import type { useNotes } from '../hooks/useNotes';
 import { saveNote } from '../../shared/api';
@@ -33,18 +33,22 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       if (n.editingNote.title || n.editingNote.content) {
-        await saveNote({
-          id: n.editingNote.id,
-          title: n.editingNote.title || 'Untitled',
-          content: n.editingNote.content || '',
-          color: n.editingNote.color,
-          is_pinned: n.editingNote.is_pinned,
-          is_locked: n.editingNote.is_locked,
-          folder: n.editingNote.folder || 'notes',
-          labels_json: n.editingNote.labels_json || '[]',
-        } as any);
-        if (isNew) {
-          n.fetchNotes();
+        try {
+          await saveNote({
+            id: n.editingNote.id,
+            title: n.editingNote.title || 'Untitled',
+            content: n.editingNote.content || '',
+            color: n.editingNote.color,
+            is_pinned: n.editingNote.is_pinned,
+            is_locked: n.editingNote.is_locked,
+            folder: n.editingNote.folder || 'notes',
+            labels_json: n.editingNote.labels_json || '[]',
+          } as any);
+          if (isNew) {
+            n.fetchNotes();
+          }
+        } catch (e) {
+          console.error('Auto-save failed', e);
         }
       }
     }, 1500);

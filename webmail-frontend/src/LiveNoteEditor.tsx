@@ -112,42 +112,6 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
     editor.formatText(range.index, range.length, 'code-block', 'plaintext');
   }, []);
 
-  // Checklist toggle
-  const handleChecklist = React.useCallback(() => {
-    const editor = quillRef.current?.getEditor();
-    if (!editor) return;
-    const range = editor.getSelection(true);
-    const format = editor.getFormat(range);
-    if (format['list'] === 'checklist') {
-      editor.format('list', false);
-    } else {
-      editor.format('list', 'checklist');
-    }
-  }, []);
-
-  // Undo/Redo state
-  const [canUndo, setCanUndo] = React.useState(false);
-  const [canRedo, setCanRedo] = React.useState(false);
-
-  useEffect(() => {
-    const editor = quillRef.current?.getEditor();
-    if (!editor) return;
-
-    const updateState = () => {
-      const history = editor.history;
-      setCanUndo(history?.stack?.undo?.length > 0);
-      setCanRedo(history?.stack?.redo?.length > 0);
-    };
-
-    editor.on('text-change', updateState);
-    editor.on('selection-change', updateState);
-
-    return () => {
-      editor.off('text-change', updateState);
-      editor.off('selection-change', updateState);
-    };
-  }, [noteId]);
-
   const modules = React.useMemo(() => ({
     toolbar: {
       container: [

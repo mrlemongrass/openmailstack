@@ -220,11 +220,13 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                 const notes = notesIdx >= 0 ? cols[notesIdx] || '' : '';
 
                 if (name || email) {
-                    await pool.query(
-                        'INSERT INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                        [user, name, email, phone, jobTitle, organization, notes]
-                    );
-                    imported++;
+                    try {
+                        await pool.query(
+                            'INSERT IGNORE INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                            [user, name, email, phone, jobTitle, organization, notes]
+                        );
+                        imported++;
+                    } catch {}
                 }
             }
         } else {
@@ -236,11 +238,13 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                 if (parsed.name || parsed.email) {
                     const emailsJson = (parsed.emails && parsed.emails.length > 0) ? JSON.stringify(parsed.emails.map((e: string) => ({ value: e, label: 'Other' }))) : null;
                     const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p: string) => ({ value: p, label: 'Other' }))) : null;
-                    await pool.query(
-                        'INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, emails_json, phones_json, vcard_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        [user, parsed.name || '', parsed.email || '', parsed.phone || '', parsed.title || '', parsed.organization || '', parsed.note || '', emailsJson, phonesJson, vcard]
-                    );
-                    imported++;
+                    try {
+                        await pool.query(
+                            'INSERT IGNORE INTO contacts (username, name, email, phone, job_title, organization, notes, emails_json, phones_json, vcard_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                            [user, parsed.name || '', parsed.email || '', parsed.phone || '', parsed.title || '', parsed.organization || '', parsed.note || '', emailsJson, phonesJson, vcard]
+                        );
+                        imported++;
+                    } catch {}
                 }
             }
         }

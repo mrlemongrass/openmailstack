@@ -3162,15 +3162,18 @@ function App() {
           if (currentBatch) batches.push(currentBatch);
 
           for (let i = 0; i < batches.length; i++) {
-            setContactsActionStatus(`Importing ${totalImported + 1}-${Math.min(totalImported + BATCH_SIZE, vcardCount)} of ${vcardCount} contacts...`);
-            const response = await fetch('/api/apps/contacts-import', {
-              method: 'POST',
-              headers: getHeaders(),
-              body: JSON.stringify({ data: batches[i], format: 'vcard' })
-            });
-            const data = await response.json();
-            if (!response.ok || !data.success) throw new Error(data.error || 'Import failed.');
-            totalImported += data.count;
+            setContactsActionStatus(`Importing ${Math.min((i + 1) * BATCH_SIZE, vcardCount)} of ${vcardCount} contacts...`);
+            try {
+              const response = await fetch('/api/apps/contacts-import', {
+                method: 'POST',
+                headers: getHeaders(),
+                body: JSON.stringify({ data: batches[i], format: 'vcard' })
+              });
+              const data = await response.json();
+              if (response.ok && data.success) {
+                totalImported += data.count;
+              }
+            } catch {}
           }
         } else {
           const response = await fetch('/api/apps/contacts-import', {

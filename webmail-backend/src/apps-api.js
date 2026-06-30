@@ -207,8 +207,11 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                 const organization = orgIdx >= 0 ? cols[orgIdx] || '' : '';
                 const notes = notesIdx >= 0 ? cols[notesIdx] || '' : '';
                 if (name || email) {
-                    await db_1.pool.query('INSERT INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)', [user, name, email, phone, jobTitle, organization, notes]);
-                    imported++;
+                    try {
+                        await db_1.pool.query('INSERT IGNORE INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)', [user, name, email, phone, jobTitle, organization, notes]);
+                        imported++;
+                    }
+                    catch { }
                 }
             }
         }
@@ -222,8 +225,11 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                 if (parsed.name || parsed.email) {
                     const emailsJson = (parsed.emails && parsed.emails.length > 0) ? JSON.stringify(parsed.emails.map((e) => ({ value: e, label: 'Other' }))) : null;
                     const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p) => ({ value: p, label: 'Other' }))) : null;
-                    await db_1.pool.query('INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, emails_json, phones_json, vcard_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [user, parsed.name || '', parsed.email || '', parsed.phone || '', parsed.title || '', parsed.organization || '', parsed.note || '', emailsJson, phonesJson, vcard]);
-                    imported++;
+                    try {
+                        await db_1.pool.query('INSERT IGNORE INTO contacts (username, name, email, phone, job_title, organization, notes, emails_json, phones_json, vcard_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [user, parsed.name || '', parsed.email || '', parsed.phone || '', parsed.title || '', parsed.organization || '', parsed.note || '', emailsJson, phonesJson, vcard]);
+                        imported++;
+                    }
+                    catch { }
                 }
             }
         }

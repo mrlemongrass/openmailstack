@@ -34,6 +34,17 @@ exports.appsApiRouter.get('/contacts', async (req, res) => {
         const hasMore = rows.length > limit;
         if (hasMore)
             rows.pop();
+        // Parse JSON columns (mysql2 returns them as strings)
+        for (const row of rows) {
+            for (const col of ['emails_json', 'phones_json', 'addresses_json', 'labels_json']) {
+                if (typeof row[col] === 'string') {
+                    try {
+                        row[col] = JSON.parse(row[col]);
+                    }
+                    catch { }
+                }
+            }
+        }
         res.json({ success: true, contacts: rows, hasMore });
     }
     catch (e) {

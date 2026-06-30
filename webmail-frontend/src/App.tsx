@@ -1268,9 +1268,15 @@ function App() {
     return [...filteredContacts]
       .map(contact => {
         const parsed = parseContactName(contact);
+        const safeContact = { ...contact };
+        for (const col of ['emails_json', 'phones_json', 'addresses_json', 'labels_json']) {
+          if (typeof (safeContact as any)[col] === 'string') {
+            try { (safeContact as any)[col] = JSON.parse((safeContact as any)[col]); } catch {}
+          }
+        }
         return {
-          ...contact,
-          displayName: formatContactName(contact, parsed, contactsSettings.nameFormat),
+          ...safeContact,
+          displayName: formatContactName(safeContact, parsed, contactsSettings.nameFormat),
           _parsedName: parsed
         };
       })

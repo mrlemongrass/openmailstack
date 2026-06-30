@@ -100,6 +100,30 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
           ))}
         </div>
       )}
+      {/* Hover actions */}
+      <div className="note-card-actions" style={{
+        display: 'flex', gap: 4, padding: '0 16px 10px', opacity: 0, transition: 'opacity 0.15s',
+      }} onClick={(e) => e.stopPropagation()}>
+        {note.folder === 'archive' ? (
+          <button className="btn btn-ghost btn-xs"
+            style={{ fontSize: '0.7rem' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              n.saveNote({ id: note.id, folder: 'notes' });
+            }}>
+            Unarchive
+          </button>
+        ) : note.folder !== 'trash' ? (
+          <button className="btn btn-ghost btn-xs"
+            style={{ fontSize: '0.7rem' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              n.saveNote({ id: note.id, folder: 'archive' });
+            }}>
+            Archive
+          </button>
+        ) : null}
+      </div>
       {note.is_pinned ? (
         <div style={{ position: 'absolute', top: 8, right: 8 }}>
           <Star size={14} fill="#f59e0b" color="#f59e0b" />

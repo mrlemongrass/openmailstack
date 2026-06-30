@@ -1408,3 +1408,8 @@ li[data-checked="true"] .ql-checkbox {
     border-radius: 0;
   }
 }
+
+/* ---- Note card actions ---- */
+.contact-card:hover .note-card-actions {
+  opacity: 1;
+}

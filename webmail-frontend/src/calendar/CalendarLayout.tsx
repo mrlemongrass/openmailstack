@@ -1,4 +1,4 @@
-import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
+import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultLayout } from 'react-resizable-panels';
 import { useMediaQuery } from '../shared/hooks/useMediaQuery';
 import { useCalendar } from './hooks/useCalendar';
 import { CalendarSidebar } from './CalendarSidebar';
@@ -20,6 +20,11 @@ export function CalendarLayout() {
   const cal = useCalendar();
   const isMobile = useMediaQuery('(max-width: 767px)');
 
+  const calendarPanelLayout = useDefaultLayout({
+    id: 'oms-cal-v10',
+    panelIds: ['calendar-sidebar', 'calendar-view'],
+  });
+
   if (isMobile) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -31,13 +36,19 @@ export function CalendarLayout() {
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <PanelGroup id="oms-cal-v10" orientation="horizontal" style={{ flex: 1 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1 }}>
+      <PanelGroup
+        id="oms-cal-v10"
+        orientation="horizontal"
+        defaultLayout={calendarPanelLayout.defaultLayout}
+        onLayoutChange={calendarPanelLayout.onLayoutChange}
+        style={{ width: '100%', height: '100%', minHeight: 0, minWidth: 0 }}
+      >
         <Panel id="calendar-sidebar" defaultSize={20} minSize={15} maxSize={30}>
           <CalendarSidebar cal={cal} />
         </Panel>
         <ResizeHandle />
-        <Panel id="calendar-content" defaultSize={80} minSize={40}>
+        <Panel id="calendar-view" defaultSize={80} minSize={40}>
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <CalendarToolbar cal={cal} />
             {cal.isLoading ? <Skeleton count={12} height={60} /> : <MonthView cal={cal} />}

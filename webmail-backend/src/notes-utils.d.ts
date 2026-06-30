@@ -24,5 +24,32 @@ export declare function saveNote(note: Partial<NoteRow> & {
 }): Promise<NoteRow>;
 export declare function deleteNote(id: string, owner: string): Promise<void>;
 export declare function hardDeleteNote(id: string, owner: string): Promise<void>;
+export interface NoteReminder {
+    note_id: string;
+    remind_at: string;
+    notified: number;
+    created_at: string;
+}
+export declare function ensureRemindersSchema(): Promise<void>;
+export declare function getNoteReminder(noteId: string): Promise<NoteReminder | null>;
+export declare function saveNoteReminder(noteId: string, remindAt: string): Promise<void>;
+export declare function deleteNoteReminder(noteId: string): Promise<void>;
+export interface NoteAttachmentRow {
+    id: string;
+    note_id: string;
+    filename: string;
+    mime_type: string;
+    size_bytes: number;
+    storage_path: string;
+    created_at: string;
+}
+export declare function ensureAttachmentsSchema(): Promise<void>;
+export declare function listNoteAttachments(noteId: string): Promise<NoteAttachmentRow[]>;
+export declare function saveNoteAttachment(attachment: NoteAttachmentRow): Promise<void>;
+export declare function deleteNoteAttachment(attachmentId: string): Promise<NoteAttachmentRow | null>;
+export declare function ensureAllNotesSchemas(): Promise<void>;
+export declare function listNotesWithReminders(owner: string): Promise<(NoteRow & {
+    remind_at: string | null;
+})[]>;
 export declare function getNotesSyncToken(owner: string): Promise<number>;
 //# sourceMappingURL=notes-utils.d.ts.map

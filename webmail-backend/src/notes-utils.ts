@@ -128,6 +128,118 @@ export async function hardDeleteNote(id: string, owner: string): Promise<void> {
     await pool.query('DELETE FROM notes WHERE id = ? AND owner = ?', [id, owner]);
 }
 
+// ---- Reminders ----
+
+export interface NoteReminder {
+    note_id: string;
+    remind_at: string;
+    notified: number;
+    created_at: string;
+}
+
+export async function ensureRemindersSchema(): Promise<void> {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS note_reminders (
+            note_id VARCHAR(255) PRIMARY KEY,
+            remind_at DATETIME NOT NULL,
+            notified TINYINT(1) DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+        )
+    `);
+}
+
+export async function getNoteReminder(noteId: string): Promise<NoteReminder | null> {
+    const [results]: any = await pool.query(
+        'SELECT * FROM note_reminders WHERE note_id = ?',
+        [noteId]
+    );
+    return results.length > 0 ? results[0] : null;
+}
+
+export async function saveNoteReminder(noteId: string, remindAt: string): Promise<void> {
+    await pool.query(
+        'INSERT INTO note_reminders (note_id, remind_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE remind_at = VALUES(remind_at), notified = 0',
+        [noteId, remindAt]
+    );
+}
+
+export async function deleteNoteReminder(noteId: string): Promise<void> {
+    await pool.query('DELETE FROM note_reminders WHERE note_id = ?', [noteId]);
+}
+
+// ---- Attachments ----
+
+export interface NoteAttachmentRow {
+    id: string;
+    note_id: string;
+    filename: string;
+    mime_type: string;
+    size_bytes: number;
+    storage_path: string;
+    created_at: string;
+}
+
+export async function ensureAttachmentsSchema(): Promise<void> {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS note_attachments (
+            id VARCHAR(255) PRIMARY KEY,
+            note_id VARCHAR(255) NOT NULL,
+            filename VARCHAR(255) NOT NULL,
+            mime_type VARCHAR(100) NOT NULL,
+            size_bytes BIGINT NOT NULL,
+            storage_path VARCHAR(500) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_note_attachments_note_id (note_id),
+            FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+        )
+    `);
+}
+
+export async function listNoteAttachments(noteId: string): Promise<NoteAttachmentRow[]> {
+    const [results]: any = await pool.query(
+        'SELECT * FROM note_attachments WHERE note_id = ? ORDER BY created_at ASC',
+        [noteId]
+    );
+    return results as NoteAttachmentRow[];
+}
+
+export async function saveNoteAttachment(attachment: NoteAttachmentRow): Promise<void> {
+    await pool.query(
+        'INSERT INTO note_attachments (id, note_id, filename, mime_type, size_bytes, storage_path) VALUES (?, ?, ?, ?, ?, ?)',
+        [attachment.id, attachment.note_id, attachment.filename, attachment.mime_type, attachment.size_bytes, attachment.storage_path]
+    );
+}
+
+export async function deleteNoteAttachment(attachmentId: string): Promise<NoteAttachmentRow | null> {
+    const [results]: any = await pool.query('SELECT * FROM note_attachments WHERE id = ?', [attachmentId]);
+    if (results.length === 0) return null;
+    await pool.query('DELETE FROM note_attachments WHERE id = ?', [attachmentId]);
+    return results[0];
+}
+
+// ---- Schema migration helper ----
+
+export async function ensureAllNotesSchemas(): Promise<void> {
+    await ensureNotesSchema();
+    await ensureRemindersSchema();
+    await ensureAttachmentsSchema();
+}
+
+// ---- Extended listNotes with reminders ----
+
+export async function listNotesWithReminders(owner: string): Promise<(NoteRow & { remind_at: string | null })[]> {
+    const [results]: any = await pool.query(
+        `SELECT n.*, r.remind_at
+         FROM notes n
+         LEFT JOIN note_reminders r ON n.id = r.note_id
+         WHERE n.owner = ? AND n.is_deleted = 0
+         ORDER BY n.updated_at DESC`,
+        [owner]
+    );
+    return results;
+}
+
 export async function getNotesSyncToken(owner: string): Promise<number> {
     const [results]: any = await pool.query('SELECT MAX(sync_token) as max_token FROM notes WHERE owner = ?', [owner]);
     return results[0]?.max_token || 1;

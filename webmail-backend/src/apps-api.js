@@ -1,4 +1,40 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.appsApiRouter = void 0;
 const express_1 = require("express");
@@ -15,6 +51,58 @@ const authenticateApp = (req, res, next) => {
     });
 };
 exports.appsApiRouter.use(authenticateApp);
+async function purgeExpiredTrash() {
+    await db_1.pool.query("DELETE FROM contacts WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL 30 DAY");
+}
+async function syncBirthdayEvent(user, contactName, contactEmail, birthday) {
+    // Find or create Birthdays calendar
+    const [calRows] = await db_1.pool.query("SELECT id FROM calendars WHERE user_id = ? AND (dav_slug = 'birthdays' OR name = 'Birthdays') LIMIT 1", [user]);
+    let calendarId;
+    if (calRows.length === 0) {
+        const cal = await (0, calendar_utils_1.createCalendar)(user, 'Birthdays', { slug: 'birthdays', color: '#e91e63', components: 'VEVENT' });
+        calendarId = cal.id;
+    }
+    else {
+        calendarId = calRows[0].id;
+    }
+    // Build event UID from contact identity
+    const uid = `birthday-${Buffer.from(contactEmail || contactName).toString('hex').slice(0, 32)}@openmailstack`;
+    if (!birthday) {
+        // Remove birthday if cleared
+        await db_1.pool.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [calendarId, uid]);
+        return;
+    }
+    // Parse birthday (expects YYYY-MM-DD or MM-DD)
+    const parts = birthday.split('-');
+    let month, day;
+    if (parts.length >= 3) {
+        month = parts[1];
+        day = parts[2];
+    }
+    else if (parts.length === 2) {
+        month = parts[0];
+        day = parts[1];
+    }
+    else
+        return;
+    const dtstart = `1970${month.padStart(2, '0')}${day.padStart(2, '0')}`;
+    const summary = `${contactName || contactEmail}'s Birthday`;
+    const ical = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//OpenMailStack//Birthdays//EN',
+        'BEGIN:VEVENT',
+        `UID:${uid}`,
+        `DTSTART;VALUE=DATE:${dtstart}`,
+        `DTEND;VALUE=DATE:${dtstart}`,
+        'RRULE:FREQ=YEARLY',
+        `SUMMARY:${summary}`,
+        'TRANSP:TRANSPARENT',
+        'END:VEVENT',
+        'END:VCALENDAR',
+    ].join('\r\n');
+    await db_1.pool.query('INSERT INTO events (calendar_id, uid, ical_data, sync_token) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE ical_data=?, sync_token=sync_token+1', [calendarId, uid, ical, ical]);
+}
 // ==========================================
 // CONTACTS API
 // ==========================================
@@ -23,12 +111,13 @@ exports.appsApiRouter.get('/contacts', async (req, res) => {
     const offset = parseInt(req.query.offset || '0', 10) || 0;
     const limit = Math.min(parseInt(req.query.limit || '200', 10) || 200, 500);
     try {
+        await purgeExpiredTrash();
         const [rows] = await db_1.pool.query(`SELECT id, username, name, email, phone, dav_uid, sync_token, updated_at,
                     emails_json, phones_json, addresses_json, job_title, organization,
                     notes, labels_json, photo_url, is_favorite,
                     prefix, first_name, middle_name, last_name, suffix, nickname,
                     department, birthday, website_url
-             FROM contacts WHERE username = ?
+             FROM contacts WHERE username = ? AND deleted_at IS NULL
              ORDER BY is_favorite DESC, name ASC, email ASC, id ASC
              LIMIT ? OFFSET ?`, [user, limit + 1, offset]);
         const hasMore = rows.length > limit;
@@ -97,6 +186,10 @@ exports.appsApiRouter.post('/contacts', async (req, res) => {
             birthday || null,
             websiteUrl || null
         ]);
+        if (birthday !== undefined) {
+            const savedName = fullName || email || '';
+            await syncBirthdayEvent(user, savedName, email || '', birthday || null);
+        }
         res.json({ success: true, id: result.insertId });
     }
     catch (e) {
@@ -107,7 +200,7 @@ exports.appsApiRouter.put('/contacts/:id', async (req, res) => {
     const user = req.username;
     const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url } = req.body;
     try {
-        const [existing] = await db_1.pool.query('SELECT * FROM contacts WHERE id=? AND username=?', [req.params.id, user]);
+        const [existing] = await db_1.pool.query('SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL', [req.params.id, user]);
         if (existing.length === 0)
             return res.status(404).json({ success: false, error: 'Contact not found' });
         const existingContact = existing[0];
@@ -140,6 +233,10 @@ exports.appsApiRouter.put('/contacts/:id', async (req, res) => {
         updateSql += ` WHERE id=? AND username=?`;
         queryParams.push(req.params.id, user);
         await db_1.pool.query(updateSql, queryParams);
+        const savedName = fullName || existingContact.email || '';
+        const savedEmail = email || existingContact.email || '';
+        const savedBirthday = birthday !== undefined ? (birthday || null) : existingContact.birthday || null;
+        await syncBirthdayEvent(user, savedName, savedEmail, savedBirthday);
         res.json({ success: true });
     }
     catch (e) {
@@ -149,10 +246,10 @@ exports.appsApiRouter.put('/contacts/:id', async (req, res) => {
 exports.appsApiRouter.put('/contacts/:id/favorite', async (req, res) => {
     const user = req.username;
     try {
-        const [result] = await db_1.pool.query('UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1) WHERE id = ? AND username = ?', [req.params.id, user]);
+        const [result] = await db_1.pool.query('UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1) WHERE id = ? AND username = ? AND deleted_at IS NULL', [req.params.id, user]);
         if (result.affectedRows === 0)
             return res.status(404).json({ success: false, error: 'Contact not found' });
-        const [rows] = await db_1.pool.query('SELECT is_favorite FROM contacts WHERE id = ?', [req.params.id]);
+        const [rows] = await db_1.pool.query('SELECT is_favorite FROM contacts WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
         res.json({ success: true, is_favorite: rows[0]?.is_favorite === 1 });
     }
     catch (e) {
@@ -166,7 +263,7 @@ exports.appsApiRouter.post('/contacts/bulk-delete', async (req, res) => {
         return res.status(400).json({ success: false, error: 'ids array required' });
     try {
         const placeholders = ids.map(() => '?').join(',');
-        const [result] = await db_1.pool.query(`DELETE FROM contacts WHERE id IN (${placeholders}) AND username = ?`, [...ids, user]);
+        const [result] = await db_1.pool.query(`UPDATE contacts SET deleted_at = NOW() WHERE id IN (${placeholders}) AND username = ? AND deleted_at IS NULL`, [...ids, user]);
         res.json({ success: true, deleted: result.affectedRows });
     }
     catch (e) {
@@ -176,8 +273,114 @@ exports.appsApiRouter.post('/contacts/bulk-delete', async (req, res) => {
 exports.appsApiRouter.delete('/contacts/:id', async (req, res) => {
     const user = req.username;
     try {
-        await db_1.pool.query('DELETE FROM contacts WHERE id=? AND username=?', [req.params.id, user]);
+        await db_1.pool.query('UPDATE contacts SET deleted_at = NOW() WHERE id=? AND username=? AND deleted_at IS NULL', [req.params.id, user]);
         res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.get('/contacts/trash', async (req, res) => {
+    const user = req.username;
+    try {
+        await purgeExpiredTrash();
+        const [rows] = await db_1.pool.query(`SELECT id, name, email, phone, deleted_at
+             FROM contacts WHERE username = ? AND deleted_at IS NOT NULL
+             ORDER BY deleted_at DESC`, [user]);
+        res.json({ success: true, contacts: rows });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.post('/contacts/:id/restore', async (req, res) => {
+    const user = req.username;
+    try {
+        const [result] = await db_1.pool.query('UPDATE contacts SET deleted_at = NULL WHERE id=? AND username=? AND deleted_at IS NOT NULL', [req.params.id, user]);
+        if (result.affectedRows === 0)
+            return res.status(404).json({ success: false, error: 'Contact not found in trash' });
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.delete('/contacts/:id/permanent', async (req, res) => {
+    const user = req.username;
+    try {
+        const [contactToDelete] = await db_1.pool.query('SELECT name, email FROM contacts WHERE id=? AND username=?', [req.params.id, user]);
+        if (contactToDelete.length > 0) {
+            await syncBirthdayEvent(user, contactToDelete[0].name, contactToDelete[0].email, null);
+        }
+        await db_1.pool.query('DELETE FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL', [req.params.id, user]);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.get('/contacts/:id/activity', async (req, res) => {
+    const user = req.username;
+    try {
+        const [contactRows] = await db_1.pool.query('SELECT email, emails_json FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL', [req.params.id, user]);
+        if (contactRows.length === 0)
+            return res.status(404).json({ success: false, error: 'Contact not found' });
+        const contact = contactRows[0];
+        const emails = [contact.email];
+        if (contact.emails_json) {
+            const parsed = typeof contact.emails_json === 'string' ? JSON.parse(contact.emails_json) : contact.emails_json;
+            if (Array.isArray(parsed)) {
+                for (const item of parsed) {
+                    if (item.value && !emails.includes(item.value))
+                        emails.push(item.value);
+                }
+            }
+        }
+        const emailPlaceholders = emails.map(() => '?').join(',');
+        const [emailRows] = await db_1.pool.query(`SELECT subject, received_at, id, snippet(subject, body) AS snippet
+             FROM messages
+             WHERE username = ? AND (from_addr IN (${emailPlaceholders}) OR to_addrs REGEXP ? OR cc_addrs REGEXP ?)
+             ORDER BY received_at DESC LIMIT 20`, [user, ...emails, emails.join('|'), emails.join('|')]);
+        const [meetingRows] = await db_1.pool.query(`SELECT e.uid AS id, e.ical_data, MIN(eo.start) AS start
+             FROM events e
+             JOIN events_occurrences eo ON eo.event_id = e.id
+             JOIN event_attendees ea ON ea.event_id = e.id
+             WHERE ea.email IN (${emailPlaceholders}) AND eo.start >= NOW()
+             GROUP BY e.id, e.uid, e.ical_data
+             ORDER BY eo.start ASC LIMIT 10`, [...emails]);
+        const meetings = meetingRows.map((r) => {
+            const titleMatch = r.ical_data?.match(/SUMMARY:([^\r\n]*)/);
+            return {
+                id: r.id,
+                title: titleMatch ? titleMatch[1].trim() : 'Meeting',
+                start: r.start,
+            };
+        });
+        res.json({ success: true, emails: emailRows, meetings });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.post('/contacts/:id/share', async (req, res) => {
+    const user = req.username;
+    const shareTo = req.body.recipientEmail;
+    const shareMsg = req.body.message || '';
+    if (!shareTo || !shareTo.includes('@')) {
+        return res.status(400).json({ success: false, error: 'Valid recipient email is required' });
+    }
+    try {
+        const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL', [req.params.id, user]);
+        if (rows.length === 0)
+            return res.status(404).json({ success: false, error: 'Contact not found' });
+        const c = rows[0];
+        const vcard = (0, contact_utils_1.normalizeVCardData)(c.vcard_data || '', c.dav_uid || `contact-${c.id}`, { name: c.name, email: c.email, phone: c.phone });
+        res.json({
+            success: true,
+            vcard,
+            mailtoSubject: `Contact: ${c.name || c.email}`,
+            mailtoBody: `${shareMsg}\n\n`,
+        });
     }
     catch (e) {
         res.status(500).json({ success: false, error: e.message });
@@ -187,7 +390,21 @@ exports.appsApiRouter.get('/contacts-export', async (req, res) => {
     const user = req.username;
     const format = req.query.format || 'vcard';
     try {
-        const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ?', [user]);
+        const idsParam = req.query.ids;
+        let rows;
+        if (idsParam) {
+            const ids = idsParam.split(',').map(Number).filter(n => !isNaN(n));
+            if (ids.length === 0) {
+                rows = [];
+            }
+            else {
+                const placeholders = ids.map(() => '?').join(',');
+                [rows] = await db_1.pool.query(`SELECT * FROM contacts WHERE username = ? AND id IN (${placeholders}) AND deleted_at IS NULL`, [user, ...ids]);
+            }
+        }
+        else {
+            [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL', [user]);
+        }
         if (format === 'csv') {
             res.setHeader('Content-Type', 'text/csv');
             res.setHeader('Content-Disposition', 'attachment; filename="contacts.csv"');
@@ -250,7 +467,16 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                     continue;
                 }
                 try {
-                    const [result] = await db_1.pool.query('INSERT IGNORE INTO contacts (username, name, email, phone, job_title, organization, notes) VALUES (?, ?, ?, ?, ?, ?, ?)', [user, name, email, phone, jobTitle, organization, notes]);
+                    const [result] = await db_1.pool.query(`INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, dav_uid)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, CONCAT('import-csv-', UNIX_TIMESTAMP(), '-', ?))
+                         ON DUPLICATE KEY UPDATE
+                           name = VALUES(name),
+                           phone = VALUES(phone),
+                           job_title = VALUES(job_title),
+                           organization = VALUES(organization),
+                           notes = VALUES(notes),
+                           deleted_at = NULL,
+                           sync_token = sync_token + 1`, [user, name, email, phone, jobTitle, organization, notes, imported]);
                     if (result.affectedRows > 0)
                         imported++;
                     else
@@ -275,15 +501,31 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                 const emailsJson = (parsed.emails && parsed.emails.length > 0) ? JSON.stringify(parsed.emails.map((e) => ({ value: e, label: 'Other' }))) : null;
                 const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p) => ({ value: p, label: 'Other' }))) : null;
                 try {
-                    const [result] = await db_1.pool.query(`INSERT IGNORE INTO contacts
+                    const [result] = await db_1.pool.query(`INSERT INTO contacts
                          (username, name, email, phone, job_title, organization, notes,
                           emails_json, phones_json, vcard_data,
-                          prefix, first_name, middle_name, last_name, suffix)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [user, parsed.name || '', parsed.email || '', parsed.phone || '',
+                          prefix, first_name, middle_name, last_name, suffix, dav_uid)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CONCAT('import-vcard-', UNIX_TIMESTAMP(), '-', ?))
+                         ON DUPLICATE KEY UPDATE
+                           name = VALUES(name),
+                           phone = VALUES(phone),
+                           job_title = VALUES(job_title),
+                           organization = VALUES(organization),
+                           notes = VALUES(notes),
+                           emails_json = VALUES(emails_json),
+                           phones_json = VALUES(phones_json),
+                           vcard_data = VALUES(vcard_data),
+                           prefix = VALUES(prefix),
+                           first_name = VALUES(first_name),
+                           middle_name = VALUES(middle_name),
+                           last_name = VALUES(last_name),
+                           suffix = VALUES(suffix),
+                           deleted_at = NULL,
+                           sync_token = sync_token + 1`, [user, parsed.name || '', parsed.email || '', parsed.phone || '',
                         parsed.title || '', parsed.organization || '', parsed.note || '',
                         emailsJson, phonesJson, vcard,
                         parsed.prefix || null, parsed.firstName || null, parsed.middleName || null,
-                        parsed.lastName || null, parsed.suffix || null]);
+                        parsed.lastName || null, parsed.suffix || null, imported]);
                     if (result.affectedRows > 0)
                         imported++;
                     else
@@ -303,7 +545,7 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
 exports.appsApiRouter.get('/contacts-duplicates', async (req, res) => {
     const user = req.username;
     try {
-        const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ?', [user]);
+        const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL', [user]);
         const duplicates = [];
         const seen = new Set();
         for (let i = 0; i < rows.length; i++) {
@@ -344,7 +586,7 @@ exports.appsApiRouter.get('/contacts-merge-preview', async (req, res) => {
     if (ids.length < 2)
         return res.status(400).json({ success: false, error: 'Need at least 2 contact IDs' });
     try {
-        const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=?', [ids, user]);
+        const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=? AND deleted_at IS NULL', [ids, user]);
         if (rows.length < 2)
             return res.status(404).json({ success: false, error: 'Contacts not found' });
         // Build field-by-field preview showing source of each value
@@ -374,11 +616,11 @@ exports.appsApiRouter.post('/contacts-merge', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Invalid input' });
     }
     try {
-        const [primaryRows] = await db_1.pool.query('SELECT * FROM contacts WHERE id=? AND username=?', [primaryId, user]);
+        const [primaryRows] = await db_1.pool.query('SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL', [primaryId, user]);
         if (primaryRows.length === 0)
             return res.status(404).json({ success: false, error: 'Primary contact not found' });
         const primary = primaryRows[0];
-        const [dupRows] = await db_1.pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=?', [duplicateIds, user]);
+        const [dupRows] = await db_1.pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=? AND deleted_at IS NULL', [duplicateIds, user]);
         if (dupRows.length === 0)
             return res.json({ success: true });
         let emails = primary.emails_json ? (typeof primary.emails_json === 'string' ? JSON.parse(primary.emails_json) : primary.emails_json) : [];
@@ -471,8 +713,10 @@ exports.appsApiRouter.delete('/contact-labels/:id', async (req, res) => {
 exports.appsApiRouter.get('/contact-groups', async (req, res) => {
     const user = req.username;
     try {
-        const [groups] = await db_1.pool.query(`SELECT g.*, COUNT(m.contact_id) as member_count
-             FROM contact_groups g LEFT JOIN contact_group_members m ON g.id = m.group_id
+        const [groups] = await db_1.pool.query(`SELECT g.*, COUNT(c.id) as member_count
+             FROM contact_groups g
+             LEFT JOIN contact_group_members m ON g.id = m.group_id
+             LEFT JOIN contacts c ON c.id = m.contact_id AND c.deleted_at IS NULL
              WHERE g.username = ? GROUP BY g.id ORDER BY g.name`, [user]);
         res.json({ success: true, groups });
     }
@@ -523,7 +767,7 @@ exports.appsApiRouter.get('/contact-groups/:id/members', async (req, res) => {
     const user = req.username;
     try {
         const [rows] = await db_1.pool.query(`SELECT m.contact_id, c.name, c.email FROM contact_group_members m
-             JOIN contacts c ON c.id = m.contact_id
+             JOIN contacts c ON c.id = m.contact_id AND c.deleted_at IS NULL
              JOIN contact_groups g ON g.id = m.group_id
              WHERE m.group_id = ? AND g.username = ?`, [req.params.id, user]);
         res.json({ success: true, members: rows });
@@ -628,7 +872,7 @@ exports.appsApiRouter.get('/notes', async (req, res) => {
             // Let's await it so the response includes fresh notes.
             await (0, notes_imap_sync_1.syncNotesWithImap)(user, pass);
         }
-        const rows = await (0, notes_utils_1.listNotes)(user);
+        const rows = await (0, notes_utils_1.listNotesWithReminders)(user);
         res.json({ success: true, notes: rows });
     }
     catch (e) {
@@ -682,6 +926,148 @@ exports.appsApiRouter.delete('/notes/:id', async (req, res) => {
     }
 });
 // ==========================================
+// ---- Notes: Image upload ----
+const multer_1 = __importDefault(require("multer"));
+const path = __importStar(require("path"));
+const fs = __importStar(require("fs"));
+const crypto = __importStar(require("crypto"));
+const notesUploadDir = path.join(__dirname, '..', 'uploads', 'notes');
+if (!fs.existsSync(notesUploadDir)) {
+    fs.mkdirSync(notesUploadDir, { recursive: true });
+}
+const notesImageUpload = (0, multer_1.default)({
+    storage: multer_1.default.diskStorage({
+        destination: notesUploadDir,
+        filename: (_req, file, cb) => {
+            const user = _req.username || 'unknown';
+            const userDir = path.join(notesUploadDir, user);
+            if (!fs.existsSync(userDir))
+                fs.mkdirSync(userDir, { recursive: true });
+            const ext = path.extname(file.originalname) || '.png';
+            cb(null, path.join(user, `${crypto.randomUUID()}${ext}`));
+        }
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const allowed = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+        if (allowed.includes(file.mimetype)) {
+            cb(null, true);
+        }
+        else {
+            cb(new Error('Only PNG, JPEG, GIF, and WebP images are allowed'));
+        }
+    }
+});
+exports.appsApiRouter.post('/notes/upload', notesImageUpload.single('file'), async (req, res) => {
+    if (!req.file) {
+        res.status(400).json({ success: false, error: 'No file uploaded' });
+        return;
+    }
+    const url = `/uploads/notes/${req.file.filename}`;
+    res.json({ success: true, url });
+});
+// ---- Notes: Reminders ----
+const notes_utils_2 = require("./notes-utils");
+exports.appsApiRouter.get('/notes/:id/reminder', async (req, res) => {
+    try {
+        const reminder = await (0, notes_utils_2.getNoteReminder)(req.params.id);
+        if (!reminder) {
+            res.status(404).json({ success: false, reminder: null });
+            return;
+        }
+        res.json({ success: true, reminder: { remind_at: reminder.remind_at } });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.post('/notes/:id/reminder', async (req, res) => {
+    try {
+        await (0, notes_utils_2.saveNoteReminder)(req.params.id, req.body.remind_at);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.delete('/notes/:id/reminder', async (req, res) => {
+    try {
+        await (0, notes_utils_2.deleteNoteReminder)(req.params.id);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+// ---- Notes: Attachments ----
+const notes_utils_3 = require("./notes-utils");
+const attachmentsUpload = (0, multer_1.default)({
+    storage: multer_1.default.diskStorage({
+        destination: (_req, _file, cb) => {
+            const user = _req.username || 'unknown';
+            const userDir = path.join(notesUploadDir, user);
+            if (!fs.existsSync(userDir))
+                fs.mkdirSync(userDir, { recursive: true });
+            cb(null, userDir);
+        },
+        filename: (_req, file, cb) => {
+            const uniqueName = `${crypto.randomUUID()}${path.extname(file.originalname)}`;
+            cb(null, uniqueName);
+        }
+    }),
+    limits: { fileSize: 25 * 1024 * 1024 },
+});
+exports.appsApiRouter.get('/notes/:id/attachments', async (req, res) => {
+    try {
+        const attachments = await (0, notes_utils_3.listNoteAttachments)(req.params.id);
+        res.json({ success: true, attachments });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.post('/notes/:id/attachments', attachmentsUpload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            res.status(400).json({ success: false, error: 'No file uploaded' });
+            return;
+        }
+        const id = crypto.randomUUID();
+        const user = req.username || 'unknown';
+        const storagePath = path.join('notes', user, req.file.filename);
+        const attachment = {
+            id,
+            note_id: req.params.id,
+            filename: req.file.originalname,
+            mime_type: req.file.mimetype,
+            size_bytes: req.file.size,
+            storage_path: storagePath,
+        };
+        await (0, notes_utils_3.saveNoteAttachment)(attachment);
+        res.json({ success: true, attachment });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.appsApiRouter.delete('/notes/:id/attachments/:attachmentId', async (req, res) => {
+    try {
+        const deleted = await (0, notes_utils_3.deleteNoteAttachment)(req.params.attachmentId);
+        if (!deleted) {
+            res.status(404).json({ success: false, error: 'Attachment not found' });
+            return;
+        }
+        // Delete file from disk
+        const filePath = path.join(__dirname, '..', 'uploads', deleted.storage_path);
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 // ==========================================
 // CALENDARS & EVENTS API
 // ==========================================

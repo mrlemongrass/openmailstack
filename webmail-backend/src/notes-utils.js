@@ -39,6 +39,16 @@ exports.getNote = getNote;
 exports.saveNote = saveNote;
 exports.deleteNote = deleteNote;
 exports.hardDeleteNote = hardDeleteNote;
+exports.ensureRemindersSchema = ensureRemindersSchema;
+exports.getNoteReminder = getNoteReminder;
+exports.saveNoteReminder = saveNoteReminder;
+exports.deleteNoteReminder = deleteNoteReminder;
+exports.ensureAttachmentsSchema = ensureAttachmentsSchema;
+exports.listNoteAttachments = listNoteAttachments;
+exports.saveNoteAttachment = saveNoteAttachment;
+exports.deleteNoteAttachment = deleteNoteAttachment;
+exports.ensureAllNotesSchemas = ensureAllNotesSchemas;
+exports.listNotesWithReminders = listNotesWithReminders;
 exports.getNotesSyncToken = getNotesSyncToken;
 const db_1 = require("./db");
 const crypto = __importStar(require("crypto"));
@@ -142,6 +152,71 @@ async function deleteNote(id, owner) {
 }
 async function hardDeleteNote(id, owner) {
     await db_1.pool.query('DELETE FROM notes WHERE id = ? AND owner = ?', [id, owner]);
+}
+async function ensureRemindersSchema() {
+    await db_1.pool.query(`
+        CREATE TABLE IF NOT EXISTS note_reminders (
+            note_id VARCHAR(255) PRIMARY KEY,
+            remind_at DATETIME NOT NULL,
+            notified TINYINT(1) DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+        )
+    `);
+}
+async function getNoteReminder(noteId) {
+    const [results] = await db_1.pool.query('SELECT * FROM note_reminders WHERE note_id = ?', [noteId]);
+    return results.length > 0 ? results[0] : null;
+}
+async function saveNoteReminder(noteId, remindAt) {
+    await db_1.pool.query('INSERT INTO note_reminders (note_id, remind_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE remind_at = VALUES(remind_at), notified = 0', [noteId, remindAt]);
+}
+async function deleteNoteReminder(noteId) {
+    await db_1.pool.query('DELETE FROM note_reminders WHERE note_id = ?', [noteId]);
+}
+async function ensureAttachmentsSchema() {
+    await db_1.pool.query(`
+        CREATE TABLE IF NOT EXISTS note_attachments (
+            id VARCHAR(255) PRIMARY KEY,
+            note_id VARCHAR(255) NOT NULL,
+            filename VARCHAR(255) NOT NULL,
+            mime_type VARCHAR(100) NOT NULL,
+            size_bytes BIGINT NOT NULL,
+            storage_path VARCHAR(500) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_note_attachments_note_id (note_id),
+            FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+        )
+    `);
+}
+async function listNoteAttachments(noteId) {
+    const [results] = await db_1.pool.query('SELECT * FROM note_attachments WHERE note_id = ? ORDER BY created_at ASC', [noteId]);
+    return results;
+}
+async function saveNoteAttachment(attachment) {
+    await db_1.pool.query('INSERT INTO note_attachments (id, note_id, filename, mime_type, size_bytes, storage_path) VALUES (?, ?, ?, ?, ?, ?)', [attachment.id, attachment.note_id, attachment.filename, attachment.mime_type, attachment.size_bytes, attachment.storage_path]);
+}
+async function deleteNoteAttachment(attachmentId) {
+    const [results] = await db_1.pool.query('SELECT * FROM note_attachments WHERE id = ?', [attachmentId]);
+    if (results.length === 0)
+        return null;
+    await db_1.pool.query('DELETE FROM note_attachments WHERE id = ?', [attachmentId]);
+    return results[0];
+}
+// ---- Schema migration helper ----
+async function ensureAllNotesSchemas() {
+    await ensureNotesSchema();
+    await ensureRemindersSchema();
+    await ensureAttachmentsSchema();
+}
+// ---- Extended listNotes with reminders ----
+async function listNotesWithReminders(owner) {
+    const [results] = await db_1.pool.query(`SELECT n.*, r.remind_at
+         FROM notes n
+         LEFT JOIN note_reminders r ON n.id = r.note_id
+         WHERE n.owner = ? AND n.is_deleted = 0
+         ORDER BY n.updated_at DESC`, [owner]);
+    return results;
 }
 async function getNotesSyncToken(owner) {
     const [results] = await db_1.pool.query('SELECT MAX(sync_token) as max_token FROM notes WHERE owner = ?', [owner]);

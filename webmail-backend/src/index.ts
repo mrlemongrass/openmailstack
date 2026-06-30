@@ -28,7 +28,7 @@ import {
     saveContactFromVCard,
     type ContactRow
 } from './contact-utils';
-import { ensureNotesSchema, listNotes, saveNote, deleteNote, getNotesSyncToken } from './notes-utils';
+import { ensureNotesSchema, ensureRemindersSchema, ensureAttachmentsSchema, listNotes, saveNote, deleteNote, getNotesSyncToken } from './notes-utils';
 import { activeSyncToDbNote, dbNoteToActiveSync } from './eas-notes';
 import { syncNotesWithImap } from './notes-imap-sync';
 import { startSearchWorker } from './search-worker';
@@ -58,6 +58,8 @@ ensureBrandingSchema().catch(err => console.error('Failed to initialize branding
 ensureCalendarSchema().catch(err => console.error('Failed to initialize calendar schema:', err));
 ensureContactsSchema().catch(err => console.error('Failed to initialize contacts schema:', err));
 ensureNotesSchema().catch(err => console.error('Failed to initialize notes schema:', err));
+ensureRemindersSchema().catch(err => console.error('Failed to initialize reminders schema:', err));
+ensureAttachmentsSchema().catch(err => console.error('Failed to initialize attachments schema:', err));
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(securityHeaders);
@@ -69,6 +71,9 @@ app.use(bodyParser.raw({
     },
     limit: `${serverConfig.uploadLimitBytes}b`
 }));
+
+import * as path from 'path';
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 import caldavRouter from './caldav';
 import carddavRouter from './carddav';

@@ -71,16 +71,87 @@ For external automated provisioning (e.g. WHMCS or custom billing software), we 
 - **Design:** Implements a modern "glassmorphism" aesthetic with responsive sidebar navigation and asynchronous DOM updates.
 - **Interaction:** Uses standard browser `fetch()` API to communicate with `api.php`. Forms are presented via cleanly injected dynamic HTML modals (DOM manipulation).
 
-## 4. Modern Webmail, Calendar, Contacts, And Sync Proxy
+## 4. Modern Webmail, Calendar, Contacts, Notes, And Sync Proxy
 
 The modern end-user product surface lives in `webmail-frontend/` and `webmail-backend/`.
 
-- **Frontend:** `webmail-frontend` is a React/Vite single-page app served from `/`. It provides Mail, Calendar, Contacts, Sync Info, Settings, and admin-facing controls.
-- **Backend:** `webmail-backend` is a Node/Express service listening on `127.0.0.1:20000` by default. Nginx proxies `/api`, `/api/apps`, `/caldav`, `/carddav`, autodiscover, and `/Microsoft-Server-ActiveSync` to it.
-- **Mail:** The backend talks to Dovecot IMAP, Postfix SMTP, and ManageSieve to list, read, search, send, filter, and organize mail.
-- **Calendar:** CalDAV, ActiveSync calendar sync, and the webapp share the `calendars` and `events` tables.
-- **Contacts:** CardDAV, ActiveSync contacts, and the webapp share the `contacts` table.
-- **Sessions:** Browser login uses HttpOnly cookie sessions persisted in the database. The backend still needs delegated credential hardening before it should be called enterprise-grade.
+### 4.1 Frontend Architecture (`webmail-frontend`)
+- **Framework:** React 19 + Vite 8 + TypeScript 6.
+- **Routing:** React Router v7 with URL structure: `/mail/inbox/123`, `/calendar/month`, `/contacts`, `/notes`, `/settings/:tab`, `/admin/:panel`, `/sync`.
+- **Design:** Custom dark glassmorphism theme using CSS custom properties. No external component library.
+- **Layout:** Auth gate → App shell (header + mobile tab bar) → per-app layouts with `react-resizable-panels` for desktop multi-pane views.
+- **Mobile:** Responsive breakpoints at 768px. Single-pane drill-down with fixed bottom tab bar below 768px.
+
+#### Component Architecture
+```
+src/
+├── App.tsx (65 lines — router shell)
+├── shared/
+│   ├── types.ts (all TypeScript interfaces)
+│   ├── api.ts (typed fetch wrappers for all backend endpoints)
+│   ├── hooks/ (useAuth, useAppearance, useMediaQuery)
+│   ├── components/ (Skeleton, EmptyState, ErrorBanner)
+│   └── layouts/ (AuthGate, AppShell)
+├── mail/
+│   ├── hooks/useMail.ts (all mail state + API actions)
+│   ├── FolderSidebar.tsx, MessageList.tsx (virtualized), MessageRow.tsx
+│   ├── MessageViewer.tsx, ComposeModal.tsx, SearchBar.tsx
+│   └── components/ (InlineReply, SnoozePopover, RawMessageModal, AttachmentCard, MoveToPopover, MessageListSkeleton)
+├── calendar/
+│   ├── hooks/useCalendar.ts (calendar state, event CRUD, free/busy)
+│   ├── CalendarSidebar.tsx (mini-calendar + calendar list), CalendarToolbar.tsx
+│   ├── EventModal.tsx (full event editor: guests, video links, attachments, recurrence)
+│   └── views/MonthView.tsx (week numbers, drag-and-drop, click-to-edit)
+├── contacts/
+│   ├── hooks/useContacts.ts
+│   ├── ContactSidebar.tsx (address books, labels, groups)
+│   ├── ContactGrid.tsx (virtualized)
+│   └── components/ContactSkeleton.tsx
+├── notes/
+│   ├── hooks/useNotes.ts
+│   ├── NotesSidebar.tsx, NotesGrid.tsx
+│   ├── LiveNoteEditor.tsx (Yjs/WebRTC collaborative editing)
+│   └── components/NoteSkeleton.tsx
+├── settings/ (routes + existing SettingsPanel files)
+└── admin/ (routes + existing admin panel files)
+```
+
+#### Key Mail Features
+- 3-pane layout: folder sidebar → virtualized message list → thread viewer
+- Inline reply box, Send & Archive, snooze with custom time picker
+- Drag-and-drop attachments, inline image previews, attachment size warnings
+- Quick hover actions (archive, delete, read, snooze, star)
+- Raw message viewer with copy-to-clipboard, print stylesheet
+- Custom scheduled send with datetime picker
+- Send-as alias identity switching, templates/canned responses
+- Move-to folder picker with search, mute thread
+- Full-text search with operators, SSE real-time updates
+
+#### Key Calendar Features
+- Five views: Month, Week, Day, Year, Agenda
+- Full event editor with guests, video call links (Meet/Zoom/Teams), attachments, recurrence
+- Invitation system with ICS ATTENDEE generation
+- Free/busy lookup endpoint with per-guest availability indicators
+- Drag-and-drop in month and week/day views
+- Mini-calendar sidebar, week numbers, natural language quick-create
+- Birthdays auto-calendar from contacts
+
+### 4.2 Backend (`webmail-backend`)
+- **Runtime:** Node.js + Express 5, listening on `127.0.0.1:20000`.
+- **Protocols:** IMAP (Dovecot), SMTP (Postfix), ManageSieve, CalDAV, CardDAV, ActiveSync (EAS), JMAP.
+- **Session:** HttpOnly cookie sessions in MySQL. `requireAuth` / `requireSession` middleware.
+- **Real-time:** SSE (`/api/events`) for mail push. Socket.IO available. WebSocket for calendar/contacts sync notifications.
+- **API surface:** `/api/auth/*` (login/logout/session), `/api/folders/*` (mail), `/api/messages/*` (send, search, snooze, mute, raw), `/api/apps/*` (calendars, events, contacts, freebusy, birthdays), `/api/settings/*` (user settings, templates), `/api/admin/*` (domain, mailbox, alias management).
+
+### 4.3 Database Tables (webmail-specific)
+- `sessions` — HttpOnly cookie sessions
+- `scheduled_emails` — delayed/scheduled send queue
+- `snooze_queue` — snoozed messages with restore time
+- `muted_threads` — muted message UIDs per user
+- `calendars`, `cal_events` — CalDAV + webapp calendar data
+- `contacts`, `contact_owners`, `contact_labels`, `contact_groups` — CardDAV + webapp contacts
+- `notes` — Notes with Apple Notes IMAP sync support
+- `webmail_admin_audit`, `webhook_deliveries` — admin audit trail
 
 ---
 

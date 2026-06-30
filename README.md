@@ -24,7 +24,12 @@ Stop wrestling with cryptic config files and manual database queries. OpenMailSt
   * 🏰 **Multi-Tenant Domain Verification:** Domain admins are strictly bounded to their own domains, and can securely add new domains utilizing automated DNS TXT record ownership verification.
   * 🛑 **SQL Spam Quarantining:** High-scoring spam is automatically intercepted at the Postfix MTA level, saved to disk, and logged to MariaDB where admins can securely review, delete, or release it to users' inboxes directly from the UI.
   * 🚫 **Hierarchical JSON Ban Policies:** Configure granular domain or server-wide blocklists for specific IPs, wildcard domains, or file extensions, parsed dynamically by Rspamd.
-* 📧 **Mail, Calendar & Contacts:** The primary end-user experience is the React/Vite app in `webmail-frontend`, backed by the Node/Express mail and sync proxy in `webmail-backend`. Roundcube remains available as a legacy mail fallback while the modern suite continues to mature.
+* 📧 **Modern Webmail Suite:** A full-featured React/Vite SPA (`webmail-frontend`) backed by a Node/Express sync proxy (`webmail-backend`). Includes:
+  * **Mail:** 3-pane layout with virtualized message list, inline reply, snooze, quick hover actions, drag-and-drop attachments, raw message viewer, search with operators, scheduled send, templates, send-as alias, and more.
+  * **Calendar:** Month/Week/Day/Year/Agenda views, event editor with guests, video call links, free/busy lookup, mini-calendar, drag-and-drop, natural language quick-create, week numbers, birthdays calendar.
+  * **Contacts:** Grid/list views with virtualization, labels and groups, duplicate detection/merging, vCard/CSV import/export, CardDAV sync.
+  * **Notes:** Rich text editor, collaborative editing (Yjs/WebRTC), pin/lock/color tags, multi-format import/export, Apple Notes IMAP sync.
+  * Roundcube remains available as a legacy mail fallback at `/webmail`.
 * 🛑 **Security & Anti-Spam:** Rspamd (DKIM/ARC signing), ClamAV (Anti-virus), Fail2ban, UFW Firewall, and automated Let's Encrypt SSL.
 * 🤖 **Automation & Guardrails:** Intelligent state detection, automated pre-flight safety snapshots, interactive point-in-time rollbacks, and hourly automated DKIM domain synchronization.
 

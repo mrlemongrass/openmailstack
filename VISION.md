@@ -5,6 +5,20 @@ OpenMailStack speaks every standard mail protocol your users' clients already us
 
 ---
 
+## Current Status (v0.1.5 → v0.2.0)
+
+The modern React webmail frontend (`webmail-frontend/`) has undergone a major architectural modernization (2026-06-30 – 2026-07-01):
+
+- **Architecture:** Decomposed from a 7,524-line monolith into per-app directories with React Router v7, shared types/API/hooks/components, and mobile-responsive layout.
+- **Mail:** Full-featured with inline reply, snooze, drag-drop attachments, hover actions, raw message viewer, scheduled send, templates, send-as alias, print stylesheet, and more.
+- **Calendar:** Event editor with guests and video links, free/busy lookup, mini-calendar, drag-and-drop in all views, natural language quick-create, week numbers, birthdays calendar.
+- **Contacts:** Virtualized grid/list, labels and groups, duplicate merging, vCard/CSV import/export.
+- **Notes:** Collaborative editing via Yjs/WebRTC, rich text, multi-format import/export, Apple Notes sync.
+
+The long-term v2 vision (below) remains a ground-up Rust rewrite as a single JMAP-native binary. The current Node.js + React stack serves as the production foundation while v2 is developed.
+
+---
+
 ## First-class JMAP support
 
 JMAP is the modern replacement for IMAP, designed around JSON over HTTP instead of the old line-based wire protocol. New mail appears the moment it arrives, every device stays in step, and the protocol is efficient enough to feel native to a mobile or web app. OpenMailStack supports every JMAP extension, so any compliant client gets the full feature set.

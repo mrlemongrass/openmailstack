@@ -1,8 +1,32 @@
 # OpenMailStack Roadmap
 
-Last reviewed: 2026-06-29
+Last reviewed: 2026-07-01
 
 This roadmap tracks the remaining product and release work for the modern OpenMailStack suite. The current product direction is a native React webmail, calendar, and contacts experience backed by the Node/Express sync proxy, while Roundcube and older SOGo-compatible paths remain compatibility or fallback surfaces.
+
+## 0. Webmail UI Modernization Pass ✅ (2026-06-30 – 2026-07-01)
+
+The monolithic 7,524-line `App.tsx` has been decomposed into a modern React architecture:
+
+- ✅ **Phase 1 — Architecture & Foundation:** React Router v7 with URL structure (`/mail/inbox/123`, `/calendar/month`, `/contacts`, `/notes`), per-app component directories (`mail/`, `calendar/`, `contacts/`, `notes/`, `settings/`, `admin/`), mobile responsive layout with bottom tab bar, virtual scrolling via `@tanstack/react-virtual`, and skeleton loading states on all list views.
+- ✅ **Phase 2 — Mail Polish:** Inline reply box, snooze with preset times + custom picker, drag-and-drop attachments into compose, quick hover actions (archive, delete, read, snooze), raw message viewer with copy-to-clipboard, and print stylesheet.
+- ✅ **Phase 3 — Mail Remaining Features:** Custom scheduled send time, Send & Archive, send-as alias identity, attachment size warnings, move-to folder picker, inline image previews, mute/ignore thread, templates/canned responses, and mark-as-unread from viewer. Follow-up nudge, confidential mode, read receipts, and inbox categories are spec'd for future implementation.
+- ✅ **Calendar Polish:** Invitation system with guest list and ICS ATTENDEE generation, free/busy lookup endpoint, propose-new-time via event editing, video call auto-generation (Meet/Zoom/Teams), mini-calendar in sidebar, drag-and-drop in month view, create-event-from-text natural language parsing, week numbers, event attachments, and birthdays auto-calendar from contacts. Events-from-email auto-detection spec'd for roadmap.
+
+**Current frontend architecture:**
+```
+webmail-frontend/src/
+├── App.tsx (65 lines — router shell)
+├── shared/ (types, api client, hooks, components, layouts)
+├── mail/ (12 files — useMail hook, views, compose, skeletons)
+├── calendar/ (8 files — useCalendar hook, EventModal, MonthView, sidebar)
+├── contacts/ (7 files — useContacts hook, grid, sidebar, skeletons)
+├── notes/ (7 files — useNotes hook, grid, sidebar, skeletons)
+├── settings/ (routes + existing panel files)
+└── admin/ (routes + existing panel files)
+```
+
+**Build:** Frontend 380KB JS (115KB gzip), 18KB CSS. Backend TypeScript clean. Both build with zero errors.
 
 ## 1. Real Client Validation
 
@@ -12,7 +36,41 @@ This roadmap tracks the remaining product and release work for the modern OpenMa
 - Validate Thunderbird IMAP/SMTP, CalDAV, and CardDAV. ✅
 - Record exact setup steps and failures in `docs/webmail-release-validation.md`. ✅
 
-## 2. Calendar Hardening ✅ (2026-06-29)
+## 2. Contacts & Notes UI Modernization 🟡
+
+The contacts and notes apps have been extracted into their own directories with routing, hooks, and virtualized views, but still need the full feature pass:
+
+### Contacts (🟡 in progress)
+- ✅ Per-app directory with useContacts hook, ContactSidebar, ContactGrid, ContactSkeleton.
+- ✅ Virtualized contact grid via @tanstack/react-virtual.
+- ✅ Labels and groups sidebar with filtering.
+- ✅ Duplicate detection and merging.
+- ✅ vCard and CSV import/export.
+- ✅ CardDAV and ActiveSync backend.
+- ❌ Quick actions from contact cards (email, call, map address).
+- ❌ Contact detail inline view (read-only panel, not edit modal).
+- ❌ Birthday-to-calendar integration in frontend.
+- ❌ Contact restore/trash.
+- ❌ Selective export (currently exports all).
+- ❌ Contact activity timeline (recent emails with this contact).
+- ❌ Contact sharing.
+
+### Notes (🟡 in progress)
+- ✅ Per-app directory with useNotes hook, NotesSidebar, NotesGrid, NoteSkeleton.
+- ✅ Collaborative editing via Yjs/WebRTC (LiveNoteEditor).
+- ✅ Pin, lock, color tags, labels, search.
+- ✅ Multi-format import (HTML, PDF, Markdown, JSON) and export (PDF, Markdown, JSON).
+- ✅ Apple Notes IMAP sync and ActiveSync support.
+- ❌ Checklists/todo items in notes.
+- ❌ Image paste and inline display.
+- ❌ Table support and code blocks.
+- ❌ Sort options (currently by updated date only).
+- ❌ Reminders/due dates on notes.
+- ❌ File attachments on notes.
+- ❌ Undo/redo buttons in editor.
+- ❌ Archive (third state between active and trash).
+
+## 3. Calendar Hardening ✅ (2026-06-29)
 
 - ✅ Replace prompt-based calendar creation with the same dialog quality used for calendar edit/delete.
 - ✅ Improve event creation and editing with move, drag, resize, calendar switching, and clearer validation.

@@ -36,7 +36,7 @@ export function CalendarLayout() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       <PanelGroup
         id="oms-cal-v10"
         orientation="horizontal"

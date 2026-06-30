@@ -31,13 +31,23 @@ html, body, #root {
   overflow: hidden;
 }
 
-/* Allow resizable panels to shrink below content width */
+/* Allow resizable panels to shrink — critical for react-resizable-panels */
+[data-panel-group-direction] {
+  min-height: 0;
+  min-width: 0;
+}
 [data-panel] {
   overflow: hidden;
+  min-height: 0;
+  min-width: 0;
 }
 [data-panel] > * {
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
+}
+[data-panel-resize-handle] {
+  flex-shrink: 0;
 }
 
 body {

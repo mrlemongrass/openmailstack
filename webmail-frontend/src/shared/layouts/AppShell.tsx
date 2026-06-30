@@ -28,7 +28,7 @@ export function AppShell() {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', minHeight: 0, overflow: 'hidden' }}>
       {!isMobile && (
         <header style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -78,7 +78,7 @@ export function AppShell() {
         </header>
       )}
 
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingBottom: isMobile ? 56 : 0 }}>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', paddingBottom: isMobile ? 56 : 0 }}>
         <Outlet />
       </main>
 

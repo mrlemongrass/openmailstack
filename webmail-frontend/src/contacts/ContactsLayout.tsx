@@ -34,7 +34,7 @@ export function ContactsLayout() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       <PanelGroup
         id="oms-contacts-v10"
         orientation="horizontal"

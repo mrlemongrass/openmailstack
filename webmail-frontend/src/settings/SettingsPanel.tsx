@@ -76,6 +76,7 @@ interface SettingsContentProps {
   vacationSettings: { enabled: boolean; subject?: string; body: string; days?: number };
   onUpdateVacationSettings: (settings: { enabled: boolean; subject?: string; body: string; days?: number }) => void;
   onSaveRules: () => void;
+  onSaveVacation: () => void;
   onAddSignature: () => void;
   onUpdateSignatures: (signatures: Signature[]) => void;
   onMailSettingsChange: (settings: MailUserSettings) => void;
@@ -641,13 +642,13 @@ function ForwardingPane({ forwardingGoto, keepCopy, saving, onForwardingChange, 
   );
 }
 
-function VacationPane({ vacationSettings, onUpdateVacationSettings, saving, onSaveRules }: SettingsContentProps) {
+function VacationPane({ vacationSettings, onUpdateVacationSettings, saving, onSaveVacation }: SettingsContentProps) {
   return (
     <div className="settings-page">
       <SettingsHeader
         title="Auto-Responder"
         eyebrow="Mail"
-        action={<button className="btn btn-primary" type="button" onClick={onSaveRules} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>}
+        action={<button className="btn btn-primary" type="button" onClick={onSaveVacation} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>}
       />
       <section className="settings-section">
         <label className="settings-field">

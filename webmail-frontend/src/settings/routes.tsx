@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, Routes, Route } from 'react-router';
-import { SettingsContent } from './SettingsPanel';
+import { useParams, useNavigate, Routes, Route } from 'react-router';
+import { SettingsContent, SettingsSidebar } from './SettingsPanel';
+import { normalizeSettingsTab, type SettingsTab } from './tabs';
 import {
   getUserSettings,
   saveUserSettings,
@@ -278,6 +279,29 @@ function SettingsLoader() {
     });
   }, []);
 
+  const handleSaveVacation = useCallback(async () => {
+    setSaving(true);
+    try {
+      const mailWithVacation = {
+        ...mailSettings,
+        vacation: {
+          enabled: vacationSettings.enabled,
+          subject: vacationSettings.subject,
+          body: vacationSettings.body,
+          days: vacationSettings.days || 1,
+        },
+      };
+      await saveUserSettings('mail', mailWithVacation as any);
+      setSettingsSaveState('saved');
+      setTimeout(() => setSettingsSaveState('idle'), 2000);
+    } catch (err: any) {
+      setSettingsSyncError(err.message || 'Failed to save vacation');
+      setSettingsSaveState('error');
+    } finally {
+      setSaving(false);
+    }
+  }, [mailSettings, vacationSettings]);
+
   // --- Password handler ---
   const handlePasswordChange = useCallback((pw: { current: string; new: string; confirm: string }) => {
     setPasswords(pw);
@@ -387,6 +411,7 @@ function SettingsLoader() {
       vacationSettings={vacationSettings}
       onUpdateVacationSettings={handleUpdateVacationSettings}
       onSaveRules={handleSaveRules}
+      onSaveVacation={handleSaveVacation}
       onAddSignature={handleAddSignature}
       onUpdateSignatures={handleUpdateSignatures}
       onMailSettingsChange={handleMailSettingsChange}
@@ -401,19 +426,39 @@ function SettingsLoader() {
   );
 }
 
+function SettingsLayout() {
+  const { tab } = useParams();
+  const navigate = useNavigate();
+
+  const handleTabChange = (newTab: SettingsTab) => {
+    navigate(`/settings/${newTab}`);
+  };
+
+  const normalizedTab = normalizeSettingsTab(tab);
+
+  return (
+    <div style={{ flex: 1, display: 'flex' }}>
+      <nav style={{
+        width: 220,
+        flexShrink: 0,
+        borderRight: '1px solid var(--border-glass)',
+        overflowY: 'auto',
+        padding: '12px 8px',
+        background: 'var(--bg-glass)',
+      }}>
+        <SettingsSidebar activeTab={normalizedTab} onTabChange={handleTabChange} />
+      </nav>
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        <SettingsLoader />
+      </div>
+    </div>
+  );
+}
+
 export function SettingsRoutes() {
   return (
     <Routes>
-      <Route
-        path=":tab?"
-        element={
-          <div style={{ flex: 1, display: 'flex' }}>
-            <div style={{ flex: 1, overflow: 'auto' }}>
-              <SettingsLoader />
-            </div>
-          </div>
-        }
-      />
+      <Route path=":tab?" element={<SettingsLayout />} />
     </Routes>
   );
 }

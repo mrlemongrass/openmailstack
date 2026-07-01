@@ -164,7 +164,9 @@ async function deleteNote(id, owner) {
         }
         await db_1.pool.query('DELETE a FROM note_attachments a JOIN notes n ON n.id = a.note_id WHERE a.note_id = ? AND n.owner = ?', [id, owner]);
     }
-    catch { }
+    catch (e) {
+        console.error('deleteNote: failed to clean up reminders/attachments', e);
+    }
     try {
         const { io } = require('./index');
         io.to(owner).emit('note_deleted', { noteId: id });

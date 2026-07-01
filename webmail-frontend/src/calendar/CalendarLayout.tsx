@@ -16,6 +16,19 @@ function ResizeHandle() {
   );
 }
 
+function renderCalendarView(cal: ReturnType<typeof useCalendar>) {
+  switch (cal.calendarView) {
+    case 'month':
+      return <MonthView cal={cal} />;
+    default:
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-secondary)', fontSize: '1.1rem' }}>
+          {cal.calendarView.charAt(0).toUpperCase() + cal.calendarView.slice(1)} view coming soon
+        </div>
+      );
+  }
+}
+
 export function CalendarLayout() {
   const cal = useCalendar();
   const isMobile = useMediaQuery('(max-width: 767px)');
@@ -29,7 +42,7 @@ export function CalendarLayout() {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <CalendarToolbar cal={cal} />
-        {cal.isLoading ? <Skeleton count={12} height={60} /> : <MonthView cal={cal} />}
+        {cal.isLoading ? <Skeleton count={12} height={60} /> : renderCalendarView(cal)}
         <EventModal cal={cal} />
       </div>
     );
@@ -51,7 +64,7 @@ export function CalendarLayout() {
         <Panel id="calendar-view" defaultSize="80%" minSize="25%">
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <CalendarToolbar cal={cal} />
-            {cal.isLoading ? <Skeleton count={12} height={60} /> : <MonthView cal={cal} />}
+            {cal.isLoading ? <Skeleton count={12} height={60} /> : renderCalendarView(cal)}
           </div>
         </Panel>
       </PanelGroup>

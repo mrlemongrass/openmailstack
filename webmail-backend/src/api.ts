@@ -2692,8 +2692,14 @@ apiRouter.get('/notes', requireAuth, async (req: any, res) => {
 
 apiRouter.post('/notes', requireAuth, async (req: any, res) => {
     try {
-        const note = await saveNote({ ...req.body, owner: req.user.username });
-        syncNotesWithImap(req.user.username, req.user.password).catch(e => console.error(e));
+        const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
+        const note = await saveNote({
+            title, content, owner: req.user.username,
+            color, is_pinned, is_locked, folder, labels_json
+        });
+        if (req.user.password) {
+            syncNotesWithImap(req.user.username, req.user.password).catch(e => console.error(e));
+        }
         res.json({ success: true, note });
     } catch (err: any) {
         console.error('Notes POST error:', err);
@@ -2703,8 +2709,14 @@ apiRouter.post('/notes', requireAuth, async (req: any, res) => {
 
 apiRouter.put('/notes/:id', requireAuth, async (req: any, res) => {
     try {
-        const note = await saveNote({ ...req.body, id: req.params.id, owner: req.user.username });
-        syncNotesWithImap(req.user.username, req.user.password).catch(e => console.error(e));
+        const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
+        const note = await saveNote({
+            id: req.params.id, owner: req.user.username,
+            title, content, color, is_pinned, is_locked, folder, labels_json
+        });
+        if (req.user.password) {
+            syncNotesWithImap(req.user.username, req.user.password).catch(e => console.error(e));
+        }
         res.json({ success: true, note });
     } catch (err: any) {
         res.status(500).json({ success: false, error: err.message });

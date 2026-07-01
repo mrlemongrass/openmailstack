@@ -161,7 +161,7 @@ exports.appsApiRouter.post('/contacts', async (req, res) => {
         });
         const [result] = await db_1.pool.query(`INSERT INTO contacts
             (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, sync_token, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
             user,
             fullName || '',
             email || '',
@@ -308,11 +308,14 @@ exports.appsApiRouter.post('/contacts/:id/restore', async (req, res) => {
 exports.appsApiRouter.delete('/contacts/:id/permanent', async (req, res) => {
     const user = req.username;
     try {
-        const [contactToDelete] = await db_1.pool.query('SELECT name, email FROM contacts WHERE id=? AND username=?', [req.params.id, user]);
+        const [contactToDelete] = await db_1.pool.query('SELECT name, email FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL', [req.params.id, user]);
         if (contactToDelete.length > 0) {
             await syncBirthdayEvent(user, contactToDelete[0].name, contactToDelete[0].email, null);
         }
-        await db_1.pool.query('DELETE FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL', [req.params.id, user]);
+        await db_1.pool.query('DELETE FROM contact_group_members WHERE contact_id = ?', [req.params.id]);
+        const [delResult] = await db_1.pool.query('DELETE FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL', [req.params.id, user]);
+        if (delResult.affectedRows === 0)
+            return res.status(404).json({ success: false, error: 'Contact not found in trash' });
         res.json({ success: true });
     }
     catch (e) {
@@ -882,10 +885,16 @@ exports.appsApiRouter.get('/notes', async (req, res) => {
 });
 exports.appsApiRouter.post('/notes', async (req, res) => {
     const user = req.username;
-    const { title, content } = req.body;
+    const pass = req.user?.password;
+    const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
     try {
-        const saved = await (0, notes_utils_1.saveNote)({ title, content, owner: user });
-        res.json({ success: true, id: saved.id });
+        const saved = await (0, notes_utils_1.saveNote)({
+            title, content, owner: user,
+            color, is_pinned, is_locked, folder, labels_json
+        });
+        if (pass)
+            (0, notes_imap_sync_1.syncNotesWithImap)(user, pass).catch(e => console.error(e));
+        res.json({ success: true, note: saved });
     }
     catch (e) {
         console.error("POST notes error", e);
@@ -894,9 +903,10 @@ exports.appsApiRouter.post('/notes', async (req, res) => {
 });
 exports.appsApiRouter.put('/notes/:id', async (req, res) => {
     const user = req.username;
+    const pass = req.user?.password;
     const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
     try {
-        await (0, notes_utils_1.saveNote)({
+        const saved = await (0, notes_utils_1.saveNote)({
             id: req.params.id,
             owner: user,
             title,
@@ -907,7 +917,9 @@ exports.appsApiRouter.put('/notes/:id', async (req, res) => {
             folder,
             labels_json
         });
-        res.json({ success: true });
+        if (pass)
+            (0, notes_imap_sync_1.syncNotesWithImap)(user, pass).catch(e => console.error(e));
+        res.json({ success: true, note: saved });
     }
     catch (e) {
         console.error("PUT notes error", e);
@@ -916,8 +928,11 @@ exports.appsApiRouter.put('/notes/:id', async (req, res) => {
 });
 exports.appsApiRouter.delete('/notes/:id', async (req, res) => {
     const user = req.username;
+    const pass = req.user?.password;
     try {
         await (0, notes_utils_1.deleteNote)(req.params.id, user);
+        if (pass)
+            (0, notes_imap_sync_1.syncNotesWithImap)(user, pass).catch(e => console.error(e));
         res.json({ success: true });
     }
     catch (e) {
@@ -1026,6 +1041,15 @@ const attachmentsUpload = (0, multer_1.default)({
         }
     }),
     limits: { fileSize: 25 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const blocked = ['application/x-msdownload', 'application/x-msdos-program', 'application/x-executable', 'application/x-sh', 'application/x-shockwave-flash'];
+        if (blocked.includes(file.mimetype)) {
+            cb(new Error('Executable files are not allowed'));
+        }
+        else {
+            cb(null, true);
+        }
+    }
 });
 exports.appsApiRouter.get('/notes/:id/attachments', async (req, res) => {
     const user = req.username;
@@ -1315,22 +1339,35 @@ exports.appsApiRouter.delete('/calendars/:id', async (req, res) => {
 });
 exports.appsApiRouter.post('/events', async (req, res) => {
     const user = req.username;
-    const { calendar_id, uid, ical_data } = req.body;
+    const { data: ical_data, calendar_id } = req.body;
+    if (!ical_data)
+        return res.status(400).json({ success: false, error: 'Missing data (iCalendar string)' });
+    // Extract UID from the VEVENT block
+    const uidMatch = ical_data.match(/^UID:(.+)$/m);
+    const uid = uidMatch ? uidMatch[1].trim() : `event-${Date.now()}@openmailstack`;
     try {
-        // verify calendar ownership
+        // resolve calendar: use provided calendar_id, or the user's first personal calendar
+        let calId = calendar_id;
+        if (!calId) {
+            const [userCals] = await db_1.pool.query('SELECT id FROM calendars WHERE user_id = ? ORDER BY id ASC LIMIT 1', [user]);
+            if (userCals.length === 0)
+                return res.status(400).json({ success: false, error: 'No calendar found for user' });
+            calId = userCals[0].id;
+        }
+        // verify calendar ownership or write share
         const [cals] = await db_1.pool.query(`
-            SELECT c.id 
-            FROM calendars c 
+            SELECT c.id
+            FROM calendars c
             LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
             WHERE c.id = ? AND (c.user_id = ? OR cs.permission = 'write')
-        `, [user, calendar_id, user]);
+        `, [user, calId, user]);
         if (cals.length === 0)
             return res.status(403).json({ success: false, error: 'Unauthorized calendar' });
-        await db_1.pool.query('INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE ical_data=?', [calendar_id, uid, ical_data, ical_data]);
-        await db_1.pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar_id]);
+        await db_1.pool.query('INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE ical_data=?', [calId, uid, ical_data, ical_data]);
+        await db_1.pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calId]);
         try {
             const { io } = require('./index');
-            io.to(user).emit('calendar_updated', { calendarId: calendar_id });
+            io.to(user).emit('calendar_updated', { calendarId: calId });
         }
         catch (e) { }
         res.json({ success: true });
@@ -1392,17 +1429,17 @@ exports.appsApiRouter.get('/calendars/freebusy', async (req, res) => {
         }
         const busy = {};
         for (const user of users) {
-            const [rows] = await db_1.pool.query(`SELECT cal_events.ics_data FROM cal_events
-                 JOIN calendars ON cal_events.calendar_id = calendars.id
-                 WHERE calendars.owner = ? OR calendars.id IN
-                   (SELECT calendar_id FROM calendar_shares WHERE user_email = ?)`, [user, user]);
+            const [rows] = await db_1.pool.query(`SELECT events.ical_data FROM events
+                 JOIN calendars ON events.calendar_id = calendars.id
+                 WHERE calendars.user_id = ? OR calendars.id IN
+                   (SELECT calendar_id FROM calendar_shares WHERE shared_with_user_id = ?)`, [user, user]);
             const userBusy = [];
             for (const row of rows || []) {
                 try {
-                    const evt = (0, calendar_utils_1.parseIcalEvent)('freebusy', row.ics_data);
+                    const evt = (0, calendar_utils_1.parseIcalEvent)('freebusy', row.ical_data);
                     if (!evt)
                         continue;
-                    if (row.ics_data.includes('TRANSP:TRANSPARENT'))
+                    if (row.ical_data.includes('TRANSP:TRANSPARENT'))
                         continue;
                     const eStart = new Date(evt.start);
                     const eEnd = new Date(evt.end);

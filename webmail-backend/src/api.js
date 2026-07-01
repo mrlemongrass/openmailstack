@@ -1363,23 +1363,42 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
         res.status(500).json({ success: false, error: err.message });
     }
 });
-exports.apiRouter.post('/messages/undo', requireAuth, require('express').json(), async (req, res) => {
+exports.apiRouter.post('/messages/undo', requireAuth, async (req, res) => {
     const user = req.user.username;
-    const { scheduledId } = req.body;
-    if (!scheduledId) {
-        return res.status(400).json({ success: false, error: 'scheduledId is required' });
+    const pass = req.user.password;
+    const { scheduledId, uids, targetFolder, sourceFolder } = req.body;
+    // Handle scheduled send cancellation
+    if (scheduledId) {
+        try {
+            const [result] = await db_1.pool.query('DELETE FROM scheduled_emails WHERE id = ? AND username = ?', [scheduledId, user]);
+            if (result.affectedRows > 0) {
+                return res.json({ success: true, message: 'Message send undone' });
+            }
+            else {
+                return res.status(404).json({ success: false, error: 'Scheduled message not found or already sent' });
+            }
+        }
+        catch (err) {
+            console.error('Undo error:', err);
+            return res.status(500).json({ success: false, error: err.message });
+        }
+    }
+    // Handle IMAP message restoration
+    if (!uids || !Array.isArray(uids) || uids.length === 0 || !targetFolder) {
+        return res.status(400).json({ success: false, error: 'scheduledId or uids+targetFolder is required' });
     }
     try {
-        const [result] = await db_1.pool.query('DELETE FROM scheduled_emails WHERE id = ? AND username = ?', [scheduledId, user]);
-        if (result.affectedRows > 0) {
-            res.json({ success: true, message: 'Message send undone' });
-        }
-        else {
-            res.status(404).json({ success: false, error: 'Scheduled message not found or already sent' });
-        }
+        const { ImapService } = require('./imap');
+        const imap = new ImapService(user, pass);
+        await imap.connect();
+        const restoreFolder = sourceFolder || 'INBOX';
+        await imap.client.mailboxOpen(targetFolder);
+        await imap.client.messageMove(uids.map(String), restoreFolder, { uid: true });
+        await imap.logout();
+        res.json({ success: true, message: 'Messages restored' });
     }
     catch (err) {
-        console.error('Undo error:', err);
+        console.error('Undo IMAP restore error:', err);
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -2482,10 +2501,63 @@ exports.apiRouter.post('/admin/spam_policies', requireAuth, requireAdmin, async 
 });
 const notes_utils_1 = require("./notes-utils");
 const notes_imap_sync_1 = require("./notes-imap-sync");
+const path_1 = __importDefault(require("path"));
+const notesUploadDir = path_1.default.join(__dirname, '..', 'uploads', 'notes');
+if (!fs_1.default.existsSync(notesUploadDir)) {
+    fs_1.default.mkdirSync(notesUploadDir, { recursive: true });
+}
+const notesImageUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => {
+            const user = _req.user?.username || 'unknown';
+            const userDir = path_1.default.join(notesUploadDir, user);
+            if (!fs_1.default.existsSync(userDir))
+                fs_1.default.mkdirSync(userDir, { recursive: true });
+            cb(null, userDir);
+        },
+        filename: (_req, file, cb) => {
+            cb(null, `${crypto_1.default.randomUUID()}${path_1.default.extname(file.originalname) || '.png'}`);
+        }
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const allowed = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+        if (allowed.includes(file.mimetype)) {
+            cb(null, true);
+        }
+        else {
+            cb(new Error('Only PNG, JPEG, GIF, and WebP images are allowed'));
+        }
+    }
+});
+const attachmentsUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => {
+            const user = _req.user?.username || 'unknown';
+            const userDir = path_1.default.join(notesUploadDir, user);
+            if (!fs_1.default.existsSync(userDir))
+                fs_1.default.mkdirSync(userDir, { recursive: true });
+            cb(null, userDir);
+        },
+        filename: (_req, file, cb) => {
+            cb(null, `${crypto_1.default.randomUUID()}${path_1.default.extname(file.originalname)}`);
+        }
+    }),
+    limits: { fileSize: 25 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const blocked = ['application/x-msdownload', 'application/x-msdos-program', 'application/x-executable', 'application/x-sh', 'application/x-shockwave-flash'];
+        if (blocked.includes(file.mimetype)) {
+            cb(new Error('Executable files are not allowed'));
+        }
+        else {
+            cb(null, true);
+        }
+    }
+});
 exports.apiRouter.get('/notes', requireAuth, async (req, res) => {
     try {
         await (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password);
-        const notes = await (0, notes_utils_1.listNotes)(req.user.username);
+        const notes = await (0, notes_utils_1.listNotesWithReminders)(req.user.username);
         console.log(`[NOTES GET] User: ${req.user.username}, count: ${notes.length}`);
         res.json({ success: true, notes });
     }
@@ -2496,8 +2568,14 @@ exports.apiRouter.get('/notes', requireAuth, async (req, res) => {
 });
 exports.apiRouter.post('/notes', requireAuth, async (req, res) => {
     try {
-        const note = await (0, notes_utils_1.saveNote)({ ...req.body, owner: req.user.username });
-        (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
+        const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
+        const note = await (0, notes_utils_1.saveNote)({
+            title, content, owner: req.user.username,
+            color, is_pinned, is_locked, folder, labels_json
+        });
+        if (req.user.password) {
+            (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
+        }
         res.json({ success: true, note });
     }
     catch (err) {
@@ -2507,8 +2585,14 @@ exports.apiRouter.post('/notes', requireAuth, async (req, res) => {
 });
 exports.apiRouter.put('/notes/:id', requireAuth, async (req, res) => {
     try {
-        const note = await (0, notes_utils_1.saveNote)({ ...req.body, id: req.params.id, owner: req.user.username });
-        (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
+        const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
+        const note = await (0, notes_utils_1.saveNote)({
+            id: req.params.id, owner: req.user.username,
+            title, content, color, is_pinned, is_locked, folder, labels_json
+        });
+        if (req.user.password) {
+            (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
+        }
         res.json({ success: true, note });
     }
     catch (err) {
@@ -2523,6 +2607,107 @@ exports.apiRouter.delete('/notes/:id', requireAuth, async (req, res) => {
     }
     catch (err) {
         res.status(500).json({ success: false, error: err.message });
+    }
+});
+// ---- Notes: Image upload ----
+exports.apiRouter.post('/notes/upload', requireAuth, notesImageUpload.single('file'), async (req, res) => {
+    if (!req.file) {
+        res.status(400).json({ success: false, error: 'No file uploaded' });
+        return;
+    }
+    const user = req.user.username || 'unknown';
+    const url = `/uploads/notes/${user}/${req.file.filename}`;
+    res.json({ success: true, url });
+});
+// ---- Notes: Reminders ----
+exports.apiRouter.get('/notes/:id/reminder', requireAuth, async (req, res) => {
+    try {
+        const reminder = await (0, notes_utils_1.getNoteReminder)(req.params.id, req.user.username);
+        if (!reminder) {
+            res.status(404).json({ success: false, reminder: null });
+            return;
+        }
+        res.json({ success: true, reminder: { remind_at: reminder.remind_at } });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.apiRouter.post('/notes/:id/reminder', requireAuth, async (req, res) => {
+    try {
+        if (!req.body.remind_at) {
+            res.status(400).json({ success: false, error: 'remind_at is required' });
+            return;
+        }
+        await (0, notes_utils_1.saveNoteReminder)(req.params.id, req.body.remind_at, req.user.username);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.apiRouter.delete('/notes/:id/reminder', requireAuth, async (req, res) => {
+    try {
+        await (0, notes_utils_1.deleteNoteReminder)(req.params.id, req.user.username);
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+// ---- Notes: Attachments ----
+exports.apiRouter.get('/notes/:id/attachments', requireAuth, async (req, res) => {
+    try {
+        const attachments = await (0, notes_utils_1.listNoteAttachments)(req.params.id, req.user.username);
+        const attachmentsWithUrl = attachments.map((att) => ({
+            ...att,
+            url: `/uploads/${att.storage_path}`,
+        }));
+        res.json({ success: true, attachments: attachmentsWithUrl });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.apiRouter.post('/notes/:id/attachments', requireAuth, attachmentsUpload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            res.status(400).json({ success: false, error: 'No file uploaded' });
+            return;
+        }
+        const id = crypto_1.default.randomUUID();
+        const user = req.user.username || 'unknown';
+        const storagePath = path_1.default.join('notes', user, req.file.filename);
+        const attachment = {
+            id,
+            note_id: req.params.id,
+            filename: req.file.originalname,
+            mime_type: req.file.mimetype,
+            size_bytes: req.file.size,
+            storage_path: storagePath,
+        };
+        await (0, notes_utils_1.saveNoteAttachment)(attachment, user);
+        res.json({ success: true, attachment: { ...attachment, url: `/uploads/${storagePath}` } });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+exports.apiRouter.delete('/notes/:id/attachments/:attachmentId', requireAuth, async (req, res) => {
+    try {
+        const deleted = await (0, notes_utils_1.deleteNoteAttachment)(req.params.attachmentId, req.user.username);
+        if (!deleted) {
+            res.status(404).json({ success: false, error: 'Attachment not found' });
+            return;
+        }
+        const filePath = path_1.default.join(__dirname, '..', 'uploads', deleted.storage_path);
+        if (fs_1.default.existsSync(filePath)) {
+            fs_1.default.unlinkSync(filePath);
+        }
+        res.json({ success: true });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, error: e.message });
     }
 });
 //# sourceMappingURL=api.js.map

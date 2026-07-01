@@ -128,7 +128,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
                 className={`note-color-swatch${note.color === color ? ' active' : ''}`}
                 style={{ backgroundColor: color }}
                 title={color}
-                onClick={() => n.setEditingNote((prev: any) => ({ ...prev, color }))}
+                onClick={() => { n.setEditingNote((prev: any) => ({ ...prev, color })); scheduleAutoSave(); }}
               />
             ))}
           </div>

@@ -81,6 +81,7 @@ export function useContacts() {
         refreshLabels();
         refreshGroups();
         refreshDuplicates();
+        refreshTrash();
     }, []);
 
     return {

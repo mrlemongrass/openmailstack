@@ -78,7 +78,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           )}
         </div>
         <div style={{ flex: 1 }} />
-        <button className="btn btn-ghost" onClick={() => mail.messageAction('star', [message.uid])}>
+        <button className="btn btn-ghost" onClick={() => mail.messageAction(message.isStarred ? 'unstar' : 'star', [message.uid])}>
           <Star size={16} fill={message.isStarred ? '#f59e0b' : 'none'} color={message.isStarred ? '#f59e0b' : undefined} />
         </button>
         <button className="btn btn-ghost" onClick={() => { mail.messageAction('unread', [message.uid]); navigate(`/mail/${encodeURIComponent(folder || 'INBOX')}`); }} title="Mark unread">

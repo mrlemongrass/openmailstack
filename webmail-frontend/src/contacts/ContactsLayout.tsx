@@ -36,6 +36,7 @@ export function ContactsLayout() {
         try {
             await api.deleteContact(contact.id);
             contacts.refreshContacts();
+            contacts.refreshTrash();
             contacts.setSelectedContact(null);
         } catch (e) { console.error('Delete failed', e); }
     };

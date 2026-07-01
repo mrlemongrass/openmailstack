@@ -96,10 +96,12 @@ export function useMail(_opts: UseMailOptions) {
       formData.append('references', references);
       await api.sendMessage(formData);
       setReplyText('');
+      await fetchFolders();
+      await fetchMessages();
       return true;
     } catch (e) { console.error('Reply failed', e); return false; }
     finally { setReplySending(false); }
-  }, [replyText]);
+  }, [replyText, fetchFolders, fetchMessages]);
 
   // Compose send
   const handleSend = useCallback(async () => {

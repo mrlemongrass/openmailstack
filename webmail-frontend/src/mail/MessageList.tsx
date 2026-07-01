@@ -17,6 +17,7 @@ export function MessageList({ mail, density }: MessageListProps) {
   const { folder } = useParams<{ folder: string }>();
   const navigate = useNavigate();
   const parentRef = useRef<HTMLDivElement>(null);
+  const starringRef = useRef<Set<number>>(new Set());
   const decodedFolder = folder ? decodeURIComponent(folder) : 'INBOX';
   const { activeFolder, setActiveFolder, setIsSearchActive, setSelectedMessages } = mail;
 
@@ -54,8 +55,16 @@ export function MessageList({ mail, density }: MessageListProps) {
   };
 
   const handleStar = (uid: number) => {
+    if (starringRef.current.has(uid)) return; // guard against rapid double-clicks
     const msg = mail.messages.find((m) => m.uid === uid);
-    if (msg) mail.messageAction(msg.isStarred ? 'unstar' : 'star', [uid]);
+    if (!msg) return;
+    const action = msg.isStarred ? 'unstar' : 'star';
+    // Optimistic update: immediately toggle local state
+    starringRef.current.add(uid);
+    mail.setMessages((prev: any[]) => prev.map((m) => m.uid === uid ? { ...m, isStarred: !msg.isStarred } : m));
+    mail.messageAction(action, [uid]).finally(() => {
+      starringRef.current.delete(uid);
+    });
   };
 
   if (mail.mailLoading && mail.messages.length === 0) {

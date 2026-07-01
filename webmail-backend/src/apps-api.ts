@@ -939,7 +939,7 @@ appsApiRouter.post('/notes', async (req: Request, res: Response) => {
             color, is_pinned, is_locked, folder, labels_json
         });
         if (pass) syncNotesWithImap(user, pass).catch(e => console.error(e));
-        res.json({ success: true, id: saved.id });
+        res.json({ success: true, note: saved });
     } catch (e: any) {
         console.error("POST notes error", e);
         res.status(500).json({ success: false, error: e.message });
@@ -951,7 +951,7 @@ appsApiRouter.put('/notes/:id', async (req: Request, res: Response) => {
     const pass = (req as any).user?.password;
     const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
     try {
-        await saveNote({
+        const saved = await saveNote({
             id: req.params.id as string,
             owner: user,
             title,
@@ -963,7 +963,7 @@ appsApiRouter.put('/notes/:id', async (req: Request, res: Response) => {
             labels_json
         });
         if (pass) syncNotesWithImap(user, pass).catch(e => console.error(e));
-        res.json({ success: true });
+        res.json({ success: true, note: saved });
     } catch (e: any) {
         console.error("PUT notes error", e);
         res.status(500).json({ success: false, error: e.message });

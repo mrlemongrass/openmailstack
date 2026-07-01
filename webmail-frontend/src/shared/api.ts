@@ -5,7 +5,7 @@ import type {
   MailFolder, Signature, Rule,
   ContactsResponse, Contact, ContactLabel, ContactGroup,
   CalendarsResponse, Calendar, CalendarUpdateResponse, CalendarDeleteResponse,
-  Note,
+  Note, NoteAttachment,
   UserIdentities,
 } from './types';
 

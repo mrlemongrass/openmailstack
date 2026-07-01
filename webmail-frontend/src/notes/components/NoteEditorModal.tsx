@@ -18,7 +18,7 @@ interface NoteEditorModalProps {
 
 export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
   const titleRef = useRef<HTMLInputElement>(null);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   if (!n.isNoteModalOpen) return null;
 
@@ -28,7 +28,6 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     // Flush any pending auto-save before closing
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = undefined;
     }
     const latest = n.editingNote;
     const title = titleRef.current?.value || latest.title || '';

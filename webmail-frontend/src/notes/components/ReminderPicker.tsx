@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Clock, X } from 'lucide-react';
 import { fetchNoteReminder, saveNoteReminder, deleteNoteReminder } from '../../shared/api';
 

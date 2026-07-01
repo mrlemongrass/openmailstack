@@ -127,7 +127,7 @@ export function ContactsLayout() {
                         <ContactGrid contacts={contacts} density={density} />
                     )}
                 </Panel>
-                {showDetail && (
+                {showDetail && contacts.selectedContact && (
                     <>
                         <ResizeHandle />
                         <Panel id="contacts-detail" defaultSize="30%" minSize="20%">

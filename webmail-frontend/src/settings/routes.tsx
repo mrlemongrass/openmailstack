@@ -73,7 +73,7 @@ function SettingsLoader() {
   // --- Debounced auto-save helpers ---
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  const debouncedSave = useCallback((key: string, fn: () => Promise<void>, delay = 800) => {
+  const debouncedSave = useCallback((key: string, fn: () => void, delay = 800) => {
     if (debounceTimers.current[key]) clearTimeout(debounceTimers.current[key]);
     debounceTimers.current[key] = setTimeout(async () => {
       setSettingsSaveState('saving');

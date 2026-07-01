@@ -38,7 +38,7 @@ function AdminLoader() {
 
         const merged: AdminSettingsMap = { ...defaultAdminSettings };
         ALL_NAMESPACES.forEach((ns, i) => {
-          merged[ns] = { ...defaultAdminSettings[ns], ...results[i] };
+          merged[ns] = { ...defaultAdminSettings[ns], ...(results[i] as any) };
         });
 
         setSettings(merged);

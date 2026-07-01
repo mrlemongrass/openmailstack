@@ -62,13 +62,13 @@ export function ContactDetail({ contact, onClose, onEdit, onShare, onDelete }: {
                     </div>
                     <div>
                         <div style={{ fontWeight: 600, fontSize: '1.1rem' }}>{contact.name || contact.email}</div>
-                        {contact.job_title && contact.organization && (
+                        {contact.jobTitle && contact.organization && (
                             <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                                {contact.job_title} at {contact.organization}
+                                {contact.jobTitle} at {contact.organization}
                             </div>
                         )}
-                        {contact.job_title && !contact.organization && (
-                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{contact.job_title}</div>
+                        {contact.jobTitle && !contact.organization && (
+                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{contact.jobTitle}</div>
                         )}
                     </div>
                 </div>
@@ -141,10 +141,10 @@ export function ContactDetail({ contact, onClose, onEdit, onShare, onDelete }: {
                         </div>
                     )}
 
-                    {contact.job_title && (
+                    {contact.jobTitle && (
                         <div>
                             <div style={sectionLabel}><Briefcase size={12} style={{ marginRight: 4 }} />Job Title</div>
-                            <div style={fieldValue}>{contact.job_title}</div>
+                            <div style={fieldValue}>{contact.jobTitle}</div>
                         </div>
                     )}
 

@@ -85,24 +85,6 @@ export function useMail(_opts: UseMailOptions) {
   const [replyText, setReplyText] = useState('');
   const [replySending, setReplySending] = useState(false);
 
-  const sendReply = useCallback(async (to: string, subject: string, inReplyTo: string, references: string) => {
-    setReplySending(true);
-    try {
-      const formData = new FormData();
-      formData.append('to', to);
-      formData.append('subject', subject.startsWith('Re:') ? subject : `Re: ${subject}`);
-      formData.append('body', replyText);
-      formData.append('inReplyTo', inReplyTo);
-      formData.append('references', references);
-      await api.sendMessage(formData);
-      setReplyText('');
-      await fetchFolders();
-      await fetchMessages();
-      return true;
-    } catch (e) { console.error('Reply failed', e); return false; }
-    finally { setReplySending(false); }
-  }, [replyText, fetchFolders, fetchMessages]);
-
   // Compose send
   const handleSend = useCallback(async () => {
     setSending(true);
@@ -172,6 +154,24 @@ export function useMail(_opts: UseMailOptions) {
     } catch (e) { console.error('Failed to fetch messages', e); }
     if (activeFolderRef.current === folder) setMailLoading(false);
   }, [activeFolder]);
+
+  const sendReply = useCallback(async (to: string, subject: string, inReplyTo: string, references: string) => {
+    setReplySending(true);
+    try {
+      const formData = new FormData();
+      formData.append('to', to);
+      formData.append('subject', subject.startsWith('Re:') ? subject : `Re: ${subject}`);
+      formData.append('body', replyText);
+      formData.append('inReplyTo', inReplyTo);
+      formData.append('references', references);
+      await api.sendMessage(formData);
+      setReplyText('');
+      await fetchFolders();
+      await fetchMessages();
+      return true;
+    } catch (e) { console.error('Reply failed', e); return false; }
+    finally { setReplySending(false); }
+  }, [replyText, fetchFolders, fetchMessages]);
 
   // Fetch a single message body (full content)
   const fetchMessageBody = useCallback(async (uid: number, folderPath: string) => {

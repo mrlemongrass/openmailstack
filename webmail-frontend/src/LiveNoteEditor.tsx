@@ -35,7 +35,7 @@ interface LiveNoteEditorProps {
 export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialContent, onChange }) => {
   const quillRef = useRef<any>(null);
   const initialized = useRef(false);
-  const initTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const initTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 

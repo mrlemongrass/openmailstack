@@ -70,7 +70,7 @@ export function ContactEditModal({ contact, onClose, onSaved }: {
                     </div>
                     <div className="settings-field">
                         <label style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>Job Title</label>
-                        <input className="glass-input" value={form.job_title || ''} onChange={(e) => handleChange('job_title', e.target.value)} />
+                        <input className="glass-input" value={form.jobTitle || ''} onChange={(e) => handleChange('jobTitle', e.target.value)} />
                     </div>
                     <div className="settings-field">
                         <label style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>Birthday (YYYY-MM-DD)</label>

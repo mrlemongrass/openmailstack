@@ -153,9 +153,19 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             </div>
           )}
         </div>
+        {/* Compose error */}
+        {mail.composeError && (
+          <div style={{
+            padding: '8px 16px', background: 'rgba(239,68,68,0.1)',
+            borderTop: '1px solid rgba(239,68,68,0.3)', borderBottom: '1px solid rgba(239,68,68,0.3)',
+            color: 'var(--danger)', fontSize: '0.85rem',
+          }}>
+            {mail.composeError}
+          </div>
+        )}
         {/* Footer */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8,
-          padding: '12px 16px', borderTop: '1px solid var(--border-glass)', flexWrap: 'wrap' }}>
+          padding: '12px 16px', borderTop: mail.composeError ? 'none' : '1px solid var(--border-glass)', flexWrap: 'wrap' }}>
           <label className="btn btn-ghost" style={{ cursor: 'pointer' }}>
             <Paperclip size={16} />
             <input type="file" multiple hidden onChange={(e) => {
@@ -213,6 +223,12 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
               {mail.composeAttachments.length} file{mail.composeAttachments.length !== 1 ? 's' : ''}
             </span>
           )}
+          {mail.draftSaveStatus && (
+            <span style={{ fontSize: '0.75rem', color: mail.draftSaveStatus === 'error'
+              ? 'var(--danger)' : 'var(--text-secondary)' }}>
+              {mail.draftSaveStatus === 'saving' ? 'Saving...' : mail.draftSaveStatus === 'saved' ? 'Saved' : 'Error'}
+            </span>
+          )}
           {/* Schedule send (#3) */}
           <div style={{ position: 'relative' }}>
             <button className="btn btn-ghost" onClick={() => setShowSchedule(!showSchedule)}
@@ -243,11 +259,11 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             )}
           </div>
           <button className="btn btn-primary" disabled={mail.sending || sizeExceedsBlock}
-            onClick={() => { /* Send handled by parent via mail action */ }}>
+            onClick={() => mail.handleSend()}>
             <Send size={16} /> {mail.sending ? 'Sending...' : 'Send'}
           </button>
           <button className="btn btn-ghost" disabled={mail.sending || sizeExceedsBlock}
-            onClick={() => { /* Send+Archive #4 */ }}
+            onClick={() => mail.handleSendAndArchive()}
             style={{ fontSize: '0.8rem' }} title="Send & Archive">
             <Archive size={14} />
           </button>

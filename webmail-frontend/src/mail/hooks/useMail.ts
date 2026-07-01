@@ -240,7 +240,7 @@ export function useMail(_opts: UseMailOptions) {
     if (!targetUids.length) return;
     try {
       const result = await api.messageAction(action, activeFolder, targetUids);
-      if (result.undoUids) {
+      if (result.undoUids && result.undoUids.length > 0) {
         setMailUndo({
           message: getUndoMessage(action),
           uids: result.undoUids,
@@ -290,6 +290,9 @@ export function useMail(_opts: UseMailOptions) {
       fetchFolders();
       if (!isSearchActive) fetchMessages();
     });
+    es.onerror = () => {
+      console.error('SSE connection error');
+    };
     return () => es.close();
   }, [isSearchActive, fetchFolders, fetchMessages]);
 

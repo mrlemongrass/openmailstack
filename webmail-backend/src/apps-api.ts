@@ -300,7 +300,7 @@ appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Respon
     const user = (req as any).username;
     try {
         const [contactToDelete]: any = await pool.query(
-            'SELECT name, email FROM contacts WHERE id=? AND username=?',
+            'SELECT name, email FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
             [req.params.id as string, user]
         );
         if (contactToDelete.length > 0) {
@@ -310,10 +310,11 @@ appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Respon
             'DELETE FROM contact_group_members WHERE contact_id = ?',
             [req.params.id as string]
         );
-        await pool.query(
+        const [delResult]: any = await pool.query(
             'DELETE FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
             [req.params.id as string, user]
         );
+        if (delResult.affectedRows === 0) return res.status(404).json({ success: false, error: 'Contact not found in trash' });
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });

@@ -36,6 +36,8 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
   const quillRef = useRef<any>(null);
   const initialized = useRef(false);
   const initTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   useEffect(() => {
     if (!quillRef.current || initialized.current) return;
@@ -63,7 +65,7 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
     }, 200);
 
     const handleTextChange = () => {
-      onChange(editor.root.innerHTML);
+      onChangeRef.current(editor.root.innerHTML);
     };
     editor.on('text-change', handleTextChange);
 

@@ -54,18 +54,12 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     n.fetchNotes();
   }, [n]);
 
-  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    n.setEditingNote((prev: any) => ({ ...prev, title: e.target.value }));
-  }, [n]);
-
-  const handleContentChange = useCallback((content: string) => {
-    n.setEditingNote((prev: any) => ({ ...prev, content }));
-    // Auto-save debounced
+  const scheduleAutoSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
-      // Read latest metadata at save time to avoid stale closure
       const latest = n.editingNote;
       const title = titleRef.current?.value || latest.title || '';
+      const content = latest.content || '';
       if (title || content) {
         try {
           const saved = await saveNote({
@@ -78,7 +72,6 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             folder: latest.folder || 'notes',
             labels_json: latest.labels_json || '[]',
           } as any);
-          // For new notes, update editingNote.id with the returned saved.id
           if (!latest.id && saved?.id) {
             n.setEditingNote((prev: any) => ({ ...prev, id: saved.id }));
             n.fetchNotes();
@@ -89,6 +82,16 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
       }
     }, 1500);
   }, [n]);
+
+  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    n.setEditingNote((prev: any) => ({ ...prev, title: e.target.value }));
+    scheduleAutoSave();
+  }, [n, scheduleAutoSave]);
+
+  const handleContentChange = useCallback((content: string) => {
+    n.setEditingNote((prev: any) => ({ ...prev, content }));
+    scheduleAutoSave();
+  }, [n, scheduleAutoSave]);
 
   // Cleanup timer on unmount
   useEffect(() => {

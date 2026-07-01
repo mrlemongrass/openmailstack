@@ -113,9 +113,14 @@ export async function deleteSearch(id: string): Promise<void> {
 }
 
 export async function fetchSignatures(): Promise<Signature[]> {
-  const res = await fetch('/api/settings/signatures');
-  const data = await res.json();
-  return data.signatures || [];
+  try {
+    const res = await fetch('/api/settings/mail');
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.settings?.signatures || [];
+  } catch {
+    return [];
+  }
 }
 
 export async function fetchRules(): Promise<Rule[]> {
@@ -403,9 +408,10 @@ export async function fetchUserSettings(namespace: string): Promise<any> {
 }
 
 export async function saveUserSettings(namespace: string, settings: any): Promise<void> {
-  await fetch(`/api/settings/${namespace}`, {
+  const res = await fetch(`/api/settings/${namespace}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings),
+    body: JSON.stringify({ settings }),
   });
+  if (!res.ok) throw new Error(`Failed to save settings for ${namespace}`);
 }

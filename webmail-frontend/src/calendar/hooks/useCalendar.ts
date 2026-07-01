@@ -15,7 +15,12 @@ export function useCalendar() {
   const [editingEvent, setEditingEvent] = useState<Partial<CalendarEvent> | null>(null);
   const [eventError, setEventError] = useState('');
   const [eventSaving, setEventSaving] = useState(false);
-  const [calendarVisibility, setCalendarVisibility] = useState<Record<number, boolean>>({});
+  const [calendarVisibility, setCalendarVisibility] = useState<Record<number, boolean>>(() => {
+    try {
+      const stored = localStorage.getItem('oms_calendar_visibility');
+      return stored ? JSON.parse(stored) : {};
+    } catch { return {}; }
+  });
   const [quickCreateText, setQuickCreateText] = useState('');
 
   // New event draft
@@ -42,6 +47,13 @@ export function useCalendar() {
   }, []);
 
   useEffect(() => { setIsLoading(true); refreshCalendars().finally(() => setIsLoading(false)); }, []);
+
+  // Persist calendar visibility to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('oms_calendar_visibility', JSON.stringify(calendarVisibility));
+    } catch {}
+  }, [calendarVisibility]);
 
   // Event CRUD
   const saveEvent = useCallback(async () => {

@@ -85,6 +85,29 @@ export function useMail(_opts: UseMailOptions) {
   const [replyText, setReplyText] = useState('');
   const [replySending, setReplySending] = useState(false);
 
+  // ---- Data fetching (must be before handleSend) ----
+  const fetchFolders = useCallback(async () => {
+    try {
+      const folderList = await api.fetchFolders();
+      setFolders(folderList);
+    } catch (e) { console.error('Failed to fetch folders', e); }
+  }, []);
+
+  const fetchMessages = useCallback(async () => {
+    const folder = activeFolder;
+    setMailLoading(true);
+    try {
+      const data = await api.fetchMessages(folder);
+      if (data.messages) {
+        if (activeFolderRef.current !== folder) return;
+        setMessages(data.messages);
+        setMailLowestUid(data.lowestUid || null);
+        setMailMoreAvailable(data.moreAvailable !== false);
+      }
+    } catch (e) { console.error('Failed to fetch messages', e); }
+    finally { setMailLoading(false); }
+  }, [activeFolder]);
+
   // Compose send
   const handleSend = useCallback(async () => {
     setSending(true);
@@ -131,29 +154,6 @@ export function useMail(_opts: UseMailOptions) {
   const [userQuota, _setUserQuota] = useState<{ usage: number; limit: number } | null>(null);
   const [loadedImagesForMsg, setLoadedImagesForMsg] = useState<Set<string>>(new Set());
   const [showSearchHints, setShowSearchHints] = useState(false);
-
-  // ---- Data fetching ----
-  const fetchFolders = useCallback(async () => {
-    try {
-      const folderList = await api.fetchFolders();
-      setFolders(folderList);
-    } catch (e) { console.error('Failed to fetch folders', e); }
-  }, []);
-
-  const fetchMessages = useCallback(async () => {
-    const folder = activeFolder;
-    setMailLoading(true);
-    try {
-      const data = await api.fetchMessages(folder);
-      if (data.messages) {
-        if (activeFolderRef.current !== folder) return;
-        setMessages(data.messages);
-        setMailLowestUid(data.lowestUid || null);
-        setMailMoreAvailable(data.moreAvailable || false);
-      }
-    } catch (e) { console.error('Failed to fetch messages', e); }
-    if (activeFolderRef.current === folder) setMailLoading(false);
-  }, [activeFolder]);
 
   const sendReply = useCallback(async (to: string, subject: string, inReplyTo: string, references: string) => {
     setReplySending(true);

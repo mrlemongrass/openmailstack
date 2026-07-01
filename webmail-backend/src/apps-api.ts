@@ -926,9 +926,14 @@ appsApiRouter.get('/notes', async (req: Request, res: Response) => {
 
 appsApiRouter.post('/notes', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { title, content } = req.body;
+    const pass = (req as any).user?.password;
+    const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
     try {
-        const saved = await saveNote({ title, content, owner: user });
+        const saved = await saveNote({
+            title, content, owner: user,
+            color, is_pinned, is_locked, folder, labels_json
+        });
+        if (pass) syncNotesWithImap(user, pass).catch(e => console.error(e));
         res.json({ success: true, id: saved.id });
     } catch (e: any) {
         console.error("POST notes error", e);
@@ -938,6 +943,7 @@ appsApiRouter.post('/notes', async (req: Request, res: Response) => {
 
 appsApiRouter.put('/notes/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
+    const pass = (req as any).user?.password;
     const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
     try {
         await saveNote({
@@ -951,6 +957,7 @@ appsApiRouter.put('/notes/:id', async (req: Request, res: Response) => {
             folder,
             labels_json
         });
+        if (pass) syncNotesWithImap(user, pass).catch(e => console.error(e));
         res.json({ success: true });
     } catch (e: any) {
         console.error("PUT notes error", e);
@@ -960,8 +967,10 @@ appsApiRouter.put('/notes/:id', async (req: Request, res: Response) => {
 
 appsApiRouter.delete('/notes/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
+    const pass = (req as any).user?.password;
     try {
         await deleteNote(req.params.id as string, user);
+        if (pass) syncNotesWithImap(user, pass).catch(e => console.error(e));
         res.json({ success: true });
     } catch (e: any) {
         console.error("DELETE notes error", e);
@@ -1073,6 +1082,14 @@ const attachmentsUpload = multer({
         }
     }),
     limits: { fileSize: 25 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const blocked = ['application/x-msdownload', 'application/x-msdos-program', 'application/x-executable', 'application/x-sh', 'application/x-shockwave-flash'];
+        if (blocked.includes(file.mimetype)) {
+            cb(new Error('Executable files are not allowed'));
+        } else {
+            cb(null, true);
+        }
+    }
 });
 
 appsApiRouter.get('/notes/:id/attachments', async (req: Request, res: Response) => {

@@ -22,6 +22,14 @@ export function ReminderPicker({ noteId }: ReminderPickerProps) {
     return () => { abortedRef.current = true; };
   }, [noteId]);
 
+  // Convert UTC ISO string to local datetime-local format (YYYY-MM-DDTHH:MM)
+  const toLocalDatetime = (isoString: string): string => {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
   const handleSet = useCallback(async (datetime: string) => {
     if (!noteId || noteId === 'new') return;
     setLoading(true);
@@ -89,8 +97,12 @@ export function ReminderPicker({ noteId }: ReminderPickerProps) {
           <input
             type="datetime-local"
             className="glass-input"
-            value={remindAt ? remindAt.slice(0, 16) : ''}
-            onChange={(e) => handleSet(new Date(e.target.value).toISOString())}
+            value={remindAt ? toLocalDatetime(remindAt) : ''}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (!val) return;
+              handleSet(new Date(val).toISOString());
+            }}
             style={{ width: '100%', marginBottom: 8, fontSize: '0.85rem' }}
             disabled={loading}
           />

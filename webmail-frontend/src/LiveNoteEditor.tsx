@@ -4,6 +4,7 @@ import 'react-quill-new/dist/quill.bubble.css';
 import * as Y from 'yjs';
 import { WebrtcProvider } from 'y-webrtc';
 import { QuillBinding } from 'y-quill';
+import DOMPurify from 'dompurify';
 import { ChecklistBlot } from './notes/editor/checklist-blot';
 import { CodeBlockBlot } from './notes/editor/code-block-blot';
 import { uploadNoteImage } from './shared/api';
@@ -34,6 +35,7 @@ interface LiveNoteEditorProps {
 export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialContent, onChange }) => {
   const quillRef = useRef<any>(null);
   const initialized = useRef(false);
+  const initTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
     if (!quillRef.current || initialized.current) return;
@@ -50,11 +52,13 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
     const binding = new QuillBinding(ytext, editor, provider.awareness);
 
     // Short debounce to allow CRDT sync before checking for initial content
-    setTimeout(() => {
+    initTimerRef.current = setTimeout(() => {
       if (initialContent && ytext.length === 0) {
+        // Sanitize HTML before pasting to prevent stored XSS
+        const cleanHtml = DOMPurify.sanitize(initialContent);
         // Use dangerouslyPasteHTML for table support — Quill's native insertText
         // does not handle complex HTML structures like tables.
-        editor.clipboard.dangerouslyPasteHTML(initialContent);
+        editor.clipboard.dangerouslyPasteHTML(cleanHtml);
       }
     }, 200);
 
@@ -64,10 +68,12 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
     editor.on('text-change', handleTextChange);
 
     return () => {
+      if (initTimerRef.current) clearTimeout(initTimerRef.current);
       editor.off('text-change', handleTextChange);
       binding.destroy();
       provider.destroy();
       ydoc.destroy();
+      initialized.current = false;
     };
   }, [noteId]);
 
@@ -83,6 +89,7 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
         const editor = quillRef.current?.getEditor();
         if (!editor) return;
         const range = editor.getSelection(true);
+        if (!range) return;
         const { url } = await uploadNoteImage(file);
         editor.insertEmbed(range.index, 'image', url);
         editor.setSelection(range.index + 1);
@@ -97,6 +104,8 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
   const handleInsertTable = React.useCallback(() => {
     const editor = quillRef.current?.getEditor();
     if (!editor) return;
+    const range = editor.getSelection(true);
+    if (!range) return;
     const rows = 3, cols = 3;
     let tableHtml = '<table style="width:100%;border-collapse:collapse;border:1px solid var(--border-glass);">';
     for (let i = 0; i < rows; i++) {
@@ -107,7 +116,6 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
       tableHtml += '</tr>';
     }
     tableHtml += '</table>';
-    const range = editor.getSelection(true);
     editor.clipboard.dangerouslyPasteHTML(range.index, tableHtml);
   }, []);
 
@@ -116,6 +124,7 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
     const editor = quillRef.current?.getEditor();
     if (!editor) return;
     const range = editor.getSelection(true);
+    if (!range) return;
     editor.formatText(range.index, range.length, 'syntax-code-block', 'plaintext');
   }, []);
 

@@ -2602,13 +2602,65 @@ apiRouter.post('/admin/spam_policies', requireAuth, requireAdmin, async (req: an
     }
 });
 
-import { listNotes, getNote, saveNote, deleteNote } from './notes-utils';
+import { listNotesWithReminders, getNote, saveNote, deleteNote, getNoteReminder, saveNoteReminder, deleteNoteReminder, listNoteAttachments, saveNoteAttachment, deleteNoteAttachment } from './notes-utils';
 import { syncNotesWithImap } from './notes-imap-sync';
+import path from 'path';
+
+const notesUploadDir = path.join(__dirname, '..', 'uploads', 'notes');
+if (!fs.existsSync(notesUploadDir)) {
+    fs.mkdirSync(notesUploadDir, { recursive: true });
+}
+
+const notesImageUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req: any, _file: any, cb: any) => {
+            const user = _req.user?.username || 'unknown';
+            const userDir = path.join(notesUploadDir, user);
+            if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+            cb(null, userDir);
+        },
+        filename: (_req: any, file: any, cb: any) => {
+            cb(null, `${crypto.randomUUID()}${path.extname(file.originalname) || '.png'}`);
+        }
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req: any, file: any, cb: any) => {
+        const allowed = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+        if (allowed.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only PNG, JPEG, GIF, and WebP images are allowed'));
+        }
+    }
+});
+
+const attachmentsUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req: any, _file: any, cb: any) => {
+            const user = _req.user?.username || 'unknown';
+            const userDir = path.join(notesUploadDir, user);
+            if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+            cb(null, userDir);
+        },
+        filename: (_req: any, file: any, cb: any) => {
+            cb(null, `${crypto.randomUUID()}${path.extname(file.originalname)}`);
+        }
+    }),
+    limits: { fileSize: 25 * 1024 * 1024 },
+    fileFilter: (_req: any, file: any, cb: any) => {
+        const blocked = ['application/x-msdownload', 'application/x-msdos-program', 'application/x-executable', 'application/x-sh', 'application/x-shockwave-flash'];
+        if (blocked.includes(file.mimetype)) {
+            cb(new Error('Executable files are not allowed'));
+        } else {
+            cb(null, true);
+        }
+    }
+});
 
 apiRouter.get('/notes', requireAuth, async (req: any, res) => {
     try {
         await syncNotesWithImap(req.user.username, req.user.password);
-        const notes = await listNotes(req.user.username);
+        const notes = await listNotesWithReminders(req.user.username);
         console.log(`[NOTES GET] User: ${req.user.username}, count: ${notes.length}`);
         res.json({ success: true, notes });
     } catch (err: any) {
@@ -2645,5 +2697,107 @@ apiRouter.delete('/notes/:id', requireAuth, async (req: any, res) => {
         res.json({ success: true });
     } catch (err: any) {
         res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ---- Notes: Image upload ----
+apiRouter.post('/notes/upload', requireAuth, notesImageUpload.single('file'), async (req: any, res) => {
+    if (!req.file) {
+        res.status(400).json({ success: false, error: 'No file uploaded' });
+        return;
+    }
+    const user = req.user.username || 'unknown';
+    const url = `/uploads/notes/${user}/${req.file.filename}`;
+    res.json({ success: true, url });
+});
+
+// ---- Notes: Reminders ----
+apiRouter.get('/notes/:id/reminder', requireAuth, async (req: any, res) => {
+    try {
+        const reminder = await getNoteReminder(req.params.id, req.user.username);
+        if (!reminder) {
+            res.status(404).json({ success: false, reminder: null });
+            return;
+        }
+        res.json({ success: true, reminder: { remind_at: reminder.remind_at } });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+apiRouter.post('/notes/:id/reminder', requireAuth, async (req: any, res) => {
+    try {
+        if (!req.body.remind_at) {
+            res.status(400).json({ success: false, error: 'remind_at is required' });
+            return;
+        }
+        await saveNoteReminder(req.params.id, req.body.remind_at, req.user.username);
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+apiRouter.delete('/notes/:id/reminder', requireAuth, async (req: any, res) => {
+    try {
+        await deleteNoteReminder(req.params.id, req.user.username);
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// ---- Notes: Attachments ----
+apiRouter.get('/notes/:id/attachments', requireAuth, async (req: any, res) => {
+    try {
+        const attachments = await listNoteAttachments(req.params.id, req.user.username);
+        const attachmentsWithUrl = attachments.map((att: any) => ({
+            ...att,
+            url: `/uploads/${att.storage_path}`,
+        }));
+        res.json({ success: true, attachments: attachmentsWithUrl });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+apiRouter.post('/notes/:id/attachments', requireAuth, attachmentsUpload.single('file'), async (req: any, res) => {
+    try {
+        if (!req.file) {
+            res.status(400).json({ success: false, error: 'No file uploaded' });
+            return;
+        }
+        const id = crypto.randomUUID();
+        const user = req.user.username || 'unknown';
+        const storagePath = path.join('notes', user, req.file.filename);
+        const attachment = {
+            id,
+            note_id: req.params.id,
+            filename: req.file.originalname,
+            mime_type: req.file.mimetype,
+            size_bytes: req.file.size,
+            storage_path: storagePath,
+        };
+        await saveNoteAttachment(attachment as any, user);
+        res.json({ success: true, attachment: { ...attachment, url: `/uploads/${storagePath}` } });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+apiRouter.delete('/notes/:id/attachments/:attachmentId', requireAuth, async (req: any, res) => {
+    try {
+        const deleted = await deleteNoteAttachment(req.params.attachmentId, req.user.username);
+        if (!deleted) {
+            res.status(404).json({ success: false, error: 'Attachment not found' });
+            return;
+        }
+        const filePath = path.join(__dirname, '..', 'uploads', deleted.storage_path);
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ success: false, error: e.message });
     }
 });

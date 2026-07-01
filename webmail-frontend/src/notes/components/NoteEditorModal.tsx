@@ -32,29 +32,24 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     n.setEditingNote((prev: any) => ({ ...prev, content }));
     // Auto-save debounced
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    // Capture values at call time to avoid stale closure over n.editingNote
-    const noteId = n.editingNote.id;
-    const title = titleRef.current?.value || '';
-    const color = n.editingNote.color;
-    const isPinned = n.editingNote.is_pinned;
-    const isLocked = n.editingNote.is_locked;
-    const folder = n.editingNote.folder;
-    const labelsJson = n.editingNote.labels_json;
     saveTimerRef.current = setTimeout(async () => {
+      // Read latest metadata at save time to avoid stale closure
+      const latest = n.editingNote;
+      const title = titleRef.current?.value || latest.title || '';
       if (title || content) {
         try {
           const saved = await saveNote({
-            id: noteId,
+            id: latest.id,
             title: title || 'Untitled',
             content: content || '',
-            color,
-            is_pinned: isPinned,
-            is_locked: isLocked,
-            folder: folder || 'notes',
-            labels_json: labelsJson || '[]',
+            color: latest.color,
+            is_pinned: latest.is_pinned,
+            is_locked: latest.is_locked,
+            folder: latest.folder || 'notes',
+            labels_json: latest.labels_json || '[]',
           } as any);
           // For new notes, update editingNote.id with the returned saved.id
-          if (!noteId && saved?.id) {
+          if (!latest.id && saved?.id) {
             n.setEditingNote((prev: any) => ({ ...prev, id: saved.id }));
             n.fetchNotes();
           }

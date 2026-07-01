@@ -17,13 +17,17 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showSnooze, setShowSnooze] = useState(false);
   const [showMoveTo, setShowMoveTo] = useState(false);
 
-  // Fetch full message body when message is selected
+  // Fetch full message body when message is selected, and mark as read
   useEffect(() => {
     if (uid && folder) {
       const messageUid = parseInt(uid, 10);
       const msg = mail.messages.find((m) => m.uid === messageUid);
       if (msg && !msg.html && !msg.text) {
         mail.fetchMessageBody(messageUid, decodeURIComponent(folder));
+      }
+      // Mark message as read automatically when viewing
+      if (msg && !msg.isRead) {
+        mail.messageAction('read', [messageUid]);
       }
     }
   }, [uid, folder]);

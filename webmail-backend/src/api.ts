@@ -983,19 +983,22 @@ apiRouter.get('/folders/*folder/messages', requireAuth, async (req: any, res) =>
         const { messages, uidNext, lowestUid, moreAvailable } = await imap.getMessages(folder, undefined, fetchOlderThan);
         await imap.logout();
         
-        const parsedMessages = [];
-        const indexRows: MailSearchIndexRow[] = [];
-        for (let msg of messages) {
+        // Parse messages in parallel — sequential parsing is the main bottleneck
+        const parsed = await Promise.all(messages.map(async (msg: any) => {
             const parsed = await simpleParser(msg.source);
-            const summary = parsedMailToSummary(folder, msg, parsed);
-            parsedMessages.push(summary);
-            indexRows.push(parsedMailToIndexRow(folder, msg, parsed));
-        }
-        try {
-            await upsertMailSearchRows(user, indexRows);
-        } catch (indexErr) {
+            return {
+                summary: parsedMailToSummary(folder, msg, parsed),
+                indexRow: parsedMailToIndexRow(folder, msg, parsed),
+            };
+        }));
+        const parsedMessages = parsed.map(p => p.summary);
+        const indexRows = parsed.map(p => p.indexRow);
+
+        // Update search index asynchronously — don't block the response
+        upsertMailSearchRows(user, indexRows).catch(indexErr => {
             console.error('Failed to update mail search index:', indexErr);
-        }
+        });
+
         res.json({
             success: true,
             messages: parsedMessages.reverse(),
@@ -1147,12 +1150,11 @@ apiRouter.post('/messages/search/index/sync', requireAuth, async (req: any, res)
             const messages = maxUid > 0
                 ? await imap.getMessagesSinceUid(folderPath, maxUid + 1, perFolderLimit)
                 : await imap.getRecentMessagesForIndex(folderPath, Math.min(perFolderLimit, 50));
-            const rows: MailSearchIndexRow[] = [];
-            for (const msg of messages) {
+            const parsedResults = await Promise.all(messages.map(async (msg: any) => {
                 const parsed = await simpleParser(msg.source);
-                rows.push(parsedMailToIndexRow(folderPath, msg, parsed));
-            }
-            indexed += await upsertMailSearchRows(user, rows);
+                return parsedMailToIndexRow(folderPath, msg, parsed);
+            }));
+            indexed += await upsertMailSearchRows(user, parsedResults);
         }
 
         res.json({ success: true, indexed, folders: folderPaths.length, perFolderLimit, mode: 'incremental' });
@@ -1185,12 +1187,11 @@ apiRouter.post('/messages/search/index', requireAuth, async (req: any, res) => {
         let indexed = 0;
         for (const folderPath of folderPaths) {
             const messages = await imap.getRecentMessagesForIndex(folderPath, perFolderLimit);
-            const rows: MailSearchIndexRow[] = [];
-            for (const msg of messages) {
+            const parsedResults = await Promise.all(messages.map(async (msg: any) => {
                 const parsed = await simpleParser(msg.source);
-                rows.push(parsedMailToIndexRow(folderPath, msg, parsed));
-            }
-            indexed += await upsertMailSearchRows(user, rows);
+                return parsedMailToIndexRow(folderPath, msg, parsed);
+            }));
+            indexed += await upsertMailSearchRows(user, parsedResults);
         }
 
         res.json({ success: true, indexed, folders: folderPaths.length, perFolderLimit });
@@ -1287,16 +1288,20 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
 
         const parsedMessages = [];
         const indexRows: MailSearchIndexRow[] = [];
-        for (let msg of results) {
+        const parsed = await Promise.all(results.map(async (msg: any) => {
             const parsed = await simpleParser(msg.source);
-            parsedMessages.push(parsedMailToSummary(msg.folder, msg, parsed, 180));
-            indexRows.push(parsedMailToIndexRow(msg.folder, msg, parsed));
+            return {
+                summary: parsedMailToSummary(msg.folder, msg, parsed, 180),
+                indexRow: parsedMailToIndexRow(msg.folder, msg, parsed),
+            };
+        }));
+        for (const p of parsed) {
+            parsedMessages.push(p.summary);
+            indexRows.push(p.indexRow);
         }
-        try {
-            await upsertMailSearchRows(user, indexRows);
-        } catch (indexErr) {
+        upsertMailSearchRows(user, indexRows).catch(indexErr => {
             console.error('Failed to update mail search index from IMAP search:', indexErr);
-        }
+        });
 
         parsedMessages.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
         res.json({ success: true, messages: parsedMessages.slice(0, limit), query, scope, field, source: 'imap' });

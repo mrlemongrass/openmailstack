@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, NavLink, Outlet, Navigate } from 'react-router';
 import {
   LayoutDashboard, Globe, Mail, Forward, GitMerge, Shield,
-  Settings, Palette, BarChart3, Key, Box, ShieldAlert, Menu, X,
+  Settings, Palette, BarChart3, Key, Box, ShieldAlert, AlertTriangle, Menu, X,
 } from 'lucide-react';
 import { AdminSettingsPanel } from './AdminSettingsPanel';
 import { BrandingPanel } from './BrandingPanel';
@@ -38,18 +38,20 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { path: '/admin/dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
-  { path: '/admin/domains', label: 'Domains', icon: <Globe size={18} /> },
-  { path: '/admin/mailboxes', label: 'Mailboxes', icon: <Mail size={18} /> },
-  { path: '/admin/aliases', label: 'Aliases', icon: <Forward size={18} /> },
-  { path: '/admin/routing', label: 'Routing', icon: <GitMerge size={18} /> },
-  { path: '/admin/admins', label: 'Admins', icon: <Shield size={18} /> },
-  { path: '/admin/settings', label: 'Settings', icon: <Settings size={18} /> },
-  { path: '/admin/branding', label: 'Branding', icon: <Palette size={18} /> },
-  { path: '/admin/telemetry', label: 'Telemetry', icon: <BarChart3 size={18} /> },
-  { path: '/admin/apikeys', label: 'API Keys', icon: <Key size={18} /> },
-  { path: '/admin/updates', label: 'Updates', icon: <Box size={18} /> },
-  { path: '/admin/spam', label: 'Spam', icon: <ShieldAlert size={18} /> },
+  {
+    path: '/admin/dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+  { path: '/admin/domains',     label: 'Domains',   icon: <Globe size={18} /> },
+  { path: '/admin/mailboxes',   label: 'Mailboxes', icon: <Mail size={18} /> },
+  { path: '/admin/aliases',     label: 'Aliases',   icon: <Forward size={18} /> },
+  { path: '/admin/routing',     label: 'Routing',   icon: <GitMerge size={18} /> },
+  { path: '/admin/admins',      label: 'Admins',    icon: <Shield size={18} /> },
+  { path: '/admin/settings',    label: 'Settings',  icon: <Settings size={18} /> },
+  { path: '/admin/branding',    label: 'Branding',  icon: <Palette size={18} /> },
+  { path: '/admin/telemetry',   label: 'Telemetry', icon: <BarChart3 size={18} /> },
+  { path: '/admin/intrusion',   label: 'Intrusion Detection', icon: <ShieldAlert size={18} /> },
+  { path: '/admin/apikeys',     label: 'API Keys',  icon: <Key size={18} /> },
+  { path: '/admin/updates',     label: 'Updates',   icon: <Box size={18} /> },
+  { path: '/admin/spam',        label: 'Spam',      icon: <AlertTriangle size={18} /> },
 ];
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
@@ -308,19 +310,6 @@ function BrandingLoader() {
   );
 }
 
-// ─── Telemetry Tab (combines TelemetryPanel + Fail2banPanel) ─────────────────
-
-function TelemetryTab() {
-  return (
-    <div>
-      <TelemetryPanel />
-      <div style={{ marginTop: 24 }}>
-        <Fail2banPanel />
-      </div>
-    </div>
-  );
-}
-
 // ─── Route export ────────────────────────────────────────────────────────────
 
 export function AdminRoutes() {
@@ -336,7 +325,8 @@ export function AdminRoutes() {
         <Route path="admins" element={<AdminsPanel />} />
         <Route path="settings" element={<SettingsLoader />} />
         <Route path="branding" element={<BrandingLoader />} />
-        <Route path="telemetry" element={<TelemetryTab />} />
+        <Route path="telemetry" element={<TelemetryPanel />} />
+        <Route path="intrusion" element={<Fail2banPanel />} />
         <Route path="apikeys" element={<ApiKeysPanel />} />
         <Route path="updates" element={<UpdatesPanel />} />
         <Route path="spam" element={<SpamPanel />} />

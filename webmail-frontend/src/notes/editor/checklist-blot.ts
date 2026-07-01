@@ -1,6 +1,7 @@
-import Quill from 'react-quill-new';
+import ReactQuill from 'react-quill-new';
+const Quill = ReactQuill.Quill;
 
-const Block = (Quill as any).import('blots/block');
+const Block = Quill.import('blots/block') as any;
 
 class ChecklistBlot extends Block {
   static blotName = 'checklist-item';
@@ -19,7 +20,7 @@ class ChecklistBlot extends Block {
     checkbox.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const blot = (Quill as any).find(node);
+      const blot = Quill.find(node) as any;
       if (blot) {
         const current = node.getAttribute('data-checked') === 'true';
         blot.format('checklist-item', !current);

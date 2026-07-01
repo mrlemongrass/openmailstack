@@ -1,6 +1,7 @@
-import Quill from 'react-quill-new';
+import ReactQuill from 'react-quill-new';
+const Quill = ReactQuill.Quill;
 
-const Block = (Quill as any).import('blots/block');
+const Block = Quill.import('blots/block') as any;
 
 class CodeBlockBlot extends Block {
   static blotName = 'syntax-code-block';

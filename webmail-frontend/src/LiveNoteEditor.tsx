@@ -11,8 +11,8 @@ import { uploadNoteImage } from './shared/api';
 
 // Register custom blots
 const Quill = ReactQuill.Quill;
-Quill.register(ChecklistBlot);
-Quill.register(CodeBlockBlot);
+(Quill as any).register(ChecklistBlot);
+(Quill as any).register(CodeBlockBlot);
 
 // Add custom list type for checklist
 const ListConfig = Quill.import('formats/list') as any;

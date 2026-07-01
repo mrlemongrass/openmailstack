@@ -143,6 +143,7 @@ export interface MailUndoState {
   message: string;
   uids: number[];
   targetFolder?: string;
+  sourceFolder?: string;
   timestamp: number;
 }
 

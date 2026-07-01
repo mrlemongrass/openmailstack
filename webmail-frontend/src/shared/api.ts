@@ -64,7 +64,7 @@ export async function messageAction(action: string, folder: string, uids: number
   return res.json();
 }
 
-export async function undoAction(undo: { uids: number[]; targetFolder?: string }): Promise<void> {
+export async function undoAction(undo: { uids: number[]; targetFolder?: string; sourceFolder?: string }): Promise<void> {
   await fetch('/api/messages/undo', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

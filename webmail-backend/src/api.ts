@@ -1438,23 +1438,44 @@ apiRouter.post('/messages/send', requireAuth, upload.array('attachments'), async
     }
 });
 
-apiRouter.post('/messages/undo', requireAuth, require('express').json(), async (req: any, res) => {
+apiRouter.post('/messages/undo', requireAuth, async (req: any, res) => {
     const user = req.user.username;
-    const { scheduledId } = req.body;
-    
-    if (!scheduledId) {
-        return res.status(400).json({ success: false, error: 'scheduledId is required' });
-    }
-    
-    try {
-        const [result]: any = await pool.query('DELETE FROM scheduled_emails WHERE id = ? AND username = ?', [scheduledId, user]);
-        if (result.affectedRows > 0) {
-            res.json({ success: true, message: 'Message send undone' });
-        } else {
-            res.status(404).json({ success: false, error: 'Scheduled message not found or already sent' });
+    const pass = req.user.password;
+    const { scheduledId, uids, targetFolder, sourceFolder } = req.body;
+
+    // Handle scheduled send cancellation
+    if (scheduledId) {
+        try {
+            const [result]: any = await pool.query('DELETE FROM scheduled_emails WHERE id = ? AND username = ?', [scheduledId, user]);
+            if (result.affectedRows > 0) {
+                return res.json({ success: true, message: 'Message send undone' });
+            } else {
+                return res.status(404).json({ success: false, error: 'Scheduled message not found or already sent' });
+            }
+        } catch (err: any) {
+            console.error('Undo error:', err);
+            return res.status(500).json({ success: false, error: err.message });
         }
+    }
+
+    // Handle IMAP message restoration
+    if (!uids || !Array.isArray(uids) || uids.length === 0 || !targetFolder) {
+        return res.status(400).json({ success: false, error: 'scheduledId or uids+targetFolder is required' });
+    }
+
+    try {
+        const { ImapService } = require('./imap');
+        const imap = new ImapService(user, pass);
+        await imap.connect();
+
+        const restoreFolder = sourceFolder || 'INBOX';
+        await imap.client.mailboxOpen(targetFolder);
+        await imap.client.messageMove(uids.map(String), restoreFolder, { uid: true });
+        await imap.logout();
+
+        res.json({ success: true, message: 'Messages restored' });
     } catch (err: any) {
-        console.error('Undo error:', err);
+        console.error('Undo IMAP restore error:', err);
         res.status(500).json({ success: false, error: err.message });
     }
 });

@@ -3,6 +3,7 @@ import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultL
 import { useMediaQuery } from '../shared/hooks/useMediaQuery';
 import { FolderSidebar } from './FolderSidebar';
 import { MessageViewer } from './MessageViewer';
+import { UndoBar } from './components/UndoBar';
 import type { useMail } from './hooks/useMail';
 
 interface MailLayoutProps {
@@ -33,6 +34,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {showViewer ? <MessageViewer mail={mail} /> : <Outlet />}
+        <UndoBar mailUndo={mail.mailUndo} onUndo={mail.undoAction} onDismiss={() => mail.setMailUndo(null)} />
       </div>
     );
   }
@@ -74,6 +76,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
           </>
         )}
       </PanelGroup>
+      <UndoBar mailUndo={mail.mailUndo} onUndo={mail.undoAction} onDismiss={() => mail.setMailUndo(null)} />
     </div>
   );
 }

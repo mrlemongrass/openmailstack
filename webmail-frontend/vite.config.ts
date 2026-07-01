@@ -12,6 +12,7 @@ export default defineConfig({
       '/Microsoft-Server-ActiveSync': 'http://127.0.0.1:20000',
       '/autodiscover': 'http://127.0.0.1:20000',
       '/.well-known': 'http://127.0.0.1:20000',
+      '/uploads': 'http://127.0.0.1:20000',
     },
   }
 })

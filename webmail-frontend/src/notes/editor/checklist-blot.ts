@@ -40,9 +40,8 @@ class ChecklistBlot extends Block {
       if (checkbox) {
         (checkbox as HTMLElement).innerHTML = value ? '✓' : '';
       }
-    } else {
-      super.format(name, value);
     }
+    super.format(name, value);
   }
 }
 

@@ -1380,6 +1380,32 @@ li[data-checked="true"] .ql-checkbox {
   gap: 4px;
 }
 
+.note-color-picker {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.note-color-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--border-glass);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.note-color-swatch:hover {
+  transform: scale(1.2);
+}
+
+.note-color-swatch.active {
+  border-color: var(--text-primary);
+  transform: scale(1.15);
+}
+
 .note-modal-editor {
   flex: 1;
   display: flex;

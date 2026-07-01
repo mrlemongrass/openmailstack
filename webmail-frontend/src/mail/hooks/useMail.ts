@@ -77,7 +77,9 @@ export function useMail(_opts: UseMailOptions) {
   const [draftUid, setDraftUid] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftSaveStatus, setDraftSaveStatus] = useState<'saving' | 'saved' | 'error' | null>(null);
+  const [composeError, setComposeError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Inline reply state
   const [replyText, setReplyText] = useState('');
@@ -98,6 +100,46 @@ export function useMail(_opts: UseMailOptions) {
     } catch (e) { console.error('Reply failed', e); return false; }
     finally { setReplySending(false); }
   }, [replyText]);
+
+  // Compose send
+  const handleSend = useCallback(async () => {
+    setSending(true);
+    setComposeError(null);
+    try {
+      const formData = new FormData();
+      if (composeFrom) formData.append('from', composeFrom);
+      formData.append('to', composeTo);
+      if (composeCc) formData.append('cc', composeCc);
+      if (composeBcc) formData.append('bcc', composeBcc);
+      formData.append('subject', composeSubject || '(no subject)');
+      formData.append('html', composeBody);
+      if (draftUid) formData.append('draftUid', draftUid);
+      composeAttachments.forEach((file) => {
+        formData.append('attachments', file);
+      });
+      await api.sendMessage(formData);
+      // Clear compose state on success
+      setComposeTo(''); setComposeCc(''); setComposeBcc('');
+      setComposeSubject(''); setComposeBody('');
+      setComposeAttachments([]);
+      setDraftUid(null); setDraftId(null);
+      setDraftSaveStatus(null);
+      setShowCc(false); setShowBcc(false);
+      setIsComposing(false);
+      fetchFolders();
+    } catch (e: any) {
+      console.error('Send failed', e);
+      setComposeError(e?.message || 'Failed to send message');
+    } finally {
+      setSending(false);
+    }
+  }, [composeFrom, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments, draftUid, fetchFolders]);
+
+  const handleSendAndArchive = useCallback(async () => {
+    // For new compose, "Send & Archive" sends the message.
+    // If replying, archive would apply to the source thread.
+    await handleSend();
+  }, [handleSend]);
 
   // Other mail state
   const [signatures, setSignatures] = useState<Signature[]>([]);
@@ -203,6 +245,7 @@ export function useMail(_opts: UseMailOptions) {
           message: getUndoMessage(action),
           uids: result.undoUids,
           targetFolder: result.targetFolder,
+          sourceFolder: activeFolder,
           timestamp: Date.now(),
         });
       }
@@ -215,7 +258,7 @@ export function useMail(_opts: UseMailOptions) {
   const undoAction = useCallback(async () => {
     if (!mailUndo) return;
     try {
-      await api.undoAction({ uids: mailUndo.uids, targetFolder: mailUndo.targetFolder });
+      await api.undoAction({ uids: mailUndo.uids, targetFolder: mailUndo.targetFolder, sourceFolder: mailUndo.sourceFolder });
       setMailUndo(null);
       await fetchMessages();
       await fetchFolders();
@@ -263,6 +306,48 @@ export function useMail(_opts: UseMailOptions) {
     fetchMessages();
   }, [activeFolder]);
 
+  // ---- Draft auto-save ----
+  useEffect(() => {
+    if (!isComposing) return;
+
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+    }
+
+    draftTimerRef.current = setTimeout(async () => {
+      if (!composeTo && !composeSubject && !composeBody && composeAttachments.length === 0) return;
+
+      setDraftSaveStatus('saving');
+      try {
+        const formData = new FormData();
+        if (composeFrom) formData.append('from', composeFrom);
+        formData.append('to', composeTo);
+        if (composeCc) formData.append('cc', composeCc);
+        if (composeBcc) formData.append('bcc', composeBcc);
+        formData.append('subject', composeSubject || '(no subject)');
+        formData.append('html', composeBody);
+        if (draftUid) formData.append('draftUid', draftUid);
+        composeAttachments.forEach((file) => {
+          formData.append('attachments', file);
+        });
+
+        const result: any = await api.saveDraft(formData);
+        if (result.draftId) setDraftId(result.draftId);
+        if (result.draftUid) setDraftUid(result.draftUid);
+        setDraftSaveStatus('saved');
+      } catch (e) {
+        console.error('Draft save failed', e);
+        setDraftSaveStatus('error');
+      }
+    }, 2000);
+
+    return () => {
+      if (draftTimerRef.current) {
+        clearTimeout(draftTimerRef.current);
+      }
+    };
+  }, [isComposing, composeFrom, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments, draftUid]);
+
   return {
     folders, activeFolder, setActiveFolder, expandedFolders, setExpandedFolders: setExpandedPersisted,
     messages, setMessages, selectedMessages, setSelectedMessages,
@@ -284,8 +369,9 @@ export function useMail(_opts: UseMailOptions) {
     composeAttachments, setComposeAttachments,
     composeMode, setComposeMode,
     draftUid, setDraftUid, draftId, setDraftId,
-    draftSaveStatus, setDraftSaveStatus,
-    sending, setSending, replyText, setReplyText, replySending, sendReply,
+    draftSaveStatus, setDraftSaveStatus, composeError, setComposeError,
+    sending, handleSend, handleSendAndArchive,
+    replyText, setReplyText, replySending, sendReply,
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
     fetchFolders, fetchMessages, fetchMessageBody, loadOlderMessages, refreshMessages,

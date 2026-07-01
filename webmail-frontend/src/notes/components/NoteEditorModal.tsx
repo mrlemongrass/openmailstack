@@ -6,6 +6,12 @@ import { AttachmentList } from './AttachmentList';
 import type { useNotes } from '../hooks/useNotes';
 import { saveNote } from '../../shared/api';
 
+const NOTE_COLORS = [
+  '#ffffff', '#f28b82', '#fbbc04', '#fff475', '#ccff90',
+  '#a7ffeb', '#cbf0f8', '#aecbfa', '#d7aefb', '#fdcfe8',
+  '#e6c9a8', '#e8eaed',
+];
+
 interface NoteEditorModalProps {
   notesCtx: ReturnType<typeof useNotes>;
 }
@@ -18,7 +24,31 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
 
   const note = n.editingNote;
 
-  const handleClose = useCallback(() => {
+  const handleClose = useCallback(async () => {
+    // Flush any pending auto-save before closing
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = undefined;
+    }
+    const latest = n.editingNote;
+    const title = titleRef.current?.value || latest.title || '';
+    const content = latest.content || '';
+    if (title || content) {
+      try {
+        await saveNote({
+          id: latest.id,
+          title: title || 'Untitled',
+          content: content || '',
+          color: latest.color,
+          is_pinned: latest.is_pinned,
+          is_locked: latest.is_locked,
+          folder: latest.folder || 'notes',
+          labels_json: latest.labels_json || '[]',
+        } as any);
+      } catch (e) {
+        console.error('Save on close failed', e);
+      }
+    }
     n.setIsNoteModalOpen(false);
     n.setEditingNote({});
     n.fetchNotes();
@@ -88,6 +118,17 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             value={note.title || ''}
             onChange={handleTitleChange}
           />
+          <div className="note-color-picker">
+            {NOTE_COLORS.map(color => (
+              <button
+                key={color}
+                className={`note-color-swatch${note.color === color ? ' active' : ''}`}
+                style={{ backgroundColor: color }}
+                title={color}
+                onClick={() => n.setEditingNote((prev: any) => ({ ...prev, color }))}
+              />
+            ))}
+          </div>
           <ReminderPicker noteId={note.id} />
           <div className="note-modal-actions">
             <button className="btn btn-ghost btn-sm" onClick={handleClose} title="Close">

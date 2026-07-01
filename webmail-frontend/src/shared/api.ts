@@ -279,11 +279,11 @@ export async function deleteCalendarApi(id: number): Promise<CalendarDeleteRespo
   return res.json();
 }
 
-export async function saveEvent(icsData: string): Promise<CalendarUpdateResponse> {
+export async function saveEvent(icsData: string, calendarId?: number): Promise<CalendarUpdateResponse> {
   const res = await fetch('/api/apps/events', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ data: icsData }),
+    body: JSON.stringify({ data: icsData, calendar_id: calendarId }),
   });
   return res.json();
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, Share2, Pencil, Calendar, Mail, MapPin, Phone, Globe, Building2, Briefcase } from 'lucide-react';
+import { X, Share2, Pencil, Trash2, Calendar, Mail, MapPin, Phone, Globe, Building2, Briefcase } from 'lucide-react';
 import type { Contact } from '../shared/types';
 import { ContactQuickActions } from './ContactQuickActions';
 import * as api from '../shared/api';
@@ -17,11 +17,12 @@ interface MeetingItem {
     id: string;
 }
 
-export function ContactDetail({ contact, onClose, onEdit, onShare }: {
+export function ContactDetail({ contact, onClose, onEdit, onShare, onDelete }: {
     contact: Contact;
     onClose: () => void;
     onEdit: () => void;
     onShare: () => void;
+    onDelete: () => void;
 }) {
     const [emails, setEmails] = useState<ActivityItem[]>([]);
     const [meetings, setMeetings] = useState<MeetingItem[]>([]);
@@ -77,6 +78,9 @@ export function ContactDetail({ contact, onClose, onEdit, onShare }: {
                     </button>
                     <button className="btn btn-ghost" onClick={onEdit} style={{ padding: 6 }} title="Edit">
                         <Pencil size={16} />
+                    </button>
+                    <button className="btn btn-ghost" onClick={onDelete} style={{ padding: 6 }} title="Delete">
+                        <Trash2 size={16} />
                     </button>
                     <button className="btn btn-ghost" onClick={onClose} style={{ padding: 6 }} title="Close">
                         <X size={16} />

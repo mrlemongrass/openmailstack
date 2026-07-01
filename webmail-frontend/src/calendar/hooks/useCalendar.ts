@@ -62,7 +62,7 @@ export function useCalendar() {
         (newEvent.guests as string[]).forEach((g) => lines.push(`ATTENDEE:mailto:${g}`));
       }
       lines.push('END:VEVENT', 'END:VCALENDAR');
-      await api.saveEvent(lines.join('\r\n'));
+      await api.saveEvent(lines.join('\r\n'), newEvent.calendarId);
       setIsEventModalOpen(false);
       setEditingEvent(null);
       setNewEvent({ title: '', start: new Date(), end: new Date(new Date().getTime() + 3600000), isAllDay: false, location: '', description: '', calendarId: 0 });

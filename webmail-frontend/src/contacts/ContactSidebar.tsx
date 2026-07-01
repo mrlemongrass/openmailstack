@@ -1,14 +1,14 @@
 import { Users, Building2, Plus, ScanLine, Trash2 } from 'lucide-react';
 import type { useContacts } from './hooks/useContacts';
 
-export function ContactSidebar({ contacts: c }: { contacts: ReturnType<typeof useContacts> }) {
+export function ContactSidebar({ contacts: c, onNewContact }: { contacts: ReturnType<typeof useContacts>; onNewContact: () => void }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 12 }}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <button className="btn btn-primary" style={{ flex: 1 }}
-          onClick={() => c.setContactsView('personal')}>
-          <Plus size={16} /> New
+          onClick={onNewContact}>
+          <Plus size={16} /> New Contact
         </button>
         <button className="btn btn-ghost" style={{ padding: '6px 10px' }}
           onClick={() => c.refreshDuplicates()}

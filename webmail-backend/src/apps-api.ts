@@ -133,7 +133,7 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
         const [result]: any = await pool.query(
             `INSERT INTO contacts
             (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, sync_token, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 user,
                 fullName || '',
@@ -306,6 +306,10 @@ appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Respon
         if (contactToDelete.length > 0) {
             await syncBirthdayEvent(user, contactToDelete[0].name, contactToDelete[0].email, null);
         }
+        await pool.query(
+            'DELETE FROM contact_group_members WHERE contact_id = ?',
+            [req.params.id as string]
+        );
         await pool.query(
             'DELETE FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
             [req.params.id as string, user]
@@ -1400,25 +1404,39 @@ appsApiRouter.delete('/calendars/:id', async (req: Request, res: Response) => {
 
 appsApiRouter.post('/events', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { calendar_id, uid, ical_data } = req.body;
+    const { data: ical_data, calendar_id } = req.body;
+    if (!ical_data) return res.status(400).json({ success: false, error: 'Missing data (iCalendar string)' });
+
+    // Extract UID from the VEVENT block
+    const uidMatch = ical_data.match(/^UID:(.+)$/m);
+    const uid = uidMatch ? uidMatch[1].trim() : `event-${Date.now()}@openmailstack`;
+
     try {
-        // verify calendar ownership
+        // resolve calendar: use provided calendar_id, or the user's first personal calendar
+        let calId = calendar_id;
+        if (!calId) {
+            const [userCals]: any = await pool.query('SELECT id FROM calendars WHERE user_id = ? ORDER BY id ASC LIMIT 1', [user]);
+            if (userCals.length === 0) return res.status(400).json({ success: false, error: 'No calendar found for user' });
+            calId = userCals[0].id;
+        }
+
+        // verify calendar ownership or write share
         const [cals]: any = await pool.query(`
-            SELECT c.id 
-            FROM calendars c 
+            SELECT c.id
+            FROM calendars c
             LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
             WHERE c.id = ? AND (c.user_id = ? OR cs.permission = 'write')
-        `, [user, calendar_id, user]);
+        `, [user, calId, user]);
         if (cals.length === 0) return res.status(403).json({success: false, error: 'Unauthorized calendar'});
 
         await pool.query(
             'INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE ical_data=?',
-            [calendar_id, uid, ical_data, ical_data]
+            [calId, uid, ical_data, ical_data]
         );
-        await pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar_id]);
+        await pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calId]);
         try {
             const { io } = require('./index');
-            io.to(user).emit('calendar_updated', { calendarId: calendar_id });
+            io.to(user).emit('calendar_updated', { calendarId: calId });
         } catch(e) {}
 
         res.json({ success: true });
@@ -1481,18 +1499,18 @@ appsApiRouter.get('/calendars/freebusy', async (req: Request, res: Response) => 
         const busy: Record<string, { start: string; end: string }[]> = {};
         for (const user of users) {
             const [rows]: any = await pool.query(
-                `SELECT cal_events.ics_data FROM cal_events
-                 JOIN calendars ON cal_events.calendar_id = calendars.id
-                 WHERE calendars.owner = ? OR calendars.id IN
-                   (SELECT calendar_id FROM calendar_shares WHERE user_email = ?)`,
+                `SELECT events.ical_data FROM events
+                 JOIN calendars ON events.calendar_id = calendars.id
+                 WHERE calendars.user_id = ? OR calendars.id IN
+                   (SELECT calendar_id FROM calendar_shares WHERE shared_with_user_id = ?)`,
                 [user, user]
             );
             const userBusy: { start: string; end: string }[] = [];
             for (const row of rows || []) {
                 try {
-                    const evt = parseIcalEvent('freebusy', row.ics_data);
+                    const evt = parseIcalEvent('freebusy', row.ical_data);
                     if (!evt) continue;
-                    if (row.ics_data.includes('TRANSP:TRANSPARENT')) continue;
+                    if (row.ical_data.includes('TRANSP:TRANSPARENT')) continue;
                     const eStart = new Date(evt.start);
                     const eEnd = new Date(evt.end);
                     if (eEnd > start && eStart < end) {

@@ -10,6 +10,7 @@ import { ContactTrash } from './ContactTrash';
 import { ContactShareModal } from './ContactShareModal';
 import { ContactEditModal } from './ContactEditModal';
 import { useAppearance } from '../shared/hooks/useAppearance';
+import * as api from '../shared/api';
 
 function ResizeHandle() {
     return (
@@ -28,6 +29,17 @@ export function ContactsLayout() {
     const [showShare, setShowShare] = useState(false);
     const [editingContact, setEditingContact] = useState<Contact | null>(null);
 
+    const handleNewContact = () => setEditingContact({} as Contact);
+
+    const handleDeleteContact = async (contact: Contact) => {
+        if (!contact.id || !confirm('Move this contact to trash?')) return;
+        try {
+            await api.deleteContact(contact.id);
+            contacts.refreshContacts();
+            contacts.setSelectedContact(null);
+        } catch (e) { console.error('Delete failed', e); }
+    };
+
     const contactsPanelLayout = useDefaultLayout({
         id: 'oms-contacts-v12',
         panelIds: ['contacts-sidebar', 'contacts-view'],
@@ -43,6 +55,7 @@ export function ContactsLayout() {
                         onClose={() => contacts.setSelectedContact(null)}
                         onEdit={() => setEditingContact(contacts.selectedContact)}
                         onShare={() => setShowShare(true)}
+                        onDelete={() => handleDeleteContact(contacts.selectedContact!)}
                     />
                     {showShare && contacts.selectedContact && (
                         <ContactShareModal
@@ -96,7 +109,7 @@ export function ContactsLayout() {
                 style={{ width: '100%', height: '100%', minHeight: 0, minWidth: 0 }}
             >
                 <Panel id="contacts-sidebar" defaultSize="20%" minSize="10%" maxSize="35%">
-                    <ContactSidebar contacts={contacts} />
+                    <ContactSidebar contacts={contacts} onNewContact={handleNewContact} />
                 </Panel>
                 <ResizeHandle />
                 <Panel id="contacts-view" defaultSize={showDetail ? "50%" : "80%"} minSize="30%">
@@ -122,6 +135,7 @@ export function ContactsLayout() {
                                 onClose={() => contacts.setSelectedContact(null)}
                                 onEdit={() => setEditingContact(contacts.selectedContact)}
                                 onShare={() => setShowShare(true)}
+                                onDelete={() => handleDeleteContact(contacts.selectedContact!)}
                             />
                         </Panel>
                     </>

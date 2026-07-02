@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { X, Check, Loader } from 'lucide-react';
 import { LiveNoteEditor } from '../../LiveNoteEditor';
 import { ReminderPicker } from './ReminderPicker';
 import { AttachmentList } from './AttachmentList';
@@ -19,6 +19,7 @@ interface NoteEditorModalProps {
 export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
   const titleRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | null>(null);
 
   if (!n.isNoteModalOpen) return null;
 
@@ -60,6 +61,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
       const title = titleRef.current?.value || latest.title || '';
       const content = latest.content || '';
       if (title || content) {
+        setSaveStatus('saving');
         try {
           const saved = await saveNote({
             id: latest.id,
@@ -75,8 +77,10 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             n.setEditingNote((prev: any) => ({ ...prev, id: saved.id }));
             n.fetchNotes();
           }
+          setSaveStatus('saved');
         } catch (e) {
           console.error('Auto-save failed', e);
+          setSaveStatus(null);
         }
       }
     }, 1500);
@@ -132,6 +136,15 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             ))}
           </div>
           <ReminderPicker noteId={note.id} />
+          {saveStatus && (
+            <span style={{
+              fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4,
+              color: saveStatus === 'saved' ? '#10b981' : 'var(--text-secondary)',
+            }}>
+              {saveStatus === 'saving' ? <Loader size={12} className="spin" /> : <Check size={12} />}
+              {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
+            </span>
+          )}
           <div className="note-modal-actions">
             <button className="btn btn-ghost btn-sm" onClick={handleClose} title="Close">
               <X size={18} />

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Send, Paperclip, Archive, Clock, Image, FileText } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
 import type { useMail } from './hooks/useMail';
@@ -79,6 +79,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [autocompleteField, setAutocompleteField] = useState<'to' | 'cc' | 'bcc' | null>(null);
   const [suggestions, setSuggestions] = useState<ContactSuggestion[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     api.fetchContacts(500, 0).then((data: any) => {
@@ -140,7 +141,11 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   }, [autocompleteField, suggestions, selectedIndex, selectSuggestion]);
 
   const handleFieldBlur = useCallback(() => {
-    setTimeout(() => { setSuggestions([]); setAutocompleteField(null); }, 150);
+    blurTimerRef.current = setTimeout(() => { setSuggestions([]); setAutocompleteField(null); }, 150);
+  }, []);
+
+  const clearBlurTimer = useCallback(() => {
+    if (blurTimerRef.current) { clearTimeout(blurTimerRef.current); blurTimerRef.current = null; }
   }, []);
 
   // Templates
@@ -196,7 +201,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             <input className="glass-input" placeholder="To" value={mail.composeTo}
               onChange={(e) => handleFieldChange(e.target.value, 'to')}
               onKeyDown={(e) => handleFieldKeyDown(e, 'to')}
-              onFocus={() => { const { fragment } = getFragmentInfo(mail.composeTo); if (fragment.length >= 2) handleFieldChange(mail.composeTo, 'to'); }}
+              onFocus={() => { clearBlurTimer(); const { fragment } = getFragmentInfo(mail.composeTo); if (fragment.length >= 2) handleFieldChange(mail.composeTo, 'to'); }}
               onBlur={handleFieldBlur}
               autoComplete="off" style={{ width: '100%' }} />
             {autocompleteField === 'to' && suggestions.length > 0 && (

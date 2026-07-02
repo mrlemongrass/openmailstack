@@ -11,6 +11,7 @@ export function useCalendar() {
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [calendarError, setCalendarError] = useState('');
   const [isAdvancedEventMode, setIsAdvancedEventMode] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Partial<CalendarEvent> | null>(null);
   const [eventError, setEventError] = useState('');
@@ -39,10 +40,11 @@ export function useCalendar() {
             ...e, start: new Date(e.start), end: new Date(e.end),
           })),
         }));
+        setCalendarError('');
         setCalendars(normalized);
         setEvents(normalized.flatMap((c) => c.events));
       }
-    } catch (e) { console.error('Failed to fetch calendars', e); }
+    } catch (e: any) { setCalendarError(e?.message || 'Failed to load calendars'); console.error('Failed to fetch calendars', e); }
     setIsRefreshing(false);
   }, []);
 
@@ -126,7 +128,7 @@ export function useCalendar() {
     calendarSearchQuery, setCalendarSearchQuery,
     isEventModalOpen, setIsEventModalOpen,
     isAdvancedEventMode, setIsAdvancedEventMode,
-    isLoading, isRefreshing,
+    isLoading, isRefreshing, calendarError,
     refreshCalendars,
     newEvent, setNewEvent, editingEvent, eventError, eventSaving,
     saveEvent, deleteEvent, openNewEvent, editExistingEvent,

@@ -7,6 +7,7 @@ import { CalendarToolbar } from './CalendarToolbar';
 import { EventModal } from './EventModal';
 import { Skeleton } from '../shared/components/Skeleton';
 import { EmptyState } from '../shared/components/EmptyState';
+import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { CalendarDays } from 'lucide-react';
 
 function ResizeHandle() {
@@ -20,6 +21,15 @@ function ResizeHandle() {
 
 function renderCalendarContent(cal: ReturnType<typeof useCalendar>) {
   if (cal.isLoading) return <Skeleton count={12} height={60} />;
+
+  if (cal.calendarError) {
+    return (
+      <ErrorBanner
+        error={cal.calendarError}
+        onRetry={() => { cal.refreshCalendars(); }}
+      />
+    );
+  }
 
   if (!cal.isLoading && cal.events.length === 0) {
     return (

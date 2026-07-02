@@ -1,5 +1,6 @@
 import { useRef, useCallback, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { Users } from 'lucide-react';
 import { ContactSkeleton } from './components/ContactSkeleton';
 import type { useContacts } from './hooks/useContacts';
 import type { Contact } from '../shared/types';
@@ -22,6 +23,24 @@ export function ContactGrid({ contacts: c, density }: {
   const [showExportMenu, setShowExportMenu] = useState(false);
 
   if (c.isLoading && c.contacts.length === 0) return <ContactSkeleton count={20} />;
+
+  if (!c.isLoading && c.contacts.length === 0 && !c.contactSearchQuery) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+        <div style={{ textAlign: 'center', padding: 40 }}>
+          <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }}>
+            <Users size={48} />
+          </div>
+          <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>
+            No contacts yet
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: 320, lineHeight: 1.5 }}>
+            Use the New Contact button in the sidebar to create your first contact, or import contacts from a vCard or CSV file.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

@@ -247,10 +247,15 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                     onChange={(e) => setScheduleTime(e.target.value)}
                     style={{ width: '100%', marginBottom: 8, fontSize: '0.85rem' }} />
                   <button className="btn btn-primary" style={{ width: '100%', fontSize: '0.85rem' }}
-                    disabled={!scheduleDate || !scheduleTime}
+                    disabled={!scheduleDate || !scheduleTime || mail.sending}
                     onClick={() => {
-                      mail.setComposeSubject(mail.composeSubject || '(no subject)');
+                      const [h, m] = scheduleTime.split(':').map(Number);
+                      const sendAt = new Date(scheduleDate);
+                      sendAt.setHours(h || 0, m || 0, 0, 0);
                       setShowSchedule(false);
+                      setScheduleDate('');
+                      setScheduleTime('');
+                      mail.handleSend(sendAt);
                     }}>
                     Schedule
                   </button>

@@ -109,7 +109,7 @@ export function useMail(_opts: UseMailOptions) {
   }, [activeFolder]);
 
   // Compose send
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(async (sendAt?: Date | null) => {
     setSending(true);
     setComposeError(null);
     try {
@@ -124,6 +124,10 @@ export function useMail(_opts: UseMailOptions) {
       composeAttachments.forEach((file) => {
         formData.append('attachments', file);
       });
+      if (sendAt && sendAt.getTime() > Date.now()) {
+        const delaySeconds = Math.ceil((sendAt.getTime() - Date.now()) / 1000);
+        formData.append('delaySeconds', String(delaySeconds));
+      }
       await api.sendMessage(formData);
       // Clear compose state on success
       setComposeTo(''); setComposeCc(''); setComposeBcc('');
@@ -142,10 +146,10 @@ export function useMail(_opts: UseMailOptions) {
     }
   }, [composeFrom, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments, draftUid, fetchFolders]);
 
-  const handleSendAndArchive = useCallback(async () => {
+  const handleSendAndArchive = useCallback(async (sendAt?: Date | null) => {
     // For new compose, "Send & Archive" sends the message.
     // If replying, archive would apply to the source thread.
-    await handleSend();
+    await handleSend(sendAt);
   }, [handleSend]);
 
   // Other mail state

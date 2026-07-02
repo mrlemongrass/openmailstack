@@ -30,7 +30,7 @@ Translate useful ideas into OpenMailStack-native, self-hostable, privacy-respect
 | Mail | Snooze | Gmail/Outlook-style snooze | Hide until selected time, restore to inbox via queue | Should | Partial | Verify current implementation |
 | Mail | Rules/filters | Gmail filters / Outlook rules | User-defined server-side rules via Sieve or backend rules engine | Must | Needs Verification | |
 | Mail | Contact autocomplete in compose | iCloud/Google/Outlook | Typing in To/Cc/Bcc shows filtered contact dropdown from personal contacts | Must | Implemented | 2026-07-02: self-contained in ComposeModal.tsx, multi-recipient support, keyboard nav |
-| Calendar | Week/day/agenda views | iCloud/Google/Outlook calendars | Functional views — Month + Week done, Day/Agenda/Year remaining | Must | Partial | 2026-07-02: WeekView added with time-slotted layout, all-day events, lane overlap |
+| Calendar | Week/day/agenda views | iCloud/Google/Outlook calendars | Month + Week + Day functional, Agenda/Year remain | Must | Partial | 2026-07-02: DayView added with hour-slotted layout, all-day events, current time indicator |
 | Calendar | Contact autocomplete in guests | iCloud/Google/Outlook | Typing in event guest field shows filtered contact dropdown | Should | Implemented | 2026-07-02: EventModal.tsx, same pattern as compose autocomplete |
 | Mail | Calendar invite rendering | iCloud/Gmail/Outlook | Inline event card with date/location/organizer and Add to Calendar button | Must | Implemented | 2026-07-02: backend ICS extraction, CalendarInviteCard component |
 | Suite | API error surfacing | Gmail/Outlook error banners | User-facing ErrorBanner with Retry across Calendar, Contacts, Notes | Must | Implemented | 2026-07-02: calendarError, contactsError, notesError states |

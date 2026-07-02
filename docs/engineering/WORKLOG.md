@@ -1280,3 +1280,63 @@ Per the quality rubric:
 ### Next recommended task
 
 Add design tokens for typography/spacing as CSS custom properties. Score 23: Severity 2, Reach 4, Confidence 4, Effort 3.
+
+---
+
+## 2026-07-02 — 4-cycle batch: Calendar + Toast + Mail + Admin
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (54 commits ahead)  
+Ending git state: clean (58 commits ahead)  
+
+### Cycle 1: Calendar Day view
+
+**Why**: Calendar had Month + Week. Day view is the natural next step for users who want a focused single-day view.
+
+**Fix**: Created `views/DayView.tsx` (105 lines) with hour-slotted timed events, all-day events, click-to-create, current time indicator. Enabled 'day' in the view switcher toolbar.
+
+**Commit**: `30debb3`
+
+### Cycle 2: Toast expansion to Contacts
+
+**Why**: Toast wiring was reverted during React #310 debugging. Re-applied on stable baseline.
+
+**Fix**: ContactSidebar shows success/error toasts for label/group creation. ContactTrash shows success toasts for restore and permanent delete.
+
+**Commit**: `aa5162c`
+
+### Cycle 3: Message list preview snippets
+
+**Why**: UX_AUDIT noted "missing preview/snippet text" in message list. Users couldn't gauge message content without opening.
+
+**Fix**: MessageRow now shows the `preview` field (first ~100 chars from backend) as a third line in comfortable density mode. Improves inbox scanning.
+
+**Commit**: `ab20e16`
+
+### Cycle 4: Admin sidebar version display
+
+**Why**: Admin was the most neglected surface — no changes in any previous cycle. No way to identify installed version from the UI.
+
+**Fix**: Added "OpenMailStack v0.1.5" label at the bottom of the admin sidebar, styled with border separator.
+
+**Commit**: `49054b2`
+
+### Proof / checks run (all cycles)
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` | No errors × 4 |
+| `npx vite build` | Success × 4 |
+| `npm test` (backend) | 26/26 pass × 4 |
+| Playwright | Day view loads, admin dashboard loads |
+
+### Docs updated
+
+- `UX_AUDIT.md`: Calendar 8→9, Message list 7→8, 5 new completed items
+- `SUITE_FEATURE_MATRIX.md`: Day view added to Week/Day/Agenda row
+- `WORKLOG.md`: This entry
+
+### Next recommended task
+
+Add design tokens for typography/spacing as CSS custom properties. Score 23.

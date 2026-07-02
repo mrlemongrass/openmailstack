@@ -10,11 +10,11 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 | Surface | Score | Status |
 |---------|-------|--------|
 | Mail shell / AppShell | 7/10 | Good three-pane layout, missing mobile header/settings access |
-| Message list | 7/10 | Good density system, missing preview/snippet text |
+| Message list | 8/10 | Good density system, preview snippets in comfortable mode |
 | Message viewer | 8/10 | Reply All/Forward fixed, HTML sanitized with DOMPurify |
 | Compose / Reply | 6/10 | Schedule send+identities fixed, inline reply basic |
 | Search | 6/10 | Search always visible, loading indicator added, hints unimplemented |
-| Calendar | 8/10 | MonthView + WeekView functional, empty/error states added, guest autocomplete |
+| Calendar | 9/10 | Month + Week + Day views functional, empty/error states, guest autocomplete |
 | Contacts | 9/10 | Good detail/edit panels, label/group creation, Email→compose, error states |
 | Settings | 9/10 | All alert()/confirm() replaced with inline feedback, password reload removed |
 | Mobile / Responsive | 7/10 | Settings added to mobile tab bar, single breakpoint, no tablet consideration |
@@ -243,7 +243,11 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - [x] Settings import alerts replaced with inline success/error banners
 - [x] Settings session revoke confirm + error replaced with ConfirmDialog + inline
 - [x] Toast notification system (success/error/info, auto-dismiss, glass-styled)
+- [x] Calendar Day view (single-day hour-slotted layout)
+- [x] Contact toast notifications (label/group create, restore, permanent delete)
+- [x] Message list preview snippets in comfortable density
+- [x] Admin sidebar version display
 
 ## Next Recommended UX Task
 
-Add design tokens for typography/spacing (CSS custom properties) — font sizes, weights, and spacing are hardcoded inline across the codebase. Centralizing them into design tokens would enable consistent theming and easier visual refinement. Score 23: Severity 2, Reach 4, Confidence 4, Effort 3.
+Add design tokens for typography/spacing (CSS custom properties). Score 23: Severity 2, Reach 4, Confidence 4, Effort 3.

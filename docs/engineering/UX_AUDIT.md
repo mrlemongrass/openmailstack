@@ -9,7 +9,7 @@
 |---------|-------|--------|
 | Mail shell / AppShell | 7/10 | Good three-pane layout, missing mobile header/settings access |
 | Message list | 7/10 | Good density system, missing preview/snippet text |
-| Message viewer | 6/10 | Good actions toolbar, Reply All/Forward broken, no HTML sanitization |
+| Message viewer | 7/10 | Reply All/Forward fixed, good actions toolbar, no HTML sanitization |
 | Compose / Reply | 6/10 | Schedule send+identities fixed, inline reply basic |
 | Search | 4/10 | SearchBar.tsx dead code, loading never shown, hints unimplemented |
 | Calendar | 5/10 | MonthView solid, 4 views are stubs, no event empty state |
@@ -27,9 +27,10 @@
 - **Problem**: Buttons render with no onClick handlers — clicking does nothing
 - **User impact**: Cannot reply-all or forward messages (core mail workflows)
 - **Severity**: Critical / Broken
-- **Status**: Open
-- **Suggested fix**: Wire Reply All to open compose with all recipients; wire Forward to open compose with "Fwd:" subject and quoted body
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Reply All collects all unique recipients (from, to, cc), excludes own addresses, opens compose with "Re: subject". Forward creates forward header block, quotes body, opens compose with "Fwd: subject".
 - **Ref**: `MessageViewer.tsx:69-70`
+- **Commit**: `6ded07b`
 
 ### 2. SearchBar.tsx is dead code, search hidden during selection
 - **Surface**: Search
@@ -142,6 +143,7 @@
 - [x] EmptyState for empty mail folders and search-no-results
 - [x] ErrorBoundary crash protection wrapping AppShell
 - [x] Code-split Notes and Admin routes (main bundle -66%)
+- [x] Reply All and Forward buttons wired (were non-functional with empty onClick)
 
 ## Next Recommended UX Task
 

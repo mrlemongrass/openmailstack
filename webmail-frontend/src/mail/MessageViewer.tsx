@@ -10,6 +10,7 @@ import { SnoozePopover } from './components/SnoozePopover';
 import { MoveToPopover } from './components/MoveToPopover';
 import { Skeleton } from '../shared/components/Skeleton';
 import { CalendarInviteCard } from '../shared/components/CalendarInviteCard';
+import { KeyboardHelp } from '../shared/components/KeyboardHelp';
 import type { useMail } from './hooks/useMail';
 
 export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
@@ -18,6 +19,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showRaw, setShowRaw] = useState(false);
   const [showSnooze, setShowSnooze] = useState(false);
   const [showMoveTo, setShowMoveTo] = useState(false);
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
 
   // Fetch full message body when message is selected, and mark as read
   useEffect(() => {
@@ -124,6 +126,9 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
       } else if (key === 'escape') {
         e.preventDefault();
         navigate(`/mail/${encodeURIComponent(folder || 'INBOX')}`);
+      } else if (key === '?' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setShowKeyboardHelp(true);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -260,6 +265,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
       {showRaw && message && (
         <RawMessageModal folder={folder || 'INBOX'} uid={message.uid} onClose={() => setShowRaw(false)} />
       )}
+      <KeyboardHelp open={showKeyboardHelp} onClose={() => setShowKeyboardHelp(false)} />
     </div>
   );
 }

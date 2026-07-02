@@ -130,9 +130,9 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
             onClick={() => c.setSelectedGroupId(c.selectedGroupId === group.id ? null : group.id)}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: group.color, flexShrink: 0 }} />
             <span style={{ flex: 1 }}>{group.name}</span>
-            {group.member_count !== undefined && (
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{group.member_count}</span>
-            )}
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+              {group.member_count ?? 0}
+            </span>
           </div>
         ))}
       </div>

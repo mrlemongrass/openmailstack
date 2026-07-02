@@ -1,7 +1,35 @@
-import { Users, Building2, Plus, ScanLine, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Users, Building2, Plus, ScanLine, Trash2, Check, X } from 'lucide-react';
+import * as api from '../shared/api';
 import type { useContacts } from './hooks/useContacts';
 
+const GROUP_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+
 export function ContactSidebar({ contacts: c, onNewContact }: { contacts: ReturnType<typeof useContacts>; onNewContact: () => void }) {
+  const [showNewLabel, setShowNewLabel] = useState(false);
+  const [newLabelName, setNewLabelName] = useState('');
+  const [showNewGroup, setShowNewGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+
+  const handleCreateLabel = async () => {
+    if (!newLabelName.trim()) return;
+    try {
+      await api.saveContactLabel({ name: newLabelName.trim(), color: GROUP_COLORS[Math.floor(Math.random() * GROUP_COLORS.length)] });
+      setNewLabelName('');
+      setShowNewLabel(false);
+      c.refreshLabels();
+    } catch { /* silent — labels refresh handles error state */ }
+  };
+
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim()) return;
+    try {
+      await api.saveContactGroup({ name: newGroupName.trim(), color: GROUP_COLORS[Math.floor(Math.random() * GROUP_COLORS.length)] });
+      setNewGroupName('');
+      setShowNewGroup(false);
+      c.refreshGroups();
+    } catch { /* silent */ }
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 12 }}>
@@ -49,8 +77,18 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
           <span style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase',
             color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>Labels</span>
           <button className="btn btn-ghost" style={{ padding: '2px 6px', fontSize: '0.8rem' }}
-            onClick={() => {}}>+</button>
+            onClick={() => setShowNewLabel(!showNewLabel)}>+</button>
         </div>
+        {showNewLabel && (
+          <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+            <input className="glass-input" placeholder="Label name" value={newLabelName}
+              onChange={(e) => setNewLabelName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateLabel(); if (e.key === 'Escape') setShowNewLabel(false); }}
+              autoFocus style={{ flex: 1, fontSize: '0.8rem', padding: '4px 8px' }} />
+            <button className="btn btn-ghost" onClick={handleCreateLabel} style={{ padding: '4px 6px' }}><Check size={14} /></button>
+            <button className="btn btn-ghost" onClick={() => setShowNewLabel(false)} style={{ padding: '4px 6px' }}><X size={14} /></button>
+          </div>
+        )}
         {c.contactLabels.map((label) => (
           <div key={label.id} className="nav-item" style={{ display: 'flex', alignItems: 'center', gap: 8,
             padding: '4px 10px', borderRadius: 'var(--radius-md)', cursor: 'pointer',
@@ -64,8 +102,22 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase',
-          color: 'var(--text-secondary)', marginBottom: 8, letterSpacing: '0.05em' }}>Groups</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase',
+            color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>Groups</span>
+          <button className="btn btn-ghost" style={{ padding: '2px 6px', fontSize: '0.8rem' }}
+            onClick={() => setShowNewGroup(!showNewGroup)}>+</button>
+        </div>
+        {showNewGroup && (
+          <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+            <input className="glass-input" placeholder="Group name" value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGroup(); if (e.key === 'Escape') setShowNewGroup(false); }}
+              autoFocus style={{ flex: 1, fontSize: '0.8rem', padding: '4px 8px' }} />
+            <button className="btn btn-ghost" onClick={handleCreateGroup} style={{ padding: '4px 6px' }}><Check size={14} /></button>
+            <button className="btn btn-ghost" onClick={() => setShowNewGroup(false)} style={{ padding: '4px 6px' }}><X size={14} /></button>
+          </div>
+        )}
         {c.contactGroups.map((group) => (
           <div key={group.id} className="nav-item" style={{ display: 'flex', alignItems: 'center', gap: 8,
             padding: '4px 10px', borderRadius: 'var(--radius-md)', cursor: 'pointer',

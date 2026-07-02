@@ -468,7 +468,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             <Send size={16} /> {mail.sending ? <><Spinner size={14} /> Sending...</> : 'Send'}
           </button>
           <button className="btn btn-ghost" disabled={mail.sending || sizeExceedsBlock}
-            onClick={() => mail.handleSendAndArchive()}
+            onClick={() => { setDidSend(true); mail.handleSendAndArchive(); }}
             style={{ fontSize: '0.8rem' }} title="Send & Archive">
             <Archive size={14} />
           </button>

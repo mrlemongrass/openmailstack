@@ -96,6 +96,9 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
       <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={nav.prev}><ChevronLeft size={16} /></button>
       <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={nav.next}><ChevronRight size={16} /></button>
       <span style={{ fontWeight: 600, fontSize: '1rem' }}>{nav.label}</span>
+      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+        · {cal.events.filter((e) => cal.calendarVisibility[e.calendarId] !== false).length} events
+      </span>
 
       {/* #7 Quick create */}
       <div style={{ display: 'flex', flex: 1, gap: 6, alignItems: 'center' }}>

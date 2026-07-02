@@ -71,6 +71,7 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
         icon={PenLine}
         title="No notes yet"
         description="Create your first note to start writing. Notes support rich text, attachments, reminders, and collaboration."
+        action={{ label: 'Create Note', onClick: () => { n.setEditingNote({}); n.setIsNoteModalOpen(true); } }}
       />
     );
   }

@@ -12,8 +12,9 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 | Mail shell / AppShell | 7/10 | Good three-pane layout, missing mobile header/settings access |
 | Message list | 8/10 | Good density system, preview snippets in comfortable mode |
 | Message viewer | 8/10 | Reply All/Forward fixed, HTML sanitized with DOMPurify |
-| Compose / Reply | 7/10 | Schedule send+identities fixed, word count, inline reply shows recipient |
+| Compose / Reply | 7/10 | Schedule send+identities fixed, word count, toast for Send & Archive |
 | Search | 6/10 | Search always visible, loading indicator added, hints unimplemented |
+| Admin | 7/10 | System health with countdown, Fail2ban with unban toast, Spam JSON formatter |
 | Calendar | 9/10 | Month + Week + Day views functional, empty/error states, guest autocomplete |
 | Contacts | 9/10 | Label/group creation + filtering, bulk delete, Email→compose, error states |
 | Notes | 8/10 | Rich editor + autosave indicator, pin toggle + toast, actionable empty state |
@@ -292,6 +293,27 @@ Open / In Progress / Done / Blocked / Needs Verification
 - [x] Mail compose word/character count
 - [x] Message body loading spinner (replaces misleading '(no content)')
 - [x] Message body pre-fetching (bodies cached before click, like Gmail/Outlook)
+- [x] Admin SpamPanel JSON Format button
+- [x] Calendar event count in toolbar
+- [x] Send & Archive toast confirmation
+- [x] Settings Forwarding helper text
+
+## Acceptance Criteria for Batch 15
+
+| Cycle | Task | User-Visible AC | Technical AC |
+|-------|------|----------------|--------------|
+| 1 | Admin Spam Format | Format button pretty-prints JSON; red error on invalid | JSON.parse/stringify with 2-space indent |
+| 2 | Calendar event count | Event count badge next to month label | Filter cal.events by calendarVisibility |
+| 3 | Send & Archive toast | Toast "Message sent" appears for Send & Archive | setDidSend(true) before handleSendAndArchive |
+| 4 | Forwarding helper | Descriptive text above Forward To field | Pure UI, no API changes |
+
+### Proof
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` | No errors |
+| `npx vite build` | Success |
+| `npm test` (backend) | 26/26 pass |
 
 ## Acceptance Criteria for Batch 14
 

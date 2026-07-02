@@ -38,6 +38,7 @@ Translate useful ideas into OpenMailStack-native, self-hostable, privacy-respect
 | Suite | Admin on mobile | All productivity apps | Admin panel accessible from mobile tab bar | Should | Implemented | 2026-07-02: ShieldAlert icon + label in mobile nav |
 | Settings | Password change UX | All productivity apps | Inline success feedback without alert() or page reload | Should | Implemented | 2026-07-02: removed alert+reload, inline pwSuccess banner |
 | Sync | Copy-to-clipboard | iCloud-style setup | One-click copy for server addresses, protocol icons, refined layout | Should | Implemented | 2026-07-02: SyncRow component with copy state |
+| Admin | Spam JSON formatter | PostfixAdmin/Rspamd | Format/validate button for spam policy JSON editor | Should | Implemented | 2026-07-02: pretty-print + validation in SpamPanel |
 | Suite | Glass-styled dialogs | iCloud/Google/Microsoft | Custom ConfirmDialog replacing browser alert()/confirm() | Should | Implemented | 2026-07-02: compose close, contact delete, session revoke |
 | Notes | Relative timestamps | Apple Notes / Google Keep | 'Just now', '5m ago', 'Yesterday' on note cards | Should | Implemented | 2026-07-02: formatRelativeTime helper + card footer |
 | Suite | Toast notifications | iCloud/Google/Microsoft | Transient glass-styled toasts for success/error/info feedback | Should | Implemented | 2026-07-02: ToastProvider context + useToast hook |

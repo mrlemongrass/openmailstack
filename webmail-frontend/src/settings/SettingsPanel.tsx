@@ -1365,6 +1365,13 @@ function AdvancedPane() {
           <ReadonlySetting label="Diagnostics" value="Planned" />
         </div>
       </section>
+      <section className="settings-section">
+        <h3>About</h3>
+        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+          <div>OpenMailStack <strong>v0.1.5</strong></div>
+          <div>A self-hosted, open-source communication and productivity suite.</div>
+        </div>
+      </section>
     </div>
   );
 }

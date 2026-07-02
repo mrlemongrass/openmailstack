@@ -179,6 +179,17 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
         ) : null}
         {note.folder !== 'trash' && (
           <button className="btn btn-ghost btn-xs"
+            style={{ fontSize: '0.7rem', color: 'var(--danger)' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              n.deleteNote(note.id!);
+              showToast({ type: 'info', message: 'Note moved to trash' });
+            }}>
+            Delete
+          </button>
+        )}
+        {note.folder !== 'trash' && (
+          <button className="btn btn-ghost btn-xs"
             style={{ fontSize: '0.7rem', color: note.is_pinned ? '#f59e0b' : undefined }}
             onClick={(e) => {
               e.stopPropagation();

@@ -1,12 +1,16 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router';
 import { AuthGate } from './shared/layouts/AuthGate';
 import { AppShell } from './shared/layouts/AppShell';
+import { ErrorBoundary } from './shared/components/ErrorBoundary';
+import { Skeleton } from './shared/components/Skeleton';
 import { MailRoutes } from './mail/routes';
 import { CalendarRoutes } from './calendar/routes';
 import { ContactsRoutes } from './contacts/routes';
-import { NotesRoutes } from './notes/routes';
 import { SettingsRoutes } from './settings/routes';
 import { AdminRoutes } from './admin/routes';
+
+const NotesRoutes = lazy(() => import('./notes/routes').then(m => ({ default: m.NotesRoutes })));
 
 function SyncView() {
   return (
@@ -38,11 +42,11 @@ export default function App() {
   return (
     <Routes>
       <Route element={<AuthGate />}>
-        <Route element={<AppShell />}>
+        <Route element={<ErrorBoundary><AppShell /></ErrorBoundary>}>
           <Route path="mail/*" element={<MailRoutes />} />
           <Route path="calendar/*" element={<CalendarRoutes />} />
           <Route path="contacts/*" element={<ContactsRoutes />} />
-          <Route path="notes/*" element={<NotesRoutes />} />
+          <Route path="notes/*" element={<Suspense fallback={<Skeleton />}><NotesRoutes /></Suspense>} />
           <Route path="settings/*" element={<SettingsRoutes />} />
           <Route path="admin/*" element={<AdminRoutes />} />
           <Route path="sync" element={<SyncView />} />

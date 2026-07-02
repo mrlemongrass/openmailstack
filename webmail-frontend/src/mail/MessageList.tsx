@@ -6,6 +6,8 @@ import { MessageRow, DENSITY_HEIGHTS } from './MessageRow';
 import { MessageListSkeleton } from './components/MessageListSkeleton';
 import { MailToolbar } from './MailToolbar';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
+import { EmptyState } from '../shared/components/EmptyState';
+import { Inbox, SearchX } from 'lucide-react';
 import type { useMail } from './hooks/useMail';
 
 interface MessageListProps {
@@ -73,6 +75,27 @@ export function MessageList({ mail, density }: MessageListProps) {
 
   if (mail.searchError) {
     return <ErrorBanner error={mail.searchError} onRetry={() => mail.doSearch(mail.searchQuery, mail.searchScope)} />;
+  }
+
+  if (!mail.mailLoading && mail.messages.length === 0) {
+    if (mail.isSearchActive) {
+      return (
+        <EmptyState
+          icon={SearchX}
+          title="No results found"
+          description={`Your search for "${mail.searchQuery}" returned no matches.`}
+          action={{ label: 'Clear search', onClick: () => { mail.setSearchQuery(''); mail.setIsSearchActive(false); } }}
+        />
+      );
+    }
+    const isInbox = decodedFolder.toUpperCase() === 'INBOX';
+    return (
+      <EmptyState
+        icon={Inbox}
+        title={isInbox ? 'Inbox is empty' : 'Folder is empty'}
+        description={isInbox ? 'Messages you receive will appear here.' : `No messages in ${decodedFolder}.`}
+      />
+    );
   }
 
   return (

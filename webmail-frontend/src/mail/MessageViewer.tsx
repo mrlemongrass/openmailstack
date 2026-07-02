@@ -231,6 +231,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         )}
       </div>
       <InlineReply
+        replyTo={message.from?.replace(/<.+?>/, '').trim() || message.from || ''}
         replyText={mail.replyText || ''}
         replySending={mail.replySending}
         onReplyTextChange={mail.setReplyText}

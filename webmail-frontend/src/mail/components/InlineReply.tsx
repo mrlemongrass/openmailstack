@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Spinner } from '../../shared/components/Spinner';
 
 interface InlineReplyProps {
+  replyTo: string;
   replyText: string;
   replySending: boolean;
   onReplyTextChange: (text: string) => void;
@@ -12,7 +13,7 @@ interface InlineReplyProps {
 }
 
 export function InlineReply({
-  replyText, replySending, onReplyTextChange, onSend, onSendAndArchive, onOpenFullCompose,
+  replyTo, replyText, replySending, onReplyTextChange, onSend, onSendAndArchive, onOpenFullCompose,
 }: InlineReplyProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -21,8 +22,9 @@ export function InlineReply({
       borderTop: '2px solid var(--border-glass)', padding: 12,
       background: 'rgba(0,0,0,0.1)',
     }}>
-      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
-        Quick Reply
+      <div style={{ fontSize: '0.8rem', marginBottom: 8 }}>
+        <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Reply to </span>
+        <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{replyTo}</span>
       </div>
       <textarea
         className="glass-input"

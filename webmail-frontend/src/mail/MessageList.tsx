@@ -73,8 +73,12 @@ export function MessageList({ mail, density }: MessageListProps) {
     return <MessageListSkeleton density={density} />;
   }
 
-  if (mail.searchError) {
+  if (mail.searchError && !mail.mailError) {
     return <ErrorBanner error={mail.searchError} onRetry={() => mail.doSearch(mail.searchQuery, mail.searchScope)} />;
+  }
+
+  if (mail.mailError) {
+    return <ErrorBanner error={mail.mailError} onRetry={() => { mail.setMailError(''); mail.fetchFolders(); mail.fetchMessages(); }} />;
   }
 
   if (!mail.mailLoading && mail.messages.length === 0) {

@@ -56,6 +56,7 @@ export function useMail(_opts: UseMailOptions) {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState('');
   const [searchInfo, setSearchInfo] = useState('');
+  const [mailError, setMailError] = useState('');
   const [searchIndexStatus, _setSearchIndexStatus] = useState<any>(null);
   const [searchWorkerStatus, _setSearchWorkerStatus] = useState<any>(null);
   const [savedSearches, _setSavedSearches] = useState<SavedSearch[]>([]);
@@ -96,7 +97,8 @@ export function useMail(_opts: UseMailOptions) {
     try {
       const folderList = await api.fetchFolders();
       setFolders(folderList);
-    } catch (e) { console.error('Failed to fetch folders', e); }
+      setMailError('');
+    } catch (e: any) { setMailError(e?.message || 'Failed to load folders'); console.error('Failed to fetch folders', e); }
   }, []);
 
   const fetchMessages = useCallback(async () => {
@@ -110,7 +112,7 @@ export function useMail(_opts: UseMailOptions) {
         setMailLowestUid(data.lowestUid || null);
         setMailMoreAvailable(data.moreAvailable !== false);
       }
-    } catch (e) { console.error('Failed to fetch messages', e); }
+    } catch (e: any) { setMailError(e?.message || 'Failed to load messages'); console.error('Failed to fetch messages', e); }
     finally { setMailLoading(false); }
   }, [activeFolder]);
 
@@ -373,6 +375,7 @@ export function useMail(_opts: UseMailOptions) {
     searchQuery, setSearchQuery, searchField, setSearchField,
     searchScope, setSearchScope, isSearchActive, setIsSearchActive,
     searchLoading, searchError, searchInfo,
+    mailError, setMailError,
     searchIndexStatus, searchWorkerStatus,
     savedSearches,
     showSearchHints, setShowSearchHints,

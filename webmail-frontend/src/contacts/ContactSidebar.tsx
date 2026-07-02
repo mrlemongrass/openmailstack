@@ -1,13 +1,11 @@
 import { useState } from 'react';
 import { Users, Building2, Plus, ScanLine, Trash2, Check, X } from 'lucide-react';
 import * as api from '../shared/api';
-import { useToast } from '../shared/components/Toast';
 import type { useContacts } from './hooks/useContacts';
 
 const GROUP_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
 export function ContactSidebar({ contacts: c, onNewContact }: { contacts: ReturnType<typeof useContacts>; onNewContact: () => void }) {
-  const { showToast } = useToast();
   const [showNewLabel, setShowNewLabel] = useState(false);
   const [newLabelName, setNewLabelName] = useState('');
   const [showNewGroup, setShowNewGroup] = useState(false);
@@ -20,8 +18,7 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
       setNewLabelName('');
       setShowNewLabel(false);
       c.refreshLabels();
-      showToast({ type: 'success', message: `Label "${newLabelName.trim()}" created` });
-    } catch { showToast({ type: 'error', message: 'Failed to create label' }); }
+    } catch { /* silent — labels refresh handles error state */ }
   };
 
   const handleCreateGroup = async () => {
@@ -31,8 +28,7 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
       setNewGroupName('');
       setShowNewGroup(false);
       c.refreshGroups();
-      showToast({ type: 'success', message: `Group "${newGroupName.trim()}" created` });
-    } catch { showToast({ type: 'error', message: 'Failed to create group' }); }
+    } catch { /* silent */ }
   };
 
   return (

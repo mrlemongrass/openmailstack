@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Send, Paperclip, Archive, Clock, Image, FileText } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
-import { useToast } from '../shared/components/Toast';
 import type { useMail } from './hooks/useMail';
 import * as api from '../shared/api';
 
@@ -31,24 +30,11 @@ function getFragmentInfo(value: string): { prefix: string; fragment: string } {
 }
 
 export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
-  const { showToast } = useToast();
   const [isDragOver, setIsDragOver] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
-  const [didSend, setDidSend] = useState(false);
-
-  // Show success toast after message sends
-  useEffect(() => {
-    if (didSend && !mail.sending && !mail.composeError && !mail.isComposing) {
-      showToast({ type: 'success', message: 'Message sent' });
-      setDidSend(false);
-    }
-    if (didSend && !mail.sending && mail.composeError) {
-      setDidSend(false); // error shown inline in compose modal
-    }
-  }, [didSend, mail.sending, mail.composeError, mail.isComposing, showToast]);
 
   // Image previews
   const [imagePreviews, setImagePreviews] = useState<{ file: File; url: string }[]>([]);
@@ -60,36 +46,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     return () => urls.forEach((p) => URL.revokeObjectURL(p.url));
   }, [mail.composeAttachments]);
 
-  if (!mail.isComposing) return null;
-
-  const size = totalSize(mail.composeAttachments);
-  const sizeExceedsWarning = size > MAX_SIZE;
-  const sizeExceedsBlock = size > BLOCK_SIZE;
-
-  const hasContent = mail.composeTo || mail.composeCc || mail.composeBcc || mail.composeSubject || mail.composeBody || mail.composeAttachments.length > 0;
-
-  const handleClose = () => {
-    if (hasContent) {
-      setShowCloseConfirm(true);
-      return;
-    }
-    mail.setIsComposing(false);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); };
-  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragOver(false); };
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault(); e.stopPropagation(); setIsDragOver(false);
-    if (e.dataTransfer.files.length > 0) {
-      mail.setComposeAttachments((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
-    }
-  };
-
-  // Aliases
-  const identities = mail.composeIdentities || [];
-  const fromOptions = identities.length > 0 ? identities : [{ address: mail.composeFrom, name: '' }];
-
-  // Contact autocomplete
+  // Contact autocomplete hooks (must be before early return)
   const [allContacts, setAllContacts] = useState<ContactSuggestion[]>([]);
   const [autocompleteField, setAutocompleteField] = useState<'to' | 'cc' | 'bcc' | null>(null);
   const [suggestions, setSuggestions] = useState<ContactSuggestion[]>([]);
@@ -172,8 +129,36 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     }).catch(() => {});
   }, []);
 
+  if (!mail.isComposing) return null;
+
+  const size = totalSize(mail.composeAttachments);
+  const sizeExceedsWarning = size > MAX_SIZE;
+  const sizeExceedsBlock = size > BLOCK_SIZE;
+
+  const hasContent = mail.composeTo || mail.composeCc || mail.composeBcc || mail.composeSubject || mail.composeBody || mail.composeAttachments.length > 0;
+
+  const handleClose = () => {
+    if (hasContent) {
+      setShowCloseConfirm(true);
+      return;
+    }
+    mail.setIsComposing(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); };
+  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragOver(false); };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation(); setIsDragOver(false);
+    if (e.dataTransfer.files.length > 0) {
+      mail.setComposeAttachments((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
+    }
+  };
+
+  // Aliases
+  const identities = mail.composeIdentities || [];
+  const fromOptions = identities.length > 0 ? identities : [{ address: mail.composeFrom, name: '' }];
+
   return (
-    <>
     <div className="compose-modal-overlay" style={{ position: 'fixed', inset: 0, zIndex: 1000,
       background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: 20 }}
       onDragOver={handleDragOver} onDragEnter={handleDragOver}
@@ -458,7 +443,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             )}
           </div>
           <button className="btn btn-primary" disabled={mail.sending || sizeExceedsBlock}
-            onClick={() => { setDidSend(true); mail.handleSend(); }}>
+            onClick={() => mail.handleSend()}>
             <Send size={16} /> {mail.sending ? <><Spinner size={14} /> Sending...</> : 'Send'}
           </button>
           <button className="btn btn-ghost" disabled={mail.sending || sizeExceedsBlock}
@@ -468,18 +453,17 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           </button>
         </div>
       </div>
+      {showCloseConfirm && (
+        <ConfirmDialog
+          open={showCloseConfirm}
+          title="Discard message?"
+          message="You have unsaved changes in this message. Your draft will be saved automatically."
+          confirmLabel="Close"
+          onConfirm={() => { setShowCloseConfirm(false); mail.setIsComposing(false); }}
+          onCancel={() => setShowCloseConfirm(false)}
+        />
+      )}
     </div>
-    {showCloseConfirm && (
-      <ConfirmDialog
-        open={showCloseConfirm}
-        title="Discard message?"
-        message="You have unsaved changes in this message. Your draft will be saved automatically."
-        confirmLabel="Close"
-        onConfirm={() => { setShowCloseConfirm(false); mail.setIsComposing(false); }}
-        onCancel={() => setShowCloseConfirm(false)}
-      />
-    )}
-    </>
   );
 }
 

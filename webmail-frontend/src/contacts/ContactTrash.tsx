@@ -3,7 +3,6 @@ import { RotateCcw, Trash2 } from 'lucide-react';
 import type { Contact } from '../shared/types';
 import * as api from '../shared/api';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
-import { useToast } from '../shared/components/Toast';
 
 export function ContactTrash({ contacts: c }: {
     contacts: {
@@ -13,14 +12,12 @@ export function ContactTrash({ contacts: c }: {
         isTrashLoading: boolean;
     };
 }) {
-    const { showToast } = useToast();
     const [deleteConfirmId, setDeleteConfirmId] = useState<number | string | null>(null);
 
     const handleRestore = async (id: number | string) => {
         await api.restoreContact(id);
         c.refreshTrash();
         c.refreshContacts();
-        showToast({ type: 'success', message: 'Contact restored' });
     };
 
     const handlePermanentDelete = async () => {
@@ -28,7 +25,6 @@ export function ContactTrash({ contacts: c }: {
         await api.permanentDeleteContact(deleteConfirmId);
         setDeleteConfirmId(null);
         c.refreshTrash();
-        showToast({ type: 'success', message: 'Contact permanently deleted' });
     };
 
     if (c.isTrashLoading) {

@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, BellOff } from 'lucide-react';
 import { format } from 'date-fns';
+import DOMPurify from 'dompurify';
 import { AttachmentCard } from './components/AttachmentCard';
 import { InlineReply } from './components/InlineReply';
 import { RawMessageModal } from './components/RawMessageModal';
@@ -56,6 +57,15 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   }
 
   const dateObj = typeof message.date === 'string' ? new Date(message.date) : message.date;
+
+  // Sanitize HTML to prevent tracking pixels, XSS, and script injection
+  const sanitizedHtml = useMemo(() => {
+    if (!message.html) return '';
+    return DOMPurify.sanitize(message.html, {
+      ALLOWED_TAGS: ['a', 'b', 'i', 'em', 'strong', 'p', 'br', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'img', 'div', 'span', 'font', 'u', 's', 'sub', 'sup', 'dl', 'dt', 'dd', 'cite', 'small'],
+      ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'width', 'height', 'style', 'class', 'id', 'color', 'bgcolor', 'align', 'border', 'cellpadding', 'cellspacing', 'colspan', 'rowspan'],
+    });
+  }, [message.html]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -140,7 +150,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         </div>
         <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: 16 }}>
           {message.html ? (
-            <div className="message-body" dangerouslySetInnerHTML={{ __html: message.html }} style={{ lineHeight: 1.6, fontSize: '0.95rem' }} />
+            <div className="message-body" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} style={{ lineHeight: 1.6, fontSize: '0.95rem' }} />
           ) : (
             <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', lineHeight: 1.6, fontSize: '0.95rem' }}>
               {message.text || '(no content)'}

@@ -91,7 +91,7 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
       borderBottom: '1px solid var(--border-glass)', flexWrap: 'wrap' }}>
-      <button className="btn btn-ghost" onClick={() => cal.setCurrentDate(new Date())}
+      <button className="btn btn-ghost" onClick={() => { cal.setCurrentDate(new Date()); showToast({ type: 'info', message: 'Jumped to today' }); }}
         style={{ fontSize: '0.85rem' }}>Today</button>
       <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={nav.prev}><ChevronLeft size={16} /></button>
       <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={nav.next}><ChevronRight size={16} /></button>

@@ -6,6 +6,7 @@ import type { AppearancePreferences, AccentColor, DensityMode, FontScale, Radius
 import { normalizeSettingsTab, type SettingsTab } from './tabs';
 import type { CalendarUserSettings, ContactsUserSettings, MailUserSettings } from './settingsApi';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
+import { useToast } from '../shared/components/Toast';
 
 interface Rule {
   id: string;
@@ -800,6 +801,7 @@ function FiltersPane({ loading, saving, rules, folders, onAddRule, onUpdateRule,
 }
 
 function MailSpamPane({ mailSettings, onMailSettingsChange }: SettingsContentProps) {
+  const { showToast } = useToast();
   const [newBlocked, setNewBlocked] = React.useState('');
   const [newSafe, setNewSafe] = React.useState('');
 
@@ -819,12 +821,14 @@ function MailSpamPane({ mailSettings, onMailSettingsChange }: SettingsContentPro
     const list = [...(mailSettings.spam?.blockedSenders || [])];
     if (!list.includes(newBlocked.trim().toLowerCase())) {
       updateSpam({ blockedSenders: [...list, newBlocked.trim().toLowerCase()] });
+      showToast({ type: 'success', message: `${newBlocked.trim()} blocked` });
     }
     setNewBlocked('');
   };
 
   const removeBlocked = (email: string) => {
     updateSpam({ blockedSenders: (mailSettings.spam?.blockedSenders || []).filter(e => e !== email) });
+    showToast({ type: 'info', message: `${email} removed from blocked` });
   };
 
   const addSafe = (e: React.FormEvent) => {
@@ -833,12 +837,14 @@ function MailSpamPane({ mailSettings, onMailSettingsChange }: SettingsContentPro
     const list = [...(mailSettings.spam?.safeSenders || [])];
     if (!list.includes(newSafe.trim().toLowerCase())) {
       updateSpam({ safeSenders: [...list, newSafe.trim().toLowerCase()] });
+      showToast({ type: 'success', message: `${newSafe.trim()} added to safe senders` });
     }
     setNewSafe('');
   };
 
   const removeSafe = (email: string) => {
     updateSpam({ safeSenders: (mailSettings.spam?.safeSenders || []).filter(e => e !== email) });
+    showToast({ type: 'info', message: `${email} removed from safe senders` });
   };
 
   return (

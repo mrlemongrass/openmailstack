@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { X, Save } from 'lucide-react';
 import type { Contact } from '../shared/types';
 import * as api from '../shared/api';
+import { useToast } from '../shared/components/Toast';
 
 export function ContactEditModal({ contact, onClose, onSaved }: {
     contact: Contact;
     onClose: () => void;
     onSaved: () => void;
 }) {
+    const { showToast } = useToast();
     const isNew = !contact.id;
     const [form, setForm] = useState<Partial<Contact>>({ ...contact });
     const [saving, setSaving] = useState(false);
@@ -23,6 +25,7 @@ export function ContactEditModal({ contact, onClose, onSaved }: {
         try {
             const result = await api.saveContact(form);
             if (result.success) {
+                showToast({ type: 'success', message: isNew ? 'Contact created' : 'Contact saved' });
                 onSaved();
                 onClose();
             } else {

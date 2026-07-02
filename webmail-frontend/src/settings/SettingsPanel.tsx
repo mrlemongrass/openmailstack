@@ -1190,8 +1190,6 @@ function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentPro
       if (res.success) {
         setPwSuccess(true);
         onPasswordChange({ current: '', new: '', confirm: '' });
-        alert(res.message);
-        window.location.reload();
       } else {
         setPwError(res.error || 'Failed to change password');
       }

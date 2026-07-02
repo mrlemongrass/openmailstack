@@ -43,7 +43,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   };
 
   // Aliases
-  const identities = (mail as any).composeIdentities || [];
+  const identities = mail.composeIdentities || [];
   const fromOptions = identities.length > 0 ? identities : [{ address: mail.composeFrom, name: '' }];
 
   // Templates

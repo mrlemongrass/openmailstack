@@ -60,6 +60,12 @@ export function useMail(_opts: UseMailOptions) {
   const [searchWorkerStatus, _setSearchWorkerStatus] = useState<any>(null);
   const [savedSearches, _setSavedSearches] = useState<SavedSearch[]>([]);
 
+  // Derive send-as identities from auth context
+  const identities: { address: string; name: string }[] = _opts.userIdentities?.address
+    ? [{ address: _opts.userIdentities.address, name: _opts.userIdentities.name || '' },
+       ...(_opts.userIdentities.aliases || []).map((a: { address: string; name?: string }) => ({ address: a.address, name: a.name || '' }))]
+    : [];
+
   // Compose state
   const [isComposing, setIsComposing] = useState(false);
   const [composeDocked, setComposeDocked] = useState(false);
@@ -70,7 +76,7 @@ export function useMail(_opts: UseMailOptions) {
   const [composeBcc, setComposeBcc] = useState('');
   const [composeSubject, setComposeSubject] = useState('');
   const [composeBody, setComposeBody] = useState('');
-  const [composeFrom, setComposeFrom] = useState('');
+  const [composeFrom, setComposeFrom] = useState(identities[0]?.address || '');
   const [composeSignature, setComposeSignature] = useState('none');
   const [composeAttachments, setComposeAttachments] = useState<File[]>([]);
   const [composeMode, setComposeMode] = useState<'rich' | 'plain'>('rich');
@@ -374,7 +380,7 @@ export function useMail(_opts: UseMailOptions) {
     showCc, setShowCc, showBcc, setShowBcc,
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc,
     composeSubject, setComposeSubject, composeBody, setComposeBody,
-    composeFrom, setComposeFrom, composeSignature, setComposeSignature,
+    composeFrom, setComposeFrom, composeIdentities: identities, composeSignature, setComposeSignature,
     composeAttachments, setComposeAttachments,
     composeMode, setComposeMode,
     draftUid, setDraftUid, draftId, setDraftId,

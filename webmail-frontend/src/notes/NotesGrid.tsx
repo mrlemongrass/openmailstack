@@ -6,6 +6,21 @@ import { ErrorBanner } from '../shared/components/ErrorBanner';
 import type { useNotes } from './hooks/useNotes';
 import type { Note } from '../shared/types';
 
+function formatRelativeTime(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'Just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHrs = Math.floor(diffMin / 60);
+  if (diffHrs < 24) return `${diffHrs}h ago`;
+  const diffDays = Math.floor(diffHrs / 24);
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays}d ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNotes> }) {
   const filtered = n.notes.filter((note) => {
     if (n.notesView === 'pinned') {
@@ -91,6 +106,8 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
   try { labels = JSON.parse(note.labels_json); } catch { labels = []; }
 
   const stripsHtml = note.content?.replace(/<[^>]*>/g, '') || '';
+  const updatedAt = note.updated_at ? new Date(note.updated_at) : null;
+  const relativeTime = updatedAt ? formatRelativeTime(updatedAt) : '';
 
   return (
     <div className="contact-card glass-panel" style={{
@@ -125,6 +142,15 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
           ))}
         </div>
       )}
+      {/* Footer: timestamp + pin indicator */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '4px 16px 8px', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+        <span>{relativeTime || 'Draft'}</span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {note.is_pinned && <Star size={11} style={{ color: '#f59e0b' }} />}
+          {note.is_locked && <Lock size={11} />}
+        </div>
+      </div>
       {/* Hover actions */}
       <div className="note-card-actions" style={{
         display: 'flex', gap: 4, padding: '0 16px 10px', opacity: 0, transition: 'opacity 0.15s',

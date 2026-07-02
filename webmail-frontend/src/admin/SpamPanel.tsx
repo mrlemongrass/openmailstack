@@ -67,6 +67,22 @@ export function SpamPanel() {
             <ExternalLink size={14} /> Open Rspamd
           </a>
           <button
+            className="btn btn-ghost"
+            onClick={() => {
+              try {
+                const parsed = JSON.parse(rules);
+                setRules(JSON.stringify(parsed, null, 2));
+                setStatus('JSON formatted successfully.');
+                setError('');
+              } catch (e: any) {
+                setError('Invalid JSON: ' + e.message);
+              }
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem' }}
+          >
+            Format
+          </button>
+          <button
             className="btn btn-primary"
             onClick={handleSave}
             disabled={saving}

@@ -32,8 +32,26 @@ export function MailLayout({ mail }: MailLayoutProps) {
 
   if (isMobile) {
     return (
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative' }}>
         {showViewer ? <MessageViewer mail={mail} /> : <Outlet />}
+        {!showViewer && (
+          <button
+            onClick={() => mail.setIsComposing(true)}
+            style={{
+              position: 'fixed', bottom: 72, right: 16, zIndex: 50,
+              width: 48, height: 48, borderRadius: '50%',
+              background: 'var(--accent-primary)', color: 'white',
+              border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 4px 16px rgba(59,130,246,0.4)',
+            }}
+            title="Compose"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        )}
         <UndoBar mailUndo={mail.mailUndo} onUndo={mail.undoAction} onDismiss={() => mail.setMailUndo(null)} />
       </div>
     );

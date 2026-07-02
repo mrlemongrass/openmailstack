@@ -23,7 +23,7 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 | Error states | 8/10 | Critical API failures surfaced across all suite apps |
 | Keyboard | 8/10 | Shortcuts added for all primary mail actions (r,a,f,s,e,#,Esc) |
 | Design system | 7/10 | Good glass theme, spinner component added, missing typography tokens |
-| Cross-suite | 6/10 | Contact autocomplete in compose + calendar guests, invites remaining |
+| Cross-suite | 7/10 | Contact autocomplete in compose + calendar guests, calendar invites in mail |
 | Mobile / Responsive | 8/10 | Admin + Settings added to mobile tab bar, single breakpoint, no tablet consideration |
 
 ## Critical Issues (broken functionality)
@@ -230,7 +230,8 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - [x] Silent API errors surfaced in Notes (notesError + ErrorBanner)
 - [x] Admin added to mobile tab bar
 - [x] Contact autocomplete in event guest field
+- [x] Calendar invite rendering in Mail message viewer (ICS detection + inline event card + Add to Calendar)
 
 ## Next Recommended UX Task
 
-Add Calendar invite rendering in Mail message viewer — detect ICS/calendar attachments or text/calendar MIME parts in email messages and render an inline card with event details and Accept/Decline/Tentative RSVP buttons. This is the highest-value remaining cross-suite integration (Calendar→Mail). Score 33: Severity 3, Reach 4, Confidence 4, Effort 3.
+Add calendar WeekView — Calendar currently has only MonthView. Implementing WeekView would unlock the most-used calendar workflow after Month. The view switcher is hidden behind `{false && (...)}` and the calendar hook already supports week view state. Score 34: Severity 4, Reach 4, Confidence 4, Effort 3.

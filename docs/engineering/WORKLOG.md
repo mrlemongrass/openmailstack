@@ -958,3 +958,80 @@ Ending git state: clean (36 commits ahead of origin)
 ### Next recommended task
 
 Add Calendar invite rendering in Mail message viewer — detect ICS/calendar attachments or text/calendar MIME parts and render an inline event card with RSVP buttons. Highest-value remaining cross-suite integration. Score 33: Severity 3, Reach 4, Confidence 4, Effort 3.
+
+---
+
+## 2026-07-02 — Calendar invite rendering in Mail message viewer
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (37 commits ahead of origin)  
+Ending git state: clean (38 commits ahead of origin)  
+
+### Selected task
+
+Render calendar invites as inline event cards in the Mail message viewer.
+
+### Why this task
+
+Cross-suite integration (Calendar→Mail) — when users receive meeting invites via email, they currently see only the raw HTML. No event details are extracted, no Add to Calendar action is available. This is a core productivity workflow covered by every major email client.
+
+Per the quality rubric:
+- **Severity 3**: Missing feature affecting common workflow
+- **Reach 4**: Affects all users who receive calendar invites
+- **Confidence 4**: Backend already uses mailparser which extracts MIME parts; ICS format is standard and parseable
+- **Effort 3**: Backend ICS extraction + frontend parser + card component + wiring
+- **Score**: (3×4) + (4×3) + (4×2) - 3 = **29**
+
+### Changes made
+
+- `webmail-backend/src/api.ts`
+  - Added `extractCalendarData()` helper — finds `text/calendar` MIME part in parsed attachments, extracts ICS content and METHOD (REQUEST/REPLY/CANCEL)
+  - Message fetch endpoint now includes `calendarData: { ics, method }` when a calendar MIME part is present
+  - Also committed compiled `api.js` + `api.js.map` (tracked build artifacts)
+
+- `webmail-frontend/src/shared/types.ts`
+  - Added `CalendarData` interface (`ics: string`, `method?: string`)
+  - Added `CalendarInvite` interface (`title`, `start`, `end`, `location?`, `description?`, `organizer?`)
+  - Added optional `calendarData?: CalendarData` to `Message` type
+
+- `webmail-frontend/src/shared/components/CalendarInviteCard.tsx` (new, 155 lines)
+  - `parseIcsInvite()` — extracts SUMMARY, DTSTART, DTEND, LOCATION, DESCRIPTION, ORGANIZER from ICS text using regex
+  - Renders glass-panel card with calendar icon, title, date/time/location/organizer details, description preview
+  - "Add to Calendar" button POSTs ICS data to `/api/apps/events`, transitions to "Added to Calendar" confirmation
+  - Graceful null return when ICS is unparseable or missing required fields
+  - Handles past events (disables add button)
+
+- `webmail-frontend/src/mail/MessageViewer.tsx`
+  - Imported `CalendarInviteCard`
+  - Renders `<CalendarInviteCard>` between message header (from/to/date) and body when `message.calendarData` is present
+
+### Proof / checks run
+
+- `webmail-backend npm run build` (tsc) — **0 errors**
+- `webmail-frontend npx tsc -b` — **TypeScript: No errors found**
+- `webmail-frontend npx vite build` — **Built successfully**
+- `webmail-backend npm test` — **26/26 tests pass**
+- Self-review: diff focused, 6 files, +211/-5
+
+### Acceptance criteria
+
+- [x] Backend detects text/calendar MIME parts in incoming messages
+- [x] ICS content and method extracted and included in API response
+- [x] Frontend parses ICS data (title, start, end, location, description, organizer)
+- [x] Inline event card rendered in message viewer with date/time/location
+- [x] "Add to Calendar" button posts ICS to events API
+- [x] Card gracefully absent when no calendar data (null-safe)
+- [x] TypeScript clean (frontend + backend)
+- [x] Backend tests pass (26/26)
+
+### Risks / notes
+
+- **ICS parsing is regex-based**: Covers common ICS fields (SUMMARY, DTSTART, DTEND, LOCATION, DESCRIPTION, ORGANIZER) but does not handle folded lines (RFC 5545 line continuations with leading whitespace), recurrence (RRULE), timezone (VTIMEZONE), or multi-value properties. Edge cases with unusual formatting may not parse. Adequate for standard meeting invites from Google Calendar, Outlook, and iCloud.
+- **No RSVP response**: Only "Add to Calendar" is implemented. Full RSVP (Accept/Decline/Tentative with email reply) would require SMTP sending of iMIP replies — deferred to future cycle.
+- **Backend compiled JS tracked**: The backend tracks compiled `.js` and `.js.map` files. The `api.js` was regenerated and committed alongside the `.ts` source.
+- **No invite dedup**: If a user clicks "Add to Calendar" multiple times, duplicate events may be created. The events API could be enhanced to check for existing ICS UID before creating.
+
+### Next recommended task
+
+Add calendar WeekView — Calendar currently has only MonthView (other views hidden). Implementing WeekView would unlock the most-used calendar workflow after Month. Score 34: Severity 4, Reach 4, Confidence 4, Effort 3.

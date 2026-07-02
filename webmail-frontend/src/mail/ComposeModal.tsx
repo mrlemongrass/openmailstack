@@ -176,7 +176,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     <div className="compose-modal-overlay" style={{ position: 'fixed', inset: 0, zIndex: 1000,
       background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: 20 }}
       onDragOver={handleDragOver} onDragEnter={handleDragOver}
-      onDragLeave={handleDragLeave} onDrop={handleDrop}>
+      onDragLeave={handleDragLeave} onDrop={handleDrop}
+      onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); handleClose(); } }}
+      tabIndex={-1} ref={(el) => el?.focus()}>
       <div className="glass-panel" style={{ width: 'min(650px, 100%)', maxHeight: '85vh', display: 'flex',
         flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
         {/* Drop overlay */}

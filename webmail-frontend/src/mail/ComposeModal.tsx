@@ -33,6 +33,17 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const sizeExceedsWarning = size > MAX_SIZE;
   const sizeExceedsBlock = size > BLOCK_SIZE;
 
+  const hasContent = mail.composeTo || mail.composeCc || mail.composeBcc || mail.composeSubject || mail.composeBody || mail.composeAttachments.length > 0;
+
+  const handleClose = () => {
+    if (hasContent) {
+      if (!window.confirm('You have unsaved changes in this message. Your draft will be saved. Close composer?')) {
+        return;
+      }
+    }
+    mail.setIsComposing(false);
+  };
+
   const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); };
   const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragOver(false); };
   const handleDrop = (e: React.DragEvent) => {
@@ -77,7 +88,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '12px 16px', borderBottom: '1px solid var(--border-glass)' }}>
           <span style={{ fontWeight: 600 }}>New Message</span>
-          <button className="btn btn-ghost" onClick={() => mail.setIsComposing(false)} style={{ padding: 4 }}>
+          <button className="btn btn-ghost" onClick={handleClose} style={{ padding: 4 }}>
             <X size={18} />
           </button>
         </div>

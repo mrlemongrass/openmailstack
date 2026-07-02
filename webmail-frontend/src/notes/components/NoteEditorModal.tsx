@@ -27,12 +27,12 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
 
   const scheduleAutoSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setSaveStatus('saving');
     saveTimerRef.current = setTimeout(async () => {
       const latest = n.editingNote;
       const title = titleRef.current?.value || latest.title || '';
       const content = latest.content || '';
       if (title || content) {
-        setSaveStatus('saving');
         try {
           const saved = await saveNote({
             id: latest.id,

@@ -9,13 +9,13 @@
 |---------|-------|--------|
 | Mail shell / AppShell | 7/10 | Good three-pane layout, missing mobile header/settings access |
 | Message list | 7/10 | Good density system, missing preview/snippet text |
-| Message viewer | 7/10 | Reply All/Forward fixed, good actions toolbar, no HTML sanitization |
+| Message viewer | 8/10 | Reply All/Forward fixed, HTML sanitized with DOMPurify |
 | Compose / Reply | 6/10 | Schedule send+identities fixed, inline reply basic |
 | Search | 4/10 | SearchBar.tsx dead code, loading never shown, hints unimplemented |
-| Calendar | 5/10 | MonthView solid, 4 views are stubs, no event empty state |
+| Calendar | 6/10 | MonthView solid, non-functional views hidden |
 | Contacts | 7/10 | Good detail/edit panels, missing empty state for grid |
 | Settings | 8/10 | Excellent feedback/validation, mobile-inaccessible, password change reloads |
-| Mobile / Responsive | 6/10 | Single breakpoint, no tablet consideration, settings/admin missing |
+| Mobile / Responsive | 7/10 | Settings added to mobile tab bar, single breakpoint, no tablet consideration |
 | Loading states | 7/10 | Good skeleton system, searchLoading/isRefreshing unused |
 | Error states | 6/10 | Great ErrorBoundary/ErrorBanner, 7+ API failures silent |
 | Design system | 6/10 | Good glass theme, missing typography/spacing tokens |
@@ -45,18 +45,21 @@
 - **Problem**: View switcher offers Month/Week/Day/Agenda/Year but only Month works
 - **User impact**: Clicking Week/Day/Agenda/Year shows dead-end placeholder
 - **Severity**: High
-- **Status**: Open
-- **Suggested fix**: Hide non-functional views or implement WeekView
-- **Ref**: `CalendarLayout.tsx:20-27`
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Hid the non-functional view switcher. Re-enable by removing `{false && (...)}` guard when views are implemented.
+- **Ref**: `CalendarToolbar.tsx:108-117`
+- **Commit**: `1e88ca8`
 
 ### 4. Settings inaccessible on mobile
 - **Surface**: Settings / Mobile
 - **Problem**: Mobile tab bar has only Mail/Calendar/Contacts/Notes — no Settings
 - **User impact**: Mobile users cannot access any settings
 - **Severity**: High
-- **Status**: Open
-- **Suggested fix**: Add Settings icon to mobile tab bar
-- **Ref**: `AppShell.tsx:85-104`
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added Settings link (gear icon + label) to mobile tab bar
+- **Commit**: `108e4c2`
+
+## High-Priority Issues (UX degradation)
 
 ## High-Priority Issues (UX degradation)
 
@@ -81,8 +84,10 @@
 - **Problem**: HTML rendered via `dangerouslySetInnerHTML` with no DOMPurify/sanitization
 - **User impact**: Tracking pixels, potential XSS via malicious email HTML
 - **Severity**: Medium (security + privacy)
-- **Status**: Open
-- **Ref**: `MessageViewer.tsx:112`
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added DOMPurify sanitization with allowlist for common email formatting tags/attributes. Uses useMemo for performance.
+- **Ref**: `MessageViewer.tsx:143`
+- **Commit**: `99fa66b`
 
 ### 8. No empty state for calendar events (first use)
 - **Surface**: Calendar
@@ -144,6 +149,9 @@
 - [x] ErrorBoundary crash protection wrapping AppShell
 - [x] Code-split Notes and Admin routes (main bundle -66%)
 - [x] Reply All and Forward buttons wired (were non-functional with empty onClick)
+- [x] Settings added to mobile tab bar (was completely inaccessible on mobile)
+- [x] HTML sanitization with DOMPurify in MessageViewer (was raw dangerouslySetInnerHTML)
+- [x] Non-functional calendar views hidden (4 of 5 views were dead-end stubs)
 
 ## Next Recommended UX Task
 

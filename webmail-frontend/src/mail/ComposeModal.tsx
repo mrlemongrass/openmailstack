@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Send, Paperclip, Archive, Clock, Image, FileText } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
+import { useToast } from '../shared/components/Toast';
 import type { useMail } from './hooks/useMail';
 import * as api from '../shared/api';
 
@@ -30,11 +31,24 @@ function getFragmentInfo(value: string): { prefix: string; fragment: string } {
 }
 
 export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
+  const { showToast } = useToast();
   const [isDragOver, setIsDragOver] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [didSend, setDidSend] = useState(false);
+
+  // Show success toast after message sends
+  useEffect(() => {
+    if (didSend && !mail.sending && !mail.composeError && !mail.isComposing) {
+      showToast({ type: 'success', message: 'Message sent' });
+      setDidSend(false);
+    }
+    if (didSend && !mail.sending && mail.composeError) {
+      setDidSend(false); // error shown inline in compose modal
+    }
+  }, [didSend, mail.sending, mail.composeError, mail.isComposing, showToast]);
 
   // Image previews
   const [imagePreviews, setImagePreviews] = useState<{ file: File; url: string }[]>([]);
@@ -444,7 +458,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             )}
           </div>
           <button className="btn btn-primary" disabled={mail.sending || sizeExceedsBlock}
-            onClick={() => mail.handleSend()}>
+            onClick={() => { setDidSend(true); mail.handleSend(); }}>
             <Send size={16} /> {mail.sending ? <><Spinner size={14} /> Sending...</> : 'Send'}
           </button>
           <button className="btn btn-ghost" disabled={mail.sending || sizeExceedsBlock}

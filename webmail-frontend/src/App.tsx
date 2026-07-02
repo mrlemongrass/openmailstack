@@ -4,6 +4,7 @@ import { AuthGate } from './shared/layouts/AuthGate';
 import { AppShell } from './shared/layouts/AppShell';
 import { ErrorBoundary } from './shared/components/ErrorBoundary';
 import { Skeleton } from './shared/components/Skeleton';
+import { ToastProvider } from './shared/components/Toast';
 import { MailRoutes } from './mail/routes';
 import { CalendarRoutes } from './calendar/routes';
 import { ContactsRoutes } from './contacts/routes';
@@ -110,6 +111,7 @@ function SyncView() {
 
 export default function App() {
   return (
+    <ToastProvider>
     <Routes>
       <Route element={<AuthGate />}>
         <Route element={<ErrorBoundary><AppShell /></ErrorBoundary>}>
@@ -124,5 +126,6 @@ export default function App() {
         </Route>
       </Route>
     </Routes>
+    </ToastProvider>
   );
 }

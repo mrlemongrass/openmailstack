@@ -1488,3 +1488,15 @@ li[data-checked="true"] .ql-checkbox {
 .attachment-item:hover {
   background: rgba(255,255,255,0.05);
 }
+
+/* Toast animation */
+@keyframes toastSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -74,8 +74,8 @@ interface SettingsContentProps {
   onAddRule: () => void;
   onUpdateRule: (id: string, updates: Partial<Rule>) => void;
   onDeleteRule: (id: string) => void;
-  vacationSettings: { enabled: boolean; subject?: string; body: string; days?: number };
-  onUpdateVacationSettings: (settings: { enabled: boolean; subject?: string; body: string; days?: number }) => void;
+  vacationSettings: { enabled: boolean; subject?: string; body: string; days?: number; startDate?: string; endDate?: string };
+  onUpdateVacationSettings: (settings: { enabled: boolean; subject?: string; body: string; days?: number; startDate?: string; endDate?: string }) => void;
   onSaveRules: () => void;
   onSaveVacation: () => void;
   onAddSignature: () => void;
@@ -691,6 +691,20 @@ function VacationPane({ vacationSettings, onUpdateVacationSettings, saving, onSa
                 onChange={event => onUpdateVacationSettings({ ...vacationSettings, days: parseInt(event.target.value, 10) || 1 })}
               />
             </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <label className="settings-field">
+                <span>Start Date (Optional)</span>
+                <input type="date" className="glass-input"
+                  value={vacationSettings.startDate || ''}
+                  onChange={event => onUpdateVacationSettings({ ...vacationSettings, startDate: event.target.value })} />
+              </label>
+              <label className="settings-field">
+                <span>End Date (Optional)</span>
+                <input type="date" className="glass-input"
+                  value={vacationSettings.endDate || ''}
+                  onChange={event => onUpdateVacationSettings({ ...vacationSettings, endDate: event.target.value })} />
+              </label>
+            </div>
             <div className="settings-disabled-note">
               The reply interval ensures that the same sender will only receive the auto-responder once every X days.
             </div>

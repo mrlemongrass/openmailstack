@@ -35,6 +35,12 @@ export function NotesSidebar({ notesCtx: n }: { notesCtx: ReturnType<typeof useN
         color: 'var(--text-secondary)', marginBottom: 8, letterSpacing: '0.05em' }}>
         Labels
       </div>
+      {n.notesLabels.includes(n.notesView) && (
+        <button className="btn btn-ghost" style={{ fontSize: '0.75rem', marginBottom: 8, width: '100%' }}
+          onClick={() => n.setNotesView('notes')}>
+          Clear label filter
+        </button>
+      )}
       {n.notesLabels.map((label) => (
         <div key={label} className="nav-item" style={{ display: 'flex', alignItems: 'center', gap: 8,
           padding: '4px 10px', borderRadius: 'var(--radius-md)', cursor: 'pointer',

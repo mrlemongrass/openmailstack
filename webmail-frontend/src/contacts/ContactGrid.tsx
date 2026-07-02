@@ -189,7 +189,8 @@ function ContactCard({ contact, onClick, isSelected, onToggleSelect }: {
                         {contact.name || contact.email}
                     </div>
                     {contact.email && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contact.email}</div>}
-                    {contact.phone && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 2 }}>{contact.phone}</div>}
+                    {contact.organization && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contact.organization}{contact.jobTitle ? ` · ${contact.jobTitle}` : ''}</div>}
+                    {!contact.organization && contact.phone && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 2 }}>{contact.phone}</div>}
                 </div>
             </div>
         </div>

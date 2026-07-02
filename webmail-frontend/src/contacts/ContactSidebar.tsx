@@ -137,6 +137,12 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
         ))}
       </div>
 
+      {(c.selectedLabel !== null || c.selectedGroupId !== null) && (
+        <button className="btn btn-ghost" style={{ fontSize: '0.75rem', marginBottom: 8, width: '100%' }}
+          onClick={() => { c.setSelectedLabel(null); c.setSelectedGroupId(null); }}>
+          Clear filter
+        </button>
+      )}
       <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border-glass)' }}>
         <div className="nav-item" style={{ display: 'flex', alignItems: 'center', gap: 8,
           padding: '6px 10px', borderRadius: 'var(--radius-md)', cursor: 'pointer',

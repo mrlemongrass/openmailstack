@@ -23,6 +23,20 @@ export interface FolderTreeNode {
   unseen: number;
 }
 
+export interface CalendarData {
+  ics: string;
+  method?: string;
+}
+
+export interface CalendarInvite {
+  title: string;
+  start: Date;
+  end: Date;
+  location?: string;
+  description?: string;
+  organizer?: string;
+}
+
 export interface Message {
   folder?: string;
   uid: number;
@@ -46,6 +60,7 @@ export interface Message {
   draftId?: string;
   threadCount?: number;
   threadUids?: number[];
+  calendarData?: CalendarData;
 }
 
 export interface MessageAttachment {

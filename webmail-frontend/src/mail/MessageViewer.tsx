@@ -9,6 +9,7 @@ import { RawMessageModal } from './components/RawMessageModal';
 import { SnoozePopover } from './components/SnoozePopover';
 import { MoveToPopover } from './components/MoveToPopover';
 import { Skeleton } from '../shared/components/Skeleton';
+import { CalendarInviteCard } from '../shared/components/CalendarInviteCard';
 import type { useMail } from './hooks/useMail';
 
 export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
@@ -210,6 +211,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           {message.to && <div><strong style={{ color: 'var(--text-primary)' }}>To:</strong> {message.to}</div>}
           <div><strong style={{ color: 'var(--text-primary)' }}>Date:</strong> {dateObj ? format(dateObj, 'EEEE, MMMM d, yyyy h:mm a') : ''}</div>
         </div>
+        {message.calendarData && <CalendarInviteCard calendarData={message.calendarData} />}
         <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: 16 }}>
           {message.html ? (
             <div className="message-body" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} style={{ lineHeight: 1.6, fontSize: '0.95rem' }} />

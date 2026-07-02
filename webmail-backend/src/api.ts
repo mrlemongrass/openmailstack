@@ -233,6 +233,18 @@ const getAttachmentMetadata = (parsed: any) => getVisibleAttachments(parsed).map
     };
 });
 
+/** Extract text/calendar ICS content from parsed MIME parts for invite rendering. */
+const extractCalendarData = (parsed: any): { ics: string; method?: string } | null => {
+    if (!Array.isArray(parsed.attachments)) return null;
+    const calPart = parsed.attachments.find((a: any) =>
+        a?.contentType === 'text/calendar' && typeof a.content === 'string' && a.content.length > 0
+    );
+    if (!calPart) return null;
+    // Parse the method from the ICS content (e.g., REQUEST, REPLY, CANCEL)
+    const methodMatch = calPart.content.match(/^METHOD:(\S+)$/im);
+    return { ics: calPart.content, method: methodMatch?.[1]?.toUpperCase() || undefined };
+};
+
 const parsedMailToSummary = (folder: string, msg: any, parsed: any, previewLength = 100) => ({
     folder,
     uid: msg.uid,
@@ -1719,8 +1731,9 @@ apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req: any, re
         if (!msg) return res.status(404).json({ success: false, error: 'Not found' });
         
         const parsed = await simpleParser(msg.source);
-        res.json({ 
-            success: true, 
+        const calData = extractCalendarData(parsed);
+        res.json({
+            success: true,
             message: {
                 uid: msg.uid,
                 subject: parsed.subject || '(No Subject)',
@@ -1736,7 +1749,8 @@ apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req: any, re
                 draftId: parsed.headers.get('x-draft-id'),
                 messageId: parsed.messageId || '',
                 inReplyTo: parsed.inReplyTo || '',
-                references: parsed.references || []
+                references: parsed.references || [],
+                calendarData: calData || undefined
             }
         });
     } catch (err: any) {

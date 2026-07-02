@@ -174,6 +174,16 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
             Archive
           </button>
         ) : null}
+        {note.folder !== 'trash' && (
+          <button className="btn btn-ghost btn-xs"
+            style={{ fontSize: '0.7rem', color: note.is_pinned ? '#f59e0b' : undefined }}
+            onClick={(e) => {
+              e.stopPropagation();
+              n.saveNote({ id: note.id, is_pinned: note.is_pinned ? 0 : 1 } as any);
+            }}>
+            <Star size={12} fill={note.is_pinned ? '#f59e0b' : 'none'} /> {note.is_pinned ? 'Unpin' : 'Pin'}
+          </button>
+        )}
       </div>
       {note.is_pinned ? (
         <div style={{ position: 'absolute', top: 8, right: 8 }}>

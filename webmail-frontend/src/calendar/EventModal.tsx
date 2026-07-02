@@ -21,25 +21,18 @@ function generateVideoId(): string {
 export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const { showToast } = useToast();
 
-  if (!cal.isEventModalOpen) return null;
-  const evt = cal.newEvent;
-  const isEditing = !!cal.editingEvent;
-
-  const handleSave = async () => {
-    const ok = await cal.saveEvent();
-    if (ok !== false) {
-      showToast({ type: 'success', message: isEditing ? 'Event updated' : 'Event created' });
-    }
-  };
+  // ── All hooks MUST be before the early return ──────────────────────────
 
   const [guestInput, setGuestInput] = useState('');
-  const [guests, setGuests] = useState<string[]>((evt.guests as string[]) || []);
+  const [guests, setGuests] = useState<string[]>([]);
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
 
   // Contact autocomplete for guest field
   const [guestSuggestions, setGuestSuggestions] = useState<{ name: string; email: string }[]>([]);
   const [guestSelectedIndex, setGuestSelectedIndex] = useState(0);
   const guestBlurRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [allGuestContacts, setAllGuestContacts] = useState<{ name: string; email: string }[]>([]);
 
   useEffect(() => {
     api.fetchContacts(500, 0).then((data: any) => {
@@ -50,8 +43,6 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
       }
     }).catch(() => {});
   }, []);
-
-  const [allGuestContacts, setAllGuestContacts] = useState<{ name: string; email: string }[]>([]);
 
   const handleGuestInputChange = useCallback((value: string) => {
     setGuestInput(value);
@@ -78,14 +69,21 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
   const handleGuestKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (guestSuggestions.length === 0) {
-      if (e.key === 'Enter') { e.preventDefault(); handleAddGuest(); }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const email = guestInput.trim();
+        if (email && email.includes('@') && !guests.includes(email)) {
+          setGuests((prev) => [...prev, email]);
+          setGuestInput('');
+        }
+      }
       return;
     }
     if (e.key === 'ArrowDown') { e.preventDefault(); setGuestSelectedIndex((p) => (p + 1) % guestSuggestions.length); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setGuestSelectedIndex((p) => (p - 1 + guestSuggestions.length) % guestSuggestions.length); }
     else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); selectGuestSuggestion(guestSuggestions[guestSelectedIndex]); }
     else if (e.key === 'Escape') { setGuestSuggestions([]); }
-  }, [guestSuggestions, guestSelectedIndex, selectGuestSuggestion]);
+  }, [guestSuggestions, guestSelectedIndex, selectGuestSuggestion, guestInput, guests]);
 
   const handleGuestBlur = useCallback(() => {
     guestBlurRef.current = setTimeout(() => setGuestSuggestions([]), 150);
@@ -95,6 +93,38 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
     if (guestBlurRef.current) { clearTimeout(guestBlurRef.current); guestBlurRef.current = null; }
     if (guestInput.length >= 2) handleGuestInputChange(guestInput);
   }, [guestInput, handleGuestInputChange]);
+
+  // Sync guests to newEvent and trigger free/busy lookup
+  useEffect(() => {
+    const evt = cal.newEvent;
+    if (guests.length > 0) {
+      cal.setNewEvent((prev) => ({ ...prev, guests }));
+    }
+    if (guests.length > 0 && evt.start) {
+      cal.lookupFreeBusy(guests, evt.start as Date, evt.end as Date);
+    }
+  }, [guests, cal]);
+
+  // Initialize guests when modal opens
+  useEffect(() => {
+    if (cal.isEventModalOpen) {
+      setGuests((cal.newEvent.guests as string[]) || []);
+    }
+  }, [cal.isEventModalOpen, cal.newEvent.guests]);
+
+  // ── Early return after all hooks ──────────────────────────────────────
+
+  if (!cal.isEventModalOpen) return null;
+
+  const evt = cal.newEvent;
+  const isEditing = !!cal.editingEvent;
+
+  const handleSave = async () => {
+    const ok = await cal.saveEvent();
+    if (ok !== false) {
+      showToast({ type: 'success', message: isEditing ? 'Event updated' : 'Event created' });
+    }
+  };
 
   // #4 Video call generation
   const addVideoLink = (provider: typeof VIDEO_PROVIDERS[number]) => {
@@ -112,19 +142,6 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
       setGuestInput('');
     }
   };
-
-  useEffect(() => {
-    if (guests.length > 0) {
-      cal.setNewEvent((prev) => ({ ...prev, guests }));
-    }
-  }, [guests]);
-
-  // #2 Free/busy lookup when guests change
-  useEffect(() => {
-    if (guests.length > 0 && evt.start) {
-      cal.lookupFreeBusy(guests, evt.start as Date, evt.end as Date);
-    }
-  }, [guests.length]);
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.7)',

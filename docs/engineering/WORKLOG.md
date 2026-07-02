@@ -1035,3 +1035,86 @@ Per the quality rubric:
 ### Next recommended task
 
 Add calendar WeekView — Calendar currently has only MonthView (other views hidden). Implementing WeekView would unlock the most-used calendar workflow after Month. Score 34: Severity 4, Reach 4, Confidence 4, Effort 3.
+
+---
+
+## 2026-07-02 — 4-cycle batch: Calendar + Settings + Cross-suite + Sync
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (40 commits ahead of origin)  
+Ending git state: clean (44 commits ahead of origin)  
+
+### Cycle 1: Calendar WeekView
+
+**Why**: Calendar only had MonthView (Week/Day/Agenda/Year hidden). WeekView is the second most-used calendar view and the most requested missing feature.
+
+**Fix**: Created `views/WeekView.tsx` (155 lines) with 7-day time-slotted grid. 24-hour rows at 56px each, events positioned absolutely by time with overlapping-lane assignment. All-day event row at top. Current-time indicator (red line) for today. Click empty slot to create event, click event to edit. Enabled view switcher (Month + Week) in CalendarToolbar.
+
+**Score**: 34 (Severity 4, Reach 4, Confidence 4, Effort 3)
+
+**Commit**: `0171f14`
+
+---
+
+### Cycle 2: Settings — remove password change alert+reload
+
+**Why**: Password change success used `alert(res.message)` + `window.location.reload()` which was jarring and wiped the inline success banner.
+
+**Fix**: Removed both `alert()` and `window.location.reload()`. The inline `pwSuccess` state already renders "Password changed successfully" — it now displays naturally without interruption. Session cookie remains valid after password change.
+
+**Score**: 33 (Severity 3, Reach 4, Confidence 5, Effort 1)
+
+**Commit**: `ec7e5ab`
+
+---
+
+### Cycle 3: Cross-suite — Contact Email opens in-app compose
+
+**Why**: ContactQuickActions Email button used `mailto:` links that opened the system mail client. This broke the suite feel — users should compose within OpenMailStack.
+
+**Fix**: Replaced `<a href="mailto:...">` with button that dispatches `oms:compose` CustomEvent + navigates to `/mail/inbox`. MailRoutes listens for the event (same-route) and checks sessionStorage (cross-route fallback) to pre-fill compose with the contact's email. Dual-delivery ensures compose opens in both scenarios.
+
+**Score**: 29 (Severity 3, Reach 3, Confidence 5, Effort 2)
+
+**Commit**: `55a140f`
+
+---
+
+### Cycle 4: Sync Setup — copy-to-clipboard and refined layout
+
+**Why**: Sync Setup page had plain text URLs with no copy functionality. Users had to manually select and copy server addresses.
+
+**Fix**: Extracted `SyncRow` component with per-row copy-to-clipboard button (Check icon confirmation, 2s timeout). Added protocol-specific icons (Mail, Globe, Calendar, Users) in tinted containers. Improved layout with clearer port/protocol details and styled authentication callout box. Clipboard fallback for older browsers.
+
+**Score**: 31 (Severity 2, Reach 5, Confidence 5, Effort 2)
+
+**Commit**: `577cce8`
+
+---
+
+### Proof / checks run (all cycles)
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` (frontend) | No errors × 4 cycles |
+| `npx vite build` (frontend) | Success × 4 cycles |
+| `npm test` (backend) | 26/26 pass × 4 cycles |
+| Self-review | Each diff reviewed before commit |
+
+### Docs updated
+
+- `UX_AUDIT.md`: Calendar 7→8, Cross-suite 7→8, Settings 8→9, Sync added 7/10, duplicate rows consolidated, completed list 22→26
+- `SUITE_FEATURE_MATRIX.md`: WeekView updated, 4 new Implemented rows (Contact→compose, password UX, sync copy, admin mobile)
+- `WORKLOG.md`: This entry
+
+### Risks / notes
+
+- **WeekView performance**: 24×7=168 click targets with inline onClick handlers. Should be fine for typical calendars with < 1000 events. May need virtualization for very large calendars.
+- **Event lane assignment**: Simple greedy algorithm places overlapping events in separate lanes. Works well for 2-3 overlapping events; more complex layouts (e.g., 5+ overlapping) may need a more sophisticated algorithm.
+- **Contact→compose**: Uses `window.location.href` for navigation which triggers a full SPA re-render. A React Router-based approach using `useNavigate` would be cleaner but requires the ContactQuickActions component to have router access.
+- **Password reload**: Session remains valid after password change on the current backend (session cookie based, not per-request password auth). If the backend changes to require re-auth after password change, the reload may need to be restored but should use a cleaner redirect.
+
+### Next recommended task
+
+Add Notes checklist blocks — Apple Notes and Google Keep support interactive checklists. The Notes editor (react-quill-new) supports custom blots for checklists. Adding a checklist toggle would improve Notes app parity. Score 28: Severity 3, Reach 3, Confidence 4, Effort 3.

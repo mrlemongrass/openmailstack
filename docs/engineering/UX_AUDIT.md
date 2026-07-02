@@ -14,17 +14,17 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 | Message viewer | 8/10 | Reply All/Forward fixed, HTML sanitized with DOMPurify |
 | Compose / Reply | 6/10 | Schedule send+identities fixed, inline reply basic |
 | Search | 6/10 | Search always visible, loading indicator added, hints unimplemented |
-| Calendar | 7/10 | MonthView solid, non-functional views hidden, empty state added |
-| Contacts | 8/10 | Good detail/edit panels, empty state added |
-| Settings | 8/10 | Excellent feedback/validation, mobile-inaccessible, password change reloads |
+| Calendar | 8/10 | MonthView + WeekView functional, empty/error states added, guest autocomplete |
+| Contacts | 8/10 | Good detail/edit panels, empty/error states added, Email opens in-app compose |
+| Settings | 9/10 | Excellent feedback/validation, password reload removed, mobile now accessible |
 | Mobile / Responsive | 7/10 | Settings added to mobile tab bar, single breakpoint, no tablet consideration |
 | Loading states | 8/10 | Good skeleton system, searchLoading indicator added |
-| Error states | 7/10 | Great ErrorBoundary/ErrorBanner, critical API failures surfaced |
 | Error states | 8/10 | Critical API failures surfaced across all suite apps |
 | Keyboard | 8/10 | Shortcuts added for all primary mail actions (r,a,f,s,e,#,Esc) |
 | Design system | 7/10 | Good glass theme, spinner component added, missing typography tokens |
-| Cross-suite | 7/10 | Contact autocomplete in compose + calendar guests, calendar invites in mail |
-| Mobile / Responsive | 8/10 | Admin + Settings added to mobile tab bar, single breakpoint, no tablet consideration |
+| Cross-suite | 8/10 | Compose + guest autocomplete, calendar invites, contact Email→compose |
+| Sync | 7/10 | Setup page with copy-to-clipboard and protocol icons, no live diagnostics |
+| Mobile / Responsive | 8/10 | Admin + Settings added to mobile tab bar, single 768px breakpoint |
 
 ## Critical Issues (broken functionality)
 
@@ -231,7 +231,11 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - [x] Admin added to mobile tab bar
 - [x] Contact autocomplete in event guest field
 - [x] Calendar invite rendering in Mail message viewer (ICS detection + inline event card + Add to Calendar)
+- [x] Calendar WeekView implemented (time-slotted 7-day grid, all-day events, current time indicator)
+- [x] Password change flow: removed alert() + window.location.reload() (inline feedback instead)
+- [x] Contact Email quick action opens in-app compose instead of system mailto:
+- [x] Sync Setup page: copy-to-clipboard, protocol icons, refined layout
 
 ## Next Recommended UX Task
 
-Add calendar WeekView — Calendar currently has only MonthView. Implementing WeekView would unlock the most-used calendar workflow after Month. The view switcher is hidden behind `{false && (...)}` and the calendar hook already supports week view state. Score 34: Severity 4, Reach 4, Confidence 4, Effort 3.
+Add Notes checklist blocks — Apple Notes and Google Keep support interactive checklists. Adding a checklist toggle in the Notes editor would improve the Notes app parity. Score 28: Severity 3, Reach 3, Confidence 4, Effort 3.

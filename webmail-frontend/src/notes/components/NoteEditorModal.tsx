@@ -23,39 +23,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | null>(null);
 
-  if (!n.isNoteModalOpen) return null;
-
-  const note = n.editingNote;
-
-  const handleClose = useCallback(async () => {
-    // Flush any pending auto-save before closing
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-    const latest = n.editingNote;
-    const title = titleRef.current?.value || latest.title || '';
-    const content = latest.content || '';
-    if (title || content) {
-      try {
-        await saveNote({
-          id: latest.id,
-          title: title || 'Untitled',
-          content: content || '',
-          color: latest.color,
-          is_pinned: latest.is_pinned,
-          is_locked: latest.is_locked,
-          folder: latest.folder || 'notes',
-          labels_json: latest.labels_json || '[]',
-        } as any);
-      } catch (e) {
-        console.error('Save on close failed', e);
-      }
-    }
-    n.setIsNoteModalOpen(false);
-    n.setEditingNote({});
-    n.fetchNotes();
-    if (title || content) showToast({ type: 'success', message: 'Note saved' });
-  }, [n, showToast]);
+  // ── All hooks MUST be before the early return ──────────────────────────
 
   const scheduleAutoSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -89,6 +57,33 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     }, 1500);
   }, [n]);
 
+  const handleClose = useCallback(async () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    const latest = n.editingNote;
+    const title = titleRef.current?.value || latest.title || '';
+    const content = latest.content || '';
+    if (title || content) {
+      try {
+        await saveNote({
+          id: latest.id,
+          title: title || 'Untitled',
+          content: content || '',
+          color: latest.color,
+          is_pinned: latest.is_pinned,
+          is_locked: latest.is_locked,
+          folder: latest.folder || 'notes',
+          labels_json: latest.labels_json || '[]',
+        } as any);
+      } catch (e) {
+        console.error('Save on close failed', e);
+      }
+    }
+    n.setIsNoteModalOpen(false);
+    n.setEditingNote({});
+    n.fetchNotes();
+    if (title || content) showToast({ type: 'success', message: 'Note saved' });
+  }, [n, showToast]);
+
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     n.setEditingNote((prev: any) => ({ ...prev, title: e.target.value }));
     scheduleAutoSave();
@@ -99,19 +94,24 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     scheduleAutoSave();
   }, [n, scheduleAutoSave]);
 
-  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, []);
 
-  // Focus title on new note
   useEffect(() => {
-    if (!note.id && titleRef.current) {
+    const noteId = n.editingNote.id;
+    if (!noteId && titleRef.current) {
       titleRef.current.focus();
     }
-  }, [note.id]);
+  }, [n.editingNote.id]);
+
+  // ── Early return after all hooks ──────────────────────────────────────
+
+  if (!n.isNoteModalOpen) return null;
+
+  const note = n.editingNote;
 
   return (
     <div className="note-modal-overlay" onClick={(e) => {

@@ -4,6 +4,7 @@ import { useCalendar } from './hooks/useCalendar';
 import { CalendarSidebar } from './CalendarSidebar';
 import { MonthView } from './views/MonthView';
 import { WeekView } from './views/WeekView';
+import { DayView } from './views/DayView';
 import { CalendarToolbar } from './CalendarToolbar';
 import { EventModal } from './EventModal';
 import { Skeleton } from '../shared/components/Skeleton';
@@ -47,6 +48,8 @@ function renderCalendarContent(cal: ReturnType<typeof useCalendar>) {
       return <MonthView cal={cal} />;
     case 'week':
       return <WeekView cal={cal} />;
+    case 'day':
+      return <DayView cal={cal} />;
     default:
       return (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-secondary)', fontSize: '1.1rem' }}>

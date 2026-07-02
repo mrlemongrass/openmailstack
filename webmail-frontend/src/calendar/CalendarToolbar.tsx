@@ -107,7 +107,7 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
 
       {/* View switcher — Month and Week are implemented */}
       <div style={{ display: 'flex', gap: 2 }}>
-        {(['month', 'week'] as const).map((v) => (
+        {(['month', 'week', 'day'] as const).map((v) => (
           <button key={v} className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: '0.8rem', textTransform: 'capitalize',
             background: cal.calendarView === v ? 'rgba(59,130,246,0.15)' : 'transparent',
             fontWeight: cal.calendarView === v ? 600 : 400 }}

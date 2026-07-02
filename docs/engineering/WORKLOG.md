@@ -1737,3 +1737,21 @@ Changed to `width: min(Npx, 100%)` — caps at designed width on desktop, shrink
 **Commit**: `329bb35`
 
 ### Proof: TSC ✅, Build ✅, Playwright: compose fits 375px viewport
+
+---
+
+## 2026-07-02 — UI/UX QoL Pass #4: Escape to close compose
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`
+
+### Stress case
+**Keyboard-heavy user**: Typing email, want to discard with Escape instead of reaching for mouse.
+
+### Fix
+Added `onKeyDown` on compose overlay: Escape triggers `handleClose()` (with unsaved content confirmation). Overlay auto-focuses via `tabIndex=-1` + `ref`.
+
+**File**: `ComposeModal.tsx` (+3/-1)  
+**Commit**: `1d94362`
+
+### Proof: TSC ✅, Build ✅, Playwright: Escape closes compose

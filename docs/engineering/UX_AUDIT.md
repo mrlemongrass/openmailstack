@@ -162,6 +162,15 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Fix**: Changed to `width: min(650px, 100%)` and `width: min(600px, 100%)` for responsive sizing
 - **Commit**: `329bb35`
 
+### Q5. Compose modal: no keyboard Escape to close
+- **Surface**: Compose
+- **Stress case**: Keyboard user composing — must reach for mouse to close modal
+- **User impact**: Breaks keyboard workflow, excessive mouse travel
+- **Severity**: Medium
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added `onKeyDown` handler on overlay div, Escape calls `handleClose()`. Overlay auto-focuses via `tabIndex=-1`.
+- **Commit**: `1d94362`
+
 ## Polish Issues (not blocking)
 
 ### 11. No design tokens for typography, spacing, or font weights

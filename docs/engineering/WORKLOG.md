@@ -868,3 +868,93 @@ Per the quality rubric:
 ### Next recommended task
 
 Add calendar WeekView — Calendar currently has only MonthView (other views hidden behind `{false && (...)}` guard). Implementing WeekView would unlock the most-used calendar workflow after Month. Score 34: Severity 4, Reach 4, Confidence 4, Effort 3.
+
+---
+
+## 2026-07-02 — Multipass batch: 4 cycles (bug fix + suite + product + cross-suite)
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (32 commits ahead of origin)  
+Ending git state: clean (36 commits ahead of origin)  
+
+### Cycle 1: Hard bug/regression — autocomplete blur race + calendar silent errors
+
+**Why**: ComposeModal autocomplete had a blur/focus race condition; calendar fetch failures silently logged to console (same pattern previously fixed in useMail).
+
+**Fix**: Added `blurTimerRef` to cancel pending blur clears on field focus. Added `calendarError` state to useCalendar, set on fetch failure / cleared on success, surfaced via ErrorBanner with Retry in CalendarLayout.
+
+**Files**: `ComposeModal.tsx` (+5/-1), `useCalendar.ts` (+3/-1), `CalendarLayout.tsx` (+10)
+
+**Score**: 35 (Severity 3, Reach 5, Confidence 5, Effort 2)
+
+**Commit**: `bd31c3f`
+
+---
+
+### Cycle 2: Core suite — surface silent API errors in Contacts + Notes
+
+**Why**: Contacts and Notes hooks had the same silent-error pattern (7 silent errors in useContacts, 3 in useNotes). Users saw empty states when APIs failed.
+
+**Fix**: Added `contactsError` + `notesError` states, set on primary fetch failure / cleared on success, surfaced via ErrorBanner with Retry in ContactGrid and NotesGrid.
+
+**Files**: `useContacts.ts` (+2/-1), `ContactGrid.tsx` (+7), `useNotes.ts` (+3/-1), `NotesGrid.tsx` (+8)
+
+**Score**: 34 (Severity 3, Reach 5, Confidence 5, Effort 1)
+
+**Commit**: `f710017`
+
+---
+
+### Cycle 3: Product experience — Admin on mobile
+
+**Why**: Admin panel completely inaccessible on mobile — desktop header shows ShieldAlert link but mobile tab bar had no Admin entry.
+
+**Fix**: Added Admin tab (ShieldAlert icon + "Admin" label) as 6th item in mobile tab bar, matching desktop parity and existing Settings pattern.
+
+**Files**: `AppShell.tsx` (+10)
+
+**Score**: 34 (Severity 4, Reach 3, Confidence 5, Effort 1)
+
+**Commit**: `a410acb`
+
+---
+
+### Cycle 4: Cross-suite integration — contact autocomplete in event guests
+
+**Why**: EventModal guest input was plain text with no contact suggestions. Same gap as compose autocomplete — connects Contacts→Calendar.
+
+**Fix**: Added contact fetching + filtered dropdown to guest field with keyboard nav (arrows/enter/escape). Selecting a contact adds them as guest with automatic free/busy lookup.
+
+**Files**: `EventModal.tsx` (+86/-4)
+
+**Score**: 28 (Severity 3, Reach 3, Confidence 5, Effort 3)
+
+**Commit**: `d0d733b`
+
+---
+
+### Proof / checks run (all cycles)
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` (frontend) | No errors × 4 cycles |
+| `npx vite build` (frontend) | Success × 4 cycles |
+| `npm test` (backend) | 26/26 pass × 4 cycles |
+| Self-review | Each diff reviewed before commit |
+
+### Docs updated
+
+- `UX_AUDIT.md`: Added issues #17-19 (silent errors surfacing, admin mobile, guest autocomplete), updated scores (Error states 7→8, Cross-suite new 6/10, Mobile 7→8), updated completed list (19→22 done)
+- `SUITE_FEATURE_MATRIX.md`: Added 4 new rows (compose autocomplete, guest autocomplete, error surfacing, admin mobile) as Implemented
+- `WORKLOG.md`: This entry
+
+### Risks / notes
+
+- **Mobile tab bar**: Now 6 items at ~62px each on 375px screens. Workable but tight — future tablet breakpoint could use a wider layout.
+- **Contact fetching duplication**: Both ComposeModal and EventModal independently fetch contacts (api.fetchContacts). Future enhancement could lift this to a shared hook or context.
+- **No frontend tests**: All verification is via TypeScript + build. Frontend interaction tests would improve confidence for the autocomplete features.
+
+### Next recommended task
+
+Add Calendar invite rendering in Mail message viewer — detect ICS/calendar attachments or text/calendar MIME parts and render an inline event card with RSVP buttons. Highest-value remaining cross-suite integration. Score 33: Severity 3, Reach 4, Confidence 4, Effort 3.

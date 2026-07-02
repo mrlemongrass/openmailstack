@@ -29,6 +29,11 @@ Translate useful ideas into OpenMailStack-native, self-hostable, privacy-respect
 | Mail | Undo send | Gmail/Outlook-style delayed send | Configurable short cancellation window before final SMTP send | Should | Not Started | Requires queue/delay semantics |
 | Mail | Snooze | Gmail/Outlook-style snooze | Hide until selected time, restore to inbox via queue | Should | Partial | Verify current implementation |
 | Mail | Rules/filters | Gmail filters / Outlook rules | User-defined server-side rules via Sieve or backend rules engine | Must | Needs Verification | |
+| Mail | Contact autocomplete in compose | iCloud/Google/Outlook | Typing in To/Cc/Bcc shows filtered contact dropdown from personal contacts | Must | Implemented | 2026-07-02: self-contained in ComposeModal.tsx, multi-recipient support, keyboard nav |
+| Calendar | Week/day/agenda views | iCloud/Google/Outlook calendars | Functional views or hide incomplete options | Must | Partial | Current report says only Month implemented |
+| Calendar | Contact autocomplete in guests | iCloud/Google/Outlook | Typing in event guest field shows filtered contact dropdown | Should | Implemented | 2026-07-02: EventModal.tsx, same pattern as compose autocomplete |
+| Suite | API error surfacing | Gmail/Outlook error banners | User-facing ErrorBanner with Retry across Calendar, Contacts, Notes | Must | Implemented | 2026-07-02: calendarError, contactsError, notesError states |
+| Suite | Admin on mobile | All productivity apps | Admin panel accessible from mobile tab bar | Should | Implemented | 2026-07-02: ShieldAlert icon + label in mobile nav |
 | Calendar | Week/day/agenda views | iCloud/Google/Outlook calendars | Functional views or hide incomplete options | Must | Partial | Current report says only Month implemented |
 | Calendar | Appointment scheduling | Google Calendar booking pages | Self-hosted booking page per user/calendar | Could | Not Started | Requires public availability rules |
 | Calendar | Shared calendars | iCloud/Outlook/Google | Share read/edit permissions, ICS public links | Should | Needs Verification | |

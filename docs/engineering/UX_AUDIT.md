@@ -20,8 +20,11 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 | Mobile / Responsive | 7/10 | Settings added to mobile tab bar, single breakpoint, no tablet consideration |
 | Loading states | 8/10 | Good skeleton system, searchLoading indicator added |
 | Error states | 7/10 | Great ErrorBoundary/ErrorBanner, critical API failures surfaced |
+| Error states | 8/10 | Critical API failures surfaced across all suite apps |
 | Keyboard | 8/10 | Shortcuts added for all primary mail actions (r,a,f,s,e,#,Esc) |
 | Design system | 7/10 | Good glass theme, spinner component added, missing typography tokens |
+| Cross-suite | 6/10 | Contact autocomplete in compose + calendar guests, invites remaining |
+| Mobile / Responsive | 8/10 | Admin + Settings added to mobile tab bar, single breakpoint, no tablet consideration |
 
 ## Critical Issues (broken functionality)
 
@@ -164,6 +167,33 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Fix**: Added EmptyState with PenLine icon and description
 - **Commit**: `70a75e8`
 
+### 17. Silent API errors in Calendar, Contacts, Notes hooks
+- **Surface**: Calendar, Contacts, Notes
+- **Problem**: API fetch failures silently logged to console — users saw empty states instead of errors
+- **User impact**: Misleading UX: "No events" / "No contacts" when actually the server is unreachable
+- **Severity**: Medium
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added error state (calendarError, contactsError, notesError) to each hook, surfaced via ErrorBanner with Retry button in CalendarLayout, ContactGrid, and NotesGrid.
+- **Commits**: `bd31c3f`, `f710017`
+
+### 18. Admin panel inaccessible on mobile
+- **Surface**: Admin / Mobile
+- **Problem**: Admin (ShieldAlert) link visible in desktop header but not in mobile tab bar
+- **User impact**: Admin users on mobile cannot access the admin panel
+- **Severity**: Medium
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added Admin tab (ShieldAlert icon + label) to mobile tab bar, matching desktop parity
+- **Commit**: `a410acb`
+
+### 19. No contact autocomplete in event guest field
+- **Surface**: Calendar / EventModal
+- **Problem**: Event guest input was plain text with no contact suggestions
+- **User impact**: Users must type full guest emails from memory
+- **Severity**: Low
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added contact autocomplete to guest field with the same pattern as compose autocomplete (fetchContacts, filtered dropdown, keyboard nav)
+- **Commit**: `d0d733b`
+
 ### 16. No contact autocomplete in compose
 - **Surface**: Compose
 - **Problem**: To/Cc/Bcc fields are plain text inputs with no address autocomplete
@@ -195,7 +225,12 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - [x] Notes grid empty state (was blank after loading)
 - [x] Spinner component created and wired into key loading states
 - [x] Contact autocomplete in compose To/Cc/Bcc fields
+- [x] Silent API errors surfaced in Calendar (calendarError + ErrorBanner)
+- [x] Silent API errors surfaced in Contacts (contactsError + ErrorBanner)
+- [x] Silent API errors surfaced in Notes (notesError + ErrorBanner)
+- [x] Admin added to mobile tab bar
+- [x] Contact autocomplete in event guest field
 
 ## Next Recommended UX Task
 
-Add calendar WeekView — Calendar currently has only MonthView (other views hidden). Implementing WeekView would unlock a primary calendar workflow. Scored 34: Severity 4 (missing core calendar view), Reach 4, Confidence 4, Effort 3.
+Add Calendar invite rendering in Mail message viewer — detect ICS/calendar attachments or text/calendar MIME parts in email messages and render an inline card with event details and Accept/Decline/Tentative RSVP buttons. This is the highest-value remaining cross-suite integration (Calendar→Mail). Score 33: Severity 3, Reach 4, Confidence 4, Effort 3.

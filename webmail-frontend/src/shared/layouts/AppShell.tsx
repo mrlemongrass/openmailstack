@@ -111,6 +111,16 @@ export function AppShell() {
             <Settings size={20} />
             Settings
           </Link>
+          <Link to="/admin"
+            style={{
+              flex: 1, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center',
+              color: activeApp === 'admin' ? 'var(--accent-primary)' : 'var(--text-secondary)',
+              textDecoration: 'none', fontSize: '0.7rem', gap: 2,
+            }}>
+            <ShieldAlert size={20} />
+            Admin
+          </Link>
         </nav>
       )}
     </div>

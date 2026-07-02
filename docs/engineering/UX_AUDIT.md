@@ -144,7 +144,16 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **User impact**: Extra mouse travel, risk of losing changes
 - **Severity**: Low — Filters pane already has sticky bar; most other panes auto-save or have save in header
 
-### Q3. Mobile compose: modal width may overflow on small screens
+### Q3. Mobile: no Compose button on mobile viewport
+- **Surface**: Mail / Mobile
+- **Stress case**: 375px viewport — folder sidebar hidden, desktop header hidden, no way to compose
+- **User impact**: Mobile users literally cannot compose a new email
+- **Severity**: Critical
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added floating action button (+ icon) at bottom-right of message list, positioned above the mobile tab bar
+- **Commit**: `8e567c1`
+
+### Q4. Mobile compose: modal width may overflow on small screens
 - **Surface**: Compose / Mobile
 - **Stress case**: 375px viewport with compose modal at 650px fixed width
 - **User impact**: Modal edges may be cut off

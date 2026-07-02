@@ -1692,3 +1692,30 @@ Branch: `main`
 ### Proof: TSC ✅, Build ✅, Playwright: compose opens with dropdown not clipped
 ### Risks: Many expanded Cc/Bcc may reduce body area; future `max-height` on recipient section could help
 ### Next QoL: Sticky Save across remaining Settings panes
+
+---
+
+## 2026-07-02 — UI/UX QoL Pass #2: Mobile Compose FAB
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`
+
+### Stress case
+**Mobile viewport (375px)**: Folder sidebar and desktop header are both hidden on mobile, making it impossible to compose a new email.
+
+### Finding
+**Q3 (Critical)**: No Compose action available on mobile.
+
+### Fix
+Added floating action button (48px circle, accent blue, + icon) fixed at bottom-right of message list, above the mobile tab bar. Only shown when not viewing a message.
+
+**Before**: No way to compose on mobile  
+**After**: FAB always visible, tap to open compose modal
+
+**File**: `webmail-frontend/src/mail/MailLayout.tsx` (+19/-1)  
+**Commit**: `8e567c1`
+
+### Proof: TSC ✅, Build ✅, Playwright: FAB visible on 375px viewport
+### Risks: FAB positioned at `bottom: 72px` — may need adjustment if tab bar height changes
+
+### Next QoL: Sticky Save across remaining Settings panes

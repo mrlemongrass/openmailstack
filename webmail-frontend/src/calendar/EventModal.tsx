@@ -3,6 +3,7 @@ import { X, Save, Trash2, Video, Paperclip, Plus, Minus } from 'lucide-react';
 import type { useCalendar } from './hooks/useCalendar';
 import { format } from 'date-fns';
 import * as api from '../shared/api';
+import { useToast } from '../shared/components/Toast';
 
 const VIDEO_PROVIDERS = [
   { name: 'Google Meet', prefix: 'https://meet.google.com/' },
@@ -18,9 +19,18 @@ function generateVideoId(): string {
 }
 
 export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
+  const { showToast } = useToast();
+
   if (!cal.isEventModalOpen) return null;
   const evt = cal.newEvent;
   const isEditing = !!cal.editingEvent;
+
+  const handleSave = async () => {
+    const ok = await cal.saveEvent();
+    if (ok !== false) {
+      showToast({ type: 'success', message: isEditing ? 'Event updated' : 'Event created' });
+    }
+  };
 
   const [guestInput, setGuestInput] = useState('');
   const [guests, setGuests] = useState<string[]>((evt.guests as string[]) || []);
@@ -126,7 +136,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
           padding: '12px 16px', borderBottom: '1px solid var(--border-glass)' }}>
           <span style={{ fontWeight: 600 }}>{isEditing ? 'Edit Event' : 'New Event'}</span>
           <div style={{ display: 'flex', gap: 4 }}>
-            {isEditing && cal.editingEvent?.id && <button className="btn btn-danger" onClick={() => { cal.deleteEvent(cal.editingEvent!.id!, cal.editingEvent!.calendarId || 0); cal.setIsEventModalOpen(false); }} style={{ padding: '4px 10px' }}><Trash2 size={14} /> Delete</button>}
+            {isEditing && cal.editingEvent?.id && <button className="btn btn-danger" onClick={async () => { await cal.deleteEvent(cal.editingEvent!.id!, cal.editingEvent!.calendarId || 0); showToast({ type: 'success', message: 'Event deleted' }); cal.setIsEventModalOpen(false); }} style={{ padding: '4px 10px' }}><Trash2 size={14} /> Delete</button>}
             <button className="btn btn-ghost" onClick={() => cal.setIsEventModalOpen(false)} style={{ padding: 4 }}><X size={18} /></button>
           </div>
         </div>
@@ -275,7 +285,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8,
           padding: '12px 16px', borderTop: '1px solid var(--border-glass)' }}>
           <button className="btn btn-ghost" onClick={() => cal.setIsEventModalOpen(false)}>Cancel</button>
-          <button className="btn btn-primary" onClick={cal.saveEvent} disabled={cal.eventSaving}>
+          <button className="btn btn-primary" onClick={handleSave} disabled={cal.eventSaving}>
             <Save size={14} /> {cal.eventSaving ? 'Saving...' : 'Save Event'}
           </button>
         </div>

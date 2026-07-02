@@ -7,7 +7,7 @@ import { MessageListSkeleton } from './components/MessageListSkeleton';
 import { MailToolbar } from './MailToolbar';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { EmptyState } from '../shared/components/EmptyState';
-import { Inbox, SearchX } from 'lucide-react';
+import { Inbox, SearchX, Loader } from 'lucide-react';
 import type { useMail } from './hooks/useMail';
 
 interface MessageListProps {
@@ -100,6 +100,17 @@ export function MessageList({ mail, density }: MessageListProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {mail.isSearchActive && mail.searchLoading && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 16px', fontSize: '0.8rem',
+          color: 'var(--accent-primary)', background: 'rgba(59,130,246,0.08)',
+          borderBottom: '1px solid rgba(59,130,246,0.15)',
+        }}>
+          <Loader size={14} style={{ animation: 'spin 1s linear infinite' }} />
+          Searching...
+        </div>
+      )}
       <MailToolbar
         selectedCount={mail.selectedMessages.length}
         totalCount={mail.messages.length}

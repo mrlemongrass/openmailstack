@@ -1415,3 +1415,82 @@ Ending git state: clean (71 commits ahead)
 ### Next recommended task
 
 Add contact birthday calendar integration — parse contact birthday fields and show them as all-day events in Calendar. Score 30: Severity 3, Reach 3, Confidence 4, Effort 3.
+
+---
+
+## 2026-07-02 — 4-cycle batch: React #310 audit + Calendar + Mail + Notes
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (72 commits ahead)  
+Ending git state: clean (76 commits ahead)  
+
+### Cycle 1: Audit + fix EventModal React #310
+
+**Why**: Same hooks-after-return pattern found in NoteEditorModal. Audited all 10 components with early returns — found EventModal had the bug.
+
+**Fix**: Moved all guest autocomplete hooks (useState × 5, useRef, useEffect, useCallback × 4) above `if (!cal.isEventModalOpen) return null`. Refactored guest initialization from useState initializer to useEffect. Confirmed UndoBar, UpdatesPanel, CalendarInviteCard, KeyboardHelp, ConfirmDialog are all clean.
+
+**Score**: 35 (Severity 5 — crash, Reach 4, Confidence 5, Effort 2)
+
+**Commit**: `3e1d6292`
+
+---
+
+### Cycle 2: Calendar — quick-create toast
+
+**Why**: Natural language quick-create silently opened the event modal with no feedback that parsing succeeded.
+
+**Fix**: Added success toast showing parsed event title and a reminder to fill details before saving.
+
+**Score**: 31 (Severity 2, Reach 4, Confidence 5, Effort 1)
+
+**Commit**: `cc45b75`
+
+---
+
+### Cycle 3: Mail — Mark all as read
+
+**Why**: No way to mark all messages in a folder as read. Users had to select all then use bulk action.
+
+**Fix**: Added "Mark all read" button next to the search bar. Calls `messageAction('read', allUids)`. Only shown when folder has messages.
+
+**Score**: 33 (Severity 3, Reach 4, Confidence 5, Effort 1)
+
+**Commit**: `7c206f8`
+
+---
+
+### Cycle 4: Notes — autosave indicator timing
+
+**Why**: "Saving..." indicator only appeared after the 1.5s debounce, giving no feedback during active typing.
+
+**Fix**: Moved `setSaveStatus('saving')` to the start of `scheduleAutoSave` (called on every keystroke). Now shows "Saving..." immediately, transitions to "Saved" when debounced save completes.
+
+**Score**: 32 (Severity 2, Reach 4, Confidence 5, Effort 1)
+
+**Commit**: `241e4b0`
+
+---
+
+### Proof / checks run (all cycles)
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` | No errors × 4 |
+| `npx vite build` | Success × 4 |
+| `npm test` (backend) | 26/26 pass × 4 |
+| Playwright | Notes editor opens, calendar loads, EventModal verified |
+
+### Docs updated
+
+- `WORKLOG.md`: This entry
+
+### Risks / notes
+
+- **EventModal guest init**: Guests are initialized via useEffect keyed on `[cal.isEventModalOpen, cal.newEvent.guests]`. If `cal.newEvent.guests` changes reference on every render, this could cause excessive re-renders. Monitored — stable in practice.
+- **React #310 audit**: 10 components checked, 1 bug found + fixed. The pattern of hooks-after-conditional-return is now understood and future components should be checked.
+
+### Next recommended task
+
+Add contact birthday calendar integration. Score 30.

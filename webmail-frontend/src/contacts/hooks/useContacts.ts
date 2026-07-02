@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { Contact, ContactLabel, ContactGroup } from '../../shared/types';
 import * as api from '../../shared/api';
 
@@ -85,8 +85,16 @@ export function useContacts() {
         refreshTrash();
     }, []);
 
+    // Client-side filtering by label
+    const filteredContacts = useMemo(() => {
+      if (selectedLabel === null) return contacts;
+      return contacts.filter((c) => {
+        try { return (c.labels_json || []).includes(selectedLabel); } catch { return false; }
+      });
+    }, [contacts, selectedLabel]);
+
     return {
-        contacts, directoryContacts, contactLabels, contactGroups,
+        contacts: filteredContacts, directoryContacts, contactLabels, contactGroups,
         duplicateGroups, selectedLabel, setSelectedLabel,
         selectedGroupId, setSelectedGroupId,
         contactsView, setContactsView,

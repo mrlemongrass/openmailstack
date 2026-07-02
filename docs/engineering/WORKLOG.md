@@ -1340,3 +1340,78 @@ Ending git state: clean (58 commits ahead)
 ### Next recommended task
 
 Add design tokens for typography/spacing as CSS custom properties. Score 23.
+
+---
+
+## 2026-07-02 — 4-cycle mini-batch: Admin + Contacts + Mail + Notes
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (67 commits ahead)  
+Ending git state: clean (71 commits ahead)  
+
+### Cycle 1: Admin — System Health refresh countdown
+
+**Why**: Admin is the most neglected surface. System Health had auto-refresh but no visual countdown.
+
+**Fix**: Added 1-second tick countdown (5s→1s) displayed alongside the "Updated" timestamp. Clears on each fetch.
+
+**Score**: 31 (Severity 2, Reach 3, Confidence 5, Effort 1)
+
+**Commit**: `9e0d202`
+
+---
+
+### Cycle 2: Contacts — bulk delete in selection bar
+
+**Why**: Contact grid had selection with export but no delete action. Users had to delete contacts one by one.
+
+**Fix**: Added "Delete Selected (N)" button with danger styling to the selection bar. Uses existing `bulkDeleteContacts` API with confirm prompt and toast feedback.
+
+**Score**: 33 (Severity 3, Reach 4, Confidence 5, Effort 1)
+
+**Commit**: `c0c5f06`
+
+---
+
+### Cycle 3: Mail — toast for star/archive/delete
+
+**Why**: Mail actions (star, archive, delete) had no user-facing feedback. Users couldn't tell if their action registered.
+
+**Fix**: Added info toasts ("Starred"/"Star removed", "Archived", "Deleted") to the three primary action buttons in MessageViewer.
+
+**Score**: 32 (Severity 2, Reach 5, Confidence 5, Effort 1)
+
+**Commit**: `6b95f35`
+
+---
+
+### Cycle 4: Notes — pin/unpin toggle on card hover
+
+**Why**: Note cards showed pin state but had no way to toggle it from the grid. Users had to open the editor to pin a note.
+
+**Fix**: Added Pin/Unpin button to the note card hover actions, using existing `saveNote` API with `is_pinned` toggle. Star icon fills/unfills based on state.
+
+**Score**: 30 (Severity 2, Reach 4, Confidence 5, Effort 1)
+
+**Commit**: `29c4d1a`
+
+---
+
+### Proof / checks run (all cycles)
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` | No errors × 4 |
+| `npx vite build` | Success × 4 |
+| `npm test` (backend) | 26/26 pass × 4 |
+
+### Docs updated
+
+- `UX_AUDIT.md`: No score changes (Admin, Contacts, Mail, Notes all already scored)
+- `SUITE_FEATURE_MATRIX.md`: No new feature rows (toast expansion, existing features)
+- `WORKLOG.md`: This entry
+
+### Next recommended task
+
+Add contact birthday calendar integration — parse contact birthday fields and show them as all-day events in Calendar. Score 30: Severity 3, Reach 3, Confidence 4, Effort 3.

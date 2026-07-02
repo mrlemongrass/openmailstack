@@ -11,13 +11,13 @@
 | Message list | 7/10 | Good density system, missing preview/snippet text |
 | Message viewer | 8/10 | Reply All/Forward fixed, HTML sanitized with DOMPurify |
 | Compose / Reply | 6/10 | Schedule send+identities fixed, inline reply basic |
-| Search | 5/10 | SearchBar.tsx dead code, loading indicator added, hints unimplemented |
-| Calendar | 6/10 | MonthView solid, non-functional views hidden |
+| Search | 6/10 | Search always visible, loading indicator added, hints unimplemented |
+| Calendar | 7/10 | MonthView solid, non-functional views hidden, empty state added |
 | Contacts | 8/10 | Good detail/edit panels, empty state added |
 | Settings | 8/10 | Excellent feedback/validation, mobile-inaccessible, password change reloads |
 | Mobile / Responsive | 7/10 | Settings added to mobile tab bar, single breakpoint, no tablet consideration |
 | Loading states | 8/10 | Good skeleton system, searchLoading indicator added |
-| Error states | 6/10 | Great ErrorBoundary/ErrorBanner, 7+ API failures silent |
+| Error states | 7/10 | Great ErrorBoundary/ErrorBanner, critical API failures surfaced |
 | Keyboard | 8/10 | Shortcuts added for all primary mail actions (r,a,f,s,e,#,Esc) |
 | Design system | 6/10 | Good glass theme, missing typography/spacing tokens |
 
@@ -35,11 +35,12 @@
 
 ### 2. SearchBar.tsx is dead code, search hidden during selection
 - **Surface**: Search
-- **Problem**: `SearchBar.tsx` never imported; search input in MailToolbar hides when messages selected
-- **User impact**: Search discoverability broken; must deselect all messages to search
+- **Problem**: ~~`SearchBar.tsx` never imported;~~ search input in MailToolbar hides when messages selected
+- **User impact**: ~~Search discoverability broken;~~ must deselect all messages to search
 - **Severity**: High
-- **Status**: Open
-- **Ref**: `SearchBar.tsx` (whole file), `MailToolbar.tsx:29-31`
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Changed to two-row toolbar: search always visible on top, bulk actions appear below when items selected
+- **Commit**: `07f8e8c`
 
 ### 3. Calendar has only MonthView — 4 views show "coming soon"
 - **Surface**: Calendar
@@ -78,8 +79,9 @@
 - **Problem**: fetchFolders, fetchMessages, fetchMessageBody, snoozeMessages, etc. all `console.error` with no user-facing feedback
 - **User impact**: Stale/broken UI with no indication something went wrong
 - **Severity**: Medium
-- **Status**: Open
-- **Ref**: `useMail.ts:99,113,203,215,226,239,267`
+- **Status**: **Done** (2026-07-02) — critical ones surfaced
+- **Fix**: Added mailError state surfaced on fetchFolders/fetchMessages failures with ErrorBanner + Retry. Non-critical actions (snooze, mute, star) remain silent.
+- **Commits**: `c5b0a1f`
 
 ### 7. No HTML sanitization in MessageViewer
 - **Surface**: Message viewer
@@ -96,8 +98,9 @@
 - **Problem**: MonthView renders a blank grid with no prompt to create first event
 - **User impact**: New users see empty calendar with no guidance
 - **Severity**: Medium
-- **Status**: Open
-- **Ref**: `MonthView.tsx:34-101`
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added EmptyState (CalendarDays icon) shown when no events exist after loading
+- **Commit**: `036caa1`
 
 ### 9. No keyboard shortcuts for mail actions
 - **Surface**: Mail shell
@@ -160,6 +163,9 @@
 - [x] Search loading indicator shown during search (was never rendered)
 - [x] Keyboard shortcuts for mail actions (r,a,f,s,e,#,Delete,Esc)
 - [x] Contact grid empty state (was blank after loading)
+- [x] Search always visible during message selection (was hidden behind bulk actions)
+- [x] Critical API errors surfaced to users (was silent console.error)
+- [x] Calendar event empty state (was blank grid with no guidance)
 
 ## Next Recommended UX Task
 

@@ -640,3 +640,81 @@ Ending git state: clean (21 commits ahead)
 ### Next recommended task
 
 Surface API errors to users instead of silently logging to console. 7+ API call sites in useMail.ts (fetchFolders, fetchMessages, fetchMessageBody, snoozeMessages, etc.) only `console.error` with no user-facing feedback. Score 34: Severity 3, Reach 5, Confidence 5, Effort 3.
+
+---
+
+## 2026-07-02 — Product Experience Batch #3: 3 UX improvements
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (22 commits ahead)  
+Ending git state: clean (25 commits ahead)  
+
+### Cycle 1: Keep search visible during message selection
+
+**Score**: 33 (Severity 4, Reach 4, Confidence 4, Effort 1)
+
+**Problem**: Selecting messages replaced the search input with bulk-action buttons. Users had to deselect all messages before searching.
+
+**Fix**: Changed MailToolbar to a two-row layout. Top row (always visible): select-all checkbox + search input. Bottom row (conditional): appears only when messages selected, with count label + bulk action buttons on a tinted blue background.
+
+**Files**: `MailToolbar.tsx` (+18/-11)
+
+**Commit**: `07f8e8c`
+
+---
+
+### Cycle 2: Surface critical API errors
+
+**Score**: 34 (Severity 3, Reach 5, Confidence 5, Effort 2)
+
+**Problem**: API failures in fetchFolders and fetchMessages only logged to console. Users saw stale/empty UI with no error indication.
+
+**Fix**: Added `mailError` state to useMail, set on fetchFolders and fetchMessages failures. Cleared on successful re-fetch. MessageList shows ErrorBanner with Retry button (re-fetches both). Non-critical actions (snooze, mute, star) remain silent.
+
+**Files**: `useMail.ts` (+5/-2), `MessageList.tsx` (+6/-1)
+
+**Commit**: `c5b0a1f`
+
+---
+
+### Cycle 3: Calendar event empty state
+
+**Score**: 32 (Severity 3, Reach 4, Confidence 5, Effort 1)
+
+**Problem**: MonthView rendered a blank 6×7 day grid when no events existed. New users saw empty cells with no guidance.
+
+**Fix**: Added EmptyState (CalendarDays icon, "No events", "Click any date to create your first event") shown when not loading and events array is empty. Consolidated duplicate render paths into single `renderCalendarContent` function.
+
+**Files**: `CalendarLayout.tsx` (+17/-3)
+
+**Commit**: `036caa1`
+
+---
+
+### Proof / checks run (all cycles)
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` | No errors × 3 |
+| `npx vite build` | Success (~2.0s) × 3 |
+| `npm test` (backend) | 25/25 pass × 3 |
+| Deployed to live | After each cycle |
+
+### UX_AUDIT.md updates
+
+- Search hidden: Open → Done
+- API errors silent: Open → Done (critical ones)
+- Calendar empty state: Open → Done
+- Scores: Search 5→6, Calendar 6→7, Error states 6→7
+- Completed: 13→16
+
+### Risks / notes
+
+- **MailToolbar**: Double-row toolbar takes slightly more vertical space. Acceptable trade-off for always-visible search.
+- **API errors**: Only fetchFolders and fetchMessages failures are surfaced. Non-critical failures remain silent by design (notification fatigue).
+- **Calendar empty state**: Only shown when events.length is 0. If events exist but are all filtered out by calendar visibility, the grid still renders (correct).
+
+### Next recommended task
+
+Add contact autocomplete to compose To/Cc/Bcc fields. Currently plain text inputs with no address suggestions. Score 31: Severity 3, Reach 4, Confidence 4, Effort 3.

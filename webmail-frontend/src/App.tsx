@@ -8,9 +8,8 @@ import { MailRoutes } from './mail/routes';
 import { CalendarRoutes } from './calendar/routes';
 import { ContactsRoutes } from './contacts/routes';
 import { SettingsRoutes } from './settings/routes';
-import { AdminRoutes } from './admin/routes';
-
 const NotesRoutes = lazy(() => import('./notes/routes').then(m => ({ default: m.NotesRoutes })));
+const AdminRoutes = lazy(() => import('./admin/routes').then(m => ({ default: m.AdminRoutes })));
 
 function SyncView() {
   return (
@@ -48,7 +47,7 @@ export default function App() {
           <Route path="contacts/*" element={<ContactsRoutes />} />
           <Route path="notes/*" element={<Suspense fallback={<Skeleton />}><NotesRoutes /></Suspense>} />
           <Route path="settings/*" element={<SettingsRoutes />} />
-          <Route path="admin/*" element={<AdminRoutes />} />
+          <Route path="admin/*" element={<Suspense fallback={<Skeleton />}><AdminRoutes /></Suspense>} />
           <Route path="sync" element={<SyncView />} />
           <Route index element={<Navigate to="/mail/inbox" replace />} />
         </Route>

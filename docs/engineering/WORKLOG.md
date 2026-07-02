@@ -1199,3 +1199,84 @@ Ending git state: clean (50 commits ahead)
 ### Next recommended task
 
 Add toast/notification system — a shared transient toast component for success/error/info messages across the suite. Score 27: Severity 2, Reach 5, Confidence 4, Effort 3.
+
+---
+
+## 2026-07-02 — Toast notification system
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (51 commits ahead)  
+Ending git state: clean (52 commits ahead)  
+
+### Selected task
+
+Build a shared toast notification system for consistent transient feedback across the suite.
+
+### Why this task
+
+UX_AUDIT issue #12 — the last remaining open polish item. Feedback was inconsistent: some flows used inline banners, others used `alert()`/`confirm()`, and transient successes (send, create, delete) had no visible confirmation. A toast system provides unified, non-intrusive feedback.
+
+Per the quality rubric:
+- **Severity 2**: Polish — existing feedback works but is inconsistent
+- **Reach 5**: Every user action that produces feedback benefits
+- **Confidence 4**: Standard pattern across all modern apps
+- **Effort 3**: Provider + component + animation + wiring
+- **Score**: (2×4) + (5×3) + (4×2) - 3 = **27**
+
+### Changes made
+
+- `webmail-frontend/src/shared/components/Toast.tsx` (new, 86 lines)
+  - `ToastProvider` context with `useToast` hook
+  - `showToast({ type, message, duration? })` API
+  - Three variants: success (green CheckCircle), error (red AlertCircle), info (blue Info)
+  - Fixed bottom-center toast container with z-index 3000
+  - Auto-dismiss after 3.5s, manual close via X button
+  - Slide-up animation via CSS @keyframes toastSlideUp
+
+- `webmail-frontend/src/index.css`
+  - Added `@keyframes toastSlideUp` animation
+
+- `webmail-frontend/src/App.tsx`
+  - Wrapped Routes with `<ToastProvider>`
+
+- `webmail-frontend/src/mail/ComposeModal.tsx`
+  - Shows 'Message sent' success toast after send completes
+  - Tracks `didSend` state, useEffect detects success/failure
+
+- `webmail-frontend/src/contacts/ContactSidebar.tsx`
+  - Success toast when label/group created
+  - Error toast when creation fails
+
+- `webmail-frontend/src/contacts/ContactTrash.tsx`
+  - 'Contact restored' toast after restore
+  - 'Contact permanently deleted' toast after delete
+
+### Proof / checks run
+
+- `npx tsc -b` (frontend) — **No errors**
+- `npx vite build` (frontend) — **Success**
+- `npm test` (backend) — **26/26 pass**
+
+### Acceptance criteria
+
+- [x] ToastProvider wraps entire app
+- [x] useToast() hook available to any component
+- [x] Success (green), error (red), info (blue) variants
+- [x] Auto-dismiss after configurable duration (default 3.5s)
+- [x] Manual close via X button
+- [x] Multiple toasts stack
+- [x] Slide-up animation
+- [x] Wired into compose send, label/group create, contact restore/delete
+- [x] TypeScript clean, build succeeds, backend tests pass
+
+### Risks / notes
+
+- **ToastProvider outside Router**: The provider wraps Routes but is outside React Router context. Components inside routes can still use the toast via the React context (context is independent of router).
+- **No persistence**: Toasts are in-memory only — navigating away dismisses them. This is correct behavior for transient notifications.
+- **Expandable**: New flows can add `import { useToast }` and call `showToast()` — no other plumbing needed.
+- **Remaining UX_AUDIT open items**: Only #11 (design tokens) remains.
+
+### Next recommended task
+
+Add design tokens for typography/spacing as CSS custom properties. Score 23: Severity 2, Reach 4, Confidence 4, Effort 3.

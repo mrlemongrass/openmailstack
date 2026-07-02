@@ -21,7 +21,7 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 | Loading states | 8/10 | Good skeleton system, searchLoading indicator added |
 | Error states | 8/10 | Critical API failures surfaced across all suite apps |
 | Keyboard | 8/10 | Shortcuts added for all primary mail actions (r,a,f,s,e,#,Esc) |
-| Design system | 7/10 | Good glass theme, spinner component added, missing typography tokens |
+| Design system | 8/10 | Glass theme, Spinner, ConfirmDialog, Toast system |
 | Cross-suite | 8/10 | Compose + guest autocomplete, calendar invites, contact Email→compose |
 | Sync | 7/10 | Setup page with copy-to-clipboard and protocol icons, no live diagnostics |
 | Mobile / Responsive | 8/10 | Admin + Settings added to mobile tab bar, single 768px breakpoint |
@@ -139,6 +139,8 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Problem**: Feedback uses inline banners, modals, or browser-native `alert()`/`confirm()`
 - **User impact**: Inconsistent visual feedback; `alert()` breaks the glass aesthetic
 - **Severity**: Low
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Created ToastProvider context with useToast hook. Glass-styled toasts (success/error/info) at bottom-center with slide-up animation. Auto-dismiss (3.5s) + manual close. Wired into ComposeModal (send), ContactSidebar (create label/group), ContactTrash (restore/delete). Any component can use `showToast({ type, message })`.
 
 ### 13. No spinner component
 - **Surface**: All
@@ -240,7 +242,8 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - [x] Glass-styled ConfirmDialog replacing window.confirm() in compose + contacts
 - [x] Settings import alerts replaced with inline success/error banners
 - [x] Settings session revoke confirm + error replaced with ConfirmDialog + inline
+- [x] Toast notification system (success/error/info, auto-dismiss, glass-styled)
 
 ## Next Recommended UX Task
 
-Add toast/notification system — a shared toast component shown at the bottom of the screen for transient success/error/info messages would replace the remaining inline banners and give consistent feedback across the suite. Score 27: Severity 2, Reach 5, Confidence 4, Effort 3.
+Add design tokens for typography/spacing (CSS custom properties) — font sizes, weights, and spacing are hardcoded inline across the codebase. Centralizing them into design tokens would enable consistent theming and easier visual refinement. Score 23: Severity 2, Reach 4, Confidence 4, Effort 3.

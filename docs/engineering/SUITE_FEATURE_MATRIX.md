@@ -40,6 +40,7 @@ Translate useful ideas into OpenMailStack-native, self-hostable, privacy-respect
 | Sync | Copy-to-clipboard | iCloud-style setup | One-click copy for server addresses, protocol icons, refined layout | Should | Implemented | 2026-07-02: SyncRow component with copy state |
 | Suite | Glass-styled dialogs | iCloud/Google/Microsoft | Custom ConfirmDialog replacing browser alert()/confirm() | Should | Implemented | 2026-07-02: compose close, contact delete, session revoke |
 | Notes | Relative timestamps | Apple Notes / Google Keep | 'Just now', '5m ago', 'Yesterday' on note cards | Should | Implemented | 2026-07-02: formatRelativeTime helper + card footer |
+| Suite | Toast notifications | iCloud/Google/Microsoft | Transient glass-styled toasts for success/error/info feedback | Should | Implemented | 2026-07-02: ToastProvider context + useToast hook |
 | Calendar | Week/day/agenda views | iCloud/Google/Outlook calendars | Functional views or hide incomplete options | Must | Partial | Current report says only Month implemented |
 | Calendar | Appointment scheduling | Google Calendar booking pages | Self-hosted booking page per user/calendar | Could | Not Started | Requires public availability rules |
 | Calendar | Shared calendars | iCloud/Outlook/Google | Share read/edit permissions, ICS public links | Should | Needs Verification | |

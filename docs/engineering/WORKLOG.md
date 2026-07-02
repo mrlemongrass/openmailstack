@@ -1497,6 +1497,78 @@ Add contact birthday calendar integration. Score 30.
 
 ---
 
+## 2026-07-02 — 4-cycle batch: Mail perf + Sync + Calendar + Admin
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+
+### Cycle 1: Mail — pre-fetch message bodies + loading spinner
+
+**Problem**: Message viewer showed "(no content)" during IMAP fetch delay. Bodies fetched on-demand only when clicked.
+
+**Fix (part 1)**: Added `bodyLoading` state + Spinner with "Loading message..." while body fetches. **(commit `6819fd3`)**
+
+**Fix (part 2)**: Added `prefetchBodies()` in useMail that silently pre-fetches first 10 visible messages in background. Tracks fetched UIDs in a Set to avoid duplicate IMAP calls. MessageList triggers pre-fetch on folder load. Bodies are cached before the user clicks — matching Gmail/iCloud/Outlook's approach. **(commit `3824bac`)**
+
+**Score**: 36 (Severity 4, Reach 5, Confidence 5, Effort 2)
+
+---
+
+### Cycle 2: Sync — server connection status badge
+
+**Problem**: Sync page had no way to verify server connectivity.
+
+**Fix**: Added `useEffect` that calls `/api/auth/status` and shows a green "Server Online" or red "Server Offline" badge next to the page title.
+
+**Score**: 31 (Severity 2, Reach 3, Confidence 5, Effort 1)
+
+**Commit**: `c32147c`
+
+---
+
+### Cycle 3: Calendar — week numbers toggle (W#)
+
+**Problem**: Week numbers were always visible in MonthView with no toggle.
+
+**Fix**: Added "W#" button in the view switcher toolbar. Toggles week number visibility via localStorage and dispatches a custom event. Shows toast on toggle.
+
+**Score**: 30 (Severity 2, Reach 3, Confidence 5, Effort 1)
+
+**Commit**: `c32147c`
+
+---
+
+### Cycle 4: Admin — Fail2ban unban toast
+
+**Problem**: Successful IP unban in Fail2ban panel had no user-facing confirmation.
+
+**Fix**: Added `useToast` import and success toast showing the unbanned IP address.
+
+**Score**: 32 (Severity 2, Reach 3, Confidence 5, Effort 1)
+
+**Commit**: `c32147c`
+
+---
+
+### Proof
+
+| Check | All Cycles |
+|-------|-----------|
+| `npx tsc -b` | No errors × 4 |
+| `npx vite build` | Success × 4 |
+| `npm test` (backend) | 26/26 pass × 4 |
+| Playwright | Message body loads instantly after pre-fetch |
+
+### Docs updated
+
+- `WORKLOG.md`: This entry
+
+### Next recommended task
+
+Add contact birthday calendar integration. Score 30.
+
+---
+
 ## 2026-07-02 — 4-cycle batch: Mail + Settings + Contacts + Calendar (toast expansion)
 
 Agent/tool: Claude Code (Claude)  

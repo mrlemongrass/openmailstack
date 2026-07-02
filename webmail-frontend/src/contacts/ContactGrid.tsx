@@ -1,8 +1,10 @@
 import { useRef, useCallback, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Users } from 'lucide-react';
+import { Users, Trash2 } from 'lucide-react';
 import { ContactSkeleton } from './components/ContactSkeleton';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
+import { useToast } from '../shared/components/Toast';
+import { bulkDeleteContacts } from '../shared/api';
 import type { useContacts } from './hooks/useContacts';
 import type { Contact } from '../shared/types';
 
@@ -10,6 +12,7 @@ export function ContactGrid({ contacts: c, density }: {
   contacts: ReturnType<typeof useContacts>;
   density: 'compact' | 'cozy' | 'comfortable';
 }) {
+  const { showToast } = useToast();
   const parentRef = useRef<HTMLDivElement>(null);
   const cols = 3;
   const rows = Math.ceil(c.contacts.length / cols);
@@ -97,6 +100,17 @@ export function ContactGrid({ contacts: c, density }: {
                       window.open(`/api/apps/contacts-export?format=csv&ids=${ids}`, '_blank');
                     }}>
                     Export Selected ({c.selectedContactIds.size}) CSV
+                  </button>
+                  <div style={{ height: 1, background: 'var(--border-glass)', margin: '2px 8px' }} />
+                  <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem', color: 'var(--danger)' }}
+                    onClick={async () => {
+                      if (!confirm(`Delete ${c.selectedContactIds.size} selected contact(s)?`)) return;
+                      await bulkDeleteContacts(Array.from(c.selectedContactIds));
+                      showToast({ type: 'success', message: `${c.selectedContactIds.size} contact(s) deleted` });
+                      c.setSelectedContactIds(new Set());
+                      c.refreshContacts();
+                    }}>
+                    <Trash2 size={14} /> Delete Selected ({c.selectedContactIds.size})
                   </button>
                 </>
               )}

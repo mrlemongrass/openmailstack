@@ -21,13 +21,14 @@ export function useContacts() {
     const [trashContacts, setTrashContacts] = useState<Contact[]>([]);
     const [isTrashLoading, setIsTrashLoading] = useState(false);
     const [isDedupLoading, setIsDedupLoading] = useState(false);
+    const [contactsError, setContactsError] = useState('');
 
     const refreshContacts = useCallback(async () => {
         setIsLoading(true);
         try {
             const data = await api.fetchContacts(200, 0);
-            if (data.contacts) { setContacts(data.contacts); setOffset(data.contacts.length); setHasMore(data.contacts.length >= 200); }
-        } catch (e) { console.error('Failed to fetch contacts', e); }
+            if (data.contacts) { setContacts(data.contacts); setOffset(data.contacts.length); setHasMore(data.contacts.length >= 200); setContactsError(''); }
+        } catch (e: any) { setContactsError(e?.message || 'Failed to load contacts'); console.error('Failed to fetch contacts', e); }
         setIsLoading(false);
     }, []);
 
@@ -92,7 +93,7 @@ export function useContacts() {
         selectedContactIds, setSelectedContactIds,
         contactSearchQuery, setContactSearchQuery,
         contactViewMode, setContactViewMode,
-        isLoading, hasMore,
+        isLoading, hasMore, contactsError,
         refreshContacts, loadMoreContacts, refreshDirectoryContacts,
         refreshLabels, refreshGroups, refreshDuplicates,
         selectedContact, setSelectedContact,

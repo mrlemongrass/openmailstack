@@ -11,6 +11,7 @@ export function useNotes() {
     catch { return ['Work', 'Personal', 'Ideas']; }
   });
   const [isLoading, setIsLoading] = useState(false);
+  const [notesError, setNotesError] = useState('');
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [editingNote, setEditingNote] = useState<Partial<Note>>({});
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
@@ -18,7 +19,7 @@ export function useNotes() {
 
   const fetchNotes = useCallback(async () => {
     setIsLoading(true);
-    try { setNotes(await api.fetchNotesApi()); } catch (e) { console.error('Failed to fetch notes', e); }
+    try { setNotes(await api.fetchNotesApi()); setNotesError(''); } catch (e: any) { setNotesError(e?.message || 'Failed to load notes'); console.error('Failed to fetch notes', e); }
     setIsLoading(false);
   }, []);
 
@@ -34,7 +35,7 @@ export function useNotes() {
 
   return {
     notes, notesView, setNotesView, notesSearchQuery, setNotesSearchQuery,
-    notesLabels, setNotesLabels, isLoading,
+    notesLabels, setNotesLabels, isLoading, notesError,
     selectedNote, setSelectedNote, editingNote, setEditingNote,
     isNoteModalOpen, setIsNoteModalOpen,
     notesSort, setNotesSort,

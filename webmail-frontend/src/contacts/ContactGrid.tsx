@@ -2,6 +2,7 @@ import { useRef, useCallback, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Users } from 'lucide-react';
 import { ContactSkeleton } from './components/ContactSkeleton';
+import { ErrorBanner } from '../shared/components/ErrorBanner';
 import type { useContacts } from './hooks/useContacts';
 import type { Contact } from '../shared/types';
 
@@ -23,6 +24,14 @@ export function ContactGrid({ contacts: c, density }: {
   const [showExportMenu, setShowExportMenu] = useState(false);
 
   if (c.isLoading && c.contacts.length === 0) return <ContactSkeleton count={20} />;
+
+  if (c.contactsError) {
+    return (
+      <div style={{ padding: 20 }}>
+        <ErrorBanner error={c.contactsError} onRetry={() => c.refreshContacts()} />
+      </div>
+    );
+  }
 
   if (!c.isLoading && c.contacts.length === 0 && !c.contactSearchQuery) {
     return (

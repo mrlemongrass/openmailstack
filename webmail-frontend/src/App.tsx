@@ -9,7 +9,7 @@ import { MailRoutes } from './mail/routes';
 import { CalendarRoutes } from './calendar/routes';
 import { ContactsRoutes } from './contacts/routes';
 import { SettingsRoutes } from './settings/routes';
-import { Mail, Globe, CalendarDays, Users, Copy, Check } from 'lucide-react';
+import { Mail, Globe, CalendarDays, Users, Copy, Check, ChevronDown } from 'lucide-react';
 const NotesRoutes = lazy(() => import('./notes/routes').then(m => ({ default: m.NotesRoutes })));
 const AdminRoutes = lazy(() => import('./admin/routes').then(m => ({ default: m.AdminRoutes })));
 
@@ -77,6 +77,56 @@ function SyncRow({ icon: Icon, label, host, detail }: SyncRowProps) {
   );
 }
 
+const DEVICE_GUIDES: { title: string; steps: string[] }[] = [
+  { title: 'iPhone / iPad', steps: ['Open Settings → Mail → Accounts → Add Account', 'Choose Other → Add Mail Account', 'Enter name, email, password, and the server addresses above', 'Tap Next — iOS will verify and enable Mail, Calendar & Contacts'] },
+  { title: 'Android (Gmail app)', steps: ['Open Gmail → Settings → Add account → Other', 'Enter your email address and password', 'Choose IMAP, then enter the server addresses above', 'Tap Next to finish setup'] },
+  { title: 'macOS Mail', steps: ['Open Mail → Settings → Accounts → Add Account', 'Choose Other Mail Account → Continue', 'Enter name, email, password, and the server addresses above', 'Sign in to enable Mail, Calendar & Contacts sync'] },
+  { title: 'Outlook (Windows / Mac)', steps: ['Open Outlook → File → Add Account', 'Enter your email address', 'Choose Advanced setup → IMAP', 'Enter the server addresses and port numbers above, then click Connect'] },
+  { title: 'Thunderbird', steps: ['Open Thunderbird → Account Settings → Account Actions → Add Mail Account', 'Enter your name, email, and password', 'Thunderbird will try to auto-detect. Choose Manual config if needed.', 'Set IMAP server and SMTP server to the addresses above, then click Done'] },
+];
+
+function DeviceGuides() {
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <h3 style={{ fontSize: '0.9rem', fontWeight: 600, margin: '0 0 10px' }}>Device Setup Guides</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {DEVICE_GUIDES.map((guide, i) => (
+          <div key={guide.title} style={{
+            border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)',
+            overflow: 'hidden',
+          }}>
+            <button
+              onClick={() => setOpenIdx(openIdx === i ? null : i)}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '10px 14px', background: 'rgba(255,255,255,0.02)',
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: '0.85rem', color: 'var(--text-primary)',
+              }}
+            >
+              <span style={{ fontWeight: 500 }}>{guide.title}</span>
+              <ChevronDown size={14} style={{
+                color: 'var(--text-secondary)',
+                transform: openIdx === i ? 'rotate(180deg)' : 'none',
+                transition: 'transform 0.2s',
+              }} />
+            </button>
+            {openIdx === i && (
+              <div style={{ padding: '8px 14px 12px', borderTop: '1px solid var(--border-glass)' }}>
+                <ol style={{ margin: 0, paddingLeft: 18, fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+                  {guide.steps.map((s) => <li key={s}>{s}</li>)}
+                </ol>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SyncView() {
   const hostname = window.location.hostname;
   const rows: SyncRowProps[] = [
@@ -97,6 +147,8 @@ function SyncView() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {rows.map((r) => <SyncRow key={r.label} {...r} />)}
         </div>
+
+        <DeviceGuides />
         <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 24, lineHeight: 1.6,
           padding: '12px 16px', borderRadius: 'var(--radius-md)',
           background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>

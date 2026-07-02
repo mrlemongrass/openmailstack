@@ -5,6 +5,7 @@ import { ReminderPicker } from './ReminderPicker';
 import { AttachmentList } from './AttachmentList';
 import type { useNotes } from '../hooks/useNotes';
 import { saveNote } from '../../shared/api';
+import { useToast } from '../../shared/components/Toast';
 
 const NOTE_COLORS = [
   '#ffffff', '#f28b82', '#fbbc04', '#fff475', '#ccff90',
@@ -17,6 +18,7 @@ interface NoteEditorModalProps {
 }
 
 export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
+  const { showToast } = useToast();
   const titleRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | null>(null);
@@ -52,7 +54,8 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     n.setIsNoteModalOpen(false);
     n.setEditingNote({});
     n.fetchNotes();
-  }, [n]);
+    if (title || content) showToast({ type: 'success', message: 'Note saved' });
+  }, [n, showToast]);
 
   const scheduleAutoSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);

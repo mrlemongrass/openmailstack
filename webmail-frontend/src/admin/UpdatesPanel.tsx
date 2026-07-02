@@ -7,11 +7,13 @@ export function UpdatesPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const [lastChecked, setLastChecked] = useState<Date | null>(null);
+
   const load = () => {
     setLoading(true);
     setError('');
     getUpdates()
-      .then(setUpdates)
+      .then((u) => { setUpdates(u); setLastChecked(new Date()); })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   };
@@ -48,9 +50,12 @@ export function UpdatesPanel() {
         <h2 style={{ margin: 0, fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: 8 }}>
           <Box size={20} /> Updates & Versions
         </h2>
-        <button className="btn btn-secondary" onClick={load} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <RefreshCw size={14} /> Check Again
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {lastChecked && <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Last checked {lastChecked.toLocaleTimeString()}</span>}
+          <button className="btn btn-secondary" onClick={load} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <RefreshCw size={14} /> Check Again
+          </button>
+        </div>
       </div>
 
       <div className="glass-panel" style={{ padding: 20, marginBottom: 16 }}>

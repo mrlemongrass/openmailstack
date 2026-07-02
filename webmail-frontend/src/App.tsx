@@ -129,13 +129,17 @@ function DeviceGuides() {
 
 function SyncView() {
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const hostname = window.location.hostname;
 
-  useEffect(() => {
+  const checkStatus = () => {
+    setServerStatus('checking');
     fetch('/api/auth/status')
-      .then((r) => setServerStatus(r.ok ? 'online' : 'offline'))
-      .catch(() => setServerStatus('offline'));
-  }, []);
+      .then((r) => { setServerStatus(r.ok ? 'online' : 'offline'); setLastChecked(new Date()); })
+      .catch(() => { setServerStatus('offline'); setLastChecked(new Date()); });
+  };
+
+  useEffect(() => { checkStatus(); }, []);
   const rows: SyncRowProps[] = [
     { icon: Mail, label: 'Incoming Mail (IMAP)', host: hostname, detail: 'Port 993 · SSL/TLS required', },
     { icon: Globe, label: 'Outgoing Mail (SMTP)', host: hostname, detail: 'Port 587 · STARTTLS required', },
@@ -155,6 +159,8 @@ function SyncView() {
           }}>
             {serverStatus === 'checking' ? 'Checking...' : serverStatus === 'online' ? 'Server Online' : 'Server Offline'}
           </span>
+          <button className="btn btn-ghost" onClick={checkStatus} style={{ fontSize: '0.75rem', marginLeft: 8 }}>Refresh</button>
+          {lastChecked && <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Checked {lastChecked.toLocaleTimeString()}</span>}
         </div>
         <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 24px', fontSize: '0.9rem' }}>
           Configure your devices to sync mail, calendars, and contacts with OpenMailStack.

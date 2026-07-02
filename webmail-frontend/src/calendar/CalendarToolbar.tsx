@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { format, addMonths, subMonths, addWeeks, subWeeks, addDays, subDays } from 'date-fns';
 import type { useCalendar } from './hooks/useCalendar';
+import { useToast } from '../shared/components/Toast';
 
 // #7 Natural language event parsing
 function parseQuickCreate(text: string): { title: string; start: Date; duration: number } | null {
@@ -64,6 +65,7 @@ function parseQuickCreate(text: string): { title: string; start: Date; duration:
 }
 
 export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }) {
+  const { showToast } = useToast();
   const handleQuickCreate = () => {
     const parsed = parseQuickCreate(cal.quickCreateText);
     if (parsed) {
@@ -76,6 +78,7 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
       });
       cal.setIsEventModalOpen(true);
       cal.setQuickCreateText('');
+      showToast({ type: 'success', message: `Event "${parsed.title}" ready — fill in details and save` });
     }
   };
 

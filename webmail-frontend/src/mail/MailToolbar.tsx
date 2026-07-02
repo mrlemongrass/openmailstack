@@ -8,6 +8,7 @@ interface MailToolbarProps {
   onSearchChange: (q: string) => void;
   onSelectAll: () => void;
   onBulkAction: (action: string) => void;
+  onMarkAllRead?: () => void;
 }
 
 const SEARCH_HINTS = [
@@ -21,7 +22,7 @@ const SEARCH_HINTS = [
   { syntax: 'after:2026-01-01', desc: 'Messages after date' },
 ];
 
-export function MailToolbar({ selectedCount, totalCount, searchQuery, onSearchChange, onSelectAll, onBulkAction }: MailToolbarProps) {
+export function MailToolbar({ selectedCount, totalCount, searchQuery, onSearchChange, onSelectAll, onBulkAction, onMarkAllRead }: MailToolbarProps) {
   const allSelected = selectedCount > 0 && selectedCount === totalCount;
   const [showHints, setShowHints] = useState(false);
 
@@ -36,6 +37,12 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, onSearchCh
           onFocus={() => setShowHints(true)}
           onBlur={() => setTimeout(() => setShowHints(false), 200)}
           style={{ flex: 1, fontSize: '0.85rem' }} />
+        {onMarkAllRead && totalCount > 0 && (
+          <button className="btn btn-ghost" onClick={onMarkAllRead}
+            style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }} title="Mark all as read">
+            Mark all read
+          </button>
+        )}
         {showHints && !searchQuery && (
           <div className="glass-panel" style={{
             position: 'absolute', top: '100%', left: 48, right: 12, zIndex: 20,

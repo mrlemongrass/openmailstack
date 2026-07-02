@@ -128,6 +128,10 @@ export function MessageList({ mail, density }: MessageListProps) {
           }
         }}
         onBulkAction={(action) => mail.messageAction(action)}
+        onMarkAllRead={() => {
+          const allUids = mail.messages.map((m) => m.uid);
+          if (allUids.length > 0) mail.messageAction('read', allUids);
+        }}
       />
       <div ref={parentRef} style={{ flex: 1, overflow: 'auto' }}>
         <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>

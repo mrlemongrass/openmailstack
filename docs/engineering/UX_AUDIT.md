@@ -301,6 +301,19 @@ Open / In Progress / Done / Blocked / Needs Verification
 - [x] Contacts clear filter button when label selected
 - [x] Notes clear label filter button
 - [x] Contact cards show organization + job title
+- [x] Sync page refresh button + last-checked timestamp
+- [x] Admin Updates panel last-checked time
+- [x] Settings Advanced → About with version v0.1.5
+- [x] Notes card delete button with toast
+
+## Acceptance Criteria for Batch 17
+
+| Cycle | Task | AC | Proof |
+|-------|------|----|-------|
+| 1 | Sync refresh | Refresh button re-checks, timestamp shows | TSC/Build ✅ |
+| 2 | Admin last-checked | Timestamp next to Check Again | TSC/Build ✅ |
+| 3 | Settings About | v0.1.5 shown in Advanced pane | TSC/Build ✅ |
+| 4 | Notes delete | Delete moves to trash + toast | TSC/Build ✅ |
 
 ## Acceptance Criteria for Batch 16
 

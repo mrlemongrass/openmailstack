@@ -1626,6 +1626,22 @@ Branch: `main`
 
 ---
 
+## 2026-07-02 — 4-cycle batch: Sync + Admin + Settings + Notes
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`
+
+| Cycle | Surface | Task | AC | Commit |
+|---|---------|------|----|--------|
+| 1 | Sync | Manual Refresh + 'Checked HH:MM' timestamp | Refresh button, timestamp visible | `13e24d2` |
+| 2 | Admin | Updates panel last-checked time | Timestamp next to Check Again | `13e24d2` |
+| 3 | Settings | About section with version v0.1.5 | Version shown in Advanced pane | `7c0ea21` |
+| 4 | Notes | Delete button on card with toast | 'moved to trash' toast on click | `7c0ea21` |
+
+### Proof: TSC ✅, Build ✅, Backend tests 26/26 ✅
+
+---
+
 ## 2026-07-02 — 4-cycle batch: Mail + Settings + Contacts + Calendar (toast expansion)
 
 Agent/tool: Claude Code (Claude)  

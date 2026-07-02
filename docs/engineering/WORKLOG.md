@@ -1494,3 +1494,29 @@ Ending git state: clean (76 commits ahead)
 ### Next recommended task
 
 Add contact birthday calendar integration. Score 30.
+
+---
+
+## 2026-07-02 — 4-cycle batch: Mail + Settings + Contacts + Calendar (toast expansion)
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+
+### Cycle 1: Mail — Mark all as read toast
+**Fix**: Shows toast with count when marking all messages as read.  
+**Commit**: `69f884f`
+
+### Cycle 2: Settings — Spam sender toasts
+**Fix**: Toast confirmations for add/remove blocked and safe senders.  
+**Commit**: `88a6e6b`
+
+### Cycle 3: Contacts — Save toast
+**Fix**: Toast confirmation when creating or saving a contact.  
+**Commit**: `88a6e6b`
+
+### Cycle 4: Calendar — Today button toast
+**Fix**: Toast feedback when clicking Today navigation button.  
+**Commit**: `88a6e6b`
+
+### Proof: TypeScript ✅, Build ✅, Backend tests 26/26 ✅
+### Next: Add contact birthday calendar integration.

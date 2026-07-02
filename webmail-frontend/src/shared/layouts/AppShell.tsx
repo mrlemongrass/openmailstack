@@ -101,6 +101,16 @@ export function AppShell() {
               {item.label}
             </Link>
           ))}
+          <Link to="/settings"
+            style={{
+              flex: 1, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center',
+              color: activeApp === 'settings' ? 'var(--accent-primary)' : 'var(--text-secondary)',
+              textDecoration: 'none', fontSize: '0.7rem', gap: 2,
+            }}>
+            <Settings size={20} />
+            Settings
+          </Link>
         </nav>
       )}
     </div>

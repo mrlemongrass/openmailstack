@@ -617,6 +617,9 @@ function ForwardingPane({ forwardingGoto, keepCopy, saving, onForwardingChange, 
         action={<button className="btn btn-primary" type="button" onClick={onSaveForwarding} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>}
       />
       <section className="settings-section">
+        <div className="settings-disabled-note" style={{ marginBottom: 16 }}>
+          Incoming messages will be automatically forwarded to the addresses below. You can enter multiple addresses separated by commas.
+        </div>
         <label className="settings-field">
           <span>Forward To</span>
           <input

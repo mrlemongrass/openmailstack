@@ -718,3 +718,80 @@ Ending git state: clean (25 commits ahead)
 ### Next recommended task
 
 Add contact autocomplete to compose To/Cc/Bcc fields. Currently plain text inputs with no address suggestions. Score 31: Severity 3, Reach 4, Confidence 4, Effort 3.
+
+---
+
+## 2026-07-02 — Product Experience Batch #4: 3 suite-wide improvements
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (26 commits ahead)  
+Ending git state: clean (29 commits ahead)  
+
+### Cycle 1: Sync page shows real server hostname
+
+**Score**: 35 (Severity 4, Reach 3, Confidence 5, Effort 1)
+
+**Problem**: Sync Setup page showed hardcoded "your-server.com" in IMAP, SMTP, CalDAV, and CardDAV URLs. The page was useless for actual device configuration.
+
+**Fix**: Changed to use `window.location.hostname` for real server URLs. Improved layout with section labels, monospace font for addresses, SSL/TLS notes, and user-friendly setup instructions.
+
+**Files**: `App.tsx` (+31/-18)
+
+**Commit**: `cf163f5`
+
+---
+
+### Cycle 2: Notes grid empty state
+
+**Score**: 32 (Severity 3, Reach 4, Confidence 5, Effort 1)
+
+**Problem**: Empty notes list rendered a blank container after loading. New users saw nothing.
+
+**Fix**: Added EmptyState with PenLine icon, "No notes yet" heading, and description mentioning rich text, attachments, reminders, and collaboration.
+
+**Files**: `NotesGrid.tsx` (+12/-1)
+
+**Commit**: `70a75e8`
+
+---
+
+### Cycle 3: Spinner component
+
+**Score**: 31 (Severity 2, Reach 5, Confidence 5, Effort 1)
+
+**Problem**: Small-area loading states used static text ("Loading...", "Saving...", "Sending...") with no motion feedback. Users couldn't tell if the app was working.
+
+**Fix**: Created reusable `Spinner` component (animated Loader icon, configurable size). Wired into AuthGate (loading + sign-in button), ComposeModal (send button), and InlineReply (send button).
+
+**Files**: `Spinner.tsx` (new), `AuthGate.tsx` (+4/-1), `ComposeModal.tsx` (+2/-1), `InlineReply.tsx` (+2/-1)
+
+**Commit**: `7f0cd1a`
+
+---
+
+### Proof / checks run
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` | No errors |
+| `npx vite build` | Success (1.85s) |
+| `npm test` (backend) | 25/25 pass |
+| Sync page (live) | Renders behind auth; hostname logic verified via code review |
+
+### UX_AUDIT.md updates
+
+- Added: Sync placeholder URLs, Notes empty state as new issues → Done
+- Spinner component → Done
+- Score: Design system 6→7
+- Completed: 16→19
+
+### Risks / notes
+
+- **Sync page**: Hostname comes from client-side `window.location.hostname`. In split-horizon DNS setups, the internal hostname may differ from the public one.
+- **Spinner**: Only wired into 3 key locations. Other text-only states (settings save, draft save) still use static text and can be migrated incrementally.
+- **Notes empty state**: The description mentions features (attachments, reminders, collaboration) that are partially implemented. This sets expectations accurately for current capability.
+
+### Next recommended task
+
+Add Settings to mobile tab bar visible items — Settings was added in Batch #1 to the tab bar, but Admin is still inaccessible on mobile. Add Admin (ShieldAlert icon) to mobile tab bar for admin users. Score 35: Severity 4, Reach 3, Confidence 5, Effort 1.

@@ -3,6 +3,8 @@
 > Last updated: 2026-07-02
 > Method: Code-level audit of all product surfaces + browser verification of login/auth gate
 
+OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin, Sync, and mobile. Do not optimize only the mail app unless there is a critical mail emergency.
+
 ## Audit Summary
 
 | Surface | Score | Status |
@@ -19,7 +21,7 @@
 | Loading states | 8/10 | Good skeleton system, searchLoading indicator added |
 | Error states | 7/10 | Great ErrorBoundary/ErrorBanner, critical API failures surfaced |
 | Keyboard | 8/10 | Shortcuts added for all primary mail actions (r,a,f,s,e,#,Esc) |
-| Design system | 6/10 | Good glass theme, missing typography/spacing tokens |
+| Design system | 7/10 | Good glass theme, spinner component added, missing typography tokens |
 
 ## Critical Issues (broken functionality)
 
@@ -140,8 +142,29 @@
 - **Problem**: Small-area loading states use text ("Loading...", "Saving...") with no animation
 - **User impact**: Static text doesn't communicate ongoing activity well
 - **Severity**: Low
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Created Spinner component, wired into AuthGate, ComposeModal, InlineReply loading states
+- **Commit**: `7f0cd1a`
 
-### 14. No contact autocomplete in compose
+### 14. Sync page shows placeholder URLs
+- **Surface**: Sync
+- **Problem**: Sync Setup page showed hardcoded "your-server.com" — useless for real configuration
+- **User impact**: Users couldn't use the page to configure their devices
+- **Severity**: Medium
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Uses `window.location.hostname` for real server URLs, improved layout with labels and notes
+- **Commit**: `cf163f5`
+
+### 15. No notes grid empty state
+- **Surface**: Notes
+- **Problem**: Empty notes list rendered blank container after loading
+- **User impact**: New users saw nothing after loading completed
+- **Severity**: Medium
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added EmptyState with PenLine icon and description
+- **Commit**: `70a75e8`
+
+### 16. No contact autocomplete in compose
 - **Surface**: Compose
 - **Problem**: To/Cc/Bcc fields are plain text inputs with no address autocomplete
 - **User impact**: Users must type full email addresses; no discoverability of contacts
@@ -166,6 +189,9 @@
 - [x] Search always visible during message selection (was hidden behind bulk actions)
 - [x] Critical API errors surfaced to users (was silent console.error)
 - [x] Calendar event empty state (was blank grid with no guidance)
+- [x] Sync page shows real server hostname (was hardcoded placeholders)
+- [x] Notes grid empty state (was blank after loading)
+- [x] Spinner component created and wired into key loading states
 
 ## Next Recommended UX Task
 

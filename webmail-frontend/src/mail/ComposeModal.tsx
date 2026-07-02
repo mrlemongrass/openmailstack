@@ -303,6 +303,13 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           <textarea className="glass-input" placeholder="Write your message..."
             value={mail.composeBody} onChange={(e) => mail.setComposeBody(e.target.value)}
             style={{ flex: 1, minHeight: 180, resize: 'vertical' }} />
+          {mail.composeBody && (
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textAlign: 'right', marginTop: 2 }}>
+              {mail.composeBody.replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(Boolean).length} words
+              {' · '}
+              {mail.composeBody.replace(/<[^>]*>/g, '').length} chars
+            </div>
+          )}
 
           {/* Image previews (#6) */}
           {imagePreviews.length > 0 && (

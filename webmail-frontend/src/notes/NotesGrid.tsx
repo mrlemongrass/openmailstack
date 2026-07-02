@@ -3,6 +3,7 @@ import { NoteSkeleton } from './components/NoteSkeleton';
 import { SortDropdown } from './components/SortDropdown';
 import { EmptyState } from '../shared/components/EmptyState';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
+import { useToast } from '../shared/components/Toast';
 import type { useNotes } from './hooks/useNotes';
 import type { Note } from '../shared/types';
 
@@ -102,6 +103,7 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
 }
 
 function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
+  const { showToast } = useToast();
   note.labels_json = note.labels_json || '[]';
   let labels: string[] = [];
   try { labels = JSON.parse(note.labels_json); } catch { labels = []; }
@@ -180,7 +182,9 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
             style={{ fontSize: '0.7rem', color: note.is_pinned ? '#f59e0b' : undefined }}
             onClick={(e) => {
               e.stopPropagation();
-              n.saveNote({ id: note.id, is_pinned: note.is_pinned ? 0 : 1 } as any);
+              const newPinned = !note.is_pinned;
+              n.saveNote({ id: note.id, is_pinned: newPinned ? 1 : 0 } as any);
+              showToast({ type: 'info', message: newPinned ? 'Note pinned' : 'Note unpinned' });
             }}>
             <Star size={12} fill={note.is_pinned ? '#f59e0b' : 'none'} /> {note.is_pinned ? 'Unpin' : 'Pin'}
           </button>

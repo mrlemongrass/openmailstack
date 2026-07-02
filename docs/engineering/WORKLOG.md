@@ -568,3 +568,75 @@ Ending git state: clean (17 commits ahead)
 ### Next recommended task
 
 Add keyboard shortcuts for mail actions (r=reply, a=reply-all, f=forward, #=delete, s=star, e=archive). Scored 34: Severity 4 (missing feature affects power users), Reach 3, Confidence 5, Effort 2. Implement as a `useEffect` keydown listener in the mail shell.
+
+---
+
+## 2026-07-02 — Product Experience Batch #2: 3 UX improvements
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (18 commits ahead)  
+Ending git state: clean (21 commits ahead)  
+
+### Cycle 1: Show search loading indicator
+
+**Score**: 33 (Severity 3, Reach 4, Confidence 5, Effort 1)
+
+**Fix**: Added a "Searching..." indicator bar with a spinning Loader icon at the top of the message list. Shown when `isSearchActive && searchLoading`. Uses accent-primary color on tinted background. Also added a CSS `@keyframes spin` animation.
+
+**Files**: `MessageList.tsx` (+11), `index.css` (+6)
+
+**Commit**: `ffaeb78`
+
+---
+
+### Cycle 2: Keyboard shortcuts for mail actions
+
+**Score**: 33 (Severity 4, Reach 3, Confidence 5, Effort 2)
+
+**Fix**: Added a `useEffect` keydown listener in `MessageViewer` for: r=reply, a=reply-all, f=forward, s=toggle star, e=archive, Delete/Backspace/#=delete, Escape=back to folder list. Shortcuts suppressed when focus is in INPUT/TEXTAREA/contentEditable elements. Ctrl/Meta combos ignored.
+
+**Files**: `MessageViewer.tsx` (+62)
+
+**Commit**: `fcf8d23`
+
+---
+
+### Cycle 3: Contact grid empty state
+
+**Score**: 32 (Severity 3, Reach 4, Confidence 5, Effort 1)
+
+**Fix**: Added empty state to `ContactGrid` when not loading, contacts list is empty, and no search query active. Shows Users icon, "No contacts yet" heading, and guidance text pointing to the sidebar New Contact button. Suppressed during search so it doesn't interfere with search-no-results.
+
+**Files**: `ContactGrid.tsx` (+19)
+
+**Commit**: `367dc65`
+
+---
+
+### Proof / checks run (all cycles)
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` | No errors × 3 |
+| `npx vite build` | Success (~1.9s) × 3 |
+| `npm test` (backend) | 25/25 pass × 3 |
+| Deployed to live | After each cycle |
+
+### UX_AUDIT.md updates
+
+- searchLoading: Open → Done
+- Keyboard shortcuts: Open → Done
+- Contact empty state: Open → Done
+- Score updates: Search 4→5, Contacts 7→8, Loading 7→8, added Keyboard 8/10
+- Completed UX improvements: 10→13
+
+### Risks / notes
+
+- **Search loading**: Only shown when search IS active AND loading. Doesn't cover initial folder loads or refresh.
+- **Keyboard shortcuts**: Only active when a message is selected (inside MessageViewer). Global shortcuts (active anywhere in mail) would require a different approach.
+- **Contact empty state**: The New Contact CTA is in the sidebar (not the grid) to avoid duplicating buttons and requiring prop drilling through the contacts hook.
+
+### Next recommended task
+
+Surface API errors to users instead of silently logging to console. 7+ API call sites in useMail.ts (fetchFolders, fetchMessages, fetchMessageBody, snoozeMessages, etc.) only `console.error` with no user-facing feedback. Score 34: Severity 3, Reach 5, Confidence 5, Effort 3.

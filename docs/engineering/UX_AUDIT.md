@@ -11,13 +11,14 @@
 | Message list | 7/10 | Good density system, missing preview/snippet text |
 | Message viewer | 8/10 | Reply All/Forward fixed, HTML sanitized with DOMPurify |
 | Compose / Reply | 6/10 | Schedule send+identities fixed, inline reply basic |
-| Search | 4/10 | SearchBar.tsx dead code, loading never shown, hints unimplemented |
+| Search | 5/10 | SearchBar.tsx dead code, loading indicator added, hints unimplemented |
 | Calendar | 6/10 | MonthView solid, non-functional views hidden |
-| Contacts | 7/10 | Good detail/edit panels, missing empty state for grid |
+| Contacts | 8/10 | Good detail/edit panels, empty state added |
 | Settings | 8/10 | Excellent feedback/validation, mobile-inaccessible, password change reloads |
 | Mobile / Responsive | 7/10 | Settings added to mobile tab bar, single breakpoint, no tablet consideration |
-| Loading states | 7/10 | Good skeleton system, searchLoading/isRefreshing unused |
+| Loading states | 8/10 | Good skeleton system, searchLoading indicator added |
 | Error states | 6/10 | Great ErrorBoundary/ErrorBanner, 7+ API failures silent |
+| Keyboard | 8/10 | Shortcuts added for all primary mail actions (r,a,f,s,e,#,Esc) |
 | Design system | 6/10 | Good glass theme, missing typography/spacing tokens |
 
 ## Critical Issues (broken functionality)
@@ -68,8 +69,9 @@
 - **Problem**: `searchLoading` state set in useMail but never rendered in any component
 - **User impact**: No feedback during search processing on slow connections
 - **Severity**: Medium
-- **Status**: Open
-- **Ref**: `useMail.ts:56`, `MessageList.tsx:72-74`
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added "Searching..." indicator bar with spinning Loader icon at top of message list
+- **Commit**: `ffaeb78`
 
 ### 6. 7+ API failures silently logged to console
 - **Surface**: All
@@ -102,15 +104,18 @@
 - **Problem**: No keyboard shortcuts for reply (r), forward (f), delete (#), star (s), archive (e)
 - **User impact**: Power users cannot triage mail efficiently
 - **Severity**: Medium
-- **Status**: Open
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added keydown listener in MessageViewer: r=reply, a=reply-all, f=forward, s=star, e=archive, Delete/Backspace/#=delete, Escape=back
+- **Commit**: `fcf8d23`
 
 ### 10. No contact grid empty state
 - **Surface**: Contacts
 - **Problem**: After loading, empty contact list renders blank container with no message
 - **User impact**: New users see nothing after contact load completes
 - **Severity**: Medium
-- **Status**: Open
-- **Ref**: `ContactGrid.tsx:79-107`
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Added empty state with Users icon, heading, and guidance text pointing to sidebar New Contact button
+- **Commit**: `367dc65`
 
 ## Polish Issues (not blocking)
 
@@ -152,6 +157,9 @@
 - [x] Settings added to mobile tab bar (was completely inaccessible on mobile)
 - [x] HTML sanitization with DOMPurify in MessageViewer (was raw dangerouslySetInnerHTML)
 - [x] Non-functional calendar views hidden (4 of 5 views were dead-end stubs)
+- [x] Search loading indicator shown during search (was never rendered)
+- [x] Keyboard shortcuts for mail actions (r,a,f,s,e,#,Delete,Esc)
+- [x] Contact grid empty state (was blank after loading)
 
 ## Next Recommended UX Task
 

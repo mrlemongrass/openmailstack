@@ -743,18 +743,40 @@ function FiltersPane({ loading, saving, rules, folders, onAddRule, onUpdateRule,
               </button>
             ))}
           </div>
-          <div className="settings-detail-pane">
+          <div className="settings-detail-pane" style={{ paddingBottom: 0 }}>
             {activeRule && (
-              <RuleEditor
-                key={activeRule.id}
-                rule={activeRule}
-                folders={folders}
-                onUpdate={updates => onUpdateRule(activeRule.id, updates)}
-                onDelete={() => {
-                  onDeleteRule(activeRule.id);
-                  setActiveRuleId(null);
-                }}
-              />
+              <>
+              <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+                <RuleEditor
+                  key={activeRule.id}
+                  rule={activeRule}
+                  folders={folders}
+                  onUpdate={updates => onUpdateRule(activeRule.id, updates)}
+                  onDelete={() => {
+                    onDeleteRule(activeRule.id);
+                    setActiveRuleId(null);
+                  }}
+                />
+              </div>
+              <div style={{
+                position: 'sticky', bottom: 0, padding: '12px 0',
+                background: 'var(--bg-glass)', backdropFilter: 'blur(12px)',
+                borderTop: '1px solid var(--border-glass)',
+                display: 'flex', gap: 8, justifyContent: 'flex-end',
+              }}>
+                <button className="btn btn-ghost" type="button"
+                  onClick={() => {
+                    onDeleteRule(activeRule.id);
+                    setActiveRuleId(null);
+                  }}>
+                  <Trash2 size={16} /> Delete Rule
+                </button>
+                <button className="btn btn-primary" type="button"
+                  onClick={onSaveRules} disabled={saving}>
+                  {saving ? 'Saving...' : 'Save Rules'}
+                </button>
+              </div>
+              </>
             )}
           </div>
         </div>

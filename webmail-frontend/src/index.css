@@ -649,9 +649,16 @@ body {
   display: grid;
   grid-template-columns: 240px 1fr;
   gap: 20px;
-  align-items: flex-start;
+  align-items: stretch;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+
+.filters-pane {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 120px);
 }
 
 .settings-list-pane {

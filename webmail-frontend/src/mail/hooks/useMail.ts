@@ -185,16 +185,19 @@ export function useMail(_opts: UseMailOptions) {
     finally { setReplySending(false); }
   }, [replyText, fetchFolders, fetchMessages]);
 
+  // Track which message bodies have been fetched (or are being fetched)
+  const prefetchedRef = useRef<Set<number>>(new Set());
+
   // Fetch a single message body (full content)
   const fetchMessageBody = useCallback(async (uid: number, folderPath: string) => {
+    if (prefetchedRef.current.has(uid)) return; // already fetched or in-flight
+    prefetchedRef.current.add(uid);
     try {
       const data = await api.fetchMessage(folderPath, uid);
       if (data.message) {
-        // Merge into messages array
         setMessages((prev) => prev.map((m) =>
           m.uid === uid ? { ...m, html: data.message.html, text: data.message.text } : m
         ));
-        // Also set viewing thread
         setViewingThread((prev) => {
           if (prev?.some((m) => m.uid === uid)) {
             return prev.map((m) => m.uid === uid ? { ...m, html: data.message.html, text: data.message.text } : m);
@@ -202,7 +205,22 @@ export function useMail(_opts: UseMailOptions) {
           return [{ ...data.message }];
         });
       }
-    } catch (e) { console.error('Failed to fetch message body', e); }
+    } catch (e) { console.error('Failed to fetch message body', e); prefetchedRef.current.delete(uid); }
+  }, []);
+
+  // Pre-fetch message bodies in the background (non-blocking, silent)
+  const prefetchBodies = useCallback((uids: number[], folderPath: string) => {
+    for (const uid of uids) {
+      if (prefetchedRef.current.has(uid)) continue;
+      prefetchedRef.current.add(uid);
+      api.fetchMessage(folderPath, uid).then((data: any) => {
+        if (data.message) {
+          setMessages((prev) => prev.map((m) =>
+            m.uid === uid ? { ...m, html: data.message.html, text: data.message.text } : m
+          ));
+        }
+      }).catch(() => { prefetchedRef.current.delete(uid); });
+    }
   }, []);
 
   // Snooze
@@ -392,7 +410,7 @@ export function useMail(_opts: UseMailOptions) {
     replyText, setReplyText, replySending, sendReply,
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
-    fetchFolders, fetchMessages, fetchMessageBody, loadOlderMessages, refreshMessages,
+    fetchFolders, fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,
     messageAction, undoAction, doSearch, snoozeMessages, muteThread,
   };
 }

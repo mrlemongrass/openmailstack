@@ -33,6 +33,19 @@ export function MessageList({ mail, density }: MessageListProps) {
     }
   }, [activeFolder, decodedFolder, setActiveFolder, setIsSearchActive, setSelectedMessages]);
 
+  // Pre-fetch message bodies for the first batch of visible messages
+  useEffect(() => {
+    if (mail.messages.length > 0 && folder) {
+      const uidsToPreFetch = mail.messages
+        .filter((m) => !m.html && !m.text)
+        .slice(0, 10)
+        .map((m) => m.uid);
+      if (uidsToPreFetch.length > 0) {
+        mail.prefetchBodies(uidsToPreFetch, decodeURIComponent(folder));
+      }
+    }
+  }, [mail.messages, folder, mail.prefetchBodies]);
+
   const rowVirtualizer = useVirtualizer({
     count: mail.messages.length,
     getScrollElement: () => parentRef.current,

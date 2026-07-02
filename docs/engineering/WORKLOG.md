@@ -1719,3 +1719,21 @@ Added floating action button (48px circle, accent blue, + icon) fixed at bottom-
 ### Risks: FAB positioned at `bottom: 72px` — may need adjustment if tab bar height changes
 
 ### Next QoL: Sticky Save across remaining Settings panes
+
+---
+
+## 2026-07-02 — UI/UX QoL Pass #3: Responsive modal widths
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`
+
+### Stress case
+**375px mobile viewport**: Compose modal (650px) and Event modal (600px) fixed widths overflowed.
+
+### Fix
+Changed to `width: min(Npx, 100%)` — caps at designed width on desktop, shrinks on mobile.
+
+**Files**: `ComposeModal.tsx` (+1/-1), `EventModal.tsx` (+1/-1)  
+**Commit**: `329bb35`
+
+### Proof: TSC ✅, Build ✅, Playwright: compose fits 375px viewport

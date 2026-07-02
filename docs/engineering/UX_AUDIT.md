@@ -153,11 +153,14 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Fix**: Added floating action button (+ icon) at bottom-right of message list, positioned above the mobile tab bar
 - **Commit**: `8e567c1`
 
-### Q4. Mobile compose: modal width may overflow on small screens
-- **Surface**: Compose / Mobile
-- **Stress case**: 375px viewport with compose modal at 650px fixed width
-- **User impact**: Modal edges may be cut off
-- **Severity**: Low — most mobile browsers handle overflow with viewport scaling
+### Q4. Mobile compose: modal width overflows on small screens
+- **Surface**: Compose + Event modals / Mobile
+- **Stress case**: 375px viewport — compose modal 650px fixed, event modal 600px fixed
+- **User impact**: Modal content cut off, buttons unreachable
+- **Severity**: Medium
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Changed to `width: min(650px, 100%)` and `width: min(600px, 100%)` for responsive sizing
+- **Commit**: `329bb35`
 
 ## Polish Issues (not blocking)
 

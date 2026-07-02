@@ -86,6 +86,15 @@ export function MessageRow({
             {message.subject || '(no subject)'}
           </span>
         </div>
+        {density === 'comfortable' && message.preview && (
+          <div style={{
+            fontSize: '0.78rem', color: 'var(--text-secondary)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            marginTop: 1, opacity: 0.7,
+          }}>
+            {message.preview}
+          </div>
+        )}
       </div>
     </div>
   );

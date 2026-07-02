@@ -6,6 +6,8 @@ import { MonthView } from './views/MonthView';
 import { CalendarToolbar } from './CalendarToolbar';
 import { EventModal } from './EventModal';
 import { Skeleton } from '../shared/components/Skeleton';
+import { EmptyState } from '../shared/components/EmptyState';
+import { CalendarDays } from 'lucide-react';
 
 function ResizeHandle() {
   return (
@@ -16,7 +18,19 @@ function ResizeHandle() {
   );
 }
 
-function renderCalendarView(cal: ReturnType<typeof useCalendar>) {
+function renderCalendarContent(cal: ReturnType<typeof useCalendar>) {
+  if (cal.isLoading) return <Skeleton count={12} height={60} />;
+
+  if (!cal.isLoading && cal.events.length === 0) {
+    return (
+      <EmptyState
+        icon={CalendarDays}
+        title="No events"
+        description="Your calendar is empty. Click any date to create your first event."
+      />
+    );
+  }
+
   switch (cal.calendarView) {
     case 'month':
       return <MonthView cal={cal} />;
@@ -42,7 +56,7 @@ export function CalendarLayout() {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <CalendarToolbar cal={cal} />
-        {cal.isLoading ? <Skeleton count={12} height={60} /> : renderCalendarView(cal)}
+        {renderCalendarContent(cal)}
         <EventModal cal={cal} />
       </div>
     );
@@ -64,7 +78,7 @@ export function CalendarLayout() {
         <Panel id="calendar-view" defaultSize="80%" minSize="25%">
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <CalendarToolbar cal={cal} />
-            {cal.isLoading ? <Skeleton count={12} height={60} /> : renderCalendarView(cal)}
+            {renderCalendarContent(cal)}
           </div>
         </Panel>
       </PanelGroup>

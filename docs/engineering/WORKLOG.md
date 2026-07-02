@@ -1665,3 +1665,30 @@ Branch: `main`
 
 ### Proof: TypeScript ✅, Build ✅, Backend tests 26/26 ✅
 ### Next: Add contact birthday calendar integration.
+
+---
+
+## 2026-07-02 — UI/UX QoL Pass: Unclip compose autocomplete
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`
+
+### Stress case
+**Compose with contacts**: Typing in recipient fields triggers contact autocomplete dropdown. Previously the dropdown rendered inside `overflow: auto` form area, clipping suggestions.
+
+### Findings (UX_AUDIT.md Q1-Q3)
+- **Q1 (Fixed)**: Compose autocomplete dropdown clipped — restructured layout
+- **Q2**: Some Settings panes lack sticky Save (mostly addressed by Filters fix)
+- **Q3**: Mobile compose 650px on 375px viewport may overflow
+
+### Fix: Q1 — Unclip autocomplete dropdown
+
+**Before**: Recipient fields + autocomplete inside `overflow: auto` → dropdown clipped  
+**After**: Recipient fields in `flexShrink: 0` no-overflow container; only body scrolls → dropdown fully visible
+
+**File**: `webmail-frontend/src/mail/ComposeModal.tsx` (+5/-2)  
+**Commit**: `3d91ba4`
+
+### Proof: TSC ✅, Build ✅, Playwright: compose opens with dropdown not clipped
+### Risks: Many expanded Cc/Bcc may reduce body area; future `max-height` on recipient section could help
+### Next QoL: Sticky Save across remaining Settings panes

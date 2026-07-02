@@ -127,6 +127,29 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Fix**: Added empty state with Users icon, heading, and guidance text pointing to sidebar New Contact button
 - **Commit**: `367dc65`
 
+## QoL Issues (2026-07-02 QoL pass)
+
+### Q1. Compose autocomplete dropdown clipped by scroll container
+- **Surface**: Compose
+- **Stress case**: Typing in To/Cc/Bcc with contacts matching → dropdown clipped inside `overflow: auto` form area
+- **User impact**: Can't see all matching contacts, especially on smaller viewports
+- **Severity**: Medium
+- **Status**: **Done** (2026-07-02)
+- **Fix**: Restructured compose layout — recipient fields (From, To, Cc, Bcc, Subject) now outside scroll area (`flexShrink: 0`). Only body textarea + attachments scroll.
+- **Commit**: `3d91ba4`
+
+### Q2. Settings panes: some lack sticky Save button
+- **Surface**: Settings (various panes)
+- **Stress case**: Long settings forms require scrolling back to top to save
+- **User impact**: Extra mouse travel, risk of losing changes
+- **Severity**: Low — Filters pane already has sticky bar; most other panes auto-save or have save in header
+
+### Q3. Mobile compose: modal width may overflow on small screens
+- **Surface**: Compose / Mobile
+- **Stress case**: 375px viewport with compose modal at 650px fixed width
+- **User impact**: Modal edges may be cut off
+- **Severity**: Low — most mobile browsers handle overflow with viewport scaling
+
 ## Polish Issues (not blocking)
 
 ### 11. No design tokens for typography, spacing, or font weights

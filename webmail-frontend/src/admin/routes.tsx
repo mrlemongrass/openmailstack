@@ -111,6 +111,12 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
             </NavLink>
           ))}
         </nav>
+        <div style={{
+          marginTop: 'auto', padding: '12px 18px', borderTop: '1px solid var(--border-glass)',
+          fontSize: '0.72rem', color: 'var(--text-secondary)',
+        }}>
+          OpenMailStack v0.1.5
+        </div>
       </aside>
     </>
   );

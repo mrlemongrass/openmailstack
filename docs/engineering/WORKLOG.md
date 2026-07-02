@@ -1118,3 +1118,84 @@ Ending git state: clean (44 commits ahead of origin)
 ### Next recommended task
 
 Add Notes checklist blocks — Apple Notes and Google Keep support interactive checklists. The Notes editor (react-quill-new) supports custom blots for checklists. Adding a checklist toggle would improve Notes app parity. Score 28: Severity 3, Reach 3, Confidence 4, Effort 3.
+
+---
+
+## 2026-07-02 — 4-cycle batch: Contacts + Notes + Product + Settings
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (46 commits ahead)  
+Ending git state: clean (50 commits ahead)  
+
+### Cycle 1: Contacts — inline label + group creation
+
+**Why**: Labels '+' button was a dead no-op; Groups had no creation UI despite full backend CRUD support (saveContactLabel, saveContactGroup).
+
+**Fix**: Wired Labels '+' to toggle inline input with Enter/Escape handling. Added Groups '+' with same pattern. Both call existing APIs and refresh sidebar on success. Random color assignment from palette.
+
+**Score**: 32 (Severity 3, Reach 4, Confidence 5, Effort 2)
+
+**Commit**: `7c369c5`
+
+---
+
+### Cycle 2: Notes — relative timestamps on cards
+
+**Why**: Note cards had no temporal context — users couldn't tell when a note was last edited.
+
+**Fix**: Added `formatRelativeTime` helper (Just now → 5m ago → 2h ago → Yesterday → 3d ago → 2w ago → Jun 15). Timestamp displayed in card footer alongside pin/lock indicators.
+
+**Score**: 33 (Severity 2, Reach 5, Confidence 5, Effort 1)
+
+**Commit**: `3c4bc28`
+
+---
+
+### Cycle 3: Product experience — glass-styled ConfirmDialog
+
+**Why**: `window.confirm()` and `alert()` broke the glass aesthetic with native browser dialogs.
+
+**Fix**: Created reusable `ConfirmDialog` component (glass-panel, AlertTriangle icon, danger variant, configurable labels). Replaced confirm() in ComposeModal (unsaved close) and ContactTrash (permanent delete).
+
+**Score**: 31 (Severity 2, Reach 5, Confidence 5, Effort 2)
+
+**Commit**: `2e62ce3`
+
+---
+
+### Cycle 4: Settings — replace alert() with inline feedback
+
+**Why**: Settings ContactsPane import used alert() + window.location.reload(). AccountSecurityPane session revoke used confirm() + alert().
+
+**Fix**: ContactsPane import now shows inline success/error banners (green/red). Removed page reload — contacts refresh without it. Session revoke now uses ConfirmDialog with inline error display. All alert()/confirm() removed from Settings surface.
+
+**Score**: 32 (Severity 2, Reach 4, Confidence 5, Effort 1)
+
+**Commit**: `c2253d4`
+
+---
+
+### Proof / checks run (all cycles)
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` (frontend) | No errors × 4 cycles |
+| `npx vite build` (frontend) | Success × 4 cycles |
+| `npm test` (backend) | 26/26 pass × 4 cycles |
+
+### Docs updated
+
+- `UX_AUDIT.md`: Contacts 8→9, Settings note updated, 6 new completed items (26→32 done)
+- `SUITE_FEATURE_MATRIX.md`: Contacts groups → Implemented, 3 new Implemented rows
+- `WORKLOG.md`: This entry
+
+### Risks / notes
+
+- **ConfirmDialog**: Only used in 3 of 7 confirmed/alert sites. Remaining: SettingsPanel session revoke already done; Settings import still uses inline banner (not a dialog — correct UX for file import feedback). No remaining blocking alert() calls.
+- **Contact group creation**: Creates empty groups — no members. Adding members to groups requires a separate feature (drag contacts to group or multi-select + assign).
+- **Note timestamps**: Uses `updated_at` from the Note type. If this field isn't populated by the backend, cards will show 'Draft'.
+
+### Next recommended task
+
+Add toast/notification system — a shared transient toast component for success/error/info messages across the suite. Score 27: Severity 2, Reach 5, Confidence 4, Effort 3.

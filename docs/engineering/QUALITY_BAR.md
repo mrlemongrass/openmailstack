@@ -158,3 +158,13 @@ A task is done only when:
 - security/privacy was considered for data/auth/mail changes
 - performance was considered for mailbox/search/sync/rendering changes
 - final report includes proof
+
+## Release blocker reference
+
+During normal development, use this file to prioritize work.
+
+During release hardening or release certification, classify unresolved issues using:
+
+- `docs/engineering/RELEASE_CRITERIA.md`
+
+Release blocker levels P0/P1/P2/P3 override normal task scoring when deciding whether OpenMailStack can ship.

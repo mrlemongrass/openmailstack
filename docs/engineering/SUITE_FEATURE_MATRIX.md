@@ -38,10 +38,12 @@ Translate useful ideas into OpenMailStack-native, self-hostable, privacy-respect
 | Suite | Admin on mobile | All productivity apps | Admin panel accessible from mobile tab bar | Should | Implemented | 2026-07-02: ShieldAlert icon + label in mobile nav |
 | Settings | Password change UX | All productivity apps | Inline success feedback without alert() or page reload | Should | Implemented | 2026-07-02: removed alert+reload, inline pwSuccess banner |
 | Sync | Copy-to-clipboard | iCloud-style setup | One-click copy for server addresses, protocol icons, refined layout | Should | Implemented | 2026-07-02: SyncRow component with copy state |
+| Suite | Glass-styled dialogs | iCloud/Google/Microsoft | Custom ConfirmDialog replacing browser alert()/confirm() | Should | Implemented | 2026-07-02: compose close, contact delete, session revoke |
+| Notes | Relative timestamps | Apple Notes / Google Keep | 'Just now', '5m ago', 'Yesterday' on note cards | Should | Implemented | 2026-07-02: formatRelativeTime helper + card footer |
 | Calendar | Week/day/agenda views | iCloud/Google/Outlook calendars | Functional views or hide incomplete options | Must | Partial | Current report says only Month implemented |
 | Calendar | Appointment scheduling | Google Calendar booking pages | Self-hosted booking page per user/calendar | Could | Not Started | Requires public availability rules |
 | Calendar | Shared calendars | iCloud/Outlook/Google | Share read/edit permissions, ICS public links | Should | Needs Verification | |
-| Contacts | Lists/groups | iCloud Contacts / Outlook People | Contact lists/groups usable in compose and invites | Should | Needs Verification | |
+| Contacts | Lists/groups | iCloud Contacts / Outlook People | Contact labels + groups with inline creation in sidebar | Should | Implemented | 2026-07-02: inline '+' creation for labels and groups |
 | Contacts | Contact search | iCloud/Outlook/Google Contacts | Fast search by name/email/company/phone | Must | Needs Verification | |
 | Contacts | Birthday calendar | iCloud/Google-style integration | Contact birthdays appear in Calendar | Should | Needs Verification | |
 | Notes | Checklists | Apple Notes / Google Keep | Checklist blocks in note editor | Should | Needs Verification | |

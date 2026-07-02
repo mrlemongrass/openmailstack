@@ -15,8 +15,8 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 | Compose / Reply | 6/10 | Schedule send+identities fixed, inline reply basic |
 | Search | 6/10 | Search always visible, loading indicator added, hints unimplemented |
 | Calendar | 8/10 | MonthView + WeekView functional, empty/error states added, guest autocomplete |
-| Contacts | 8/10 | Good detail/edit panels, empty/error states added, Email opens in-app compose |
-| Settings | 9/10 | Excellent feedback/validation, password reload removed, mobile now accessible |
+| Contacts | 9/10 | Good detail/edit panels, label/group creation, Email→compose, error states |
+| Settings | 9/10 | All alert()/confirm() replaced with inline feedback, password reload removed |
 | Mobile / Responsive | 7/10 | Settings added to mobile tab bar, single breakpoint, no tablet consideration |
 | Loading states | 8/10 | Good skeleton system, searchLoading indicator added |
 | Error states | 8/10 | Critical API failures surfaced across all suite apps |
@@ -235,7 +235,12 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - [x] Password change flow: removed alert() + window.location.reload() (inline feedback instead)
 - [x] Contact Email quick action opens in-app compose instead of system mailto:
 - [x] Sync Setup page: copy-to-clipboard, protocol icons, refined layout
+- [x] Contact label + group inline creation (Labels '+' button wired, Groups '+')
+- [x] Note card relative timestamps (Just now, 5m ago, Yesterday, etc.)
+- [x] Glass-styled ConfirmDialog replacing window.confirm() in compose + contacts
+- [x] Settings import alerts replaced with inline success/error banners
+- [x] Settings session revoke confirm + error replaced with ConfirmDialog + inline
 
 ## Next Recommended UX Task
 
-Add Notes checklist blocks — Apple Notes and Google Keep support interactive checklists. Adding a checklist toggle in the Notes editor would improve the Notes app parity. Score 28: Severity 3, Reach 3, Confidence 4, Effort 3.
+Add toast/notification system — a shared toast component shown at the bottom of the screen for transient success/error/info messages would replace the remaining inline banners and give consistent feedback across the suite. Score 27: Severity 2, Reach 5, Confidence 4, Effort 3.

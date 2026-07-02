@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Save, Trash2, Video, Paperclip, Plus, Minus } from 'lucide-react';
 import type { useCalendar } from './hooks/useCalendar';
 import { format } from 'date-fns';
+import * as api from '../shared/api';
 
 const VIDEO_PROVIDERS = [
   { name: 'Google Meet', prefix: 'https://meet.google.com/' },
@@ -24,6 +25,66 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const [guestInput, setGuestInput] = useState('');
   const [guests, setGuests] = useState<string[]>((evt.guests as string[]) || []);
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+
+  // Contact autocomplete for guest field
+  const [guestSuggestions, setGuestSuggestions] = useState<{ name: string; email: string }[]>([]);
+  const [guestSelectedIndex, setGuestSelectedIndex] = useState(0);
+  const guestBlurRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    api.fetchContacts(500, 0).then((data: any) => {
+      if (data.contacts) {
+        setAllGuestContacts((data.contacts as any[])
+          .filter((c: any) => c.email)
+          .map((c: any) => ({ name: c.name || '', email: c.email })));
+      }
+    }).catch(() => {});
+  }, []);
+
+  const [allGuestContacts, setAllGuestContacts] = useState<{ name: string; email: string }[]>([]);
+
+  const handleGuestInputChange = useCallback((value: string) => {
+    setGuestInput(value);
+    if (value.length >= 2) {
+      const lower = value.toLowerCase();
+      const filtered = allGuestContacts.filter((c) =>
+        c.name.toLowerCase().includes(lower) || c.email.toLowerCase().includes(lower)
+      ).slice(0, 6);
+      setGuestSuggestions(filtered);
+      setGuestSelectedIndex(0);
+    } else {
+      setGuestSuggestions([]);
+    }
+  }, [allGuestContacts]);
+
+  const selectGuestSuggestion = useCallback((s: { name: string; email: string }) => {
+    const email = s.email.trim();
+    if (email && !guests.includes(email)) {
+      setGuests([...guests, email]);
+    }
+    setGuestInput('');
+    setGuestSuggestions([]);
+  }, [guests]);
+
+  const handleGuestKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (guestSuggestions.length === 0) {
+      if (e.key === 'Enter') { e.preventDefault(); handleAddGuest(); }
+      return;
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setGuestSelectedIndex((p) => (p + 1) % guestSuggestions.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setGuestSelectedIndex((p) => (p - 1 + guestSuggestions.length) % guestSuggestions.length); }
+    else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); selectGuestSuggestion(guestSuggestions[guestSelectedIndex]); }
+    else if (e.key === 'Escape') { setGuestSuggestions([]); }
+  }, [guestSuggestions, guestSelectedIndex, selectGuestSuggestion]);
+
+  const handleGuestBlur = useCallback(() => {
+    guestBlurRef.current = setTimeout(() => setGuestSuggestions([]), 150);
+  }, []);
+
+  const handleGuestFocus = useCallback(() => {
+    if (guestBlurRef.current) { clearTimeout(guestBlurRef.current); guestBlurRef.current = null; }
+    if (guestInput.length >= 2) handleGuestInputChange(guestInput);
+  }, [guestInput, handleGuestInputChange]);
 
   // #4 Video call generation
   const addVideoLink = (provider: typeof VIDEO_PROVIDERS[number]) => {
@@ -121,12 +182,33 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
           {/* Guests */}
           <div>
             <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>Guests</div>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 6, position: 'relative' }}>
               <input className="glass-input" placeholder="Add guest email..." value={guestInput}
-                onChange={(e) => setGuestInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddGuest(); } }}
+                onChange={(e) => handleGuestInputChange(e.target.value)}
+                onKeyDown={handleGuestKeyDown}
+                onFocus={handleGuestFocus}
+                onBlur={handleGuestBlur}
+                autoComplete="off"
                 style={{ flex: 1, fontSize: '0.85rem' }} />
               <button className="btn btn-ghost" onClick={handleAddGuest}><Plus size={14} /></button>
+              {guestSuggestions.length > 0 && (
+                <div className="glass-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 48, zIndex: 50,
+                  marginTop: 2, maxHeight: 160, overflow: 'auto', padding: 4 }}>
+                  {guestSuggestions.map((s, i) => (
+                    <div key={s.email}
+                      onMouseDown={(e) => { e.preventDefault(); selectGuestSuggestion(s); }}
+                      style={{
+                        padding: '8px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                        background: i === guestSelectedIndex ? 'var(--accent-primary)' : 'transparent',
+                        color: i === guestSelectedIndex ? '#fff' : 'var(--text-primary)',
+                        fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: 1,
+                      }}>
+                      <span style={{ fontWeight: 600 }}>{s.name || s.email}</span>
+                      {s.name && <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{s.email}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             {guests.map((g) => (
               <div key={g} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',

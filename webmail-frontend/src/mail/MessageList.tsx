@@ -7,6 +7,7 @@ import { MessageListSkeleton } from './components/MessageListSkeleton';
 import { MailToolbar } from './MailToolbar';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { EmptyState } from '../shared/components/EmptyState';
+import { useToast } from '../shared/components/Toast';
 import { Inbox, SearchX, Loader } from 'lucide-react';
 import type { useMail } from './hooks/useMail';
 
@@ -16,6 +17,7 @@ interface MessageListProps {
 }
 
 export function MessageList({ mail, density }: MessageListProps) {
+  const { showToast } = useToast();
   const { folder } = useParams<{ folder: string }>();
   const navigate = useNavigate();
   const parentRef = useRef<HTMLDivElement>(null);
@@ -130,7 +132,10 @@ export function MessageList({ mail, density }: MessageListProps) {
         onBulkAction={(action) => mail.messageAction(action)}
         onMarkAllRead={() => {
           const allUids = mail.messages.map((m) => m.uid);
-          if (allUids.length > 0) mail.messageAction('read', allUids);
+          if (allUids.length > 0) {
+            mail.messageAction('read', allUids);
+            showToast({ type: 'success', message: `${allUids.length} messages marked as read` });
+          }
         }}
       />
       <div ref={parentRef} style={{ flex: 1, overflow: 'auto' }}>

@@ -105,7 +105,8 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
           style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>Create</button>
       </div>
 
-      {/* View switcher */}
+      {/* View switcher — only Month view is currently implemented */}
+      {false && (
       <div style={{ display: 'flex', gap: 2 }}>
         {(['month', 'week', 'day', 'agenda', 'year'] as const).map((v) => (
           <button key={v} className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: '0.8rem', textTransform: 'capitalize',
@@ -114,6 +115,7 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
             onClick={() => cal.setCalendarView(v)}>{v}</button>
         ))}
       </div>
+      )}
     </div>
   );
 }

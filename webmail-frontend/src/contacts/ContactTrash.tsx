@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { RotateCcw, Trash2 } from 'lucide-react';
 import type { Contact } from '../shared/types';
 import * as api from '../shared/api';
+import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 
 export function ContactTrash({ contacts: c }: {
     contacts: {
@@ -10,15 +12,18 @@ export function ContactTrash({ contacts: c }: {
         isTrashLoading: boolean;
     };
 }) {
+    const [deleteConfirmId, setDeleteConfirmId] = useState<number | string | null>(null);
+
     const handleRestore = async (id: number | string) => {
         await api.restoreContact(id);
         c.refreshTrash();
         c.refreshContacts();
     };
 
-    const handlePermanentDelete = async (id: number | string) => {
-        if (!window.confirm('Permanently delete this contact?')) return;
-        await api.permanentDeleteContact(id);
+    const handlePermanentDelete = async () => {
+        if (deleteConfirmId === null) return;
+        await api.permanentDeleteContact(deleteConfirmId);
+        setDeleteConfirmId(null);
         c.refreshTrash();
     };
 
@@ -36,6 +41,7 @@ export function ContactTrash({ contacts: c }: {
     }
 
     return (
+        <>
         <div style={{ padding: 16, overflow: 'auto', flex: 1 }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                 Contacts in trash are automatically deleted after 30 days.
@@ -61,7 +67,7 @@ export function ContactTrash({ contacts: c }: {
                             style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
                             <RotateCcw size={14} /> Restore
                         </button>
-                        <button className="btn btn-danger" onClick={() => handlePermanentDelete(contact.id!)}
+                        <button className="btn btn-danger" onClick={() => setDeleteConfirmId(contact.id!)}
                             style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
                             <Trash2 size={14} /> Delete Forever
                         </button>
@@ -69,5 +75,15 @@ export function ContactTrash({ contacts: c }: {
                 </div>
             ))}
         </div>
+        <ConfirmDialog
+          open={deleteConfirmId !== null}
+          title="Delete permanently?"
+          message="This contact will be permanently deleted and cannot be recovered."
+          confirmLabel="Delete Forever"
+          danger
+          onConfirm={handlePermanentDelete}
+          onCancel={() => setDeleteConfirmId(null)}
+        />
+        </>
     );
 }

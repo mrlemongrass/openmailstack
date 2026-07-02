@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Send, Paperclip, Archive, Clock, Image, FileText } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
+import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import type { useMail } from './hooks/useMail';
 import * as api from '../shared/api';
 
@@ -33,6 +34,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
   // Image previews
   const [imagePreviews, setImagePreviews] = useState<{ file: File; url: string }[]>([]);
@@ -54,9 +56,8 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
 
   const handleClose = () => {
     if (hasContent) {
-      if (!window.confirm('You have unsaved changes in this message. Your draft will be saved. Close composer?')) {
-        return;
-      }
+      setShowCloseConfirm(true);
+      return;
     }
     mail.setIsComposing(false);
   };
@@ -158,6 +159,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   }, []);
 
   return (
+    <>
     <div className="compose-modal-overlay" style={{ position: 'fixed', inset: 0, zIndex: 1000,
       background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: 20 }}
       onDragOver={handleDragOver} onDragEnter={handleDragOver}
@@ -453,6 +455,17 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         </div>
       </div>
     </div>
+    {showCloseConfirm && (
+      <ConfirmDialog
+        open={showCloseConfirm}
+        title="Discard message?"
+        message="You have unsaved changes in this message. Your draft will be saved automatically."
+        confirmLabel="Close"
+        onConfirm={() => { setShowCloseConfirm(false); mail.setIsComposing(false); }}
+        onCancel={() => setShowCloseConfirm(false)}
+      />
+    )}
+    </>
   );
 }
 

@@ -42,6 +42,7 @@ export function SystemHealthDashboard() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [countdown, setCountdown] = useState(5);
 
   useEffect(() => {
     const fetchHealth = () => {
@@ -59,11 +60,13 @@ export function SystemHealthDashboard() {
         .catch(err => {
           setError(err.message || 'Connection error');
         });
+      setCountdown(5);
     };
 
     fetchHealth();
+    const tick = setInterval(() => setCountdown(c => (c > 1 ? c - 1 : 5)), 1000);
     const interval = setInterval(fetchHealth, 5000);
-    return () => clearInterval(interval);
+    return () => { clearInterval(tick); clearInterval(interval); };
   }, []);
 
   if (error && !health) {
@@ -88,7 +91,7 @@ export function SystemHealthDashboard() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {lastUpdated && (
             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Clock size={12} /> Updated {lastUpdated.toLocaleTimeString()}
+              <Clock size={12} /> Updated {lastUpdated.toLocaleTimeString()} · refresh in {countdown}s
             </span>
           )}
           <span style={{ background: 'var(--accent-primary)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>ADMIN</span>

@@ -177,7 +177,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
       background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: 20 }}
       onDragOver={handleDragOver} onDragEnter={handleDragOver}
       onDragLeave={handleDragLeave} onDrop={handleDrop}>
-      <div className="glass-panel" style={{ width: 650, maxHeight: '85vh', display: 'flex',
+      <div className="glass-panel" style={{ width: 'min(650px, 100%)', maxHeight: '85vh', display: 'flex',
         flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
         {/* Drop overlay */}
         {isDragOver && (

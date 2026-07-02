@@ -9,6 +9,7 @@ import { RawMessageModal } from './components/RawMessageModal';
 import { SnoozePopover } from './components/SnoozePopover';
 import { MoveToPopover } from './components/MoveToPopover';
 import { Skeleton } from '../shared/components/Skeleton';
+import { Spinner } from '../shared/components/Spinner';
 import { CalendarInviteCard } from '../shared/components/CalendarInviteCard';
 import { KeyboardHelp } from '../shared/components/KeyboardHelp';
 import { useToast } from '../shared/components/Toast';
@@ -22,6 +23,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showSnooze, setShowSnooze] = useState(false);
   const [showMoveTo, setShowMoveTo] = useState(false);
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+  const [bodyLoading, setBodyLoading] = useState(false);
 
   // Fetch full message body when message is selected, and mark as read
   useEffect(() => {
@@ -29,6 +31,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
       const messageUid = parseInt(uid, 10);
       const msg = mail.messages.find((m) => m.uid === messageUid);
       if (msg && !msg.html && !msg.text) {
+        setBodyLoading(true);
         mail.fetchMessageBody(messageUid, decodeURIComponent(folder));
       }
       // Mark message as read automatically when viewing
@@ -38,6 +41,15 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     }
   }, [uid, folder]);
 
+  // Clear body loading when message content arrives
+  const messageUid = uid ? parseInt(uid, 10) : 0;
+  const message = mail.messages.find((m) => m.uid === messageUid);
+  useEffect(() => {
+    if (message && (message.html || message.text)) {
+      setBodyLoading(false);
+    }
+  }, [message?.html, message?.text]);
+
   if (!uid) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -46,9 +58,6 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
       </div>
     );
   }
-
-  const messageUid = parseInt(uid, 10);
-  const message = mail.messages.find((m) => m.uid === messageUid);
 
   if (!message) {
     return (
@@ -220,7 +229,11 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         </div>
         {message.calendarData && <CalendarInviteCard calendarData={message.calendarData} />}
         <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: 16 }}>
-          {message.html ? (
+          {bodyLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-secondary)', padding: '20px 0' }}>
+              <Spinner size={16} /> Loading message...
+            </div>
+          ) : message.html ? (
             <div className="message-body" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} style={{ lineHeight: 1.6, fontSize: '0.95rem' }} />
           ) : (
             <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', lineHeight: 1.6, fontSize: '0.95rem' }}>

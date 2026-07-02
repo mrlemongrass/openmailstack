@@ -1,5 +1,6 @@
 import { Send, Maximize2, Archive } from 'lucide-react';
 import { useState } from 'react';
+import { Spinner } from '../../shared/components/Spinner';
 
 interface InlineReplyProps {
   replyText: string;
@@ -39,7 +40,7 @@ export function InlineReply({
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-primary" disabled={!replyText.trim() || replySending}
             onClick={onSend} style={{ fontSize: '0.85rem', padding: '6px 14px' }}>
-            <Send size={14} /> {replySending ? 'Sending...' : 'Send'}
+            <Send size={14} /> {replySending ? <><Spinner size={12} /> Sending...</> : 'Send'}
           </button>
           <button className="btn btn-ghost" disabled={!replyText.trim() || replySending}
             onClick={onSendAndArchive} style={{ fontSize: '0.8rem' }} title="Send & Archive">

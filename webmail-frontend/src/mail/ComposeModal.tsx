@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, Send, Paperclip, Archive, Clock, Image, FileText } from 'lucide-react';
+import { Spinner } from '../shared/components/Spinner';
 import type { useMail } from './hooks/useMail';
 
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB warning
@@ -276,7 +277,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           </div>
           <button className="btn btn-primary" disabled={mail.sending || sizeExceedsBlock}
             onClick={() => mail.handleSend()}>
-            <Send size={16} /> {mail.sending ? 'Sending...' : 'Send'}
+            <Send size={16} /> {mail.sending ? <><Spinner size={14} /> Sending...</> : 'Send'}
           </button>
           <button className="btn btn-ghost" disabled={mail.sending || sizeExceedsBlock}
             onClick={() => mail.handleSendAndArchive()}

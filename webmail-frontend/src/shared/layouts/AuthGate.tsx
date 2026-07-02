@@ -2,6 +2,7 @@ import { Outlet } from 'react-router';
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { Mail } from 'lucide-react';
+import { Spinner } from '../components/Spinner';
 
 export function AuthGate() {
   const { isLoading, isAuthenticated, login } = useAuth();
@@ -12,7 +13,7 @@ export function AuthGate() {
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         minHeight: '100vh', background: 'var(--bg-main)', color: 'var(--text-secondary)',
       }}>
-        Loading...
+        <Spinner size={20} /> Loading...
       </div>
     );
   }
@@ -87,7 +88,7 @@ function LoginPage({ login }: { login: (email: string, password: string) => Prom
 
           <button type="submit" className="btn btn-primary" disabled={submitting}
             style={{ width: '100%' }}>
-            {submitting ? 'Signing in...' : 'Sign In'}
+            {submitting ? <><Spinner size={14} /> Signing in...</> : 'Sign In'}
           </button>
         </form>
       </div>

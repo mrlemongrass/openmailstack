@@ -198,8 +198,8 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             <X size={18} />
           </button>
         </div>
-        {/* Form fields */}
-        <div style={{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* Recipient fields — outside scroll area so autocomplete dropdowns aren't clipped */}
+        <div style={{ padding: '16px 16px 0', display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
           {/* From selector (#12) */}
           {fromOptions.length > 1 && (
             <select className="glass-select glass-input" value={mail.composeFrom}
@@ -300,6 +300,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           </div>
           <input className="glass-input" placeholder="Subject" value={mail.composeSubject}
             onChange={(e) => mail.setComposeSubject(e.target.value)} />
+        </div>
+        {/* Scrollable body area — textarea + attachments + previews */}
+        <div style={{ flex: 1, overflow: 'auto', padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
           <textarea className="glass-input" placeholder="Write your message..."
             value={mail.composeBody} onChange={(e) => mail.setComposeBody(e.target.value)}
             style={{ flex: 1, minHeight: 180, resize: 'vertical' }} />

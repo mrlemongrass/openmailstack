@@ -133,6 +133,7 @@ export function MessageList({ mail, density }: MessageListProps) {
       <MailToolbar
         selectedCount={mail.selectedMessages.length}
         totalCount={mail.messages.length}
+        activeFolder={mail.activeFolder}
         searchQuery={mail.searchQuery}
         onSearchChange={mail.setSearchQuery}
         onSelectAll={() => {

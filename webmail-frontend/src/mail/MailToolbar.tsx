@@ -5,6 +5,7 @@ interface MailToolbarProps {
   selectedCount: number;
   totalCount: number;
   searchQuery: string;
+  activeFolder?: string;
   onSearchChange: (q: string) => void;
   onSelectAll: () => void;
   onBulkAction: (action: string) => void;
@@ -22,7 +23,7 @@ const SEARCH_HINTS = [
   { syntax: 'after:2026-01-01', desc: 'Messages after date' },
 ];
 
-export function MailToolbar({ selectedCount, totalCount, searchQuery, onSearchChange, onSelectAll, onBulkAction, onMarkAllRead }: MailToolbarProps) {
+export function MailToolbar({ selectedCount, totalCount, searchQuery, activeFolder, onSearchChange, onSelectAll, onBulkAction, onMarkAllRead }: MailToolbarProps) {
   const allSelected = selectedCount > 0 && selectedCount === totalCount;
   const [showHints, setShowHints] = useState(false);
 
@@ -37,6 +38,11 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, onSearchCh
           onFocus={() => setShowHints(true)}
           onBlur={() => setTimeout(() => setShowHints(false), 200)}
           style={{ flex: 1, fontSize: '0.85rem' }} />
+        {activeFolder && (
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+            in {activeFolder}
+          </span>
+        )}
         {onMarkAllRead && totalCount > 0 && (
           <button className="btn btn-ghost" onClick={onMarkAllRead}
             style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }} title="Mark all as read">

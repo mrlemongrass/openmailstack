@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { X, Send, Paperclip, Archive, Clock, Image, FileText } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
 import type { useMail } from './hooks/useMail';
+import * as api from '../shared/api';
 
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB warning
 const BLOCK_SIZE = 50 * 1024 * 1024; // 50MB block
@@ -10,6 +11,21 @@ const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'imag
 
 function totalSize(files: File[]): number {
   return files.reduce((sum, f) => sum + f.size, 0);
+}
+
+interface ContactSuggestion {
+  name: string;
+  email: string;
+}
+
+/** Extract the fragment the user is currently typing (after the last comma). */
+function getFragmentInfo(value: string): { prefix: string; fragment: string } {
+  const lastComma = value.lastIndexOf(',');
+  if (lastComma === -1) return { prefix: '', fragment: value.trim() };
+  return {
+    prefix: value.substring(0, lastComma + 1),
+    fragment: value.substring(lastComma + 1).trim(),
+  };
 }
 
 export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
@@ -57,6 +73,75 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   // Aliases
   const identities = mail.composeIdentities || [];
   const fromOptions = identities.length > 0 ? identities : [{ address: mail.composeFrom, name: '' }];
+
+  // Contact autocomplete
+  const [allContacts, setAllContacts] = useState<ContactSuggestion[]>([]);
+  const [autocompleteField, setAutocompleteField] = useState<'to' | 'cc' | 'bcc' | null>(null);
+  const [suggestions, setSuggestions] = useState<ContactSuggestion[]>([]);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  useEffect(() => {
+    api.fetchContacts(500, 0).then((data: any) => {
+      if (data.contacts) {
+        setAllContacts((data.contacts as any[])
+          .filter((c) => c.email)
+          .map((c) => ({ name: c.name || '', email: c.email })));
+      }
+    }).catch(() => {});
+  }, []);
+
+  const getFieldValue = useCallback((field: 'to' | 'cc' | 'bcc'): string => {
+    if (field === 'cc') return mail.composeCc;
+    if (field === 'bcc') return mail.composeBcc;
+    return mail.composeTo;
+  }, [mail.composeTo, mail.composeCc, mail.composeBcc]);
+
+  const setFieldValue = useCallback((field: 'to' | 'cc' | 'bcc', value: string) => {
+    if (field === 'to') mail.setComposeTo(value);
+    else if (field === 'cc') mail.setComposeCc(value);
+    else mail.setComposeBcc(value);
+  }, [mail]);
+
+  const handleFieldChange = useCallback((value: string, field: 'to' | 'cc' | 'bcc') => {
+    setFieldValue(field, value);
+    const { fragment } = getFragmentInfo(value);
+    if (fragment.length >= 2) {
+      const lower = fragment.toLowerCase();
+      const filtered = allContacts.filter((c) =>
+        c.name.toLowerCase().includes(lower) || c.email.toLowerCase().includes(lower)
+      ).slice(0, 8);
+      setSuggestions(filtered);
+      setSelectedIndex(0);
+      setAutocompleteField(filtered.length > 0 ? field : null);
+    } else {
+      setSuggestions([]);
+      setAutocompleteField(null);
+    }
+  }, [allContacts, setFieldValue]);
+
+  const selectSuggestion = useCallback((suggestion: ContactSuggestion) => {
+    const field = autocompleteField;
+    if (!field) return;
+    const value = getFieldValue(field);
+    const { prefix } = getFragmentInfo(value);
+    const display = suggestion.name ? `${suggestion.name} <${suggestion.email}>` : suggestion.email;
+    const newValue = prefix ? `${prefix} ${display}, ` : `${display}, `;
+    setFieldValue(field, newValue);
+    setSuggestions([]);
+    setAutocompleteField(null);
+  }, [autocompleteField, getFieldValue, setFieldValue]);
+
+  const handleFieldKeyDown = useCallback((e: React.KeyboardEvent, field: 'to' | 'cc' | 'bcc') => {
+    if (autocompleteField !== field || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex((p) => (p + 1) % suggestions.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex((p) => (p - 1 + suggestions.length) % suggestions.length); }
+    else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); selectSuggestion(suggestions[selectedIndex]); }
+    else if (e.key === 'Escape') { setSuggestions([]); setAutocompleteField(null); }
+  }, [autocompleteField, suggestions, selectedIndex, selectSuggestion]);
+
+  const handleFieldBlur = useCallback(() => {
+    setTimeout(() => { setSuggestions([]); setAutocompleteField(null); }, 150);
+  }, []);
 
   // Templates
   const [templates, setTemplates] = useState<{ name: string; content: string }[]>([]);
@@ -107,12 +192,88 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
               ))}
             </select>
           )}
-          <input className="glass-input" placeholder="To" value={mail.composeTo}
-            onChange={(e) => mail.setComposeTo(e.target.value)} />
-          {mail.showCc && <input className="glass-input" placeholder="Cc" value={mail.composeCc}
-            onChange={(e) => mail.setComposeCc(e.target.value)} />}
-          {mail.showBcc && <input className="glass-input" placeholder="Bcc" value={mail.composeBcc}
-            onChange={(e) => mail.setComposeBcc(e.target.value)} />}
+          <div style={{ position: 'relative' }}>
+            <input className="glass-input" placeholder="To" value={mail.composeTo}
+              onChange={(e) => handleFieldChange(e.target.value, 'to')}
+              onKeyDown={(e) => handleFieldKeyDown(e, 'to')}
+              onFocus={() => { const { fragment } = getFragmentInfo(mail.composeTo); if (fragment.length >= 2) handleFieldChange(mail.composeTo, 'to'); }}
+              onBlur={handleFieldBlur}
+              autoComplete="off" style={{ width: '100%' }} />
+            {autocompleteField === 'to' && suggestions.length > 0 && (
+              <div className="glass-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                marginTop: 2, maxHeight: 200, overflow: 'auto', padding: 4 }}>
+                {suggestions.map((s, i) => (
+                  <div key={s.email}
+                    onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
+                    style={{
+                      padding: '8px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                      background: i === selectedIndex ? 'var(--accent-primary)' : 'transparent',
+                      color: i === selectedIndex ? '#fff' : 'var(--text-primary)',
+                      fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: 1,
+                    }}>
+                    <span style={{ fontWeight: 600 }}>{s.name || s.email}</span>
+                    {s.name && <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{s.email}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {mail.showCc && (
+            <div style={{ position: 'relative' }}>
+              <input className="glass-input" placeholder="Cc" value={mail.composeCc}
+                onChange={(e) => handleFieldChange(e.target.value, 'cc')}
+                onKeyDown={(e) => handleFieldKeyDown(e, 'cc')}
+                onFocus={() => { const { fragment } = getFragmentInfo(mail.composeCc); if (fragment.length >= 2) handleFieldChange(mail.composeCc, 'cc'); }}
+                onBlur={handleFieldBlur}
+                autoComplete="off" style={{ width: '100%' }} />
+              {autocompleteField === 'cc' && suggestions.length > 0 && (
+                <div className="glass-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                  marginTop: 2, maxHeight: 200, overflow: 'auto', padding: 4 }}>
+                  {suggestions.map((s, i) => (
+                    <div key={s.email}
+                      onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
+                      style={{
+                        padding: '8px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                        background: i === selectedIndex ? 'var(--accent-primary)' : 'transparent',
+                        color: i === selectedIndex ? '#fff' : 'var(--text-primary)',
+                        fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: 1,
+                      }}>
+                      <span style={{ fontWeight: 600 }}>{s.name || s.email}</span>
+                      {s.name && <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{s.email}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {mail.showBcc && (
+            <div style={{ position: 'relative' }}>
+              <input className="glass-input" placeholder="Bcc" value={mail.composeBcc}
+                onChange={(e) => handleFieldChange(e.target.value, 'bcc')}
+                onKeyDown={(e) => handleFieldKeyDown(e, 'bcc')}
+                onFocus={() => { const { fragment } = getFragmentInfo(mail.composeBcc); if (fragment.length >= 2) handleFieldChange(mail.composeBcc, 'bcc'); }}
+                onBlur={handleFieldBlur}
+                autoComplete="off" style={{ width: '100%' }} />
+              {autocompleteField === 'bcc' && suggestions.length > 0 && (
+                <div className="glass-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                  marginTop: 2, maxHeight: 200, overflow: 'auto', padding: 4 }}>
+                  {suggestions.map((s, i) => (
+                    <div key={s.email}
+                      onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
+                      style={{
+                        padding: '8px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                        background: i === selectedIndex ? 'var(--accent-primary)' : 'transparent',
+                        color: i === selectedIndex ? '#fff' : 'var(--text-primary)',
+                        fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: 1,
+                      }}>
+                      <span style={{ fontWeight: 600 }}>{s.name || s.email}</span>
+                      {s.name && <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{s.email}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8 }}>
             {!mail.showCc && <button className="btn btn-ghost" onClick={() => mail.setShowCc(true)} style={{ fontSize: '0.8rem' }}>Cc</button>}
             {!mail.showBcc && <button className="btn btn-ghost" onClick={() => mail.setShowBcc(true)} style={{ fontSize: '0.8rem' }}>Bcc</button>}

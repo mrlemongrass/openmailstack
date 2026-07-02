@@ -795,3 +795,76 @@ Ending git state: clean (29 commits ahead)
 ### Next recommended task
 
 Add Settings to mobile tab bar visible items — Settings was added in Batch #1 to the tab bar, but Admin is still inaccessible on mobile. Add Admin (ShieldAlert icon) to mobile tab bar for admin users. Score 35: Severity 4, Reach 3, Confidence 5, Effort 1.
+
+---
+
+## 2026-07-02 — Contact autocomplete in compose To/Cc/Bcc fields
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (29 commits ahead of origin)  
+Ending git state: dirty (1 modified file: ComposeModal.tsx, 2 untracked docs)  
+
+### Selected task
+
+Add contact autocomplete to compose To/Cc/Bcc fields in ComposeModal.
+
+### Why this task
+
+Cross-suite integration (Contacts → Mail) — directly addresses the SUITE_EXPERIENCE.md directive to prefer tasks that connect multiple apps. The compose To/Cc/Bcc fields were plain text inputs with no address suggestions, forcing users to type full email addresses from memory.
+
+Per the quality rubric:
+- **Severity 3**: Missing feature — compose works but lacks discoverability
+- **Reach 5**: Affects every compose action for every user
+- **Confidence 5**: Contacts API already exists (fetchContacts), clear implementation path
+- **Effort 3**: Moderate — autocomplete UI, multi-recipient handling, keyboard nav
+- **Score**: (3×4) + (5×3) + (5×2) - 3 = **30**
+
+### Changes made
+
+- `webmail-frontend/src/mail/ComposeModal.tsx`
+  - Added `fetchContacts` import from shared API
+  - Added `ContactSuggestion` interface and `getFragmentInfo` helper (extracts current typing fragment after last comma for multi-recipient support)
+  - Added contact fetching on mount (up to 500 contacts, filtered to contacts with email)
+  - Added `getFieldValue`/`setFieldValue` helpers for field-agnostic access
+  - Added `handleFieldChange` — filters contacts by name/email when fragment >= 2 chars, shows up to 8 suggestions
+  - Added `selectSuggestion` — replaces current fragment with "Name <email>, " format, preserving prefix
+  - Added `handleFieldKeyDown` — ArrowUp/Down navigate, Enter selects, Escape closes
+  - Added `handleFieldBlur` — 150ms delay before closing dropdown (allows click registration)
+  - Replaced plain To/Cc/Bcc inputs with relative-wrapped versions including dropdown panel
+  - Dropdown uses glass-panel styling with highlighted selected index
+
+### Proof / checks run
+
+- `webmail-frontend npx tsc -b` — **TypeScript: No errors found**
+- `webmail-frontend npx vite build` — **Built in 1.85s**, no warnings
+- `webmail-backend npm test` — **26/26 tests pass**
+- Diff: 1 file, +168/-7 lines
+
+### Acceptance criteria
+
+- [x] Typing 2+ characters in To/Cc/Bcc shows matching contacts dropdown
+- [x] Matches by name and email (case-insensitive)
+- [x] Clicking a contact fills it into the field
+- [x] Handles multi-recipient (comma-separated): replaces only the current fragment
+- [x] Dropdown closes on blur (150ms delay) or Escape
+- [x] Keyboard: Arrow keys navigate, Enter selects, Escape closes
+- [x] No dropdown when fewer than 2 characters typed
+- [x] TypeScript compiles clean
+- [x] Frontend build succeeds
+- [x] Backend tests pass (26/26)
+- [x] No new dependencies
+- [x] Self-contained in ComposeModal.tsx
+- [x] onMouseDown preventDefault prevents blur-before-click race
+
+### Risks / notes
+
+- **Dropdown clipping**: The dropdown is absolutely positioned within a scrollable container (`overflow: auto`). For recipients deep in the Cc/Bcc fields (if many recipients are scrolled), the dropdown may be partially clipped. The To field is always visible at the top of the form, so the primary use case works well. A portal-based approach could solve this for edge cases in the future.
+- **Contact data**: Fetches up to 500 contacts on mount. For installations with very large contact lists, this could be paginated in a future enhancement.
+- **No dedup**: If the same contact is added multiple times, no warning is shown. This matches typical email client behavior (duplicate recipients are harmless — mail servers deduplicate).
+- **Browser autocomplete disabled**: `autoComplete="off"` on the fields prevents browser autocomplete from conflicting with the contact dropdown.
+- **Main bundle size**: increased ~4KB (514.8KB from 510.7KB). Acceptable for the feature value.
+
+### Next recommended task
+
+Add calendar WeekView — Calendar currently has only MonthView (other views hidden behind `{false && (...)}` guard). Implementing WeekView would unlock the most-used calendar workflow after Month. Score 34: Severity 4, Reach 4, Confidence 4, Effort 3.

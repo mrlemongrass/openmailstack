@@ -169,7 +169,9 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Problem**: To/Cc/Bcc fields are plain text inputs with no address autocomplete
 - **User impact**: Users must type full email addresses; no discoverability of contacts
 - **Severity**: Low
-- **Ref**: `ComposeModal.tsx:98-103`
+- **Status**: **Done** (2026-07-02)
+- **Fix**: ComposeModal fetches contacts on mount, shows filtered dropdown when typing 2+ chars, matches by name/email, supports multi-recipient comma-separated fields with keyboard navigation (arrows, enter, escape). Self-contained in ComposeModal.tsx with no new dependencies.
+- **Ref**: `ComposeModal.tsx:74-144`
 
 ## Completed UX Improvements (this session)
 
@@ -192,7 +194,8 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - [x] Sync page shows real server hostname (was hardcoded placeholders)
 - [x] Notes grid empty state (was blank after loading)
 - [x] Spinner component created and wired into key loading states
+- [x] Contact autocomplete in compose To/Cc/Bcc fields
 
 ## Next Recommended UX Task
 
-Fix Reply All and Forward buttons in MessageViewer — highest severity, highest reach, clear fix path.
+Add calendar WeekView — Calendar currently has only MonthView (other views hidden). Implementing WeekView would unlock a primary calendar workflow. Scored 34: Severity 4 (missing core calendar view), Reach 4, Confidence 4, Effort 3.

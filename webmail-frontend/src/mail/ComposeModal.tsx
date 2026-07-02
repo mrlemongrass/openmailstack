@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Send, Paperclip, Archive, Clock, Image, FileText } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
+import { useToast } from '../shared/components/Toast';
 import type { useMail } from './hooks/useMail';
 import * as api from '../shared/api';
 
@@ -128,6 +129,19 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
       if (d.templates) setTemplates(d.templates);
     }).catch(() => {});
   }, []);
+
+  // Toast for send confirmation
+  const { showToast } = useToast();
+  const [didSend, setDidSend] = useState(false);
+  useEffect(() => {
+    if (didSend && !mail.sending && !mail.composeError && !mail.isComposing) {
+      showToast({ type: 'success', message: 'Message sent' });
+      setDidSend(false);
+    }
+    if (didSend && !mail.sending && mail.composeError) {
+      setDidSend(false);
+    }
+  }, [didSend, mail.sending, mail.composeError, mail.isComposing, showToast]);
 
   if (!mail.isComposing) return null;
 
@@ -443,7 +457,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             )}
           </div>
           <button className="btn btn-primary" disabled={mail.sending || sizeExceedsBlock}
-            onClick={() => mail.handleSend()}>
+            onClick={() => { setDidSend(true); mail.handleSend(); }}>
             <Send size={16} /> {mail.sending ? <><Spinner size={14} /> Sending...</> : 'Send'}
           </button>
           <button className="btn btn-ghost" disabled={mail.sending || sizeExceedsBlock}

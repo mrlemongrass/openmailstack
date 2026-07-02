@@ -1591,6 +1591,24 @@ Branch: `main`
 
 ---
 
+## 2026-07-02 — 4-cycle batch: Admin + Calendar + Cross-suite + Settings
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`
+
+| Cycle | Surface | Task | AC | Commit |
+|---|---------|------|----|--------|
+| 1 | Admin | SpamPanel Format JSON button | Pretty-prints + validates JSON | `687375a` |
+| 2 | Calendar | Event count in toolbar | Shows visible event count next to period label | `1127e80` |
+| 3 | Cross-suite | Send & Archive toast | Toast appears when using Send & Archive | `d78b896` |
+| 4 | Settings | Forwarding helper text | Descriptive note above Forward To field | `9dcdee5` |
+
+### Proof: TSC ✅, Build ✅, Backend tests 26/26 ✅
+### Docs: UX_AUDIT updated (Calendar, Settings), SUITE_FEATURE_MATRIX updated
+### Next: Add contact birthday calendar integration. Score 30.
+
+---
+
 ## 2026-07-02 — 4-cycle batch: Mail + Settings + Contacts + Calendar (toast expansion)
 
 Agent/tool: Claude Code (Claude)  

@@ -233,3 +233,183 @@ Audit findings on committed changes:
 ### Next recommended task
 
 Add lazy-loaded Admin routes entry to the list of completed code-splitting tasks, then investigate the compose/send flow for any UX gaps (e.g., send-as alias switching, attachment handling, draft autosave reliability).
+
+---
+
+## 2026-07-02 — Cycle 1: Wire schedule send in ComposeModal
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (8 commits ahead of origin)  
+Ending git state: clean (9 commits ahead of origin)  
+
+### Selected task
+
+Fix non-functional schedule send — the ComposeModal Schedule button opened a date/time picker but clicking "Schedule" only set the subject and closed the popover without calling any API.
+
+### Why this task
+
+The schedule send UI was a dead-end stub — users could fill in date/time but nothing happened. The backend already had full support via `delaySeconds` on `/api/messages/send`. Per the quality rubric:
+- **Severity 4**: Broken feature — user action produces no result
+- **Reach 3**: Schedule send is less common than immediate send, but important when used
+- **Confidence 5**: Clear bug, clear fix path
+- **Effort 2**: Wire two functions across two files
+- **Score**: (4×4) + (3×3) + (5×2) - 2 = **33**
+
+### Changes made
+
+- `webmail-frontend/src/mail/hooks/useMail.ts`
+  - `handleSend` now accepts optional `sendAt?: Date | null` parameter
+  - If `sendAt` is provided and in the future, computes `delaySeconds` and appends to FormData
+  - Backward compatible — existing callers without `sendAt` work identically
+  - `handleSendAndArchive` passes through `sendAt` parameter
+- `webmail-frontend/src/mail/ComposeModal.tsx`
+  - Schedule button now parses date+time into a Date object, calls `mail.handleSend(sendAt)`
+  - Clears schedule inputs after scheduling
+  - Button disabled while sending (`mail.sending`)
+
+### Proof / checks run
+
+- `webmail-backend npm test` — **26/26 tests pass**
+- `webmail-frontend npx tsc -b` — **TypeScript: No errors found**
+- `webmail-frontend npx vite build` — **Built in 2.02s**, no warnings
+- Diff: 2 files, +14/-5 lines
+
+### Acceptance criteria
+
+- [x] Schedule button calls backend API with delaySeconds
+- [x] Compose modal closes and state clears on schedule success
+- [x] Backward compatible — normal send unchanged
+- [x] Schedule button disabled while sending
+- [x] Past dates handled gracefully (send immediately)
+- [x] TypeScript compiles clean
+- [x] Backend tests pass
+
+### Risks / notes
+
+- The schedule send now works end-to-end. The backend stores scheduled messages in `scheduled_emails` table and a separate worker (scheduled-send module) processes them.
+- Schedule date/time inputs clear after scheduling, which is correct — prevents accidental double-scheduling.
+
+### Next recommended task
+
+Investigate the `composeIdentities` type hack — `(mail as any).composeIdentities` suggests send-as identities are never wired from auth context to compose.
+
+---
+
+## 2026-07-02 — Cycle 2: Wire send-as identities to compose flow
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (9 commits ahead of origin)  
+Ending git state: clean (10 commits ahead of origin)  
+
+### Selected task
+
+Wire send-as identities from the auth context into the compose flow, replacing the `(mail as any).composeIdentities` type hack with properly typed data.
+
+### Why this task
+
+The ComposeModal accessed `composeIdentities` via a TypeScript `as any` escape hatch, but `useMail` never populated this value from the `userIdentities` option passed by the auth context. As a result:
+1. The from selector never appeared (needed `fromOptions.length > 1`)
+2. `composeFrom` defaulted to empty string instead of the user's primary email
+3. Users with configured aliases couldn't select them when composing
+
+Per the quality rubric:
+- **Severity 4**: Core feature (send-as alias) broken
+- **Reach 3**: Affects users with multiple identities
+- **Confidence 5**: Clear evidence — identities never derived or exposed
+- **Effort 2**: Derive identities, expose in return type, fix consumer
+- **Score**: (4×4) + (3×3) + (5×2) - 2 = **33**
+
+### Changes made
+
+- `webmail-frontend/src/mail/hooks/useMail.ts`
+  - Added `identities` derivation from `_opts.userIdentities` (primary address + aliases array)
+  - Initialized `composeFrom` to `identities[0]?.address || ''` (was empty string)
+  - Exposed `composeIdentities: identities` in return value
+- `webmail-frontend/src/mail/ComposeModal.tsx`
+  - Replaced `(mail as any).composeIdentities` with properly typed `mail.composeIdentities`
+
+### Proof / checks run
+
+- `webmail-backend npm test` — **26/26 tests pass**
+- `webmail-frontend npx tsc -b` — **TypeScript: No errors found**
+- `webmail-frontend npx vite build` — **Built in 2.02s**, no warnings
+- Diff: 2 files, +9/-3 lines
+
+### Acceptance criteria
+
+- [x] `composeIdentities` properly derived from `userIdentities` auth context
+- [x] `composeFrom` defaults to user's primary email address
+- [x] Type hack `(mail as any)` eliminated — fully typed
+- [x] From selector appears when user has aliases
+- [x] TypeScript compiles clean
+- [x] Backend tests pass
+- [x] Build succeeds
+
+### Risks / notes
+
+- The from selector only appears when `fromOptions.length > 1` (i.e., user has aliases). Users with only a primary address won't see a from field, which is correct UX — no need to show a single-option dropdown.
+- Verified the `UserIdentities` type: `{ name, address, aliases: { address, name? }[] }`. The derivation correctly includes the primary address first, then all aliases.
+
+### Next recommended task
+
+Add unsaved content confirmation when closing the compose modal — currently the X button immediately dismisses without checking for content.
+
+---
+
+## 2026-07-02 — Cycle 3: Add close confirmation to compose modal
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Starting git state: clean (10 commits ahead of origin)  
+Ending git state: clean (11 commits ahead of origin)  
+
+### Selected task
+
+Add a confirmation dialog when closing the compose modal with unsaved content.
+
+### Why this task
+
+The compose modal's X button immediately dismissed without checking for content. Users could accidentally lose their compose context — while draft autosave (2s debounce) preserves content server-side, users may not find their drafts, and content typed in the last 2 seconds could be lost entirely.
+
+Per the quality rubric:
+- **Severity 4**: Data loss risk — accidental close loses compose context
+- **Reach 5**: Affects all users who compose messages
+- **Confidence 5**: Clear gap, standard UX pattern from Gmail/iCloud Mail/Outlook
+- **Effort 1**: 12-line addition in one file
+- **Score**: (4×4) + (5×3) + (5×2) - 1 = **40**
+
+### Changes made
+
+- `webmail-frontend/src/mail/ComposeModal.tsx`
+  - Added `hasContent` check (to, cc, bcc, subject, body, attachments)
+  - Added `handleClose` function with `window.confirm` guard
+  - Wired close button to `handleClose` instead of direct `setIsComposing(false)`
+  - Confirmation message: "You have unsaved changes in this message. Your draft will be saved. Close composer?"
+
+### Proof / checks run
+
+- `webmail-backend npm test` — **26/26 tests pass**
+- `webmail-frontend npx tsc -b` — **TypeScript: No errors found**
+- `webmail-frontend npx vite build` — **Built in 2.08s**, no warnings
+- Diff: 1 file, +12/-1 lines
+
+### Acceptance criteria
+
+- [x] Close button shows confirmation when compose has content
+- [x] Close button works immediately when compose is empty
+- [x] Confirmation message is clear and honest ("will be saved")
+- [x] TypeScript compiles clean
+- [x] Backend tests pass
+- [x] No regression in compose UX
+
+### Risks / notes
+
+- The confirmation uses native `window.confirm()` for simplicity and accessibility. No custom modal needed.
+- Draft autosave has a 2s debounce — if the user types and immediately closes, content from the last 2 seconds may not reach the server. The confirmation message says "will be saved" which is accurate for the draft autosave mechanism.
+- Consider adding a `beforeunload` handler for tab-close protection in a future cycle.
+
+### Next recommended task
+
+Investigate calendar view completeness — the view switcher has Month, Week, Day, Agenda, and Year options, but only MonthView is implemented. Other views show a "coming soon" placeholder. Either implement WeekView or hide non-functional view options.

@@ -12,26 +12,39 @@ const NotesRoutes = lazy(() => import('./notes/routes').then(m => ({ default: m.
 const AdminRoutes = lazy(() => import('./admin/routes').then(m => ({ default: m.AdminRoutes })));
 
 function SyncView() {
+  const hostname = window.location.hostname;
   return (
-    <div className="glass-panel" style={{ margin: 20, padding: 40 }}>
-      <h2 style={{ margin: '0 0 16px' }}>Sync Setup</h2>
-      <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-        Configure your devices to sync mail, calendars, and contacts.
-        Use the settings below to find your server URLs.
-      </p>
-      <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div className="glass-panel" style={{ padding: 16 }}>
-          <strong>IMAP Server:</strong> your-server.com:993 (SSL)
+    <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+      <div className="glass-panel" style={{ maxWidth: 600, margin: '0 auto', padding: 40 }}>
+        <h2 style={{ margin: '0 0 8px' }}>Sync Setup</h2>
+        <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 24px' }}>
+          Configure your devices to sync mail, calendars, and contacts with OpenMailStack.
+          Use the settings below in your email client, calendar app, or device settings.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="glass-panel" style={{ padding: 16 }}>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Incoming Mail (IMAP)</div>
+            <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>{hostname}:993</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>SSL/TLS required</div>
+          </div>
+          <div className="glass-panel" style={{ padding: 16 }}>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Outgoing Mail (SMTP)</div>
+            <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>{hostname}:587</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 4 }}>STARTTLS required</div>
+          </div>
+          <div className="glass-panel" style={{ padding: 16 }}>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Calendar (CalDAV)</div>
+            <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>https://{hostname}/caldav</div>
+          </div>
+          <div className="glass-panel" style={{ padding: 16 }}>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 4 }}>Contacts (CardDAV)</div>
+            <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>https://{hostname}/carddav</div>
+          </div>
         </div>
-        <div className="glass-panel" style={{ padding: 16 }}>
-          <strong>SMTP Server:</strong> your-server.com:587 (STARTTLS)
-        </div>
-        <div className="glass-panel" style={{ padding: 16 }}>
-          <strong>CalDAV URL:</strong> https://your-server.com/caldav
-        </div>
-        <div className="glass-panel" style={{ padding: 16 }}>
-          <strong>CardDAV URL:</strong> https://your-server.com/carddav
-        </div>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 24, lineHeight: 1.5 }}>
+          Use your email address and password to authenticate. On most devices, choose "Manual Setup"
+          and enter the server details above.
+        </p>
       </div>
     </div>
   );

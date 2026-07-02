@@ -15,6 +15,51 @@ OpenMailStack releases must be evaluated as a full suite:
 
 A release is ready only when the selected release channel has no unacceptable blockers.
 
+## Release blocker levels
+
+### P0 — Must block every release
+
+- data loss
+- credential/token/session leakage
+- auth bypass
+- cross-user data exposure
+- broken fresh install
+- broken upgrade path
+- broken send/receive for primary mail flow
+- destructive admin action without confirmation/safety
+- production secrets committed
+- database migration corrupts or drops user data
+- release artifact cannot be built
+- documented security claim is false
+
+### P1 — Must block beta, release candidate, and stable releases
+
+- major Calendar/Contacts/Notes route broken
+- compose/send/draft flow unreliable
+- ActiveSync/CalDAV/CardDAV status misleading
+- admin portal can misconfigure critical services
+- misleading UI advertises unavailable core features
+- tests/build/typecheck failing without explanation
+- install docs are materially wrong
+- serious mobile usability failure in primary flows
+
+### P2 — May ship in alpha or beta if documented
+
+- unfinished non-critical feature
+- bland UI in non-primary surface
+- partial but honest placeholder
+- known performance issue outside core flows
+- missing advanced feature
+- missing non-critical regression coverage
+
+### P3 — Does not block release
+
+- polish
+- copy cleanup
+- nice-to-have feature
+- refactor
+- internal maintainability improvement
+
 ## Release channels
 
 ### Alpha

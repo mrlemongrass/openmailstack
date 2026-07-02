@@ -36,6 +36,47 @@ At the start of each cycle:
 
 Do not spend the whole cycle auditing. Audit enough to select one valuable task, then implement and prove one concrete improvement.
 
+## Product experience mode
+
+OpenMailStack is expected to become a premium webmail product, not merely a functioning mail stack.
+
+When running in product experience mode, the agent must inspect the actual user-facing application, not only the source code.
+
+The agent should evaluate:
+
+- inbox
+- message list
+- message viewer
+- compose
+- search
+- folders/labels
+- settings
+- calendar
+- contacts
+- admin portal
+- mobile layout
+
+The agent should look for:
+
+- bland screens
+- confusing hierarchy
+- inconsistent spacing
+- weak typography
+- poor contrast
+- missing loading states
+- missing empty states
+- missing error states
+- awkward mobile behavior
+- inaccessible controls
+- unclear primary actions
+- noisy secondary actions
+- lack of visual cohesion
+- flows that work technically but do not feel polished
+
+If the app cannot be run locally, the agent must say so and use the available static evidence, but it should not claim the UI was verified.
+
+Product experience work should be treated as real engineering work. It requires acceptance criteria, implementation, proof, self-review, and worklog documentation.
+
 ## Product review
 
 Ask:

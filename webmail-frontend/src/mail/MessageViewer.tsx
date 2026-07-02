@@ -66,8 +66,39 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         <button className="btn btn-ghost" onClick={() => { mail.setComposeTo(message.from); mail.setComposeSubject(`Re: ${message.subject}`); mail.setIsComposing(true); }} title="Reply">
           <Reply size={16} />
         </button>
-        <button className="btn btn-ghost" title="Reply All"><ReplyAll size={16} /></button>
-        <button className="btn btn-ghost" title="Forward"><Forward size={16} /></button>
+        <button className="btn btn-ghost" onClick={() => {
+          // Reply All: collect all unique recipients, exclude own address
+          const ownAddresses = new Set((mail.composeIdentities || []).map((i: { address: string }) => i.address.toLowerCase()));
+          const allRecipients = [message.from, message.to, message.cc].filter(Boolean).join(', ');
+          const parsed = allRecipients.split(',').map((a: string) => {
+            const match = a.trim().match(/<(.+?)>/);
+            return match ? match[1] : a.trim();
+          }).filter(Boolean);
+          const unique = [...new Set(parsed)].filter((a: string) => !ownAddresses.has(a.toLowerCase()));
+          mail.setComposeTo(unique.join(', '));
+          mail.setComposeSubject(`Re: ${message.subject}`);
+          mail.setIsComposing(true);
+        }} title="Reply All"><ReplyAll size={16} /></button>
+        <button className="btn btn-ghost" onClick={() => {
+          // Forward: set Fwd: subject, quote original message
+          const dateStr = dateObj ? format(dateObj, 'EEE, MMM d, yyyy h:mm a') : '';
+          const forwardHeader = [
+            `\n\n---------- Forwarded message ---------`,
+            `From: ${message.from}`,
+            `Date: ${dateStr}`,
+            `Subject: ${message.subject}`,
+            message.to ? `To: ${message.to}` : null,
+            message.cc ? `Cc: ${message.cc}` : null,
+          ].filter(Boolean).join('\n');
+          const quoteBody = message.text
+            ? `\n> ${message.text.replace(/\n/g, '\n> ')}`
+            : message.html
+            ? `\n\n[HTML content forwarded — open original to view formatting]`
+            : '';
+          mail.setComposeSubject(`Fwd: ${message.subject}`);
+          mail.setComposeBody(forwardHeader + quoteBody);
+          mail.setIsComposing(true);
+        }} title="Forward"><Forward size={16} /></button>
         <button className="btn btn-ghost" onClick={() => setShowRaw(true)} title="Show original"><Code size={16} /></button>
         <div style={{ position: 'relative' }}>
           <button className="btn btn-ghost" onClick={() => setShowSnooze(!showSnooze)} title="Snooze"><Clock size={16} /></button>

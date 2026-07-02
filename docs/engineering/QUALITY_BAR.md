@@ -62,6 +62,49 @@ Inventory, but do not blindly implement:
 - admin/self-hosting setup
 - ActiveSync support
 
+## Product experience priority
+
+The product goal is not only correctness. OpenMailStack must become a polished, premium-feeling webmail product.
+
+After critical repository health is satisfied, product experience issues in primary workflows should be scored aggressively.
+
+Primary workflows include:
+
+- login/account/session
+- inbox
+- message list
+- message viewer
+- compose/reply/forward
+- attachments
+- search
+- folders/labels
+- settings
+- calendar
+- contacts
+- mobile navigation
+
+A bland, confusing, visually inconsistent, or obviously unfinished primary workflow may be scored as:
+
+Severity: 4  
+Reach: 4 or 5  
+Confidence: based on evidence  
+Effort: based on implementation size
+
+Do not automatically down-rank UI/UX work as “polish.” If the issue affects the user’s trust, clarity, speed, or ability to complete a core workflow, it is a product-quality issue.
+
+## Experience cycle requirement
+
+If the previous two completed cycles were primarily backend, tests, docs, build, dependency, bundle-size, or repository hygiene tasks, the next cycle should be a product experience cycle unless a higher-priority security, data-loss, auth, mail/sync, crash, or failing-build issue is present.
+
+A product experience cycle must produce one of:
+
+- a visible UI/UX improvement
+- a better loading, empty, or error state
+- a smoother core workflow
+- a responsive/mobile improvement
+- an accessibility improvement
+- a product-experience audit with screenshots and a prioritized UX backlog, if the app cannot yet be safely changed
+
 ## Task selection algorithm
 
 Score candidates:

@@ -16,12 +16,20 @@ export function ContactQuickActions({ contact }: { contact: Contact }) {
     };
     const disabledStyle: React.CSSProperties = { ...btnStyle, opacity: 0.35, cursor: 'default' };
 
+    const handleEmailClick = (e: React.MouseEvent) => {
+        e.preventDefault();
+        // Cross-suite integration: use both event (same-route) and storage (cross-route) for compose
+        sessionStorage.setItem('oms_compose_to', primaryEmail);
+        window.dispatchEvent(new CustomEvent('oms:compose', { detail: { to: primaryEmail } }));
+        window.location.href = '/mail/inbox';
+    };
+
     return (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {primaryEmail ? (
-                <a href={`mailto:${primaryEmail}`} style={btnStyle}>
+                <button onClick={handleEmailClick} style={btnStyle}>
                     <Mail size={14} /> Email
-                </a>
+                </button>
             ) : (
                 <span style={disabledStyle}><Mail size={14} /> Email</span>
             )}

@@ -67,6 +67,68 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     });
   }, [message.html]);
 
+  // Keyboard shortcuts for mail actions
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept when typing in inputs or textareas
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
+
+      const key = e.key.toLowerCase();
+      if (key === 'r' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        mail.setComposeTo(message.from);
+        mail.setComposeSubject(`Re: ${message.subject}`);
+        mail.setIsComposing(true);
+      } else if (key === 'a' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        const ownAddresses = new Set((mail.composeIdentities || []).map((i: { address: string }) => i.address.toLowerCase()));
+        const allRecipients = [message.from, message.to, message.cc].filter(Boolean).join(', ');
+        const parsed = allRecipients.split(',').map((addr: string) => {
+          const match = addr.trim().match(/<(.+?)>/);
+          return match ? match[1] : addr.trim();
+        }).filter(Boolean);
+        const unique = [...new Set(parsed)].filter((addr: string) => !ownAddresses.has(addr.toLowerCase()));
+        mail.setComposeTo(unique.join(', '));
+        mail.setComposeSubject(`Re: ${message.subject}`);
+        mail.setIsComposing(true);
+      } else if (key === 'f' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        const dateStr = dateObj ? format(dateObj, 'EEE, MMM d, yyyy h:mm a') : '';
+        const forwardHeader = [
+          `\n\n---------- Forwarded message ---------`,
+          `From: ${message.from}`,
+          `Date: ${dateStr}`,
+          `Subject: ${message.subject}`,
+          message.to ? `To: ${message.to}` : null,
+          message.cc ? `Cc: ${message.cc}` : null,
+        ].filter(Boolean).join('\n');
+        const quoteBody = message.text
+          ? `\n> ${message.text.replace(/\n/g, '\n> ')}`
+          : message.html
+          ? `\n\n[HTML content forwarded — open original to view formatting]`
+          : '';
+        mail.setComposeSubject(`Fwd: ${message.subject}`);
+        mail.setComposeBody(forwardHeader + quoteBody);
+        mail.setIsComposing(true);
+      } else if (key === 's' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        mail.messageAction(message.isStarred ? 'unstar' : 'star', [message.uid]);
+      } else if (key === 'e' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        mail.messageAction('archive', [message.uid]);
+      } else if ((key === 'delete' || key === 'backspace' || key === '#') && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        mail.messageAction('delete', [message.uid]);
+      } else if (key === 'escape') {
+        e.preventDefault();
+        navigate(`/mail/${encodeURIComponent(folder || 'INBOX')}`);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [message, mail, folder, navigate, dateObj]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)' }}>

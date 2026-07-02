@@ -11,7 +11,8 @@ function slugifyCalendarName(name) {
         .trim()
         .replace(/[^a-zA-Z0-9._-]+/g, '-')
         .replace(/^-+|-+$/g, '')
-        .slice(0, 80);
+        .slice(0, 80)
+        .toLowerCase();
     return slug || 'calendar';
 }
 function unfoldIcal(ical) {

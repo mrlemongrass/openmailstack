@@ -1609,6 +1609,23 @@ Branch: `main`
 
 ---
 
+## 2026-07-02 — 4-cycle batch: Search + Contacts + Notes + Contacts
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`
+
+| Cycle | Surface | Task | AC | Commit |
+|---|---------|------|----|--------|
+| 1 | Mail Search | Folder scope in search bar | "in INBOX" next to search | `8848974` |
+| 2 | Contacts | Clear filter when label selected | Button resets to all contacts | `0971c79` |
+| 3 | Notes | Clear label filter in sidebar | Button when filtering by label | `0971c79` |
+| 4 | Contacts | Org + job title on cards | Company/role on contact grid | `0971c79` |
+
+### Proof: TSC ✅, Build ✅, Backend tests 26/26 ✅
+### Docs: WORKLOG + UX_AUDIT + SUITE_FEATURE_MATRIX below
+
+---
+
 ## 2026-07-02 — 4-cycle batch: Mail + Settings + Contacts + Calendar (toast expansion)
 
 Agent/tool: Claude Code (Claude)  

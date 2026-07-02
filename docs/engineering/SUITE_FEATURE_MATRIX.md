@@ -46,7 +46,8 @@ Translate useful ideas into OpenMailStack-native, self-hostable, privacy-respect
 | Calendar | Appointment scheduling | Google Calendar booking pages | Self-hosted booking page per user/calendar | Could | Not Started | Requires public availability rules |
 | Calendar | Shared calendars | iCloud/Outlook/Google | Share read/edit permissions, ICS public links | Should | Needs Verification | |
 | Contacts | Lists/groups | iCloud Contacts / Outlook People | Labels + groups with inline creation + click-to-filter | Should | Implemented | 2026-07-02: inline creation + label filtering via useMemo |
-| Contacts | Contact search | iCloud/Outlook/Google Contacts | Fast search by name/email/company/phone | Must | Needs Verification | |
+| Contacts | Contact search | iCloud/Outlook/Google Contacts | Fast search by name/email/company/phone | Must | Needs Verification | ContactGrid shows name/email/org/job |
+| Mail | Search scope indicator | Gmail/Outlook | Shows current folder being searched next to search bar | Should | Implemented | 2026-07-02: 'in INBOX' scope badge |
 | Contacts | Birthday calendar | iCloud/Google-style integration | Contact birthdays appear in Calendar | Should | Needs Verification | |
 | Notes | Checklists | Apple Notes / Google Keep | Checklist blocks in note editor | Should | Needs Verification | |
 | Notes | Labels/tags | Google Keep | Tags/labels and filtered views | Should | Needs Verification | |

@@ -13,7 +13,7 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 | Message list | 8/10 | Good density system, preview snippets in comfortable mode |
 | Message viewer | 8/10 | Reply All/Forward fixed, HTML sanitized with DOMPurify |
 | Compose / Reply | 7/10 | Schedule send+identities fixed, word count, toast for Send & Archive |
-| Search | 6/10 | Search always visible, loading indicator added, hints unimplemented |
+| Search | 7/10 | Search always visible, syntax hints + folder scope indicator, loading indicator |
 | Admin | 7/10 | System health with countdown, Fail2ban with unban toast, Spam JSON formatter |
 | Calendar | 9/10 | Month + Week + Day views functional, empty/error states, guest autocomplete |
 | Contacts | 9/10 | Label/group creation + filtering, bulk delete, Email→compose, error states |
@@ -297,6 +297,21 @@ Open / In Progress / Done / Blocked / Needs Verification
 - [x] Calendar event count in toolbar
 - [x] Send & Archive toast confirmation
 - [x] Settings Forwarding helper text
+- [x] Mail search folder scope indicator ("in INBOX")
+- [x] Contacts clear filter button when label selected
+- [x] Notes clear label filter button
+- [x] Contact cards show organization + job title
+
+## Acceptance Criteria for Batch 16
+
+| Cycle | Task | User-Visible AC | Technical AC |
+|-------|------|----------------|--------------|
+| 1 | Search scope | "in INBOX" shown next to search bar | activeFolder prop passed to MailToolbar |
+| 2 | Contacts clear filter | Button appears when label active, resets to all | setSelectedLabel(null) |
+| 3 | Notes clear filter | Button when filtering by label | setNotesView('notes') |
+| 4 | Contact org display | Company + job title on grid cards | organization + jobTitle fields rendered |
+
+### Proof: TSC ✅, Build ✅, Backend tests 26/26 ✅
 
 ## Acceptance Criteria for Batch 15
 

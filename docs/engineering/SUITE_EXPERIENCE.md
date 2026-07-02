@@ -377,3 +377,80 @@ The user should feel:
 - “The defaults make sense.”
 - “I can recover if something goes wrong.”
 - “This feels trustworthy enough to use every day.”
+
+## Quality-of-life UX requirements
+
+OpenMailStack should not merely expose features. Features must remain comfortable, obvious, and recoverable under realistic use.
+
+Quality-of-life issues are real product defects when they make a workflow feel awkward, fragile, confusing, or unfinished.
+
+Agents must actively look for:
+
+- primary actions that disappear during scrolling
+- save/apply/cancel buttons that are too far from the edited content
+- forms that become hard to use with many rows, filters, rules, recipients, attachments, guests, contacts, notes, or settings
+- modals or panels with broken internal scrolling
+- screens where the page scrolls but the useful content area does not
+- content hidden behind fixed headers, footers, sidebars, or mobile nav
+- long workflows without sticky action bars
+- unclear dirty/unsaved state
+- missing unsaved-change warnings
+- missing success/error feedback after saving
+- forms that reset scroll position unexpectedly
+- keyboard focus lost after adding/removing items
+- repeated actions that require too much mouse travel
+- controls that are only available at the top or bottom of a long screen
+- bulk actions that disappear after selection
+- mobile layouts that require awkward scrolling to complete common actions
+- confusing disabled states
+- no clear recovery after failed save/send/sync
+- hidden overflow, clipped dropdowns, or inaccessible popovers
+- dense screens without section headers or progressive disclosure
+
+A feature is not complete until it remains usable with realistic amounts of data.
+
+Examples:
+
+- A filter editor must remain usable with many conditions and actions.
+- A settings page must keep Save/Cancel accessible after scrolling.
+- A compose window must keep Send accessible while editing long messages or adding attachments.
+- A calendar event editor must remain usable with many guests, recurrence options, attachments, or reminders.
+- A contacts screen must remain usable with many contacts, groups, labels, and fields.
+- A notes editor must keep editing, save/autosave, and navigation behavior clear for long notes.
+- Admin screens must remain usable with many domains, mailboxes, aliases, logs, quarantine items, or DNS records.
+
+## Persistent action rule
+
+For any long form, modal, drawer, settings panel, editor, or multi-step workflow, primary actions must remain accessible.
+
+Acceptable patterns include:
+
+- sticky footer action bar
+- sticky header action bar
+- floating save/apply button
+- split header + bottom action bar
+- inline section-level save buttons
+- keyboard shortcut with visible hint
+- autosave with clear saved/saving/error state
+
+If the primary action is only available far away from the current editing location, agents should treat that as a UX defect.
+
+## Scroll and overflow rule
+
+Agents must verify scroll behavior for long content.
+
+Check:
+
+- page scroll
+- panel scroll
+- modal scroll
+- drawer scroll
+- mobile scroll
+- nested scroll containers
+- dropdowns near viewport edges
+- sticky headers/footers
+- fixed nav overlap
+- keyboard focus after adding/removing rows
+- whether the final field and final action are reachable
+
+No primary workflow should require the user to scroll awkwardly back to the top just to save, send, apply, delete, or confirm.

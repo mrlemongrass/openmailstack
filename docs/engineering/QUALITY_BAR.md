@@ -143,6 +143,66 @@ Priority score:
 
 Pick the highest-scoring task that can be completed and proven in one coherent loop.
 
+## UI/UX quality-of-life scoring
+
+Quality-of-life issues are not automatically low-priority polish.
+
+Score them based on workflow impact.
+
+Examples that may score Severity 4:
+
+- user can edit a long form but the Save button is hard to reach or easy to miss
+- a long settings page has no sticky actions or unsaved-state feedback
+- a modal, drawer, or panel clips important controls
+- user cannot complete a workflow comfortably on mobile
+- a primary action disappears during a common workflow
+- a user can lose work because save/cancel/close behavior is unclear
+- adding many filters, guests, recipients, attachments, contacts, or rules makes the UI awkward or broken
+
+Examples that may score Severity 3:
+
+- excessive scrolling in a common workflow
+- poor section hierarchy in a settings screen
+- missing success feedback after save
+- hover-only actions with no keyboard/mobile alternative
+- repeated actions require unnecessary travel across the screen
+- bulk actions are hard to discover
+- long lists do not preserve scroll position after action
+
+Examples that may score Severity 2:
+
+- minor spacing/alignment issue
+- minor copy issue
+- polish issue on a non-primary screen
+- small inconsistency that does not affect completion
+
+If a quality-of-life issue affects Mail, Calendar, Contacts, Notes, Settings, Admin, Sync, or mobile primary workflows, it should be considered a product-quality issue, not cosmetic polish.
+
+## Long-content stress cases
+
+When reviewing UI/UX, agents must test realistic long-content states where applicable:
+
+- many mail filters/rules
+- many filter conditions/actions
+- many recipients
+- many attachments
+- long email body
+- many folders/labels
+- many calendars
+- many calendar guests
+- recurring event options expanded
+- many contacts
+- many contact fields/groups/labels
+- long note
+- many notes/tags/folders
+- many settings sections
+- many admin domains/mailboxes/aliases
+- many logs/quarantine items
+- mobile viewport with long forms
+
+A screen that passes with one item but fails with many realistic items is not complete.
+
+
 ## Definition of done
 
 A task is done only when:

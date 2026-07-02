@@ -191,6 +191,28 @@ Check:
 - API batching/caching
 - loading state quality
 
+## Real-user friction pass
+
+For every user-facing task, agents must perform a real-user friction pass.
+
+Do not only ask whether the feature works. Ask whether it remains pleasant and obvious under realistic use.
+
+For the touched workflow, verify:
+
+- Can the user always find the primary action?
+- Can the user save, send, apply, cancel, or confirm without excessive scrolling?
+- Is unsaved state visible?
+- Is success or failure visible?
+- Does the layout still work with many items?
+- Does the layout still work on mobile?
+- Does keyboard focus remain sensible?
+- Are dropdowns, popovers, and modals clipped?
+- Are loading, empty, error, and success states handled?
+- Can the user recover from a failed action?
+- Does the workflow feel integrated with the rest of the suite?
+
+If the answer is no, record a UX_AUDIT.md item or fix it in the current cycle if it is the highest-value bounded task.
+
 ## QA review
 
 Test as:

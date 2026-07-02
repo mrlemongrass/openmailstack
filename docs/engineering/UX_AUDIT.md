@@ -12,10 +12,11 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 | Mail shell / AppShell | 7/10 | Good three-pane layout, missing mobile header/settings access |
 | Message list | 8/10 | Good density system, preview snippets in comfortable mode |
 | Message viewer | 8/10 | Reply All/Forward fixed, HTML sanitized with DOMPurify |
-| Compose / Reply | 6/10 | Schedule send+identities fixed, inline reply basic |
+| Compose / Reply | 7/10 | Schedule send+identities fixed, word count, inline reply shows recipient |
 | Search | 6/10 | Search always visible, loading indicator added, hints unimplemented |
 | Calendar | 9/10 | Month + Week + Day views functional, empty/error states, guest autocomplete |
-| Contacts | 9/10 | Good detail/edit panels, label/group creation, Email→compose, error states |
+| Contacts | 9/10 | Label/group creation + filtering, bulk delete, Email→compose, error states |
+| Notes | 8/10 | Rich editor + autosave indicator, pin toggle + toast, actionable empty state |
 | Settings | 9/10 | All alert()/confirm() replaced with inline feedback, password reload removed |
 | Mobile / Responsive | 7/10 | Settings added to mobile tab bar, single breakpoint, no tablet consideration |
 | Loading states | 8/10 | Good skeleton system, searchLoading indicator added |
@@ -205,6 +206,44 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Fix**: ComposeModal fetches contacts on mount, shows filtered dropdown when typing 2+ chars, matches by name/email, supports multi-recipient comma-separated fields with keyboard navigation (arrows, enter, escape). Self-contained in ComposeModal.tsx with no new dependencies.
 - **Ref**: `ComposeModal.tsx:74-144`
 
+### [Status] Surface — Short title
+
+Surface:
+Mail / Calendar / Contacts / Notes / Settings / Admin / Sync / Mobile / Cross-suite
+
+Type:
+Bug / Missing feature / Misleading placeholder / Quality-of-life / Accessibility / Performance / Visual polish / Cross-suite integration
+
+Problem:
+Describe the current user-facing issue.
+
+User impact:
+Explain why this makes the product feel confusing, slow, fragile, awkward, inaccessible, or unfinished.
+
+Realistic stress case:
+Describe the data volume or interaction that reveals the issue, such as many filters, many guests, many contacts, long note, mobile viewport, many attachments, or long settings page.
+
+Expected behavior:
+Describe what should happen instead.
+
+Suggested fix:
+Describe a bounded improvement.
+
+Severity:
+1-5
+
+Reach:
+1-5
+
+Release blocker level:
+P0 / P1 / P2 / P3 / N/A
+
+Proof:
+Screenshot, route, browser notes, reproduction steps, test, or code reference.
+
+Status:
+Open / In Progress / Done / Blocked / Needs Verification
+
 ## Completed UX Improvements (this session)
 
 - [x] Schedule send wired to backend (was non-functional stub)
@@ -247,6 +286,30 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - [x] Contact toast notifications (label/group create, restore, permanent delete)
 - [x] Message list preview snippets in comfortable density
 - [x] Admin sidebar version display
+- [x] Notes empty state with actionable Create Note button
+- [x] Contact label filtering (clicking a label now filters contacts)
+- [x] Notes pin/unpin toast feedback on cards
+- [x] Mail compose word/character count
+- [x] Message body loading spinner (replaces misleading '(no content)')
+- [x] Message body pre-fetching (bodies cached before click, like Gmail/Outlook)
+
+## Acceptance Criteria for Batch 14
+
+| Cycle | Task | User-Visible AC | Technical AC |
+|-------|------|----------------|--------------|
+| 1 | Notes actionable empty state | Empty notes grid shows "Create Note" button that opens editor | Button calls setEditingNote + setIsNoteModalOpen |
+| 2 | Contacts label filtering | Clicking a label filters the contact grid to matching contacts | useMemo filters contacts by labels_json match |
+| 3 | Notes pin toast | Pin/Unpin on card shows toast confirmation | useToast in NoteCard, saveNote persists toggle |
+| 4 | Mail compose word count | Word and character count visible below body textarea while typing | Strips HTML, counts words via split(/\s+/) |
+
+### Proof
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` | No errors |
+| `npx vite build` | Success |
+| `npm test` (backend) | 26/26 pass |
+| Playwright | Notes editor opens, mail body loads |
 
 ## Next Recommended UX Task
 

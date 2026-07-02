@@ -5,6 +5,7 @@ const ReactQuill = lazy(() => import('react-quill-new'));
 import type { AppearancePreferences, AccentColor, DensityMode, FontScale, RadiusMode, ThemeMode } from './appearance';
 import { normalizeSettingsTab, type SettingsTab } from './tabs';
 import type { CalendarUserSettings, ContactsUserSettings, MailUserSettings } from './settingsApi';
+import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 
 interface Rule {
   id: string;
@@ -1008,8 +1009,29 @@ function CalendarPane({ setupValues, calendarSettings, calendars, onCalendarSett
 }
 
 function ContactsPane({ setupValues, contactsSettings, onContactsSettingsChange }: SettingsContentProps) {
+  const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const updateContacts = (updates: Partial<ContactsUserSettings>) => {
     onContactsSettingsChange({ ...contactsSettings, ...updates });
+  };
+
+  const handleImport = async (file: File | undefined, format: string) => {
+    if (!file) return;
+    setImportStatus(null);
+    try {
+      const text = await file.text();
+      const res = await fetch('/api/apps/contacts-import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format, data: text })
+      }).then(r => r.json());
+      if (res.success) {
+        setImportStatus({ type: 'success', text: `Successfully imported ${res.count} contact${res.count !== 1 ? 's' : ''}.` });
+      } else {
+        setImportStatus({ type: 'error', text: res.error || 'Import failed.' });
+      }
+    } catch (err: any) {
+      setImportStatus({ type: 'error', text: err.message || 'Network error.' });
+    }
   };
 
   return (
@@ -1066,45 +1088,25 @@ function ContactsPane({ setupValues, contactsSettings, onContactsSettingsChange 
             <a href="/api/apps/contacts-export?format=csv" className="btn btn-secondary">Export CSV</a>
             <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
               Import vCard
-              <input type="file" accept=".vcf,text/vcard" style={{ display: 'none' }} onChange={async e => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const text = await file.text();
-                const res = await fetch('/api/apps/contacts-import', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ format: 'vcard', data: text })
-                }).then(r => r.json());
-                if (res.success) {
-                  alert(`Successfully imported ${res.count} contacts!`);
-                  window.location.reload();
-                } else {
-                  alert(`Import failed: ${res.error}`);
-                }
-                e.target.value = '';
-              }} />
+              <input type="file" accept=".vcf,text/vcard" style={{ display: 'none' }}
+                onChange={e => { handleImport(e.target.files?.[0], 'vcard'); e.target.value = ''; }} />
             </label>
             <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
               Import CSV
-              <input type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={async e => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const text = await file.text();
-                const res = await fetch('/api/apps/contacts-import', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ format: 'csv', data: text })
-                }).then(r => r.json());
-                if (res.success) {
-                  alert(`Successfully imported ${res.count} contacts!`);
-                  window.location.reload();
-                } else {
-                  alert(`Import failed: ${res.error}`);
-                }
-                e.target.value = '';
-              }} />
+              <input type="file" accept=".csv,text/csv" style={{ display: 'none' }}
+                onChange={e => { handleImport(e.target.files?.[0], 'csv'); e.target.value = ''; }} />
             </label>
           </div>
+          {importStatus && (
+            <div style={{
+              marginTop: 10, padding: '8px 12px', borderRadius: 'var(--radius-md)', fontSize: '0.82rem',
+              background: importStatus.type === 'success' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+              color: importStatus.type === 'success' ? '#10b981' : 'var(--danger)',
+              border: `1px solid ${importStatus.type === 'success' ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+            }}>
+              {importStatus.text}
+            </div>
+          )}
         </section>
       </div>
 
@@ -1200,13 +1202,19 @@ function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentPro
     }
   };
 
-  const handleRevokeSession = async (id: string) => {
-    if (!confirm('Are you sure you want to revoke this session? The device will be logged out immediately.')) return;
-    const res = await fetch(`/api/account/sessions/${id}`, { method: 'DELETE' }).then(r => r.json());
+  const [revokeConfirmId, setRevokeConfirmId] = useState<string | null>(null);
+  const [revokeError, setRevokeError] = useState('');
+
+  const handleRevokeSession = async () => {
+    if (!revokeConfirmId) return;
+    setRevokeError('');
+    const res = await fetch(`/api/account/sessions/${revokeConfirmId}`, { method: 'DELETE' }).then(r => r.json());
     if (res.success) {
-      setSessions(s => s.filter(x => x.id !== id));
+      setSessions(s => s.filter(x => x.id !== revokeConfirmId));
+      setRevokeConfirmId(null);
     } else {
-      alert(res.error || 'Failed to revoke session');
+      setRevokeError(res.error || 'Failed to revoke session');
+      setRevokeConfirmId(null);
     }
   };
 
@@ -1263,7 +1271,7 @@ function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentPro
                     <td>{s.isCurrent ? <strong style={{ color: 'var(--accent-primary)' }}>Current Session</strong> : 'Active'}</td>
                     <td>
                       {!s.isCurrent && (
-                        <button type="button" className="btn-icon" onClick={() => handleRevokeSession(s.id)} title="Revoke Session">
+                        <button type="button" className="btn-icon" onClick={() => setRevokeConfirmId(s.id)} title="Revoke Session">
                           <Trash2 size={16} />
                         </button>
                       )}
@@ -1280,6 +1288,22 @@ function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentPro
           </div>
         )}
       </section>
+      {revokeError && (
+        <div style={{
+          padding: '8px 12px', borderRadius: 'var(--radius-md)', fontSize: '0.82rem',
+          background: 'rgba(239,68,68,0.1)', color: 'var(--danger)',
+          border: '1px solid rgba(239,68,68,0.2)', marginTop: 12,
+        }}>{revokeError}</div>
+      )}
+      <ConfirmDialog
+        open={revokeConfirmId !== null}
+        title="Revoke session?"
+        message="The device will be logged out immediately and must sign in again."
+        confirmLabel="Revoke"
+        danger
+        onConfirm={handleRevokeSession}
+        onCancel={() => setRevokeConfirmId(null)}
+      />
     </div>
   );
 }

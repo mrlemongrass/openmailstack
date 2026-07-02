@@ -116,6 +116,15 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
             fontWeight: cal.calendarView === v ? 600 : 400 }}
             onClick={() => cal.setCalendarView(v)}>{v}</button>
         ))}
+        <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: '0.7rem', opacity: 0.6 }}
+          onClick={() => {
+            const next = localStorage.getItem('oms_week_numbers') !== '0' ? '0' : '1';
+            localStorage.setItem('oms_week_numbers', next);
+            window.dispatchEvent(new Event('oms:weeknumbers'));
+            showToast({ type: 'info', message: next === '0' ? 'Week numbers hidden' : 'Week numbers shown' });
+          }}>
+          W#
+        </button>
       </div>
     </div>
   );

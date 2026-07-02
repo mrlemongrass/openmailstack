@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router';
 import { AuthGate } from './shared/layouts/AuthGate';
 import { AppShell } from './shared/layouts/AppShell';
@@ -128,7 +128,14 @@ function DeviceGuides() {
 }
 
 function SyncView() {
+  const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const hostname = window.location.hostname;
+
+  useEffect(() => {
+    fetch('/api/auth/status')
+      .then((r) => setServerStatus(r.ok ? 'online' : 'offline'))
+      .catch(() => setServerStatus('offline'));
+  }, []);
   const rows: SyncRowProps[] = [
     { icon: Mail, label: 'Incoming Mail (IMAP)', host: hostname, detail: 'Port 993 · SSL/TLS required', },
     { icon: Globe, label: 'Outgoing Mail (SMTP)', host: hostname, detail: 'Port 587 · STARTTLS required', },
@@ -139,7 +146,16 @@ function SyncView() {
   return (
     <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
       <div className="glass-panel" style={{ maxWidth: 640, margin: '0 auto', padding: 40 }}>
-        <h2 style={{ margin: '0 0 6px' }}>Sync Setup</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+          <h2 style={{ margin: 0 }}>Sync Setup</h2>
+          <span style={{
+            fontSize: '0.7rem', padding: '2px 10px', borderRadius: 999,
+            background: serverStatus === 'online' ? 'rgba(16,185,129,0.15)' : serverStatus === 'offline' ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.05)',
+            color: serverStatus === 'online' ? '#10b981' : serverStatus === 'offline' ? 'var(--danger)' : 'var(--text-secondary)',
+          }}>
+            {serverStatus === 'checking' ? 'Checking...' : serverStatus === 'online' ? 'Server Online' : 'Server Offline'}
+          </span>
+        </div>
         <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 24px', fontSize: '0.9rem' }}>
           Configure your devices to sync mail, calendars, and contacts with OpenMailStack.
           Use the server details below in your email client, calendar app, or device settings.

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Shield, ShieldOff, RefreshCw, Unlock, AlertTriangle } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useToast } from '../shared/components/Toast';
 
 interface JailInfo {
   name: string;
@@ -25,6 +26,7 @@ const JAIL_COLORS: Record<string, string> = {
 };
 
 export function Fail2banPanel() {
+  const { showToast } = useToast();
   const [status, setStatus] = useState<Fail2banStatus | null>(null);
   const [error, setError] = useState('');
   const [banHistory, setBanHistory] = useState<any[]>([]);
@@ -92,7 +94,8 @@ export function Fail2banPanel() {
       });
       const data = await res.json();
       if (data.success) {
-        fetchStatus(); // Refresh the jail data
+        fetchStatus();
+        showToast({ type: 'success', message: `Unbanned ${ip}` });
       } else {
         setError(data.error || 'Failed to unban IP');
       }

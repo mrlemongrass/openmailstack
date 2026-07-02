@@ -11,9 +11,11 @@ import { MoveToPopover } from './components/MoveToPopover';
 import { Skeleton } from '../shared/components/Skeleton';
 import { CalendarInviteCard } from '../shared/components/CalendarInviteCard';
 import { KeyboardHelp } from '../shared/components/KeyboardHelp';
+import { useToast } from '../shared/components/Toast';
 import type { useMail } from './hooks/useMail';
 
 export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
+  const { showToast } = useToast();
   const { folder, uid } = useParams<{ folder: string; uid: string }>();
   const navigate = useNavigate();
   const [showRaw, setShowRaw] = useState(false);
@@ -187,13 +189,13 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           )}
         </div>
         <div style={{ flex: 1 }} />
-        <button className="btn btn-ghost" onClick={() => mail.messageAction(message.isStarred ? 'unstar' : 'star', [message.uid])}>
+        <button className="btn btn-ghost" onClick={() => { mail.messageAction(message.isStarred ? 'unstar' : 'star', [message.uid]); showToast({ type: 'info', message: message.isStarred ? 'Star removed' : 'Starred' }); }}>
           <Star size={16} fill={message.isStarred ? '#f59e0b' : 'none'} color={message.isStarred ? '#f59e0b' : undefined} />
         </button>
         <button className="btn btn-ghost" onClick={() => { mail.messageAction('unread', [message.uid]); navigate(`/mail/${encodeURIComponent(folder || 'INBOX')}`); }} title="Mark unread">
           <MailOpen size={16} />
         </button>
-        <button className="btn btn-ghost" onClick={() => mail.messageAction('archive', [message.uid])}>
+        <button className="btn btn-ghost" onClick={() => { mail.messageAction('archive', [message.uid]); showToast({ type: 'info', message: 'Archived' }); }}>
           <Archive size={16} />
         </button>
         <div style={{ position: 'relative' }}>
@@ -205,7 +207,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         <button className="btn btn-ghost" onClick={() => { if (mail.muteThread) mail.muteThread([message.uid]); }} title="Mute thread">
           <BellOff size={16} />
         </button>
-        <button className="btn btn-danger" onClick={() => mail.messageAction('delete', [message.uid])}>
+        <button className="btn btn-danger" onClick={() => { mail.messageAction('delete', [message.uid]); showToast({ type: 'info', message: 'Deleted' }); }}>
           <Trash2 size={16} />
         </button>
       </div>

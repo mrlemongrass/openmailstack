@@ -1,6 +1,7 @@
-import { Star, Lock, StickyNote } from 'lucide-react';
+import { Star, Lock, StickyNote, PenLine } from 'lucide-react';
 import { NoteSkeleton } from './components/NoteSkeleton';
 import { SortDropdown } from './components/SortDropdown';
+import { EmptyState } from '../shared/components/EmptyState';
 import type { useNotes } from './hooks/useNotes';
 import type { Note } from '../shared/types';
 
@@ -39,6 +40,16 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
   });
 
   if (n.isLoading && n.notes.length === 0) return <NoteSkeleton count={12} />;
+
+  if (!n.isLoading && n.notes.length === 0) {
+    return (
+      <EmptyState
+        icon={PenLine}
+        title="No notes yet"
+        description="Create your first note to start writing. Notes support rich text, attachments, reminders, and collaboration."
+      />
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

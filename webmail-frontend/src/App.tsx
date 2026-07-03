@@ -130,6 +130,7 @@ function DeviceGuides() {
 function SyncView() {
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [diagResults, setDiagResults] = useState<Record<string, 'checking' | 'ok' | 'fail'>>({});
   const hostname = window.location.hostname;
 
   const checkStatus = () => {
@@ -137,6 +138,23 @@ function SyncView() {
     fetch('/api/auth/status')
       .then((r) => { setServerStatus(r.ok ? 'online' : 'offline'); setLastChecked(new Date()); })
       .catch(() => { setServerStatus('offline'); setLastChecked(new Date()); });
+  };
+
+  const runDiagnostics = () => {
+    const endpoints: Record<string, string> = {
+      'Mail API': '/api/auth/status',
+      'Calendar (CalDAV)': '/caldav',
+      'Contacts (CardDAV)': '/carddav',
+    };
+    const results: Record<string, 'checking' | 'ok' | 'fail'> = {};
+    Object.keys(endpoints).forEach((k) => { results[k] = 'checking'; });
+    setDiagResults({ ...results });
+
+    Object.entries(endpoints).forEach(([name, url]) => {
+      fetch(url, { method: 'HEAD' })
+        .then((r) => setDiagResults((prev) => ({ ...prev, [name]: r.ok || r.status === 405 ? 'ok' : 'fail' })))
+        .catch(() => setDiagResults((prev) => ({ ...prev, [name]: 'fail' })));
+    });
   };
 
   useEffect(() => { checkStatus(); }, []);
@@ -169,6 +187,36 @@ function SyncView() {
         </p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {rows.map((r) => <SyncRow key={r.label} {...r} />)}
+        </div>
+
+        <div style={{ marginTop: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 600, margin: 0 }}>Connection Diagnostics</h3>
+            <button className="btn btn-ghost" onClick={runDiagnostics} style={{ fontSize: '0.8rem' }}>Run Tests</button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {Object.entries(diagResults).length === 0 ? (
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Click "Run Tests" to check service availability.</p>
+            ) : (
+              Object.entries(diagResults).map(([name, status]) => (
+                <div key={name} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '8px 12px', borderRadius: 'var(--radius-md)',
+                  background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)',
+                  fontSize: '0.85rem',
+                }}>
+                  <span>{name}</span>
+                  <span style={{
+                    fontSize: '0.7rem', padding: '2px 8px', borderRadius: 999, fontWeight: 600,
+                    background: status === 'ok' ? 'rgba(16,185,129,0.15)' : status === 'fail' ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.05)',
+                    color: status === 'ok' ? '#10b981' : status === 'fail' ? 'var(--danger)' : 'var(--text-secondary)',
+                  }}>
+                    {status === 'checking' ? '...' : status === 'ok' ? 'Reachable' : 'Unreachable'}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         <DeviceGuides />

@@ -127,6 +127,33 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Fix**: Added empty state with Users icon, heading, and guidance text pointing to sidebar New Contact button
 - **Commit**: `367dc65`
 
+## Critical Bugs Found + Fixed (2026-07-03 live verification)
+
+### B1. Admin Updates panel crashes with React error
+- **Surface**: Admin → Updates
+- **Root cause**: Backend `components` returned object `{Nginx: "1.24"}` but frontend treated as array with `.map()`
+- **Fix**: Backend converts to `[{name, version}]` array
+- **Commit**: `ebbd2ba0`
+- **Verification method**: Live Playwright — 0 console errors after fix
+
+### B2. Contacts limited to 200 with no way to load more
+- **Surface**: Contacts
+- **Root cause**: `loadMoreContacts` hook existed but had zero UI triggers — no button, no infinite scroll
+- **Fix**: Added "Load More Contacts" button when `hasMore` is true
+- **Commit**: `ebbd2ba0`
+
+### B3. Admin domains show 0 mailboxes and 0 aliases
+- **Surface**: Admin → Domains
+- **Root cause**: `domain.aliases`/`domain.mailboxes` were stale counter columns, not live counts
+- **Fix**: Real-time `COUNT(*)` subqueries on `alias` and `mailbox` tables
+- **Commit**: `ebbd2ba0`
+
+### B4. Mail message loading is very slow
+- **Surface**: Mail → Message viewer
+- **Root cause**: IMAP connection-per-request — pre-fetching 10 messages = 10 parallel TCP connections
+- **Fix (partial)**: Reduced pre-fetch to 3. Full fix needs IMAP connection pooling.
+- **Commit**: `ebbd2ba0`
+
 ## QoL Issues (2026-07-02 QoL pass)
 
 ### Q1. Compose autocomplete dropdown clipped by scroll container

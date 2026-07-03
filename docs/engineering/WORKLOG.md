@@ -1868,3 +1868,59 @@ Floating "← Back" button appears at bottom-left when message body is scrolled 
 | 5 | Contacts | Birthday calendar verified | ✅ Already implemented | `f4114ef` |
 
 ### Proof: TSC ✅ ×5, Build ✅ ×5, Backend tests 26/26 ✅
+
+---
+
+## 2026-07-03 — Critical bug fix batch: Updates crash + Contacts limit + Admin counts + Mail perf
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`
+
+### Cycle 1: Admin Updates panel crash
+**Problem**: Backend `/api/admin/updates` returned `components` as object `{Nginx: "1.24"}` but frontend `UpdatesPanel.tsx` called `.map()` expecting an array — causing React crash.  
+**Fix**: Backend now converts object to `[{name, version}]` array via `Object.entries().map()`.  
+**AC**: Updates page loads without crash ✅  
+**Commit**: `ebbd2ba0`
+
+### Cycle 2: Contacts limited to 200
+**Problem**: `loadMoreContacts` existed in hook but had no UI trigger — users could only see first 200 contacts.  
+**Fix**: Added "Load More Contacts" button in `ContactGrid.tsx` when `hasMore` is true.  
+**AC**: Button visible below contact list when more contacts available ✅  
+**Commit**: `ebbd2ba0`
+
+### Cycle 3: Admin domains showing 0 mailboxes/aliases
+**Problem**: `domain.aliases` and `domain.mailboxes` counter columns were stale (not maintained by the system).  
+**Fix**: Replaced with real-time `COUNT(*)` subqueries joining `alias` and `mailbox` tables.  
+**AC**: Domain counts reflect actual mailbox and alias counts ✅  
+**Commit**: `ebbd2ba0`
+
+### Cycle 4: Mail message loading slow
+**Problem**: Pre-fetching 10 messages created 10 parallel IMAP connections, each opening a new TCP connection. Root cause: `ImapService` opens a new connection per request.  
+**Fix**: Reduced pre-fetch batch from 10 to 3 messages. Full fix (connection reuse/pooling) is a larger refactor for a future cycle.  
+**AC**: Fewer concurrent IMAP connections during pre-fetch ✅  
+**Commit**: `ebbd2ba0`
+
+### Proof
+
+| Check | All Cycles |
+|-------|-----------|
+| `npx tsc -b` (frontend) | No errors |
+| `npx vite build` (frontend) | Success |
+| `npm run build` (backend) | No errors |
+| `npm test` (backend) | 26/26 pass |
+| Playwright verify | Updates: 0 errors, Domains: loads, Contacts: 0 errors |
+
+### Docs updated
+
+- `WORKLOG.md`: This entry
+- `UX_AUDIT.md`: Bug severity + fix notes appended below
+- `SUITE_FEATURE_MATRIX.md`: Admin Updates + Contacts Load More status updated
+
+### Risks
+
+- **IMAP connection reuse**: Not addressed — pre-fetch still opens 1 connection per message. A connection pool or keep-alive would be needed for production-scale IMAP performance.
+- **Domain counts**: Subqueries add overhead to the `/admin/domains` query. With many domains, this could be slow — consider caching or denormalizing for production.
+
+### Next task
+
+Implement IMAP connection pooling/reuse in the backend for message body fetching.

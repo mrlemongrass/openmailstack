@@ -29,6 +29,9 @@ Translate useful ideas into OpenMailStack-native, self-hostable, privacy-respect
 | Mail | Undo send | Gmail/Outlook-style delayed send | Configurable short cancellation window before final SMTP send | Should | Not Started | Requires queue/delay semantics |
 | Mail | Snooze | Gmail/Outlook-style snooze | Hide until selected time, restore to inbox via queue | Should | Partial | Verify current implementation |
 | Mail | Rules/filters | Gmail filters / Outlook rules | User-defined server-side rules via Sieve or backend rules engine | Must | Needs Verification | |
+| Admin | Updates panel | iCloud/Google/Outlook | Version + component checks for Nginx, Postfix, Dovecot | Must | Implemented | 2026-07-03: fixed crash — backend now returns array |
+| Admin | Domain counts | cPanel/PostfixAdmin | Real-time mailbox and alias counts per domain | Must | Implemented | 2026-07-03: COUNT subqueries replace stale counter columns |
+| Contacts | Load more / pagination | iCloud/Google/Outlook | Button to load additional contacts beyond initial 200 | Must | Implemented | 2026-07-03: Load More button in ContactGrid |
 | Mail | Contact autocomplete in compose | iCloud/Google/Outlook | Typing in To/Cc/Bcc shows filtered contact dropdown from personal contacts | Must | Implemented | 2026-07-02: self-contained in ComposeModal.tsx, multi-recipient support, keyboard nav |
 | Calendar | Week/day/agenda views | iCloud/Google/Outlook calendars | Month + Week + Day functional, Agenda/Year remain | Must | Partial | 2026-07-02: DayView added with hour-slotted layout, all-day events, current time indicator |
 | Calendar | Contact autocomplete in guests | iCloud/Google/Outlook | Typing in event guest field shows filtered contact dropdown | Should | Implemented | 2026-07-02: EventModal.tsx, same pattern as compose autocomplete |

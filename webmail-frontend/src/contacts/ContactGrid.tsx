@@ -147,6 +147,14 @@ export function ContactGrid({ contacts: c, density }: {
           })}
         </div>
       </div>
+      {c.hasMore && (
+        <div style={{ textAlign: 'center', padding: 16 }}>
+          <button className="btn btn-ghost" onClick={c.loadMoreContacts}
+            style={{ fontSize: '0.85rem' }}>
+            Load More Contacts
+          </button>
+        </div>
+      )}
       <ScrollToTop scrollRef={parentRef} />
     </div>
   );

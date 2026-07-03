@@ -39,7 +39,7 @@ export function MessageList({ mail, density }: MessageListProps) {
     if (mail.messages.length > 0 && folder) {
       const uidsToPreFetch = mail.messages
         .filter((m) => !m.html && !m.text)
-        .slice(0, 10)
+        .slice(0, 3)
         .map((m) => m.uid);
       if (uidsToPreFetch.length > 0) {
         mail.prefetchBodies(uidsToPreFetch, decodeURIComponent(folder));

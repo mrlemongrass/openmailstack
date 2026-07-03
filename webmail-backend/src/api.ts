@@ -1971,8 +1971,8 @@ apiRouter.get('/admin/domains', requireAuth, requireAdmin, async (req, res) => {
             SELECT
                 d.domain,
                 d.description,
-                d.aliases,
-                d.mailboxes,
+                COALESCE(a.alias_count, 0) AS aliases,
+                COALESCE(m.mailbox_count, 0) AS mailboxes,
                 d.maxquota,
                 d.quota,
                 d.transport,
@@ -1983,6 +1983,12 @@ apiRouter.get('/admin/domains', requireAuth, requireAdmin, async (req, res) => {
                 dv.token AS verify_token
             FROM domain d
             LEFT JOIN domain_verification dv ON dv.domain = d.domain
+            LEFT JOIN (
+                SELECT domain, COUNT(*) AS alias_count FROM \`alias\` GROUP BY domain
+            ) a ON a.domain = d.domain
+            LEFT JOIN (
+                SELECT domain, COUNT(*) AS mailbox_count FROM mailbox GROUP BY domain
+            ) m ON m.domain = d.domain
             WHERE d.domain != "ALL"
         `);
         res.json({ success: true, data: rows });
@@ -2606,12 +2612,13 @@ apiRouter.get('/admin/updates', requireAuth, requireAdmin, async (req: any, res)
         try { const { stdout } = await execPromise("postconf -h mail_version 2>/dev/null"); components.Postfix = stdout.trim(); } catch(e) { components.Postfix = 'Not Installed'; }
         try { const { stdout } = await execPromise("dovecot --version 2>/dev/null | awk '{print $1}'"); components.Dovecot = stdout.trim(); } catch(e) { components.Dovecot = 'Not Installed'; }
         
+        const componentList = Object.entries(components).map(([name, version]) => ({ name, version: version as string }));
         res.json({
             success: true,
             current_version: '1.2.0',
             latest_version: '1.2.0',
             has_update: false,
-            components
+            components: componentList
         });
     } catch (err: any) {
         res.status(500).json({ success: false, error: err.message });

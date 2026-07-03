@@ -1865,8 +1865,8 @@ exports.apiRouter.get('/admin/domains', requireAuth, requireAdmin, async (req, r
             SELECT
                 d.domain,
                 d.description,
-                d.aliases,
-                d.mailboxes,
+                COALESCE(a.alias_count, 0) AS aliases,
+                COALESCE(m.mailbox_count, 0) AS mailboxes,
                 d.maxquota,
                 d.quota,
                 d.transport,
@@ -1877,6 +1877,12 @@ exports.apiRouter.get('/admin/domains', requireAuth, requireAdmin, async (req, r
                 dv.token AS verify_token
             FROM domain d
             LEFT JOIN domain_verification dv ON dv.domain = d.domain
+            LEFT JOIN (
+                SELECT domain, COUNT(*) AS alias_count FROM \`alias\` GROUP BY domain
+            ) a ON a.domain = d.domain
+            LEFT JOIN (
+                SELECT domain, COUNT(*) AS mailbox_count FROM mailbox GROUP BY domain
+            ) m ON m.domain = d.domain
             WHERE d.domain != "ALL"
         `);
         res.json({ success: true, data: rows });
@@ -2477,12 +2483,13 @@ exports.apiRouter.get('/admin/updates', requireAuth, requireAdmin, async (req, r
         catch (e) {
             components.Dovecot = 'Not Installed';
         }
+        const componentList = Object.entries(components).map(([name, version]) => ({ name, version: version }));
         res.json({
             success: true,
             current_version: '1.2.0',
             latest_version: '1.2.0',
             has_update: false,
-            components
+            components: componentList
         });
     }
     catch (err) {

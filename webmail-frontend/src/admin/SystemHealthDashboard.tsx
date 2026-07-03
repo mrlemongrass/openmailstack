@@ -43,9 +43,11 @@ export function SystemHealthDashboard() {
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [countdown, setCountdown] = useState(5);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const fetchHealth = () => {
+      setRefreshing(true);
       fetch('/api/admin/telemetry/system-health')
         .then(res => res.json())
         .then(data => {
@@ -59,7 +61,8 @@ export function SystemHealthDashboard() {
         })
         .catch(err => {
           setError(err.message || 'Connection error');
-        });
+        })
+        .finally(() => setRefreshing(false));
       setCountdown(5);
     };
 
@@ -91,7 +94,7 @@ export function SystemHealthDashboard() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {lastUpdated && (
             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Clock size={12} /> Updated {lastUpdated.toLocaleTimeString()} · refresh in {countdown}s
+              <Clock size={12} className={refreshing ? 'spin' : ''} /> Updated {lastUpdated.toLocaleTimeString()} · refresh in {countdown}s
             </span>
           )}
           <span style={{ background: 'var(--accent-primary)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>ADMIN</span>

@@ -67,6 +67,15 @@ const logAuthFailure = (ip, username, reason) => {
 const requireAuth = auth_1.requireSession;
 const requireAdmin = auth_1.requireAdminSession;
 const execPromise = util_1.default.promisify(child_process_1.exec);
+// IMAP connection pool — reuses connections instead of creating new ones per request
+let _imapPool = null;
+async function getPooledImap(user, pass) {
+    if (!_imapPool) {
+        const pool = require('./imap-pool');
+        _imapPool = pool;
+    }
+    return _imapPool.getImapConnection(user, pass);
+}
 const promClient = __importStar(require("prom-client"));
 promClient.collectDefaultMetrics({ prefix: 'openmailstack_' });
 const apiRequestsCounter = new promClient.Counter({
@@ -814,11 +823,8 @@ exports.apiRouter.get('/quota', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
     try {
-        const { ImapService } = require('./imap');
-        const imap = new ImapService(user, pass);
-        await imap.connect();
+        const imap = await getPooledImap(user, pass);
         const quota = await imap.getQuota();
-        await imap.logout();
         res.json({ success: true, quota });
     }
     catch (err) {
@@ -829,11 +835,8 @@ exports.apiRouter.get('/folders', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
     try {
-        const { ImapService } = require('./imap');
-        const imap = new ImapService(user, pass);
-        await imap.connect();
+        const imap = await getPooledImap(user, pass);
         const folders = await imap.getFolders();
-        await imap.logout();
         res.json({ success: true, folders });
     }
     catch (err) {
@@ -850,16 +853,11 @@ exports.apiRouter.get('/events', requireAuth, async (req, res) => {
     const pass = req.user.password;
     const folder = req.query.folder || 'INBOX';
     const { ImapService } = require('./imap');
-    const imap = new ImapService(user, pass);
+    const imap = await getPooledImap(user, pass);
     try {
-        await imap.connect();
         let isClosed = false;
         req.on('close', async () => {
             isClosed = true;
-            try {
-                await imap.logout();
-            }
-            catch (e) { }
         });
         // Start listening to the folder
         const lock = await imap.client.getMailboxLock(folder);
@@ -926,11 +924,9 @@ exports.apiRouter.get('/folders/*folder/messages', requireAuth, async (req, res)
     try {
         const { ImapService } = require('./imap');
         const simpleParser = require('mailparser').simpleParser;
-        const imap = new ImapService(user, pass);
-        await imap.connect();
+        const imap = await getPooledImap(user, pass);
         await restoreExpiredSnoozes(user, imap);
         const { messages, uidNext, lowestUid, moreAvailable } = await imap.getMessages(folder, undefined, fetchOlderThan);
-        await imap.logout();
         // Parse messages in parallel — sequential parsing is the main bottleneck
         const parsed = await Promise.all(messages.map(async (msg) => {
             const parsed = await simpleParser(msg.source);
@@ -962,12 +958,9 @@ exports.apiRouter.get('/folders/*folder/messages', requireAuth, async (req, res)
 exports.apiRouter.get('/folders/*folder/messages/:uid/raw', requireAuth, async (req, res) => {
     try {
         const folder = folderParam(req);
-        const { ImapService } = require('./imap');
-        const imap = new ImapService(req.user.username, req.user.password);
-        await imap.connect();
+        const imap = await getPooledImap(req.user.username, req.user.password);
         await imap.client.mailboxOpen(folder);
         const msg = await imap.client.fetchOne(req.params.uid, { source: true });
-        await imap.logout();
         if (!msg || !msg.source)
             return res.status(404).json({ error: 'Message not found' });
         res.set('Content-Type', 'text/plain; charset=utf-8');
@@ -987,8 +980,7 @@ exports.apiRouter.post('/messages/snooze', requireAuth, async (req, res) => {
         const untilDate = new Date(until);
         if (isNaN(untilDate.getTime()))
             return res.status(400).json({ error: 'Invalid until date' });
-        const imap = new ImapService(req.user.username, req.user.password);
-        await imap.connect();
+        const imap = await getPooledImap(req.user.username, req.user.password);
         try {
             await imap.client.mailboxCreate('Snoozed');
         }
@@ -996,7 +988,6 @@ exports.apiRouter.post('/messages/snooze', requireAuth, async (req, res) => {
         await imap.client.mailboxOpen(folder);
         await imap.client.messageMove(uids.map(String), 'Snoozed');
         await db_1.pool.execute(`INSERT INTO snooze_queue (owner, original_folder, imap_uid, snooze_until) VALUES ${uids.map(() => '(?, ?, ?, ?)').join(', ')}`, uids.flatMap((uid) => [req.user.username, folder, uid, untilDate.toISOString()]));
-        await imap.logout();
         res.json({ success: true });
     }
     catch (err) {
@@ -1089,9 +1080,8 @@ exports.apiRouter.post('/messages/search/index/sync', requireAuth, async (req, r
     const perFolderLimit = scope === 'all' ? Math.min(requestedLimit, 40) : requestedLimit;
     const { ImapService } = require('./imap');
     const simpleParser = require('mailparser').simpleParser;
-    const imap = new ImapService(user, pass);
+    const imap = await getPooledImap(user, pass);
     try {
-        await imap.connect();
         const folderPaths = scope === 'all'
             ? (await imap.getFolders()).map((f) => f.path)
             : [folder];
@@ -1114,10 +1104,6 @@ exports.apiRouter.post('/messages/search/index/sync', requireAuth, async (req, r
         res.status(500).json({ success: false, error: err.message });
     }
     finally {
-        try {
-            await imap.logout();
-        }
-        catch (e) { }
     }
 });
 exports.apiRouter.post('/messages/search/index', requireAuth, async (req, res) => {
@@ -1129,9 +1115,8 @@ exports.apiRouter.post('/messages/search/index', requireAuth, async (req, res) =
     const perFolderLimit = scope === 'all' ? Math.min(requestedLimit, 75) : requestedLimit;
     const { ImapService } = require('./imap');
     const simpleParser = require('mailparser').simpleParser;
-    const imap = new ImapService(user, pass);
+    const imap = await getPooledImap(user, pass);
     try {
-        await imap.connect();
         const folderPaths = scope === 'all'
             ? (await imap.getFolders()).map((f) => f.path)
             : [folder];
@@ -1151,10 +1136,6 @@ exports.apiRouter.post('/messages/search/index', requireAuth, async (req, res) =
         res.status(500).json({ success: false, error: err.message });
     }
     finally {
-        try {
-            await imap.logout();
-        }
-        catch (e) { }
     }
 });
 exports.apiRouter.get('/messages/search/saved', requireAuth, async (req, res) => {
@@ -1221,13 +1202,12 @@ exports.apiRouter.get('/messages/search', requireAuth, async (req, res) => {
     }
     const { ImapService } = require('./imap');
     const simpleParser = require('mailparser').simpleParser;
-    const imap = new ImapService(user, pass);
+    const imap = await getPooledImap(user, pass);
     try {
         const indexedMessages = await (0, search_index_1.searchMailIndex)(user, { query, field, scope, folder, limit });
         if (indexedMessages.length > 0 || field === 'attachments') {
             return res.json({ success: true, messages: indexedMessages, query, scope, field, source: 'index' });
         }
-        await imap.connect();
         const folderPaths = scope === 'all'
             ? (await imap.getFolders()).map((f) => f.path)
             : [folder];
@@ -1256,10 +1236,6 @@ exports.apiRouter.get('/messages/search', requireAuth, async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
     finally {
-        try {
-            await imap.logout();
-        }
-        catch (e) { }
     }
 });
 const multer = require('multer');
@@ -1339,9 +1315,7 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
                 }
             }
         }
-        const { ImapService } = require('./imap');
-        const imap = new ImapService(user, pass);
-        await imap.connect();
+        const imap = await getPooledImap(user, pass);
         const folders = await imap.getFolders();
         let sentFolder = folders.find((f) => f.path.toLowerCase().includes('sent'))?.path;
         if (!sentFolder) {
@@ -1367,7 +1341,6 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
                 }
             }
         }
-        await imap.logout();
         res.json({ success: true });
     }
     catch (err) {
@@ -1400,13 +1373,10 @@ exports.apiRouter.post('/messages/undo', requireAuth, async (req, res) => {
         return res.status(400).json({ success: false, error: 'scheduledId or uids+targetFolder is required' });
     }
     try {
-        const { ImapService } = require('./imap');
-        const imap = new ImapService(user, pass);
-        await imap.connect();
+        const imap = await getPooledImap(user, pass);
         const restoreFolder = sourceFolder || 'INBOX';
         await imap.client.mailboxOpen(targetFolder);
         await imap.client.messageMove(uids.map(String), restoreFolder, { uid: true });
-        await imap.logout();
         res.json({ success: true, message: 'Messages restored' });
     }
     catch (err) {
@@ -1444,9 +1414,7 @@ exports.apiRouter.post('/messages/draft', requireAuth, upload.array('attachments
         if (draftId) {
             mailOptions.headers['X-Draft-Id'] = draftId;
         }
-        const { ImapService } = require('./imap');
-        const imap = new ImapService(user, pass);
-        await imap.connect();
+        const imap = await getPooledImap(user, pass);
         const folders = await imap.getFolders();
         let draftsFolder = folders.find((f) => f.path.toLowerCase().includes('draft'))?.path;
         if (!draftsFolder) {
@@ -1489,7 +1457,6 @@ exports.apiRouter.post('/messages/draft', requireAuth, upload.array('attachments
             }
         }
         const appendRes = await imap.client.append(draftsFolder, rawMessage, ['\\Draft', '\\Seen']);
-        await imap.logout();
         res.json({ success: true, draftUid: appendRes.uid });
     }
     catch (err) {
@@ -1506,11 +1473,8 @@ exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
         return res.status(400).json({ success: false, error: 'Missing required parameters' });
     }
     try {
-        const { ImapService } = require('./imap');
-        const imap = new ImapService(user, pass);
-        await imap.connect();
+        const imap = await getPooledImap(user, pass);
         const actionResult = await imap.messageAction(folder, uids, action, targetFolder);
-        await imap.logout();
         try {
             if (action === 'read') {
                 await (0, search_index_1.updateMailSearchFlags)(user, folder, uids, { isRead: true });
@@ -1558,11 +1522,9 @@ exports.apiRouter.get('/folders/*folder/messages/:uid/attachments/:attachmentId'
     }
     const { ImapService } = require('./imap');
     const simpleParser = require('mailparser').simpleParser;
-    const imap = new ImapService(user, pass);
+    const imap = await getPooledImap(user, pass);
     try {
-        await imap.connect();
         const msg = await imap.getMessageByUid(folder, uid);
-        await imap.logout();
         if (!msg)
             return res.status(404).json({ success: false, error: 'Message not found' });
         const parsed = await simpleParser(msg.source);
@@ -1585,10 +1547,6 @@ exports.apiRouter.get('/folders/*folder/messages/:uid/attachments/:attachmentId'
         res.status(500).json({ success: false, error: 'Internal Server Error' });
     }
     finally {
-        try {
-            await imap.logout();
-        }
-        catch (e) { }
     }
 });
 exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req, res) => {
@@ -1632,10 +1590,8 @@ exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req,
     try {
         const { ImapService } = require('./imap');
         const simpleParser = require('mailparser').simpleParser;
-        const imap = new ImapService(user, pass);
-        await imap.connect();
+        const imap = await getPooledImap(user, pass);
         const msg = await imap.getMessageByUid(folder, uid);
-        await imap.logout();
         if (!msg)
             return res.status(404).json({ success: false, error: 'Not found' });
         const parsed = await simpleParser(msg.source);

@@ -1968,3 +1968,95 @@ Restored pre-fetch to 8 messages (pooling prevents connection storm now).
 - Pool keyed by `user:passPrefix` — two users with same password prefix get different connections (safe)
 - 30s idle timeout means connections close after inactivity — next request will create fresh connection
 - No maximum pool size — bounded by unique users accessing the system concurrently
+
+---
+
+## 2026-07-03 — Release Candidate Hardening Assessment
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`  
+Version: 0.1.5  
+Target channel: Beta/RC
+
+### Pass 1 — Repo/Build/Test/CI
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` (frontend) | ✅ No errors |
+| `npx vite build` (frontend) | ✅ Success |
+| `npm run build` (backend) | ✅ No errors |
+| `npm test` (backend) | ✅ 26/26 pass |
+| Working tree | ✅ Clean |
+| All services active | ✅ postfix, dovecot, nginx, mariadb, openmailstack |
+
+### Pass 2 — Install/Upgrade
+
+| Check | Result |
+|-------|--------|
+| install.sh present | ✅ |
+| 11 function scripts (00-11) | ✅ All present |
+| deploy_webmail_frontend.sh | ✅ |
+| upgrade.sh | ✅ |
+| backup_restore.sh | ✅ |
+| Fresh install tested | ⚠️ Not tested (requires clean VM) |
+| Upgrade tested | ⚠️ Not tested (requires prior version) |
+
+### Pass 3 — Suite Smoke Tests
+
+| Surface | Render | Console Errors | Verdict |
+|---------|--------|---------------|---------|
+| Mail Inbox | ✅ | 1 (templates 404, P3) | ✅ PASS |
+| Calendar | ✅ | 0 | ✅ PASS |
+| Contacts | ✅ | 0 | ✅ PASS |
+| Notes | ✅ | 0 | ✅ PASS |
+| Settings | ✅ | 0 | ✅ PASS |
+| Admin Dashboard | ✅ | 0 | ✅ PASS |
+| Admin Domains | ✅ | 0 | ✅ PASS |
+| Admin Updates | ✅ | 0 | ✅ PASS |
+| Sync | ✅ | 0 | ✅ PASS |
+| Mobile (375px) | ✅ | 0 | ✅ PASS |
+
+### Pass 4 — Security/Privacy
+
+| Check | Result |
+|-------|--------|
+| Secrets in code | ✅ None found |
+| Session handling | ✅ HttpOnly cookies, configurable Secure |
+| Admin RBAC | ✅ requireAdmin middleware on all admin routes |
+| Password hashing | ✅ hashMailboxPassword function |
+| Destructive action confirmation | ✅ ConfirmDialog on delete/revoke |
+| Private data in logs | ✅ No PII found in log statements |
+| Rate limiting | ⚠️ No login rate limiting (P2) |
+
+### Pass 5 — Docs
+
+| Check | Result |
+|-------|--------|
+| RELEASE_CRITERIA.md | ✅ Complete with P0-P3 levels |
+| RELEASE_CHECKLIST.md | ✅ Present |
+| UX_AUDIT.md | ✅ Up to date |
+| SUITE_FEATURE_MATRIX.md | ✅ Up to date |
+| WORKLOG.md | ✅ Current |
+| Known issues documented | ⚠️ B2 (React #310) still under investigation |
+
+### Blocker Assessment
+
+| ID | Level | Issue | Status |
+|----|-------|-------|--------|
+| B2 | **P0** | React #310 crash on some messages (UIDs 7, 9) | 🔴 Open — crashes message viewer |
+| B1 | P1 | 500 on message body fetch | ✅ Fixed |
+| B4 | P1 | Sync diagnostics wrong endpoint | ✅ Fixed |
+| — | P2 | Templates API 404 (not implemented) | Known, documented |
+| — | P2 | No login rate limiting | Low risk for single-tenant |
+| — | P2 | WBXML parser warnings | ActiveSync, no user impact |
+| — | P3 | Design tokens not fully adopted | Cosmetic |
+
+### GO / NO-GO Recommendation
+
+**NO-GO for Beta/RC.** One P0 blocker remains:
+
+**B2**: React #310 crash in message viewer on messages with calendar invite data (UIDs 7, 9 confirmed). The crash occurs in a minified component (`wl`/`Ol`) using `useEffect`/`useMemo` with hooks-after-conditional-return pattern. CalendarInviteCard was ruled out as the cause. Root cause identification requires a non-minified development build to map the minified function to the source component.
+
+**Required for GO**: Fix B2 by identifying the crashing component via dev build, applying the hooks-before-return fix pattern, and verifying all 9 inbox messages open without React errors.
+
+### Next action: Build frontend in dev mode to identify the crashing component.

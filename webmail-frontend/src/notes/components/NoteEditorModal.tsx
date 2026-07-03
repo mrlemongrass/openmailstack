@@ -139,6 +139,9 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             ))}
           </div>
           <ReminderPicker noteId={note.id} />
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+            {(note.content || '').replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(Boolean).length} words
+          </span>
           {saveStatus && (
             <span style={{
               fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4,

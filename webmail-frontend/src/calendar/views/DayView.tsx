@@ -64,6 +64,13 @@ export function DayView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
         </div>
       )}
 
+      {/* Empty state for the day */}
+      {dayEvents.length === 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: 40, color: 'var(--text-secondary)', fontSize: '0.9rem', flex: 0 }}>
+          No events scheduled for {format(day, 'EEEE, MMM d')}
+        </div>
+      )}
       {/* Time grid */}
       <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
         <div style={{ display: 'flex', height: HOURS.length * HOUR_HEIGHT, position: 'relative' }}>

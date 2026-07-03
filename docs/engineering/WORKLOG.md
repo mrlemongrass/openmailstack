@@ -1841,3 +1841,16 @@ Floating "← Back" button appears at bottom-left when message body is scrolled 
 
 ### Q2 → Closed. All 8 QoL issues now addressed.
 ### Docs: UX_AUDIT updated (Q2 closed, Q8 logged)
+
+---
+
+## 2026-07-03 — 4-cycle batch: Admin + Calendar + Notes
+
+| Cycle | Surface | Task | AC | Commit |
+|---|---------|------|----|--------|
+| 1 | Admin | Refresh animation on health clock | Clock spins during fetch | `dc58ca9` |
+| 2 | Calendar | Recurrence in MonthView tooltips | "repeats weekly" on hover | `176ed97` |
+| 3 | Notes | Note count in sidebar button | "+ New Note (5)" format | `176ed97` |
+| 4 | Admin | System Health verified | All components render | `176ed97` |
+
+### Proof: TSC ✅, Build ✅, Backend tests 26/26 ✅

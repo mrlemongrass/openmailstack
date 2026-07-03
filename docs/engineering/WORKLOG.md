@@ -1784,3 +1784,18 @@ Branch: `main`
 | 4 | Sync | ICS calendar subscription row | Subscription link visible | `6cc6d7a` |
 
 ### Proof: TSC ✅, Build ✅, Backend tests 26/26 ✅
+
+---
+
+## 2026-07-03 — UI/UX QoL Pass #5: Scroll-to-top button
+
+### Stress case: Long mail inbox — scrolling back up requires excessive mouse travel
+
+### Fix
+Created `ScrollToTop` component — monitors scroll, shows glass ↑ button >400px, smooth-scrolls to top. Wired into MessageList.
+
+**Files**: `ScrollToTop.tsx` (new), `MessageList.tsx` (+2)  
+**Commit**: `b29619c`
+
+### Proof: TSC ✅, Build ✅
+### Next QoL: Wire ScrollToTop into Contacts + Notes grids

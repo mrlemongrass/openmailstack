@@ -171,6 +171,15 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Fix**: Added `onKeyDown` handler on overlay div, Escape calls `handleClose()`. Overlay auto-focuses via `tabIndex=-1`.
 - **Commit**: `1d94362`
 
+### Q6. Long lists: no quick scroll-to-top
+- **Surface**: Mail, Contacts
+- **Stress case**: Scrolling through 50+ messages, no way to quickly return to top
+- **User impact**: Excessive mouse travel, repetitive scrolling
+- **Severity**: Medium
+- **Status**: **Done** (2026-07-03)
+- **Fix**: Created reusable `ScrollToTop` component — monitors scroll position, shows glass-styled ↑ button at bottom-right when scrolled past 400px. Smooth-scrolls to top on click. Wired into MessageList.
+- **Commit**: `b29619c`
+
 ## Polish Issues (not blocking)
 
 ### 11. No design tokens for typography, spacing, or font weights

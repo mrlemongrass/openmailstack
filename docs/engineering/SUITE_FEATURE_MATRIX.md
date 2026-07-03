@@ -48,7 +48,7 @@ Translate useful ideas into OpenMailStack-native, self-hostable, privacy-respect
 | Contacts | Lists/groups | iCloud Contacts / Outlook People | Labels + groups with inline creation + click-to-filter | Should | Implemented | 2026-07-02: inline creation + label filtering via useMemo |
 | Contacts | Contact search | iCloud/Outlook/Google Contacts | Fast search by name/email/company/phone | Must | Needs Verification | ContactGrid shows name/email/org/job |
 | Mail | Search scope indicator | Gmail/Outlook | Shows current folder being searched next to search bar | Should | Implemented | 2026-07-02: 'in INBOX' scope badge |
-| Contacts | Birthday calendar | iCloud/Google-style integration | Contact birthdays appear in Calendar | Should | Needs Verification | |
+| Contacts | Birthday calendar | iCloud/Google-style integration | Contact birthdays appear in Calendar via auto-synced Birthdays calendar | Should | Implemented | 2026-07-03: backend syncBirthdayEvent creates/updates/deletes birthday events in Birthdays calendar |
 | Notes | Checklists | Apple Notes / Google Keep | Checklist blocks in note editor | Should | Needs Verification | |
 | Notes | Labels/tags | Google Keep | Tags/labels and filtered views | Should | Needs Verification | |
 | Notes | Tables | Apple Notes | Simple tables in rich editor | Could | Not Started | |

@@ -8,6 +8,7 @@ import { MailToolbar } from './MailToolbar';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { EmptyState } from '../shared/components/EmptyState';
 import { useToast } from '../shared/components/Toast';
+import { ScrollToTop } from '../shared/components/ScrollToTop';
 import { Inbox, SearchX, Loader } from 'lucide-react';
 import type { useMail } from './hooks/useMail';
 
@@ -182,6 +183,7 @@ export function MessageList({ mail, density }: MessageListProps) {
           </div>
         )}
       </div>
+      <ScrollToTop scrollRef={parentRef} />
     </div>
   );
 }

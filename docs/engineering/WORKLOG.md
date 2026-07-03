@@ -1828,3 +1828,16 @@ Floating "← Back" button appears at bottom-left when message body is scrolled 
 **Commit**: `bda7aa1`
 
 ### Proof: TSC ✅, Build ✅
+
+---
+
+## 2026-07-03 — UI/UX QoL Pass #8: Sticky Save audit (Q2 closed)
+
+### Audit result
+- Auto-save on change: Identity, Signatures, Reading, Spam, Contacts, Calendar, Appearance ✅
+- Explicit Save, short form: Forwarding (2 fields), Vacation (5 fields) ✅
+- Explicit Save with sticky bar: Filters ✅
+- Minor gap (Q8): Forwarding/Vacation no unsaved warning — low risk
+
+### Q2 → Closed. All 8 QoL issues now addressed.
+### Docs: UX_AUDIT updated (Q2 closed, Q8 logged)

@@ -140,9 +140,8 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 
 ### Q2. Settings panes: some lack sticky Save button
 - **Surface**: Settings (various panes)
-- **Stress case**: Long settings forms require scrolling back to top to save
-- **User impact**: Extra mouse travel, risk of losing changes
-- **Severity**: Low — Filters pane already has sticky bar; most other panes auto-save or have save in header
+- **Audit result (2026-07-03)**: Most panes auto-save on change (Identity, Signatures, Reading, Spam, Contacts, Calendar, Appearance, Advanced). Panes with explicit Save (Forwarding, Vacation) have forms short enough to fit on screen. Filters already has sticky bar ✅. **No critical gaps found.** 
+- **Status**: **Closed — no action needed**
 
 ### Q3. Mobile: no Compose button on mobile viewport
 - **Surface**: Mail / Mobile
@@ -188,6 +187,13 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Status**: **Done** (2026-07-03)
 - **Fix**: Floating "← Back" button at bottom-left when scrolled past 60px. Uses passive scroll listener, navigates to inbox.
 - **Commit**: `bda7aa1`
+
+### Q8. Forwarding/Vacation: no unsaved changes warning on navigation
+- **Surface**: Settings
+- **Stress case**: User types in Forwarding address, navigates away — text is lost with no warning
+- **User impact**: Minor data loss risk for panes with explicit Save
+- **Severity**: Low — panes are short, explicit Save is visible in header
+- **Status**: Open — future enhancement
 
 ## Polish Issues (not blocking)
 

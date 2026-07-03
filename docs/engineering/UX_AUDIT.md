@@ -199,10 +199,9 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 
 ### 11. No design tokens for typography, spacing, or font weights
 - **Surface**: Design system
-- **Problem**: Font sizes, spacing, and weights are hardcoded inline — no CSS custom properties
-- **User impact**: Visual inconsistency across the app over time
-- **Severity**: Low
-- **Ref**: `index.css:3-21`
+- **Status**: **Done** (2026-07-03)
+- **Fix**: Defined CSS custom properties for font sizes (xs–2xl), font weights (normal–bold), line heights, and spacing (4px–40px) in `:root`. Enables gradual adoption.
+- **Commit**: `0792edb`
 
 ### 12. No toast/snackbar notification system
 - **Surface**: All

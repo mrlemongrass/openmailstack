@@ -1924,3 +1924,47 @@ Branch: `main`
 ### Next task
 
 Implement IMAP connection pooling/reuse in the backend for message body fetching.
+
+---
+
+## 2026-07-03 — IMAP connection pooling
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`
+
+### Problem
+Every message body fetch created a new IMAP connection (TCP + TLS handshake + IMAP auth). Pre-fetching 10 messages = 10 parallel connection storms. This was the root cause of slow mail loading.
+
+### Fix
+Created `imap-pool.ts` — persistent connection pool:
+- `getImapConnection(user, pass)`: Returns cached or new connection
+- NOOP-based liveness check before reuse
+- Auto-close after 30s idle timeout
+- `closeAllConnections()` for graceful shutdown
+
+Replaced all 15+ `new ImapService → connect → logout` patterns in `api.ts` with `await getPooledImap(user, pass)`.
+
+Restored pre-fetch to 8 messages (pooling prevents connection storm now).
+
+### Files changed
+- `webmail-backend/src/imap-pool.ts` (new, 87 lines)
+- `webmail-backend/src/api.ts` (+35/-120 — all IMAP patterns replaced)
+- `webmail-backend/src/api.js` (compiled)
+- `webmail-frontend/src/mail/MessageList.tsx` (+1/-1 — pre-fetch 3→8)
+
+### Proof
+- `npm run build` (backend): No errors
+- `npm test` (backend): 26/26 pass
+- Playwright: Messages open, body loads, 0 IMAP errors
+
+### Before/After
+| Metric | Before | After |
+|--------|--------|-------|
+| IMAP connections per message | 1 new | 1 reused |
+| Concurrent connections during pre-fetch | 8 parallel TCP+TLS | 1 reused × N requests |
+| Message 2+ loading | Full handshake each time | Instant (connection alive) |
+
+### Risks
+- Pool keyed by `user:passPrefix` — two users with same password prefix get different connections (safe)
+- 30s idle timeout means connections close after inactivity — next request will create fresh connection
+- No maximum pool size — bounded by unique users accessing the system concurrently

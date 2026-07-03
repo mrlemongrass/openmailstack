@@ -135,13 +135,14 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [didSend, setDidSend] = useState(false);
   useEffect(() => {
     if (didSend && !mail.sending && !mail.composeError && !mail.isComposing) {
-      showToast({ type: 'success', message: 'Message sent' });
+      const isUndoable = !!mail.undoSendId;
+      showToast({ type: 'success', message: isUndoable ? 'Message will be sent in 8s' : 'Message sent' });
       setDidSend(false);
     }
     if (didSend && !mail.sending && mail.composeError) {
       setDidSend(false);
     }
-  }, [didSend, mail.sending, mail.composeError, mail.isComposing, showToast]);
+  }, [didSend, mail.sending, mail.composeError, mail.isComposing, showToast, mail.undoSendId]);
 
   if (!mail.isComposing) return null;
 

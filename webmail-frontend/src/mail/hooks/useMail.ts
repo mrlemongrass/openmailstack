@@ -47,6 +47,16 @@ export function useMail(_opts: UseMailOptions) {
 
   // Undo
   const [mailUndo, setMailUndo] = useState<MailUndoState | null>(null);
+  const [undoSendId, setUndoSendId] = useState<number | null>(null);
+
+  // Cancel an undo-send (delete scheduled message before it sends)
+  const cancelSendUndo = useCallback(async () => {
+    if (!undoSendId) return;
+    try {
+      await fetch(`/api/messages/send?scheduledId=${undoSendId}`, { method: 'DELETE' });
+      setUndoSendId(null);
+    } catch (e) { console.error('Cancel send failed', e); }
+  }, [undoSendId]);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -136,7 +146,11 @@ export function useMail(_opts: UseMailOptions) {
         const delaySeconds = Math.ceil((sendAt.getTime() - Date.now()) / 1000);
         formData.append('delaySeconds', String(delaySeconds));
       }
-      await api.sendMessage(formData);
+      // Undo send: add 8-second delay so user can cancel
+      if (!sendAt) formData.append('delaySeconds', '8');
+      const result: any = await api.sendMessage(formData);
+      // Store scheduled ID for undo
+      if (result.scheduledId) setUndoSendId(result.scheduledId);
       // Clear compose state on success
       setComposeTo(''); setComposeCc(''); setComposeBcc('');
       setComposeSubject(''); setComposeBody('');
@@ -389,7 +403,7 @@ export function useMail(_opts: UseMailOptions) {
     viewingThread, setViewingThread,
     mailLowestUid, mailMoreAvailable,
     mailLoading, isRefreshing, loadingOlderMessages,
-    mailUndo, setMailUndo,
+    mailUndo, setMailUndo, undoSendId, cancelSendUndo,
     searchQuery, setSearchQuery, searchField, setSearchField,
     searchScope, setSearchScope, isSearchActive, setIsSearchActive,
     searchLoading, searchError, searchInfo,

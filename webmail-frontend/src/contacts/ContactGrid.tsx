@@ -5,6 +5,7 @@ import { ContactSkeleton } from './components/ContactSkeleton';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { useToast } from '../shared/components/Toast';
 import { bulkDeleteContacts } from '../shared/api';
+import { ScrollToTop } from '../shared/components/ScrollToTop';
 import type { useContacts } from './hooks/useContacts';
 import type { Contact } from '../shared/types';
 
@@ -146,6 +147,7 @@ export function ContactGrid({ contacts: c, density }: {
           })}
         </div>
       </div>
+      <ScrollToTop scrollRef={parentRef} />
     </div>
   );
 }

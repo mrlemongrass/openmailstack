@@ -1,9 +1,11 @@
+import { useRef } from 'react';
 import { Star, Lock, StickyNote, PenLine } from 'lucide-react';
 import { NoteSkeleton } from './components/NoteSkeleton';
 import { SortDropdown } from './components/SortDropdown';
 import { EmptyState } from '../shared/components/EmptyState';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { useToast } from '../shared/components/Toast';
+import { ScrollToTop } from '../shared/components/ScrollToTop';
 import type { useNotes } from './hooks/useNotes';
 import type { Note } from '../shared/types';
 
@@ -23,6 +25,7 @@ function formatRelativeTime(date: Date): string {
 }
 
 export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNotes> }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const filtered = n.notes.filter((note) => {
     if (n.notesView === 'pinned') {
       return note.is_pinned;
@@ -85,7 +88,7 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
           style={{ flex: 1, fontSize: '0.85rem' }} />
         <SortDropdown value={n.notesSort} onChange={n.setNotesSort} />
       </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 16,
+      <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: 16,
         display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16,
         alignContent: 'start' }}>
         {filtered.map((note) => (<NoteCard key={note.id} note={note} n={n} />))}
@@ -98,6 +101,7 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
           </div>
         )}
       </div>
+      <ScrollToTop scrollRef={scrollRef} />
     </div>
   );
 }

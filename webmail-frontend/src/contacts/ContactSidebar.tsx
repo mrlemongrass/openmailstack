@@ -62,7 +62,7 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
           onClick={() => c.setContactsView('personal')}>
           <Users size={16} />
           <span>Personal Contacts</span>
-          <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+          <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
             {c.contacts.length}
           </span>
         </div>

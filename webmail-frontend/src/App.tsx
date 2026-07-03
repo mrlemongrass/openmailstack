@@ -145,6 +145,7 @@ function SyncView() {
     { icon: Globe, label: 'Outgoing Mail (SMTP)', host: hostname, detail: 'Port 587 · STARTTLS required', },
     { icon: CalendarDays, label: 'Calendar (CalDAV)', host: `https://${hostname}/caldav`, detail: 'HTTPS — paste this full URL into your calendar client', },
     { icon: Users, label: 'Contacts (CardDAV)', host: `https://${hostname}/carddav`, detail: 'HTTPS — paste this full URL into your contacts client', },
+    { icon: CalendarDays, label: 'Calendar Subscription (ICS)', host: `https://${hostname}/caldav`, detail: 'Use this URL to subscribe to calendars from other apps', },
   ];
 
   return (

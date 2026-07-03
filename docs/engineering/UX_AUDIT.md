@@ -178,7 +178,7 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Severity**: Medium
 - **Status**: **Done** (2026-07-03)
 - **Fix**: Created reusable `ScrollToTop` component — monitors scroll position, shows glass-styled ↑ button at bottom-right when scrolled past 400px. Smooth-scrolls to top on click. Wired into MessageList.
-- **Commit**: `b29619c`
+- **Commit**: `b29619c` — extended to Contacts + Notes grids in `200ce80`
 
 ## Polish Issues (not blocking)
 

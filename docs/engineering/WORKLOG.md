@@ -1799,3 +1799,18 @@ Created `ScrollToTop` component — monitors scroll, shows glass ↑ button >400
 
 ### Proof: TSC ✅, Build ✅
 ### Next QoL: Wire ScrollToTop into Contacts + Notes grids
+
+---
+
+## 2026-07-03 — UI/UX QoL Pass #6: ScrollToTop on Contacts + Notes
+
+### Stress case: Long contact lists and many notes — no quick way to return to top
+
+### Fix
+Wired `ScrollToTop` into ContactGrid (existing `parentRef`) and NotesGrid (new `scrollRef`). Consistent ↑ button across Mail, Contacts, Notes.
+
+**Files**: `ContactGrid.tsx` (+2), `NotesGrid.tsx` (+5/-1)  
+**Commit**: `200ce80`
+
+### Proof: TSC ✅, Build ✅
+### Next QoL: Sticky Save audit across remaining Settings panes

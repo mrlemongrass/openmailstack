@@ -1814,3 +1814,17 @@ Wired `ScrollToTop` into ContactGrid (existing `parentRef`) and NotesGrid (new `
 
 ### Proof: TSC ✅, Build ✅
 ### Next QoL: Sticky Save audit across remaining Settings panes
+
+---
+
+## 2026-07-03 — UI/UX QoL Pass #7: Floating Back button in message viewer
+
+### Stress case: Long email — must scroll all the way back to top to press back arrow
+
+### Fix
+Floating "← Back" button appears at bottom-left when message body is scrolled >60px. Navigates to inbox. Passive scroll listener on bodyRef.
+
+**File**: `MessageViewer.tsx` (+30/-3)  
+**Commit**: `bda7aa1`
+
+### Proof: TSC ✅, Build ✅

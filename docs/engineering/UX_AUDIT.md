@@ -180,6 +180,15 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 - **Fix**: Created reusable `ScrollToTop` component — monitors scroll position, shows glass-styled ↑ button at bottom-right when scrolled past 400px. Smooth-scrolls to top on click. Wired into MessageList.
 - **Commit**: `b29619c` — extended to Contacts + Notes grids in `200ce80`
 
+### Q7. Message viewer: no Back button after scrolling past body
+- **Surface**: Mail / Message viewer
+- **Stress case**: Reading a long email — must scroll all the way back to top to press the back arrow
+- **User impact**: Excessive scroll travel, especially on mobile
+- **Severity**: Medium
+- **Status**: **Done** (2026-07-03)
+- **Fix**: Floating "← Back" button at bottom-left when scrolled past 60px. Uses passive scroll listener, navigates to inbox.
+- **Commit**: `bda7aa1`
+
 ## Polish Issues (not blocking)
 
 ### 11. No design tokens for typography, spacing, or font weights

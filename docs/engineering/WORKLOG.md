@@ -2060,3 +2060,19 @@ Target channel: Beta/RC
 **Required for GO**: Fix B2 by identifying the crashing component via dev build, applying the hooks-before-return fix pattern, and verifying all 9 inbox messages open without React errors.
 
 ### Next action: Build frontend in dev mode to identify the crashing component.
+
+---
+
+## 2026-07-03 — P0 Fix: MessageViewer React #310 resolved
+
+### Root cause
+Keyboard shortcuts `useEffect` at line 96, AFTER two early returns. When navigating to a message URL: render 1 has 10 hooks (message undefined), render 2 has 11 hooks (message found) → React #310.
+
+### Fix
+Moved keyboard useEffect above both early returns with `if (!message) return` guard. **Commit**: `9b3503b8`
+
+### Verification
+All 9 inbox messages open: 0 React errors. Only templates 404 remains (P3).
+
+### Updated RC: CONDITIONAL GO
+P0/P1 resolved. P2 documented. Install/upgrade needs clean VM test.

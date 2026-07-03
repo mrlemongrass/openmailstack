@@ -1,7 +1,7 @@
 import { CalendarPlus, MapPin, Clock, User, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import type { CalendarData, CalendarInvite } from '../types';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 /** Parse minimal ICS VEVENT data for display. */
 function parseIcsInvite(ics: string): CalendarInvite | null {
@@ -15,7 +15,6 @@ function parseIcsInvite(ics: string): CalendarInvite | null {
       const m = ics.match(new RegExp(`^${field}(?:;.*?)?:(\\d{8}T\\d{6}Z?)`, 'im'));
       if (!m) return null;
       const v = m[1];
-      // YYYYMMDDTHHMMSSZ
       const y = parseInt(v.slice(0, 4)), mo = parseInt(v.slice(4, 6)) - 1, d = parseInt(v.slice(6, 8));
       const h = parseInt(v.slice(9, 11)), mi = parseInt(v.slice(11, 13)), s = parseInt(v.slice(13, 15));
       return new Date(Date.UTC(y, mo, d, h, mi, s));
@@ -26,21 +25,17 @@ function parseIcsInvite(ics: string): CalendarInvite | null {
 
     if (!title || !start) return null;
 
-    return {
-      title,
-      start,
-      end: end || new Date(start.getTime() + 3600000),
-      location,
-      description: desc,
-      organizer,
-    };
+    return { title, start, end: end || new Date(start.getTime() + 3600000), location, description: desc, organizer };
   } catch {
     return null;
   }
 }
 
-export function CalendarInviteCard({ calendarData }: { calendarData: CalendarData }) {
-  const invite = parseIcsInvite(calendarData.ics);
+export function CalendarInviteCard({ calendarData }: { calendarData?: CalendarData }) {
+  const invite = useMemo(() => {
+    if (!calendarData?.ics) return null;
+    return parseIcsInvite(calendarData.ics);
+  }, [calendarData?.ics]);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -53,7 +48,7 @@ export function CalendarInviteCard({ calendarData }: { calendarData: CalendarDat
       const res = await fetch('/api/apps/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: calendarData.ics }),
+        body: JSON.stringify({ data: calendarData?.ics }),
       });
       const result = await res.json();
       if (result.success || result.event) {

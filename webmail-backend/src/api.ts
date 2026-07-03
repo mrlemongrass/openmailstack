@@ -1695,10 +1695,14 @@ apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req: any, re
     }
     
     try {
-        const { ImapService } = require('./imap');
         const simpleParser = require('mailparser').simpleParser;
-        const imap = await getPooledImap(user, pass);
+        // Per-message fetch uses its own connection to avoid pool race conditions
+        // when pre-fetching multiple messages concurrently.
+        const { ImapService: FreshImap } = require('./imap');
+        const imap = new FreshImap(user, pass);
+        await imap.connect();
         const msg = await imap.getMessageByUid(folder, uid);
+        try { await imap.logout(); } catch (e) {}
         
         if (!msg) return res.status(404).json({ success: false, error: 'Not found' });
         

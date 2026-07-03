@@ -135,14 +135,14 @@ function SyncView() {
 
   const checkStatus = () => {
     setServerStatus('checking');
-    fetch('/api/auth/status')
+    fetch('/api/auth/me')
       .then((r) => { setServerStatus(r.ok ? 'online' : 'offline'); setLastChecked(new Date()); })
       .catch(() => { setServerStatus('offline'); setLastChecked(new Date()); });
   };
 
   const runDiagnostics = () => {
     const endpoints: Record<string, string> = {
-      'Mail API': '/api/auth/status',
+      'Mail API': '/api/auth/me',
       'Calendar (CalDAV)': '/caldav',
       'Contacts (CardDAV)': '/carddav',
     };

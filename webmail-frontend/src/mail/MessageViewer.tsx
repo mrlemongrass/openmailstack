@@ -238,7 +238,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           {message.to && <div><strong style={{ color: 'var(--text-primary)' }}>To:</strong> {message.to}</div>}
           <div><strong style={{ color: 'var(--text-primary)' }}>Date:</strong> {dateObj ? format(dateObj, 'EEEE, MMMM d, yyyy h:mm a') : ''}</div>
         </div>
-        {message.calendarData && <CalendarInviteCard calendarData={message.calendarData} />}
+        <CalendarInviteCard calendarData={message.calendarData} />
         <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: 16 }}>
           {bodyLoading ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-secondary)', padding: '20px 0' }}>

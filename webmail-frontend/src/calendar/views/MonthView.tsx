@@ -75,7 +75,7 @@ export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                       {format(day, 'd')}
                     </div>
                     {dayEvents.slice(0, 3).map((evt) => {
-                      const fullText = (!evt.isAllDay ? format(new Date(evt.start), 'HH:mm') + ' ' : '') + evt.title + (evt.location ? ' — ' + evt.location : '');
+                      const fullText = (!evt.isAllDay ? format(new Date(evt.start), 'HH:mm') + ' ' : '') + evt.title + (evt.location ? ' — ' + evt.location : '') + (evt.recurrence && evt.recurrence !== 'none' ? ` (repeats ${evt.recurrence})` : '');
                       return (
                       <div key={evt.id + (evt.occurrenceId || '')} draggable
                         onDragStart={() => setDragEvent(evt)}

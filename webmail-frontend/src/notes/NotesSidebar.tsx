@@ -14,7 +14,7 @@ export function NotesSidebar({ notesCtx: n }: { notesCtx: ReturnType<typeof useN
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 12 }}>
       <button className="btn btn-primary" style={{ width: '100%', marginBottom: 16 }}
         onClick={() => { n.setEditingNote({}); n.setIsNoteModalOpen(true); }}>
-        + New Note
+        + New Note ({n.notes.length})
       </button>
 
       <div style={{ marginBottom: 16 }}>

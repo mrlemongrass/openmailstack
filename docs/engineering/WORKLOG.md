@@ -1755,3 +1755,19 @@ Added `onKeyDown` on compose overlay: Escape triggers `handleClose()` (with unsa
 **Commit**: `1d94362`
 
 ### Proof: TSC ✅, Build ✅, Playwright: Escape closes compose
+
+---
+
+## 2026-07-02 — 4-cycle mini-batch: Calendar + Contacts + Sync + Admin
+
+Agent/tool: Claude Code (Claude)  
+Branch: `main`
+
+| Cycle | Surface | Task | AC | Commit |
+|---|---------|------|----|--------|
+| 1 | Calendar | Location in MonthView tooltips | Location shown on hover | `b2624e5` |
+| 2 | Contacts | Contact count bolder in sidebar | Count emphasized | `b2624e5` |
+| 3 | Sync | Calendar subscription (ICS) row | ICS subscription link | `b2624e5` |
+| 4 | Admin | Verified System Health dashboard | Mail queue, services, stats all working | `b2624e5` |
+
+### Proof: TSC ✅, Build ✅, Backend tests 26/26 ✅

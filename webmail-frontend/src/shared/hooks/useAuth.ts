@@ -58,6 +58,8 @@ export function useAuth(): AuthState & {
     await fetch('/api/auth/logout', { method: 'POST' });
     setUser(null);
     setUserIdentities(null);
+    // Force navigation to root so AuthGate renders login page cleanly
+    window.location.href = '/';
   }, []);
 
   return { user, userIdentities, isLoading, isAuthenticated: !!user, login, logout, fetchMe };

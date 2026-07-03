@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, BellOff } from 'lucide-react';
+import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, BellOff, ChevronLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import DOMPurify from 'dompurify';
 import { AttachmentCard } from './components/AttachmentCard';
@@ -24,6 +24,8 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showMoveTo, setShowMoveTo] = useState(false);
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
   const [bodyLoading, setBodyLoading] = useState(false);
+  const [showBackFab, setShowBackFab] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   // Fetch full message body when message is selected, and mark as read
   useEffect(() => {
@@ -49,6 +51,15 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
       setBodyLoading(false);
     }
   }, [message?.html, message?.text]);
+
+  // Show back button when scrolled past message header
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const handler = () => setShowBackFab(el.scrollTop > 60);
+    el.addEventListener('scroll', handler, { passive: true });
+    return () => el.removeEventListener('scroll', handler);
+  }, [message?.uid]);
 
   if (!uid) {
     return (
@@ -220,7 +231,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           <Trash2 size={16} />
         </button>
       </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+      <div ref={bodyRef} style={{ flex: 1, overflow: 'auto', padding: 20, position: 'relative' }}>
         <h2 style={{ fontSize: '1.2rem', fontWeight: 600, margin: '0 0 12px' }}>{message.subject || '(no subject)'}</h2>
         <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
           <div><strong style={{ color: 'var(--text-primary)' }}>From:</strong> {message.from}</div>
@@ -281,6 +292,22 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         <RawMessageModal folder={folder || 'INBOX'} uid={message.uid} onClose={() => setShowRaw(false)} />
       )}
       <KeyboardHelp open={showKeyboardHelp} onClose={() => setShowKeyboardHelp(false)} />
+      {showBackFab && (
+        <button
+          onClick={() => navigate(`/mail/${encodeURIComponent(folder || 'INBOX')}`)}
+          style={{
+            position: 'fixed', bottom: 72, left: 12, zIndex: 40,
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '8px 14px', borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-glass)', backdropFilter: 'blur(8px)',
+            border: '1px solid var(--border-glass)',
+            color: 'var(--text-primary)', cursor: 'pointer',
+            fontSize: '0.85rem', boxShadow: '0 2px 12px rgba(0,0,0,0.2)',
+          }}
+        >
+          <ChevronLeft size={16} /> Back
+        </button>
+      )}
     </div>
   );
 }

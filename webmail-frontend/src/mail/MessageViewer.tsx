@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, BellOff, ChevronLeft } from 'lucide-react';
 import { format } from 'date-fns';
@@ -84,13 +84,13 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const dateObj = typeof message.date === 'string' ? new Date(message.date) : message.date;
 
   // Sanitize HTML to prevent tracking pixels, XSS, and script injection
-  const sanitizedHtml = useMemo(() => {
+  const sanitizedHtml = (() => {
     if (!message.html) return '';
     return DOMPurify.sanitize(message.html, {
       ALLOWED_TAGS: ['a', 'b', 'i', 'em', 'strong', 'p', 'br', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'img', 'div', 'span', 'font', 'u', 's', 'sub', 'sup', 'dl', 'dt', 'dd', 'cite', 'small'],
       ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'width', 'height', 'style', 'class', 'id', 'color', 'bgcolor', 'align', 'border', 'cellpadding', 'cellspacing', 'colspan', 'rowspan'],
     });
-  }, [message.html]);
+  })();
 
   // Keyboard shortcuts for mail actions
   useEffect(() => {
@@ -238,7 +238,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           {message.to && <div><strong style={{ color: 'var(--text-primary)' }}>To:</strong> {message.to}</div>}
           <div><strong style={{ color: 'var(--text-primary)' }}>Date:</strong> {dateObj ? format(dateObj, 'EEEE, MMMM d, yyyy h:mm a') : ''}</div>
         </div>
-        <CalendarInviteCard calendarData={message.calendarData} />
+<CalendarInviteCard calendarData={message.calendarData} />
         <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: 16 }}>
           {bodyLoading ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-secondary)', padding: '20px 0' }}>

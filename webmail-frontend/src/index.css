@@ -1120,6 +1120,13 @@ body {
 }
 .ql-editor {
   min-height: 200px;
+  color: #1a1a2e;
+  background: #ffffff;
+}
+
+.ql-editor.ql-blank::before {
+  color: #94a3b8;
+  font-style: normal;
 }
 
 .contact-card:hover {

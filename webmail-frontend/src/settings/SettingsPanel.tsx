@@ -539,28 +539,24 @@ function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: Sett
             </div>
 
             {/* Quill editor */}
-            <div style={{ background: '#ffffff' }}>
-              <Suspense fallback={<div style={{ padding: 24, color: '#666' }}>Loading editor...</div>}>
-                <ReactQuill
-                  theme="snow"
-                  value={selected.content}
-                  onChange={content => {
-                    const updated = signatures.map(item => item.id === selected.id ? { ...item, content } : item);
-                    onUpdateSignatures(updated);
-                  }}
-                  modules={{
-                    toolbar: [
-                      [{ 'font': [] }],
-                      ['bold', 'italic', 'underline', 'strike'],
-                      [{ 'color': [] }, { 'background': [] }],
-                      [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-                      ['link', 'image'],
-                      ['clean']
-                    ]
-                  }}
-                />
-              </Suspense>
-            </div>
+            <Suspense fallback={<div style={{ padding: 24, color: '#666', background: '#fff' }}>Loading editor...</div>}>
+              <ReactQuill
+                theme="snow"
+                value={selected.content}
+                onChange={content => {
+                  const updated = signatures.map(item => item.id === selected.id ? { ...item, content } : item);
+                  onUpdateSignatures(updated);
+                }}
+                modules={{
+                  toolbar: [
+                    ['bold', 'italic', 'underline'],
+                    [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                    ['link'],
+                    ['clean']
+                  ]
+                }}
+              />
+            </Suspense>
           </div>
         )}
       </section>

@@ -144,6 +144,19 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     }
   }, [didSend, mail.sending, mail.composeError, mail.isComposing, showToast, mail.undoSendId]);
 
+  // Auto-select default signature when compose opens
+  useEffect(() => {
+    if (mail.isComposing && mail.signatures && mail.signatures.length > 0) {
+      const def = mail.signatures.find((s: any) => s.isDefault) || mail.signatures[0];
+      if (mail.composeSignature === 'none' || !mail.signatures.find((s: any) => s.id === mail.composeSignature)) {
+        mail.setComposeSignature(def.id);
+        if (def.content && !mail.composeBody) {
+          mail.setComposeBody(def.content + '\n\n');
+        }
+      }
+    }
+  }, [mail.isComposing, mail.signatures]);
+
   if (!mail.isComposing) return null;
 
   const size = totalSize(mail.composeAttachments);
@@ -303,6 +316,20 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           </div>
           <input className="glass-input" placeholder="Subject" value={mail.composeSubject}
             onChange={(e) => mail.setComposeSubject(e.target.value)} />
+          {mail.signatures && mail.signatures.length > 0 && (
+            <select className="glass-select glass-input" value={mail.composeSignature}
+              onChange={(e) => {
+                const sig = mail.signatures.find((s: any) => s.id === e.target.value);
+                mail.setComposeSignature(e.target.value);
+                if (sig?.content) mail.setComposeBody((prev: string) => sig.content + '\n\n' + prev);
+              }}
+              style={{ fontSize: '0.8rem', padding: '6px 10px' }}>
+              <option value="none">No signature</option>
+              {mail.signatures.map((s: any) => (
+                <option key={s.id} value={s.id}>{s.name}{s.isDefault ? ' (default)' : ''}</option>
+              ))}
+            </select>
+          )}
         </div>
         {/* Scrollable body area — textarea + attachments + previews */}
         <div style={{ flex: 1, overflow: 'auto', padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>

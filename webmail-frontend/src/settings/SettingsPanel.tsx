@@ -504,8 +504,8 @@ function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: Sett
                     </button>
                   </div>
                 </div>
-                <div style={{ background: 'var(--bg-primary)' }}>
-                  <Suspense fallback={<div style={{ padding: '16px', color: 'var(--text-secondary)' }}>Loading editor...</div>}>
+                <div style={{ background: '#ffffff', borderRadius: '0 0 4px 4px' }}>
+                  <Suspense fallback={<div style={{ padding: '16px', color: '#666' }}>Loading editor...</div>}>
                     <ReactQuill 
                       theme="snow"
                       value={sig.content}

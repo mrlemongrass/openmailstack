@@ -1,5 +1,5 @@
 import React, { useState, lazy, Suspense, type ReactNode } from 'react';
-import { CalendarDays, Check, Copy, Filter, Lock, Mail, Palette, PenTool, Plus, Send, ShieldAlert, SlidersHorizontal, Smartphone, Trash2, Users } from 'lucide-react';
+import { CalendarDays, Check, ChevronDown, ChevronRight, Copy, Filter, Lock, Mail, Palette, PenTool, Plus, Send, ShieldAlert, SlidersHorizontal, Smartphone, Trash2, Users } from 'lucide-react';
 
 const ReactQuill = lazy(() => import('react-quill-new'));
 import type { AppearancePreferences, AccentColor, DensityMode, FontScale, RadiusMode, ThemeMode } from './appearance';
@@ -430,106 +430,113 @@ function MailIdentityPane({ mailSettings, availableSenders, setupMailboxAddress,
 }
 
 function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: SettingsContentProps) {
+  const [activeId, setActiveId] = useState<string | null>(null);
+
   return (
     <div className="settings-page">
       <SettingsHeader
         title="Signatures"
         eyebrow="Mail"
-        action={<button className="btn btn-ghost" type="button" onClick={onAddSignature}><Plus size={18} /> New Signature</button>}
+        action={<button className="btn btn-ghost" type="button" onClick={() => { onAddSignature(); setActiveId(null); }}><Plus size={18} /> New Signature</button>}
       />
 
       <section className="settings-section">
         {signatures.length === 0 ? (
-          <div className="empty-state" style={{ padding: '30px' }}>
-            <p>No signatures created yet.</p>
+          <div className="empty-state" style={{ padding: '40px' }}>
+            <PenTool size={40} style={{ opacity: 0.3, marginBottom: 12 }} />
+            <p style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>No signatures created yet.</p>
+            <button className="btn btn-primary" onClick={onAddSignature}>Create your first signature</button>
           </div>
         ) : (
-          <div className="rules-list">
-            {signatures.map(sig => (
-              <div key={sig.id} className="condition-row signature-editor">
-                <div className="signature-editor-header">
-                  <div className="signature-name-row">
-                    <input
-                      className="rule-name-input"
-                      value={sig.name}
-                      onChange={event => {
-                        onUpdateSignatures(signatures.map(item => item.id === sig.id ? { ...item, name: event.target.value } : item));
-                      }}
-                      placeholder="Signature name"
-                    />
-                    {sig.isDefault && <span className="settings-status-pill">Default</span>}
-                    {sig.defaultForNew && <span className="settings-status-pill">New</span>}
-                    {sig.defaultForReply && <span className="settings-status-pill">Reply</span>}
-                  </div>
-                  <div className="settings-action-row">
-                    {!sig.isDefault && (
-                      <button
-                        className="btn btn-ghost"
-                        type="button"
-                        onClick={() => onUpdateSignatures(signatures.map(item => ({ ...item, isDefault: item.id === sig.id })))}
-                      >
-                        Set Default
-                      </button>
-                    )}
-                    {!sig.defaultForNew && (
-                      <button
-                        className="btn btn-ghost"
-                        type="button"
-                        onClick={() => onUpdateSignatures(signatures.map(item => ({ ...item, defaultForNew: item.id === sig.id })))}
-                      >
-                        New
-                      </button>
-                    )}
-                    {!sig.defaultForReply && (
-                      <button
-                        className="btn btn-ghost"
-                        type="button"
-                        onClick={() => onUpdateSignatures(signatures.map(item => ({ ...item, defaultForReply: item.id === sig.id })))}
-                      >
-                        Reply
-                      </button>
-                    )}
-                    <button
-                      className="btn btn-danger"
-                      type="button"
-                      onClick={() => {
-                        const next = signatures.filter(item => item.id !== sig.id);
-                        if (sig.isDefault && next.length > 0) next[0] = { ...next[0], isDefault: true };
-                        onUpdateSignatures(next);
-                      }}
-                      title="Delete signature"
-                      aria-label="Delete signature"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {signatures.map(sig => {
+              const isOpen = activeId === sig.id;
+              return (
+                <div key={sig.id} style={{
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-md)',
+                  overflow: 'hidden',
+                  background: isOpen ? 'rgba(255,255,255,0.03)' : 'transparent',
+                }}>
+                  {/* Header row — clickable to expand */}
+                  <button
+                    type="button"
+                    onClick={() => setActiveId(isOpen ? null : sig.id)}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      fontFamily: 'inherit', fontSize: '0.9rem', color: 'var(--text-primary)',
+                    }}>
+                    {isOpen ? <ChevronDown size={16} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} /> : <ChevronRight size={16} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />}
+                    <span style={{ flex: 1, textAlign: 'left', fontWeight: 500 }}>
+                      {sig.name || 'Unnamed'}
+                    </span>
+                    {sig.isDefault && <span style={{ fontSize: '0.7rem', background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '2px 8px', borderRadius: 999, fontWeight: 600 }}>Default</span>}
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                      {sig.content?.replace(/<[^>]*>/g, '').slice(0, 40) || 'Empty'}
+                    </span>
+                  </button>
+
+                  {/* Expanded editor */}
+                  {isOpen && (
+                    <div style={{ borderTop: '1px solid var(--border-glass)', padding: '12px 16px 16px' }}>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                        <input
+                          value={sig.name}
+                          onChange={e => onUpdateSignatures(signatures.map(item => item.id === sig.id ? { ...item, name: e.target.value } : item))}
+                          placeholder="Signature name"
+                          style={{
+                            flex: 1, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-glass)',
+                            borderRadius: 'var(--radius-sm)', padding: '6px 10px', color: 'var(--text-primary)',
+                            fontSize: '0.85rem', fontFamily: 'inherit',
+                          }}
+                        />
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          {!sig.isDefault && (
+                            <button className="btn btn-ghost" style={{ fontSize: '0.75rem' }}
+                              onClick={() => onUpdateSignatures(signatures.map(item => ({ ...item, isDefault: item.id === sig.id })))}>
+                              Set as Default
+                            </button>
+                          )}
+                          <button className="btn btn-ghost" style={{ color: 'var(--danger)', padding: '4px 8px' }}
+                            onClick={() => {
+                              const next = signatures.filter(item => item.id !== sig.id);
+                              if (sig.isDefault && next.length > 0) next[0] = { ...next[0], isDefault: true };
+                              onUpdateSignatures(next);
+                              setActiveId(null);
+                            }}
+                            title="Delete">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{
+                        background: '#ffffff', borderRadius: 'var(--radius-sm)',
+                        border: '1px solid #e2e8f0',
+                      }}>
+                        <Suspense fallback={<div style={{ padding: 20, color: '#666' }}>Loading editor...</div>}>
+                          <ReactQuill
+                            theme="snow"
+                            value={sig.content}
+                            onChange={content => onUpdateSignatures(signatures.map(item => item.id === sig.id ? { ...item, content } : item))}
+                            modules={{
+                              toolbar: [
+                                [{ 'font': [] }],
+                                ['bold', 'italic', 'underline', 'strike'],
+                                [{ 'color': [] }, { 'background': [] }],
+                                [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                                ['link', 'image'],
+                                ['clean']
+                              ]
+                            }}
+                          />
+                        </Suspense>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div style={{ background: '#ffffff', borderRadius: '0 0 4px 4px' }}>
-                  <Suspense fallback={<div style={{ padding: '16px', color: '#666' }}>Loading editor...</div>}>
-                    <ReactQuill 
-                      theme="snow"
-                      value={sig.content}
-                      onChange={content => onUpdateSignatures(signatures.map(item => item.id === sig.id ? { ...item, content } : item))}
-                      modules={{
-                        toolbar: [
-                          [{ 'font': [] }],
-                          ['bold', 'italic', 'underline', 'strike'],
-                          [{ 'color': [] }, { 'background': [] }],
-                          [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-                          ['link', 'image'],
-                          ['clean']
-                        ]
-                      }}
-                      style={{ 
-                        borderBottomLeftRadius: '12px', 
-                        borderBottomRightRadius: '12px',
-                        overflow: 'hidden'
-                      }}
-                    />
-                  </Suspense>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

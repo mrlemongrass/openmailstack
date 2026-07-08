@@ -558,7 +558,6 @@ function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: Sett
                       ['clean']
                     ]
                   }}
-                  style={{ height: 280 }}
                 />
               </Suspense>
             </div>

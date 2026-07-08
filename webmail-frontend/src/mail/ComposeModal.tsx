@@ -11,6 +11,10 @@ const BLOCK_SIZE = 50 * 1024 * 1024; // 50MB block
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
 
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
+}
+
 function totalSize(files: File[]): number {
   return files.reduce((sum, f) => sum + f.size, 0);
 }
@@ -151,7 +155,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
       if (mail.composeSignature === 'none' || !mail.signatures.find((s: any) => s.id === mail.composeSignature)) {
         mail.setComposeSignature(def.id);
         if (def.content && !mail.composeBody) {
-          mail.setComposeBody(def.content + '\n\n');
+          mail.setComposeBody(stripHtml(def.content) + '\n\n');
         }
       }
     }
@@ -321,7 +325,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
               onChange={(e) => {
                 const sig = mail.signatures.find((s: any) => s.id === e.target.value);
                 mail.setComposeSignature(e.target.value);
-                if (sig?.content) mail.setComposeBody((prev: string) => sig.content + '\n\n' + prev);
+                if (sig?.content) mail.setComposeBody((prev: string) => stripHtml(sig.content) + '\n\n' + prev);
               }}
               style={{ fontSize: '0.8rem', padding: '6px 10px' }}>
               <option value="none">No signature</option>

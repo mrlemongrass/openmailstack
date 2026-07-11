@@ -1,5 +1,9 @@
 // Types extracted from App.tsx — all interfaces used across the app
 
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type JsonObject = { [key: string]: JsonValue };
+
 // ---- Mail types ----
 export interface Rule {
   id: string;
@@ -206,7 +210,16 @@ export interface Contact {
   deleted_at?: string;
 }
 
-export type DisplayContact = Contact & { displayName: string; _parsedName?: any };
+export interface ParsedContactName {
+  prefix?: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  suffix?: string;
+  nickname?: string;
+}
+
+export type DisplayContact = Contact & { displayName: string; _parsedName?: ParsedContactName };
 
 export interface ContactGroup {
   id: number;
@@ -274,6 +287,12 @@ export interface CalendarDeleteResponse {
   success: boolean;
   deletedEvents?: number;
   error?: string;
+}
+
+export interface CalendarShare {
+  email: string;
+  permission: string;
+  calendarId?: number;
 }
 
 // ---- Notes types ----

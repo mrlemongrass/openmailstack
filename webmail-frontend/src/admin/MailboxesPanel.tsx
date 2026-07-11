@@ -1,12 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Mail, Trash2, Plus, Key, X, Edit3 } from 'lucide-react';
 import { CreateMailboxModal, ChangePasswordModal } from './AdminModals';
-import { getMailboxes, createMailbox, updateMailbox, deleteMailbox, changeMailboxPassword, getDomains, type MailboxInfo, type DomainInfo } from './adminSettingsApi';
+import { getMailboxes, createMailbox, updateMailbox, deleteMailbox, changeMailboxPassword, getDomains, type CreateMailboxPayload, type UpdateMailboxPayload, type MailboxInfo, type DomainInfo } from './adminSettingsApi';
 
 interface EditFormData {
   name: string;
   quota: string;
   active: boolean;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 function EditMailboxModal({ mailbox, onClose, onSave }: { mailbox: MailboxInfo; onClose: () => void; onSave: (data: EditFormData) => Promise<void> }) {
@@ -68,25 +72,18 @@ export function MailboxesPanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleCreate = async (data: any) => {
+  const handleCreate = async (data: CreateMailboxPayload) => {
     try {
-      const payload: Record<string, string> = {
-        username: data.username,
-        domain: data.domain,
-        name: data.name,
-        password: data.password,
-        quota: data.quota,
-      };
-      await createMailbox(payload);
+      await createMailbox(data);
       setShowCreate(false);
       setLoading(true);
       load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(errorMessage(e, 'Failed to create mailbox')); }
   };
 
   const handleEdit = async (data: EditFormData) => {
     if (!editMailbox) return;
-    const payload: Record<string, any> = { ...data, username: editMailbox.username };
+    const payload: UpdateMailboxPayload = { ...data, username: editMailbox.username };
     await updateMailbox(editMailbox.username, payload);
     setEditMailbox(null);
     setLoading(true);
@@ -102,7 +99,7 @@ export function MailboxesPanel() {
   const handleDelete = async (username: string) => {
     if (!confirm(`Delete mailbox "${username}"?`)) return;
     setDeleting(username);
-    try { await deleteMailbox(username); load(); } catch (e: any) { setError(e.message); }
+    try { await deleteMailbox(username); load(); } catch (e: unknown) { setError(errorMessage(e, 'Failed to delete mailbox')); }
     finally { setDeleting(null); }
   };
 

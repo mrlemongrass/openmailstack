@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { CreateMailboxPayload } from './adminSettingsApi';
 
 interface ModalProps {
   onClose: () => void;
@@ -38,7 +39,13 @@ export function CreateDomainModal({ onClose, onSubmit }: ModalProps & { onSubmit
   );
 }
 
-export function CreateMailboxModal({ onClose, onSubmit, domains }: ModalProps & { onSubmit: (data: any) => void, domains: { domain: string }[] }) {
+export interface CreateAliasPayload {
+  address: string;
+  domain: string;
+  goto: string;
+}
+
+export function CreateMailboxModal({ onClose, onSubmit, domains }: ModalProps & { onSubmit: (data: CreateMailboxPayload) => void, domains: { domain: string }[] }) {
   const [domain, setDomain] = useState(domains[0]?.domain || '');
   const [username, setUsername] = useState('');
   const [name, setName] = useState('');
@@ -83,7 +90,7 @@ export function CreateMailboxModal({ onClose, onSubmit, domains }: ModalProps & 
   );
 }
 
-export function CreateAliasModal({ onClose, onSubmit, domains }: ModalProps & { onSubmit: (data: any) => void, domains: { domain: string }[] }) {
+export function CreateAliasModal({ onClose, onSubmit, domains }: ModalProps & { onSubmit: (data: CreateAliasPayload) => void, domains: { domain: string }[] }) {
   const [domain, setDomain] = useState(domains[0]?.domain || '');
   const [address, setAddress] = useState('');
   const [goto, setGoto] = useState('');

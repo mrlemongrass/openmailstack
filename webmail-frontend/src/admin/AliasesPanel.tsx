@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Forward, Trash2, Plus, X, Edit3 } from 'lucide-react';
-import { CreateAliasModal } from './AdminModals';
+import { CreateAliasModal, type CreateAliasPayload } from './AdminModals';
 import { getAliases, createAlias, updateAlias, deleteAlias, getDomains, type AliasInfo, type DomainInfo } from './adminSettingsApi';
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 function EditAliasModal({ alias, onClose, onSave, domains }: { alias: AliasInfo; onClose: () => void; onSave: (data: { address: string; domain: string; goto: string }) => Promise<void>; domains: DomainInfo[] }) {
   const [address, setAddress] = useState(alias.address);
@@ -63,13 +67,13 @@ export function AliasesPanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleCreate = async (data: any) => {
+  const handleCreate = async (data: CreateAliasPayload) => {
     try {
       await createAlias({ address: data.address, domain: data.domain, goto: data.goto });
       setShowCreate(false);
       setLoading(true);
       load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(errorMessage(e, 'Failed to create alias')); }
   };
 
   const handleEdit = async (data: { address: string; domain: string; goto: string }) => {
@@ -83,7 +87,7 @@ export function AliasesPanel() {
   const handleDelete = async (address: string) => {
     if (!confirm(`Delete alias "${address}"?`)) return;
     setDeleting(address);
-    try { await deleteAlias(address); load(); } catch (e: any) { setError(e.message); }
+    try { await deleteAlias(address); load(); } catch (e: unknown) { setError(errorMessage(e, 'Failed to delete alias')); }
     finally { setDeleting(null); }
   };
 

@@ -5,9 +5,11 @@ import type {
   MailFolder, Signature, Rule,
   ContactsResponse, Contact, ContactLabel, ContactGroup,
   CalendarsResponse, Calendar, CalendarUpdateResponse, CalendarDeleteResponse,
+  CalendarShare,
   Note, NoteAttachment,
   UserIdentities,
 } from './types';
+import type { NamespaceSettings, SettingsNamespace } from '../settings/settingsApi';
 
 // ---- Auth ----
 export async function fetchMe(): Promise<{ email?: string; name?: string }> {
@@ -308,7 +310,7 @@ export async function deleteEvent(calendarId: number, uid: string, excludeDate?:
   await fetch(url, { method: 'DELETE' });
 }
 
-export async function fetchCalendarShares(calendarId: number): Promise<any[]> {
+export async function fetchCalendarShares(calendarId: number): Promise<CalendarShare[]> {
   const res = await fetch(`/api/apps/calendars/${calendarId}/shares`);
   const data = await res.json();
   return data.shares || [];
@@ -409,13 +411,20 @@ export async function deleteNoteAttachment(noteId: string, attachmentId: string)
 }
 
 // ---- Settings ----
-export async function fetchUserSettings(namespace: string): Promise<any> {
+export interface UserSettingsResponse<T extends SettingsNamespace> {
+  success: boolean;
+  namespace: T;
+  settings: NamespaceSettings[T];
+  error?: string;
+}
+
+export async function fetchUserSettings<T extends SettingsNamespace>(namespace: T): Promise<UserSettingsResponse<T>> {
   const res = await fetch(`/api/settings/${namespace}`);
   if (!res.ok) throw new Error(`Failed to fetch settings for ${namespace}`);
   return res.json();
 }
 
-export async function saveUserSettings(namespace: string, settings: any): Promise<void> {
+export async function saveUserSettings<T extends SettingsNamespace>(namespace: T, settings: NamespaceSettings[T]): Promise<void> {
   const res = await fetch(`/api/settings/${namespace}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

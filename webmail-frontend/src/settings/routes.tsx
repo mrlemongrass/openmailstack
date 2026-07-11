@@ -17,6 +17,15 @@ import { DEFAULT_APPEARANCE, applyAppearancePreferences, saveAppearancePreferenc
 import { fetchFolders, fetchRules, fetchIdentities, fetchCalendars } from '../shared/api';
 import type { Rule, MailFolder, Signature } from '../shared/types';
 
+type MailSettingsWithExtras = MailUserSettings & {
+  forwarding?: { goto?: string; keepCopy?: boolean };
+  vacation?: { enabled?: boolean; subject?: string; body?: string; days?: number };
+};
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 function SettingsLoader() {
   const { tab } = useParams();
 
@@ -82,9 +91,9 @@ function SettingsLoader() {
         await fn();
         setSettingsSaveState('saved');
         setTimeout(() => setSettingsSaveState('idle'), 2000);
-      } catch (err: any) {
+      } catch (err: unknown) {
         setSettingsSaveState('error');
-        setSettingsSyncError(err.message || 'Failed to save settings');
+        setSettingsSyncError(errorMessage(err, 'Failed to save settings'));
       }
     }, delay);
   }, []);
@@ -92,6 +101,7 @@ function SettingsLoader() {
   // --- Load all data on mount ---
   useEffect(() => {
     let cancelled = false;
+    const debounceTimersForCleanup = debounceTimers.current;
     async function load() {
       try {
         setLoading(true);
@@ -128,10 +138,10 @@ function SettingsLoader() {
         setSetupMailboxAddress(identitiesData.address);
 
         const calList = calendarsData.calendars || [];
-        setCalendars(calList.map((c: any) => ({ id: c.id, name: c.name })));
+        setCalendars(calList.map((c) => ({ id: c.id, name: c.name })));
 
         // Forwarding and vacation are extra fields on mail settings (not in the TS type)
-        const mailExtra = mail as any;
+        const mailExtra: MailSettingsWithExtras = mail;
         if (mailExtra.forwarding) {
           setForwardingGoto(mailExtra.forwarding.goto || '');
           setKeepCopy(!!mailExtra.forwarding.keepCopy);
@@ -144,9 +154,9 @@ function SettingsLoader() {
             days: mailExtra.vacation.days || 1,
           });
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (!cancelled) {
-          setSettingsSyncError(err.message || 'Failed to load settings');
+          setSettingsSyncError(errorMessage(err, 'Failed to load settings'));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -156,7 +166,7 @@ function SettingsLoader() {
 
     return () => {
       cancelled = true;
-      Object.values(debounceTimers.current).forEach(clearTimeout);
+      Object.values(debounceTimersForCleanup).forEach(clearTimeout);
     };
   }, []);
 
@@ -185,7 +195,7 @@ function SettingsLoader() {
 
   // --- Signature handlers (stored inside mailSettings.signatures) ---
   const handleUpdateSignatures = useCallback((newSignatures: Signature[]) => {
-    const updated = { ...mailSettings, signatures: newSignatures as any };
+    const updated = { ...mailSettings, signatures: newSignatures };
     setMailSettings(updated);
     debouncedSave('mail', () => saveUserSettings('mail', updated));
   }, [mailSettings, debouncedSave]);
@@ -196,7 +206,7 @@ function SettingsLoader() {
       name: 'New Signature',
       content: '',
     };
-    handleUpdateSignatures([...mailSettings.signatures, newSig as any]);
+    handleUpdateSignatures([...mailSettings.signatures, newSig]);
   }, [mailSettings.signatures, handleUpdateSignatures]);
 
   // --- Rule handlers ---
@@ -230,8 +240,8 @@ function SettingsLoader() {
       });
       setSettingsSaveState('saved');
       setTimeout(() => setSettingsSaveState('idle'), 2000);
-    } catch (err: any) {
-      setSettingsSyncError(err.message || 'Failed to save rules');
+    } catch (err: unknown) {
+      setSettingsSyncError(errorMessage(err, 'Failed to save rules'));
       setSettingsSaveState('error');
     } finally {
       setSaving(false);
@@ -254,11 +264,11 @@ function SettingsLoader() {
         ...mailSettings,
         forwarding: { goto: forwardingGoto, keepCopy },
       };
-      await saveUserSettings('mail', mailWithForwarding as any);
+      await saveUserSettings('mail', mailWithForwarding);
       setSettingsSaveState('saved');
       setTimeout(() => setSettingsSaveState('idle'), 2000);
-    } catch (err: any) {
-      setSettingsSyncError(err.message || 'Failed to save forwarding');
+    } catch (err: unknown) {
+      setSettingsSyncError(errorMessage(err, 'Failed to save forwarding'));
     } finally {
       setSaving(false);
     }
@@ -291,11 +301,11 @@ function SettingsLoader() {
           days: vacationSettings.days || 1,
         },
       };
-      await saveUserSettings('mail', mailWithVacation as any);
+      await saveUserSettings('mail', mailWithVacation);
       setSettingsSaveState('saved');
       setTimeout(() => setSettingsSaveState('idle'), 2000);
-    } catch (err: any) {
-      setSettingsSyncError(err.message || 'Failed to save vacation');
+    } catch (err: unknown) {
+      setSettingsSyncError(errorMessage(err, 'Failed to save vacation'));
       setSettingsSaveState('error');
     } finally {
       setSaving(false);

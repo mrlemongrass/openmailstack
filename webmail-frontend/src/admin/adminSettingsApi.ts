@@ -1,3 +1,5 @@
+import type { JsonObject } from '../shared/types';
+
 export type AdminSettingsNamespace = 'organization' | 'publicUrls' | 'security' | 'mailPolicy' | 'system' | 'webhooks';
 
 export interface OrganizationAdminSettings {
@@ -250,6 +252,32 @@ export interface MailboxInfo {
   show_in_directory?: boolean;
 }
 
+export interface CreateMailboxPayload {
+  username: string;
+  domain: string;
+  name: string;
+  password: string;
+  quota: string;
+}
+
+export interface UpdateMailboxPayload {
+  username?: string;
+  name?: string;
+  quota?: string | number;
+  active?: boolean;
+  phone?: string;
+  email_other?: string;
+  company?: string;
+  job_title?: string;
+  street_address?: string;
+  city?: string;
+  region?: string;
+  postal_code?: string;
+  country?: string;
+  notes?: string;
+  show_in_directory?: boolean;
+}
+
 export async function getMailboxes(): Promise<MailboxInfo[]> {
   const r = await fetch('/api/admin/mailboxes', { credentials: 'include' });
   const b = await r.json() as { success: boolean; data: MailboxInfo[]; error?: string };
@@ -257,7 +285,7 @@ export async function getMailboxes(): Promise<MailboxInfo[]> {
   return b.data;
 }
 
-export async function createMailbox(data: Record<string, string>): Promise<void> {
+export async function createMailbox(data: CreateMailboxPayload): Promise<void> {
   const r = await fetch('/api/admin/mailboxes', {
     method: 'POST', credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -267,7 +295,7 @@ export async function createMailbox(data: Record<string, string>): Promise<void>
   if (!r.ok || !b.success) throw new Error(b.error || 'Failed to create mailbox');
 }
 
-export async function updateMailbox(username: string, data: Record<string, any>): Promise<void> {
+export async function updateMailbox(username: string, data: UpdateMailboxPayload): Promise<void> {
   const r = await fetch(`/api/admin/mailboxes/${encodeURIComponent(username)}`, {
     method: 'PUT', credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -480,14 +508,14 @@ export async function getUpdates(): Promise<UpdatesInfo> {
 
 // ─── Spam Policies ───────────────────────────────────────────────────────────
 
-export async function getSpamPolicies(): Promise<Record<string, any> | null> {
+export async function getSpamPolicies(): Promise<JsonObject | null> {
   const r = await fetch('/api/admin/spam_policies', { credentials: 'include' });
-  const b = await r.json() as { success: boolean; rules: Record<string, any> | null; error?: string };
+  const b = await r.json() as { success: boolean; rules: JsonObject | null; error?: string };
   if (!r.ok || !b.success) throw new Error(b.error || 'Failed to load spam policies');
   return b.rules;
 }
 
-export async function saveSpamPolicies(rules: Record<string, any>): Promise<void> {
+export async function saveSpamPolicies(rules: JsonObject): Promise<void> {
   const r = await fetch('/api/admin/spam_policies', {
     method: 'POST', credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

@@ -3846,3 +3846,53 @@ The user explicitly requested commit/push, repository stabilization, frontend li
 ### Next recommended task
 
 Type the shared frontend API/admin/settings response shapes to reduce `no-explicit-any` warnings, then split the largest frontend route chunks.
+
+## 2026-07-11 — Frontend warning reduction and route code splitting
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: dirty (bounded frontend cleanup after repository stabilization)
+Ending git state: clean after commit/push
+
+### Selected task
+
+Continue the recommended frontend stabilization pass by reducing typed-response warning debt and addressing the oversized frontend main bundle.
+
+### Why this task
+
+The previous stabilization made frontend lint usable but left 145 warnings and a Vite chunk-size advisory. The highest-value follow-up was to type shared API/admin/settings seams and split top-level routes before broad feature work.
+
+### Changes made
+
+- `webmail-frontend/src/shared/types.ts`, `webmail-frontend/src/shared/api.ts`
+  - Added shared JSON/contact/calendar/settings response types and removed broad casts from common API helpers.
+- `webmail-frontend/src/admin/*`
+  - Typed mailbox/alias/admin settings payloads and normalized error handling around admin CRUD/settings flows.
+- `webmail-frontend/src/settings/routes.tsx`
+  - Tightened settings namespace payload types, removed several broad casts, and fixed one cleanup dependency warning.
+- `webmail-frontend/src/App.tsx`
+  - Lazy-loaded Mail, Calendar, Contacts, and Settings routes so the authenticated shell is no longer the oversized main chunk.
+
+### Proof / checks run
+
+- `rtk npm --prefix webmail-frontend run lint`
+  - Passed with 112 warnings, down from 145.
+- `rtk npm --prefix webmail-frontend run build`
+  - Passed with no Vite chunk-size advisory. Main chunk is `223.98 kB`; largest route chunk is `481.12 kB`.
+
+### Acceptance criteria
+
+- [x] Frontend lint remains green.
+- [x] Warning count is reduced without suppressing the staged migration categories.
+- [x] Build passes.
+- [x] Main app chunk is below the 500 kB target.
+- [x] Remaining warning debt is quantified for the next cleanup pass.
+
+### Risks / notes
+
+- 112 frontend warnings remain. The largest buckets are still feature-local `no-explicit-any`, mount-effect state updates, and hook dependency cleanup.
+- The largest route chunk is below the target but close enough that future feature work should continue using route/component-level lazy loading.
+
+### Next recommended task
+
+Continue the lint backlog inside `src/mail/hooks/useMail.ts` and `src/mail/ComposeModal.tsx`, then address the React hook warnings in focused feature-module passes.

@@ -705,3 +705,10 @@ Future entry template:
 - Fixed: Removed a render-time ref write in `LiveNoteEditor`, avoided mutating note props in `NotesGrid`, and corrected `CalendarInviteCard` memo dependencies.
 - Verified: `rtk bash ./tests/lint/run.sh`, `rtk bash ./tests/integration/run.sh`, `rtk npm --prefix webmail-backend test`, `rtk npm --prefix webmail-backend run build`, `rtk npm --prefix webmail-frontend run lint`, `rtk npm --prefix webmail-frontend run build`, and `rtk git diff --check` passed. Frontend lint still reports 145 warnings, and frontend build still reports the expected chunk-size advisory.
 - Follow-up: Reduce the remaining frontend warning debt by typing shared API/admin/settings responses, then split the largest frontend chunks.
+
+## 2026-07-11 Frontend Warning Reduction And Route Code Splitting
+
+- Changed: Added shared JSON/contact/calendar/settings response types and applied them through shared API helpers, admin mailbox/alias/settings flows, and settings namespace saves.
+- Changed: Lazy-loaded the Mail, Calendar, Contacts, and Settings routes from `webmail-frontend/src/App.tsx`, keeping the authenticated shell smaller and preserving the existing skeleton fallback.
+- Verified: `rtk npm --prefix webmail-frontend run lint` passed with 112 warnings, down from 145. `rtk npm --prefix webmail-frontend run build` passed with no Vite chunk-size advisory; the main chunk is `223.98 kB` and the largest route chunk is `481.12 kB`.
+- Follow-up: Continue warning cleanup in the mail feature modules, starting with `src/mail/hooks/useMail.ts` and `src/mail/ComposeModal.tsx`, then handle React hook warning classes in focused passes.

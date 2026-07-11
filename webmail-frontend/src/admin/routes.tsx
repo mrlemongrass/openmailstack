@@ -189,6 +189,10 @@ const ALL_NAMESPACES: AdminSettingsNamespace[] = [
   'webhooks',
 ];
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 function SettingsLoader() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -204,13 +208,16 @@ function SettingsLoader() {
           ALL_NAMESPACES.map((ns) => getAdminSettings(ns)),
         );
         if (cancelled) return;
-        const merged: AdminSettingsMap = { ...defaultAdminSettings };
-        ALL_NAMESPACES.forEach((ns, i) => {
-          merged[ns] = { ...defaultAdminSettings[ns], ...(results[i] as any) };
+        setSettings({
+          organization: { ...defaultAdminSettings.organization, ...results[0] },
+          publicUrls: { ...defaultAdminSettings.publicUrls, ...results[1] },
+          security: { ...defaultAdminSettings.security, ...results[2] },
+          mailPolicy: { ...defaultAdminSettings.mailPolicy, ...results[3] },
+          system: { ...defaultAdminSettings.system, ...results[4] },
+          webhooks: { ...defaultAdminSettings.webhooks, ...results[5] },
         });
-        setSettings(merged);
-      } catch (err: any) {
-        if (!cancelled) setStatus(`Failed to load admin settings: ${err.message}`);
+      } catch (err: unknown) {
+        if (!cancelled) setStatus(`Failed to load admin settings: ${errorMessage(err, 'Failed to load admin settings')}`);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -231,8 +238,8 @@ function SettingsLoader() {
         ALL_NAMESPACES.map((ns) => saveAdminSettings(ns, settings[ns])),
       );
       setStatus('All settings saved successfully.');
-    } catch (err: any) {
-      setStatus(`Save failed: ${err.message}`);
+    } catch (err: unknown) {
+      setStatus(`Save failed: ${errorMessage(err, 'Failed to save admin settings')}`);
     } finally {
       setSaving(false);
     }
@@ -272,7 +279,7 @@ function BrandingLoader() {
     let cancelled = false;
     fetchAdminBranding()
       .then(b => { if (!cancelled) setBranding(b); })
-      .catch(e => { if (!cancelled) setStatus(`Failed to load branding: ${e.message}`); })
+      .catch((e: unknown) => { if (!cancelled) setStatus(`Failed to load branding: ${errorMessage(e, 'Failed to load branding')}`); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
@@ -286,8 +293,8 @@ function BrandingLoader() {
     try {
       await saveAdminBranding(branding);
       setStatus('Branding saved successfully.');
-    } catch (err: any) {
-      setStatus(`Save failed: ${err.message}`);
+    } catch (err: unknown) {
+      setStatus(`Save failed: ${errorMessage(err, 'Failed to save branding')}`);
     } finally {
       setSaving(false);
     }

@@ -11,6 +11,10 @@ import {
 
 const CONTACTS_PAGE_SIZE = 200;
 
+function errorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error ? error.message : fallback;
+}
+
 export function useContacts() {
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [totalContacts, setTotalContacts] = useState(0);
@@ -46,7 +50,7 @@ export function useContacts() {
                 setHasMore(data.hasMore ?? data.contacts.length >= CONTACTS_PAGE_SIZE);
                 setContactsError('');
             }
-        } catch (e: any) { setContactsError(e?.message || 'Failed to load contacts'); console.error('Failed to fetch contacts', e); }
+        } catch (e: unknown) { setContactsError(errorMessage(e, 'Failed to load contacts')); console.error('Failed to fetch contacts', e); }
         setIsLoading(false);
     }, [contactsSettings.sortBy, debouncedContactSearchQuery]);
 
@@ -121,7 +125,10 @@ export function useContacts() {
         return () => window.clearTimeout(timeout);
     }, [contactSearchQuery]);
 
-    useEffect(() => { refreshContacts(); }, [refreshContacts]);
+    useEffect(() => {
+        const timer = window.setTimeout(() => { void refreshContacts(); }, 0);
+        return () => window.clearTimeout(timer);
+    }, [refreshContacts]);
     useEffect(() => {
         let isActive = true;
         let socket: ReturnType<typeof createSocket> | null = null;
@@ -164,18 +171,24 @@ export function useContacts() {
         };
     }, [refreshContacts]);
     useEffect(() => {
-        refreshLabels();
-        refreshGroups();
-        refreshDuplicates();
-        refreshTrash();
+        const timer = window.setTimeout(() => {
+            void refreshLabels();
+            void refreshGroups();
+            void refreshDuplicates();
+            void refreshTrash();
+        }, 0);
+        return () => window.clearTimeout(timer);
     }, [refreshLabels, refreshGroups, refreshDuplicates, refreshTrash]);
 
     useEffect(() => {
-        setSelectedContact((current) => {
-            if (!current?.id) return current;
-            const refreshed = contacts.find(contact => String(contact.id) === String(current.id));
-            return refreshed || current;
-        });
+        const timer = window.setTimeout(() => {
+            setSelectedContact((current) => {
+                if (!current?.id) return current;
+                const refreshed = contacts.find(contact => String(contact.id) === String(current.id));
+                return refreshed || current;
+            });
+        }, 0);
+        return () => window.clearTimeout(timer);
     }, [contacts]);
 
     // Search is handled by the backend so it can cover contacts beyond the loaded page.

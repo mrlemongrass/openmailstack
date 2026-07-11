@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { X, Send, Paperclip, Archive, Clock, Image, FileText } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
 import type { useMail } from './hooks/useMail';
 import * as api from '../shared/api';
+import type { Contact, Signature, MailIdentity } from '../shared/types';
 
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB warning
 const BLOCK_SIZE = 50 * 1024 * 1024; // 50MB block
@@ -22,6 +23,11 @@ function totalSize(files: File[]): number {
 interface ContactSuggestion {
   name: string;
   email: string;
+}
+
+interface MessageTemplate {
+  name: string;
+  content: string;
 }
 
 /** Extract the fragment the user is currently typing (after the last comma). */
@@ -42,14 +48,14 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
   // Image previews
-  const [imagePreviews, setImagePreviews] = useState<{ file: File; url: string }[]>([]);
-  useEffect(() => {
-    const urls = mail.composeAttachments
+  const imagePreviews = useMemo(() => (
+    mail.composeAttachments
       .filter((f) => IMAGE_TYPES.includes(f.type))
-      .map((f) => ({ file: f, url: URL.createObjectURL(f) }));
-    setImagePreviews(urls);
-    return () => urls.forEach((p) => URL.revokeObjectURL(p.url));
-  }, [mail.composeAttachments]);
+      .map((f) => ({ file: f, url: URL.createObjectURL(f) }))
+  ), [mail.composeAttachments]);
+  useEffect(() => {
+    return () => imagePreviews.forEach((p) => URL.revokeObjectURL(p.url));
+  }, [imagePreviews]);
 
   // Contact autocomplete hooks (must be before early return)
   const [allContacts, setAllContacts] = useState<ContactSuggestion[]>([]);
@@ -59,9 +65,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    api.fetchContacts(500, 0).then((data: any) => {
+    api.fetchContacts(500, 0).then((data) => {
       if (data.contacts) {
-        setAllContacts((data.contacts as any[])
+        setAllContacts((data.contacts as Contact[])
           .filter((c) => c.email)
           .map((c) => ({ name: c.name || '', email: c.email })));
       }
@@ -126,10 +132,10 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   }, []);
 
   // Templates
-  const [templates, setTemplates] = useState<{ name: string; content: string }[]>([]);
+  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   useEffect(() => {
-    fetch('/api/settings/templates').then((r) => r.json()).then((d) => {
+    fetch('/api/settings/templates').then((r) => r.json() as Promise<{ templates?: MessageTemplate[] }>).then((d) => {
       if (d.templates) setTemplates(d.templates);
     }).catch(() => {});
   }, []);
@@ -139,27 +145,42 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [didSend, setDidSend] = useState(false);
   useEffect(() => {
     if (didSend && !mail.sending && !mail.composeError && !mail.isComposing) {
-      const isUndoable = !!mail.undoSendId;
-      showToast({ type: 'success', message: isUndoable ? 'Message will be sent in 8s' : 'Message sent' });
-      setDidSend(false);
+      const timer = window.setTimeout(() => {
+        const isUndoable = !!mail.undoSendId;
+        showToast({ type: 'success', message: isUndoable ? 'Message will be sent in 8s' : 'Message sent' });
+        setDidSend(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
     if (didSend && !mail.sending && mail.composeError) {
-      setDidSend(false);
+      const timer = window.setTimeout(() => setDidSend(false), 0);
+      return () => window.clearTimeout(timer);
     }
   }, [didSend, mail.sending, mail.composeError, mail.isComposing, showToast, mail.undoSendId]);
 
   // Auto-select default signature when compose opens
+  const {
+    isComposing,
+    signatures,
+    composeSignature,
+    composeBody,
+    setComposeSignature,
+    setComposeBody,
+  } = mail;
   useEffect(() => {
-    if (mail.isComposing && mail.signatures && mail.signatures.length > 0) {
-      const def = mail.signatures.find((s: any) => s.isDefault) || mail.signatures[0];
-      if (mail.composeSignature === 'none' || !mail.signatures.find((s: any) => s.id === mail.composeSignature)) {
-        mail.setComposeSignature(def.id);
-        if (def.content && !mail.composeBody) {
-          mail.setComposeBody(stripHtml(def.content) + '\n\n');
+    if (isComposing && signatures && signatures.length > 0) {
+      const timer = window.setTimeout(() => {
+        const def = signatures.find((s: Signature) => s.isDefault) || signatures[0];
+        if (composeSignature === 'none' || !signatures.find((s: Signature) => s.id === composeSignature)) {
+          setComposeSignature(def.id);
+          if (def.content && !composeBody) {
+            setComposeBody(stripHtml(def.content) + '\n\n');
+          }
         }
-      }
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
-  }, [mail.isComposing, mail.signatures]);
+  }, [isComposing, signatures, composeSignature, composeBody, setComposeSignature, setComposeBody]);
 
   if (!mail.isComposing) return null;
 
@@ -225,7 +246,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             <select className="glass-select glass-input" value={mail.composeFrom}
               onChange={(e) => mail.setComposeFrom(e.target.value)}
               style={{ fontSize: '0.85rem', padding: '8px 12px' }}>
-              {fromOptions.map((a: any) => (
+              {fromOptions.map((a: MailIdentity) => (
                 <option key={a.address} value={a.address}>
                   {a.name ? `${a.name} <${a.address}>` : a.address}
                 </option>
@@ -323,13 +344,13 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           {mail.signatures && mail.signatures.length > 0 && (
             <select className="glass-select glass-input" value={mail.composeSignature}
               onChange={(e) => {
-                const sig = mail.signatures.find((s: any) => s.id === e.target.value);
+                const sig = mail.signatures.find((s: Signature) => s.id === e.target.value);
                 mail.setComposeSignature(e.target.value);
                 if (sig?.content) mail.setComposeBody((prev: string) => stripHtml(sig.content) + '\n\n' + prev);
               }}
               style={{ fontSize: '0.8rem', padding: '6px 10px' }}>
               <option value="none">No signature</option>
-              {mail.signatures.map((s: any) => (
+              {mail.signatures.map((s: Signature) => (
                 <option key={s.id} value={s.id}>{s.name}{s.isDefault ? ' (default)' : ''}</option>
               ))}
             </select>

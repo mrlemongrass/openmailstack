@@ -9,13 +9,53 @@ import { ChecklistBlot } from './notes/editor/checklist-blot';
 import { CodeBlockBlot } from './notes/editor/code-block-blot';
 import { uploadNoteImage } from './shared/api';
 
+interface QuillRange {
+  index: number;
+  length: number;
+}
+
+interface QuillLine {
+  domNode: HTMLElement;
+}
+
+interface QuillEditor {
+  root: HTMLElement;
+  clipboard: {
+    dangerouslyPasteHTML(html: string): void;
+    dangerouslyPasteHTML(index: number, html: string): void;
+  };
+  history?: {
+    undo(): void;
+    redo(): void;
+  };
+  getSelection(focus?: boolean): QuillRange | null;
+  insertEmbed(index: number, type: string, value: string): void;
+  setSelection(index: number): void;
+  formatText(index: number, length: number, name: string, value: unknown): void;
+  format(name: string, value: unknown): void;
+  getLine(index: number): [QuillLine];
+  on(eventName: 'text-change', handler: () => void): void;
+  off(eventName: 'text-change', handler: () => void): void;
+}
+
+interface QuillListConfig {
+  DEFAULTS?: Record<string, unknown>;
+}
+
+function getQuillEditor(ref: React.RefObject<ReactQuill | null>): QuillEditor | null {
+  return (ref.current?.getEditor() as unknown as QuillEditor | undefined) ?? null;
+}
+
 // Register custom blots
-const Quill = ReactQuill.Quill;
-(Quill as any).register(ChecklistBlot);
-(Quill as any).register(CodeBlockBlot);
+const Quill = ReactQuill.Quill as unknown as {
+  register(blot: unknown): void;
+  import(path: string): unknown;
+};
+Quill.register(ChecklistBlot);
+Quill.register(CodeBlockBlot);
 
 // Add custom list type for checklist
-const ListConfig = Quill.import('formats/list') as any;
+const ListConfig = Quill.import('formats/list') as QuillListConfig | null;
 if (ListConfig) {
   ListConfig.DEFAULTS = {
     ...ListConfig.DEFAULTS,
@@ -33,9 +73,9 @@ interface LiveNoteEditorProps {
 }
 
 export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialContent, onChange }) => {
-  const quillRef = useRef<any>(null);
+  const quillRef = useRef<ReactQuill | null>(null);
   const initialized = useRef(false);
-  const initTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onChangeRef = useRef(onChange);
 
   useEffect(() => {
@@ -46,7 +86,8 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
     if (!quillRef.current || initialized.current) return;
     initialized.current = true;
 
-    const editor = quillRef.current.getEditor();
+    const editor = getQuillEditor(quillRef);
+    if (!editor) return;
 
     const ydoc = new Y.Doc();
     const provider = new WebrtcProvider(`oms-note-${noteId}`, ydoc, {
@@ -80,7 +121,7 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
       ydoc.destroy();
       initialized.current = false;
     };
-  }, [noteId]);
+  }, [noteId, initialContent]);
 
   // Image upload handler
   const handleImageUpload = React.useCallback(() => {
@@ -91,7 +132,7 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
       const file = input.files?.[0];
       if (!file) return;
       try {
-        const editor = quillRef.current?.getEditor();
+        const editor = getQuillEditor(quillRef);
         if (!editor) return;
         const range = editor.getSelection(true);
         if (!range) return;
@@ -107,7 +148,7 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
 
   // Table insert helper
   const handleInsertTable = React.useCallback(() => {
-    const editor = quillRef.current?.getEditor();
+    const editor = getQuillEditor(quillRef);
     if (!editor) return;
     const range = editor.getSelection(true);
     if (!range) return;
@@ -126,7 +167,7 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
 
   // Code block insert
   const handleCodeBlock = React.useCallback(() => {
-    const editor = quillRef.current?.getEditor();
+    const editor = getQuillEditor(quillRef);
     if (!editor) return;
     const range = editor.getSelection(true);
     if (!range) return;
@@ -147,8 +188,8 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
         'image': handleImageUpload,
         'table': handleInsertTable,
         'syntax-code-block': handleCodeBlock,
-        'undo': () => quillRef.current?.getEditor()?.history?.undo(),
-        'redo': () => quillRef.current?.getEditor()?.history?.redo(),
+        'undo': () => getQuillEditor(quillRef)?.history?.undo(),
+        'redo': () => getQuillEditor(quillRef)?.history?.redo(),
       },
     },
     keyboard: {
@@ -156,8 +197,8 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
         handleEnterOnChecklist: {
           key: 'Enter',
           format: { list: 'checklist' },
-          handler: (range: any, _context: any) => {
-            const editor = quillRef.current?.getEditor();
+          handler: (range: QuillRange, _context: unknown) => {
+            const editor = getQuillEditor(quillRef);
             if (!editor) return false;
             const [line] = editor.getLine(range.index);
             const text = line.domNode.textContent?.trim();

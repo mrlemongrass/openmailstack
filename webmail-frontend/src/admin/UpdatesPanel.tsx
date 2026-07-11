@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, CheckCircle, AlertCircle, Box } from 'lucide-react';
-import { getUpdates, type UpdatesInfo } from './adminSettingsApi';
+import { adminErrorMessage, getUpdates, type UpdatesInfo } from './adminSettingsApi';
 
 export function UpdatesPanel() {
   const [updates, setUpdates] = useState<UpdatesInfo | null>(null);
@@ -9,16 +9,19 @@ export function UpdatesPanel() {
 
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
     setError('');
     getUpdates()
       .then((u) => { setUpdates(u); setLastChecked(new Date()); })
-      .catch(e => setError(e.message))
+      .catch((e: unknown) => setError(adminErrorMessage(e)))
       .finally(() => setLoading(false));
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(load, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
 
   if (loading) {
     return (

@@ -89,8 +89,8 @@ rtk npm --prefix webmail-frontend run build
 
 Notes:
 
-- `webmail-frontend run lint` is currently a green gate, with warnings retained for the staged `any` typing and React compiler-style hook migration.
-- `webmail-frontend run build` may still report a Vite chunk-size advisory until the next frontend code-splitting pass.
+- `webmail-frontend run lint` is currently a clean green gate with zero warnings.
+- `webmail-frontend run build` is below the documented 500 kB main-chunk target and currently emits no Vite chunk-size advisory.
 - `packaging/systemd/openmailstack.service` still runs generated backend JavaScript, so keep backend `.js`, `.d.ts`, and source maps in sync with TypeScript changes.
 
 ## Live Validation

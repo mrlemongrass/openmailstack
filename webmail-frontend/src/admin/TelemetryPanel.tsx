@@ -2,10 +2,31 @@ import { useEffect, useRef, useState } from 'react';
 import { Activity, Download, TerminalSquare } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 
+type TelemetryPoint = {
+  time: string;
+  cpu?: number;
+  memory?: number;
+  lag?: number;
+  requests?: number;
+  mailQueue?: number;
+  imap?: number;
+  smtp?: number;
+  http?: number;
+  rspamdScanned?: number;
+  rspamdSpam?: number;
+  rspamdRejected?: number;
+  cpuLoad1?: number;
+  cpuLoad5?: number;
+  cpuLoad15?: number;
+  memTotal?: number;
+  memFree?: number;
+  diskUsed?: number;
+};
+
 export function TelemetryPanel() {
   const [logs, setLogs] = useState<string[]>([]);
   const [activeView, setActiveView] = useState<'logs' | 'metrics'>('logs');
-  const [history, setHistory] = useState<any[]>([]);
+  const [history, setHistory] = useState<TelemetryPoint[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -15,7 +36,7 @@ export function TelemetryPanel() {
           .then(res => res.text())
           .then(text => {
              const lines = text.split('\n');
-             const point: any = { time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) };
+             const point: TelemetryPoint = { time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) };
              lines.forEach(line => {
                if (line.startsWith('#') || !line.trim()) return;
                const [key, val] = line.split(' ');

@@ -43,9 +43,9 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             is_locked: latest.is_locked,
             folder: latest.folder || 'notes',
             labels_json: latest.labels_json || '[]',
-          } as any);
+          });
           if (!latest.id && saved?.id) {
-            n.setEditingNote((prev: any) => ({ ...prev, id: saved.id }));
+            n.setEditingNote((prev) => ({ ...prev, id: saved.id }));
             n.fetchNotes();
           }
           setSaveStatus('saved');
@@ -73,7 +73,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
           is_locked: latest.is_locked,
           folder: latest.folder || 'notes',
           labels_json: latest.labels_json || '[]',
-        } as any);
+        });
       } catch (e) {
         console.error('Save on close failed', e);
       }
@@ -85,12 +85,12 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
   }, [n, showToast]);
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    n.setEditingNote((prev: any) => ({ ...prev, title: e.target.value }));
+    n.setEditingNote((prev) => ({ ...prev, title: e.target.value }));
     scheduleAutoSave();
   }, [n, scheduleAutoSave]);
 
   const handleContentChange = useCallback((content: string) => {
-    n.setEditingNote((prev: any) => ({ ...prev, content }));
+    n.setEditingNote((prev) => ({ ...prev, content }));
     scheduleAutoSave();
   }, [n, scheduleAutoSave]);
 
@@ -134,7 +134,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
                 className={`note-color-swatch${note.color === color ? ' active' : ''}`}
                 style={{ backgroundColor: color }}
                 title={color}
-                onClick={() => { n.setEditingNote((prev: any) => ({ ...prev, color })); scheduleAutoSave(); }}
+                onClick={() => { n.setEditingNote((prev) => ({ ...prev, color })); scheduleAutoSave(); }}
               />
             ))}
           </div>

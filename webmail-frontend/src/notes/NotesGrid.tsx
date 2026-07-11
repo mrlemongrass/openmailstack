@@ -205,7 +205,7 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
             onClick={(e) => {
               e.stopPropagation();
               const newPinned = !note.is_pinned;
-              n.saveNote({ id: note.id, is_pinned: newPinned ? 1 : 0 } as any);
+              n.saveNote({ id: note.id, is_pinned: newPinned ? 1 : 0 });
               showToast({ type: 'info', message: newPinned ? 'Note pinned' : 'Note unpinned' });
             }}>
             <Star size={12} fill={note.is_pinned ? '#f59e0b' : 'none'} /> {note.is_pinned ? 'Unpin' : 'Pin'}

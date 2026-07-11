@@ -5,11 +5,15 @@ import { MessageList } from './MessageList';
 import { ComposeModal } from './ComposeModal';
 import { useMail } from './hooks/useMail';
 import { useAppearance } from '../shared/hooks/useAppearance';
+import { defaultMailSettings } from '../settings/settingsApi';
+import type { UserIdentities } from '../shared/types';
+
+const EMPTY_IDENTITIES: UserIdentities = { name: '', address: '', aliases: [] };
 
 export function MailRoutes() {
   const { appearance } = useAppearance();
   const density = (appearance.density as 'compact' | 'cozy' | 'comfortable') || 'cozy';
-  const mail = useMail({ mailSettings: {} as any, isThreaded: false, userIdentities: {} as any });
+  const mail = useMail({ mailSettings: defaultMailSettings, isThreaded: false, userIdentities: EMPTY_IDENTITIES });
 
   // Listen for cross-suite compose events + check for pending compose on mount
   useEffect(() => {

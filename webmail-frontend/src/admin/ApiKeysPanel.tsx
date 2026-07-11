@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Key, Trash2, Plus, X, Copy, Check } from 'lucide-react';
 import { CreateApiKeyModal } from './AdminModals';
-import { getApiKeys, createApiKey, deleteApiKey, type ApiKeyInfo } from './adminSettingsApi';
+import { adminErrorMessage, getApiKeys, createApiKey, deleteApiKey, type ApiKeyInfo } from './adminSettingsApi';
 
 export function ApiKeysPanel() {
   const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
@@ -13,7 +13,7 @@ export function ApiKeysPanel() {
   const [deleting, setDeleting] = useState<number | null>(null);
 
   const load = useCallback(() => {
-    getApiKeys().then(setKeys).catch(e => setError(e.message)).finally(() => setLoading(false));
+    getApiKeys().then(setKeys).catch((e: unknown) => setError(adminErrorMessage(e))).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -24,13 +24,13 @@ export function ApiKeysPanel() {
       setShowCreate(false);
       setNewKey(rawKey);
       load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(adminErrorMessage(e)); }
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm('Delete this API key? Any services using it will lose access.')) return;
     setDeleting(id);
-    try { await deleteApiKey(id); load(); } catch (e: any) { setError(e.message); }
+    try { await deleteApiKey(id); load(); } catch (e: unknown) { setError(adminErrorMessage(e)); }
     finally { setDeleting(null); }
   };
 

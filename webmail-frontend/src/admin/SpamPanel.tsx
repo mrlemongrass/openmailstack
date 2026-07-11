@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ShieldAlert, ExternalLink, Save, X } from 'lucide-react';
-import { getSpamPolicies, saveSpamPolicies } from './adminSettingsApi';
+import { adminErrorMessage, getSpamPolicies, saveSpamPolicies } from './adminSettingsApi';
+import type { JsonObject } from '../shared/types';
+
+function parseRulesJson(rules: string): JsonObject {
+  const parsed: unknown = JSON.parse(rules);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Policy must be a JSON object');
+  }
+  return parsed as JsonObject;
+}
 
 export function SpamPanel() {
   const [rules, setRules] = useState<string>('');
@@ -14,25 +23,28 @@ export function SpamPanel() {
     setError('');
     getSpamPolicies()
       .then(r => setRules(r ? JSON.stringify(r, null, 2) : '{}'))
-      .catch(e => setError(e.message))
+      .catch((e: unknown) => setError(adminErrorMessage(e)))
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const timer = window.setTimeout(load, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
 
   const handleSave = async () => {
     setSaving(true);
     setStatus('');
     setError('');
     try {
-      const parsed = JSON.parse(rules);
+      const parsed = parseRulesJson(rules);
       await saveSpamPolicies(parsed);
       setStatus('Spam policies saved successfully.');
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (e instanceof SyntaxError) {
         setError('Invalid JSON: ' + e.message);
       } else {
-        setError(e.message);
+        setError(adminErrorMessage(e));
       }
     } finally {
       setSaving(false);
@@ -70,12 +82,12 @@ export function SpamPanel() {
             className="btn btn-ghost"
             onClick={() => {
               try {
-                const parsed = JSON.parse(rules);
+                const parsed = parseRulesJson(rules);
                 setRules(JSON.stringify(parsed, null, 2));
                 setStatus('JSON formatted successfully.');
                 setError('');
-              } catch (e: any) {
-                setError('Invalid JSON: ' + e.message);
+              } catch (e: unknown) {
+                setError('Invalid JSON: ' + adminErrorMessage(e));
               }
             }}
             style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem' }}

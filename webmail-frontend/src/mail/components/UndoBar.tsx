@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 
 interface UndoBarProps {
   mailUndo: { message: string } | null;
@@ -7,49 +7,22 @@ interface UndoBarProps {
 }
 
 export function UndoBar({ mailUndo, onUndo, onDismiss }: UndoBarProps) {
-  const [visible, setVisible] = useState(false);
-  const [dismissing, setDismissing] = useState(false);
-
-  // Show bar when mailUndo is set
-  useEffect(() => {
-    if (mailUndo) {
-      setVisible(true);
-      setDismissing(false);
-    } else {
-      setVisible(false);
-    }
-  }, [mailUndo]);
-
   // Auto-dismiss after 5 seconds
   useEffect(() => {
     if (!mailUndo) return;
-    const timer = setTimeout(() => {
-      setDismissing(true);
-      setTimeout(() => {
-        onDismiss();
-        setVisible(false);
-      }, 300);
-    }, 5000);
+    const timer = setTimeout(onDismiss, 5000);
     return () => clearTimeout(timer);
   }, [mailUndo, onDismiss]);
 
   const handleUndo = useCallback(() => {
-    setDismissing(true);
-    setTimeout(() => {
-      onUndo();
-      setVisible(false);
-    }, 300);
+    onUndo();
   }, [onUndo]);
 
   const handleClose = useCallback(() => {
-    setDismissing(true);
-    setTimeout(() => {
-      onDismiss();
-      setVisible(false);
-    }, 300);
+    onDismiss();
   }, [onDismiss]);
 
-  if (!visible || !mailUndo) return null;
+  if (!mailUndo) return null;
 
   return (
     <div
@@ -63,8 +36,6 @@ export function UndoBar({ mailUndo, onUndo, onDismiss }: UndoBarProps) {
         justifyContent: 'center',
         pointerEvents: 'none',
         padding: '0 16px 16px',
-        opacity: dismissing ? 0 : 1,
-        transition: 'opacity 0.3s ease',
       }}
     >
       <div

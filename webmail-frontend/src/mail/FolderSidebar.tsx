@@ -2,6 +2,8 @@ import { useNavigate } from 'react-router';
 import { Inbox, Send, Star, Trash2, Archive, FolderOpen, Edit2 } from 'lucide-react';
 import type { MailFolder } from '../shared/types';
 
+type FolderIcon = React.ComponentType<{ size?: number }>;
+
 interface FolderSidebarProps {
   folders: MailFolder[];
   activeFolder: string;
@@ -39,7 +41,7 @@ function buildFolderTree(folders: MailFolder[]): FolderTreeNode[] {
   return Object.values(root);
 }
 
-const ICON_MAP: Record<string, React.ComponentType<any>> = {
+const ICON_MAP: Record<string, FolderIcon> = {
   INBOX: Inbox, Sent: Send, Starred: Star, Trash: Trash2, Archive: Archive,
 };
 
@@ -118,7 +120,7 @@ function FolderItem({ node, activeFolder, expandedFolders, onToggleExpand, depth
             padding: '1px 6px', fontSize: '0.7rem', fontWeight: 600 }}>{node.unseen}</span>
         )}
       </div>
-      {isExpanded && hasChildren && Object.values(node.children).map((child: any) => (
+      {isExpanded && hasChildren && Object.values(node.children).map((child) => (
         <FolderItem key={child.fullPath} node={child} activeFolder={activeFolder}
           expandedFolders={expandedFolders} onToggleExpand={onToggleExpand}
           depth={depth + 1} />

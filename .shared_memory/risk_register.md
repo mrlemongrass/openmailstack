@@ -35,6 +35,7 @@ Last updated: 2026-07-11
 - ✅ CardDAV contact depth-1 tombstone compatibility: macOS Contacts was observed listing the address book with depth-1 `PROPFIND` after an iPhone delete, so CardDAV now includes recent 404 tombstones in address-book PROPFIND results and the smoke script asserts that path.
 - ✅ CardDAV legacy href tombstone compatibility: deleted contact tombstones now also emit a legacy `contact-<id>` href alias when available, covering macOS caches that may have stored an older resource href for an ActiveSync-created card.
 - ✅ Physical iPhone Exchange contact create/edit/delete: `thang@housevo.us` contact create and edit reached iPhone, web Contacts, macOS Contacts, and server storage. Delete reached iPhone, web Contacts, and server tombstone state immediately; macOS Contacts cleared stale local cache state after the CardDAV account was removed, Contacts was closed/reopened, and the account was re-added.
+- ✅ Frontend lint and main bundle stabilization: Frontend lint exits 0 with zero warnings, and the main production chunk remains below the documented 500 kB target after top-level route code splitting.
 
 ## Remaining High-Priority Risks
 
@@ -45,8 +46,6 @@ Last updated: 2026-07-11
 - The Node backend stores mailbox credentials with AES-256-GCM encryption. Master-user auth is implemented as optional env vars but requires manual Dovecot server-side config (`auth_master_user_separator = *` and a master passdb). Without server-side setup, per-user passwords are still stored reversibly.
 - Tasks/notes remain prototype/mock folders in ActiveSync.
 - Physical iPhone Exchange, macOS Mail/Calendar/Contacts, Android plus DAVx5, and Thunderbird rows in `docs/webmail-release-validation.md` need a post-July-10 rerun. The iPhone Exchange receive/send/Sent copy/picture attachment, calendar create/edit/delete, and contact create/edit/delete paths passed for `thang@housevo.us` after the ActiveSync SendMail, CalDAV, and Contacts UX/multi-phone/tombstone fixes. The final contact edit retry changed company to `OpenMailStack Test 2`; web Contacts and macOS Contacts reflected it, and live storage preserved both phone numbers. Scripted smokes pass, but they are not a substitute for the remaining standalone macOS/Android/Thunderbird client rows.
-- Frontend lint now exits 0, but warning debt remains broad: staged `any` typing plus React compiler-style hook migration warnings. A shared API/admin/settings typing pass reduced warnings from 145 to 112, and top-level route lazy-loading brought the main build chunk below the documented 500 kB target. Treat the remaining mail feature-module typing and hook cleanup as release-quality work before a formal release.
-
 ## Security and Authorization Areas to Re-check
 
 - `admin_portal_src/public/api.php` has CSRF and many prepared statements, but RBAC/domain scoping should be reviewed endpoint by endpoint. Some admin actions do not obviously re-check domain ownership.

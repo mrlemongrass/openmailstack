@@ -2,6 +2,8 @@ import { Star, Paperclip, Archive, Trash2, Mail, MailOpen, Clock } from 'lucide-
 import type { Message } from '../shared/types';
 import { format, isToday, isYesterday } from 'date-fns';
 
+type RowIcon = React.ComponentType<{ size?: number; fill?: string; color?: string }>;
+
 interface MessageRowProps {
   message: Message;
   isSelected: boolean;
@@ -101,7 +103,7 @@ export function MessageRow({
 }
 
 function ActionButton({ icon: Icon, title, onClick }: {
-  icon: React.ComponentType<any>; title: string; onClick: () => void;
+  icon: RowIcon; title: string; onClick: () => void;
 }) {
   return (
     <button className="btn btn-ghost" title={title}

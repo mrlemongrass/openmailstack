@@ -11,6 +11,7 @@ import { useToast } from '../shared/components/Toast';
 import { ScrollToTop } from '../shared/components/ScrollToTop';
 import { Inbox, SearchX, Loader } from 'lucide-react';
 import type { useMail } from './hooks/useMail';
+import type { Message } from '../shared/types';
 
 interface MessageListProps {
   mail: ReturnType<typeof useMail>;
@@ -24,7 +25,14 @@ export function MessageList({ mail, density }: MessageListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const starringRef = useRef<Set<number>>(new Set());
   const decodedFolder = folder ? decodeURIComponent(folder) : 'INBOX';
-  const { activeFolder, setActiveFolder, setIsSearchActive, setSelectedMessages } = mail;
+  const {
+    activeFolder,
+    messages,
+    prefetchBodies,
+    setActiveFolder,
+    setIsSearchActive,
+    setSelectedMessages,
+  } = mail;
 
   useEffect(() => {
     if (decodedFolder !== activeFolder) {
@@ -36,17 +44,18 @@ export function MessageList({ mail, density }: MessageListProps) {
 
   // Pre-fetch message bodies for the first batch of visible messages
   useEffect(() => {
-    if (mail.messages.length > 0 && folder) {
-      const uidsToPreFetch = mail.messages
+    if (messages.length > 0 && folder) {
+      const uidsToPreFetch = messages
         .filter((m) => !m.html && !m.text)
         .slice(0, 8)
         .map((m) => m.uid);
       if (uidsToPreFetch.length > 0) {
-        mail.prefetchBodies(uidsToPreFetch, decodeURIComponent(folder));
+        prefetchBodies(uidsToPreFetch, decodeURIComponent(folder));
       }
     }
-  }, [mail.messages, folder, mail.prefetchBodies]);
+  }, [messages, folder, prefetchBodies]);
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack virtualizer is intentional for large mailboxes.
   const rowVirtualizer = useVirtualizer({
     count: mail.messages.length,
     getScrollElement: () => parentRef.current,
@@ -79,7 +88,7 @@ export function MessageList({ mail, density }: MessageListProps) {
     const action = msg.isStarred ? 'unstar' : 'star';
     // Optimistic update: immediately toggle local state
     starringRef.current.add(uid);
-    mail.setMessages((prev: any[]) => prev.map((m) => m.uid === uid ? { ...m, isStarred: !msg.isStarred } : m));
+    mail.setMessages((prev: Message[]) => prev.map((m) => m.uid === uid ? { ...m, isStarred: !msg.isStarred } : m));
     mail.messageAction(action, [uid]).finally(() => {
       starringRef.current.delete(uid);
     });

@@ -2,6 +2,10 @@ import { useState, useCallback, useEffect } from 'react';
 import type { Note } from '../../shared/types';
 import * as api from '../../shared/api';
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function useNotes() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [notesView, setNotesView] = useState('notes');
@@ -19,11 +23,14 @@ export function useNotes() {
 
   const fetchNotes = useCallback(async () => {
     setIsLoading(true);
-    try { setNotes(await api.fetchNotesApi()); setNotesError(''); } catch (e: any) { setNotesError(e?.message || 'Failed to load notes'); console.error('Failed to fetch notes', e); }
+    try { setNotes(await api.fetchNotesApi()); setNotesError(''); } catch (e: unknown) { setNotesError(errorMessage(e, 'Failed to load notes')); console.error('Failed to fetch notes', e); }
     setIsLoading(false);
   }, []);
 
-  useEffect(() => { fetchNotes(); }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void fetchNotes(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchNotes]);
 
   const saveNote = useCallback(async (note: Partial<Note>) => {
     try { await api.saveNote(note); await fetchNotes(); } catch (e) { console.error(e); }

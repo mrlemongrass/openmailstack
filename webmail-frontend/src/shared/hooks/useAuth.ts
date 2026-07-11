@@ -42,7 +42,10 @@ export function useAuth(): AuthState & {
     setIsLoading(false);
   }, []);
 
-  useEffect(() => { fetchMe(); }, [fetchMe]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void fetchMe(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchMe]);
 
   const login = useCallback(async (email: string, password: string): Promise<boolean> => {
     const res = await fetch('/api/auth/login', {

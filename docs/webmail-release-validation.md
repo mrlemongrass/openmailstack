@@ -26,8 +26,8 @@ Current scripted snapshot, 2026-07-11:
 - Pass: `rtk bash ./tests/integration/run.sh` passed, including the ActiveSync mail smoke guard.
 - Pass: `rtk npm --prefix webmail-backend test` passed 14/14 backend tests.
 - Pass: `rtk npm --prefix webmail-backend run build` completed TypeScript compilation.
-- Pass with warnings: `rtk npm --prefix webmail-frontend run lint` exits 0 with 112 warnings. The remaining warnings are the staged `any` typing and React compiler-style hook migration backlog.
-- Pass: `rtk npm --prefix webmail-frontend run build` completed with no Vite chunk-size advisory. The current main chunk is `223.98 kB`; the largest route chunk is `481.12 kB`.
+- Pass: `rtk npm --prefix webmail-frontend run lint` exits 0 with zero warnings.
+- Pass: `rtk npm --prefix webmail-frontend run build` completed with no Vite chunk-size advisory. The current main chunk is `224.12 kB`; the largest route chunk is `481.41 kB`.
 
 ## Clean VM Gate
 

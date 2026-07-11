@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Shield, ShieldOff, RefreshCw, Unlock, AlertTriangle } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useToast } from '../shared/components/Toast';
+import { adminErrorMessage } from './adminSettingsApi';
 
 interface JailInfo {
   name: string;
@@ -18,6 +19,11 @@ interface Fail2banStatus {
   jails: JailInfo[];
 }
 
+type BanHistoryPoint = {
+  time: string;
+  [jail: string]: string | number;
+};
+
 const JAIL_COLORS: Record<string, string> = {
   sshd: '#3b82f6',
   postfix: '#f59e0b',
@@ -29,7 +35,7 @@ export function Fail2banPanel() {
   const { showToast } = useToast();
   const [status, setStatus] = useState<Fail2banStatus | null>(null);
   const [error, setError] = useState('');
-  const [banHistory, setBanHistory] = useState<any[]>([]);
+  const [banHistory, setBanHistory] = useState<BanHistoryPoint[]>([]);
   const [unbanning, setUnbanning] = useState<string | null>(null);
   const [confirmUnban, setConfirmUnban] = useState<{ jail: string; ip: string } | null>(null);
 
@@ -55,7 +61,7 @@ export function Fail2banPanel() {
         .then(res => res.text())
         .then(text => {
           const lines = text.split('\n');
-          const point: any = {
+          const point: BanHistoryPoint = {
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
           };
           lines.forEach(line => {
@@ -99,8 +105,8 @@ export function Fail2banPanel() {
       } else {
         setError(data.error || 'Failed to unban IP');
       }
-    } catch (err: any) {
-      setError(err.message || 'Connection error');
+    } catch (err: unknown) {
+      setError(adminErrorMessage(err, 'Connection error'));
     } finally {
       setUnbanning(null);
     }

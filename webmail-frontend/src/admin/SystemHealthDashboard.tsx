@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Server, Shield, HardDrive, Activity, Database, Globe, Clock, RefreshCw, AlertTriangle, Smartphone } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { adminErrorMessage } from './adminSettingsApi';
 
 interface ProtocolHealth {
   ok: boolean;
@@ -44,8 +45,10 @@ function formatLoad(n: number): string {
   return n.toFixed(2);
 }
 
-const SERVICE_META: Record<string, { label: string; icon: LucideIcon | React.ComponentType<{ size?: number }> }> = {
-  postfix: { label: 'Postfix (SMTP)', icon: MailIcon as any },
+type DashboardIcon = LucideIcon | React.ComponentType<{ size?: number; style?: React.CSSProperties }>;
+
+const SERVICE_META: Record<string, { label: string; icon: DashboardIcon }> = {
+  postfix: { label: 'Postfix (SMTP)', icon: MailIcon },
   dovecot: { label: 'Dovecot (IMAP)', icon: Server },
   rspamd: { label: 'Rspamd', icon: Shield },
   fail2ban: { label: 'Fail2ban', icon: Shield },
@@ -53,9 +56,9 @@ const SERVICE_META: Record<string, { label: string; icon: LucideIcon | React.Com
   nginx: { label: 'Nginx (HTTPS Proxy)', icon: Globe },
 };
 
-function MailIcon({ size = 24 }: { size?: number }) {
+function MailIcon({ size = 24, style }: { size?: number; style?: React.CSSProperties }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg style={style} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="2" y="4" width="20" height="16" rx="2" />
       <path d="M22 7l-10 7L2 7" />
     </svg>
@@ -84,18 +87,18 @@ export function SystemHealthDashboard() {
           setError(data.error || 'Failed to load system health');
         }
       })
-      .catch(err => {
-        setError(err.message || 'Connection error');
+      .catch((err: unknown) => {
+        setError(adminErrorMessage(err, 'Connection error'));
       })
       .finally(() => setRefreshing(false));
     setCountdown(15);
   }, []);
 
   useEffect(() => {
-    fetchHealth();
+    const initialTimer = window.setTimeout(fetchHealth, 0);
     const tick = setInterval(() => setCountdown(c => (c > 1 ? c - 1 : 15)), 1000);
     const interval = setInterval(fetchHealth, 15000);
-    return () => { clearInterval(tick); clearInterval(interval); };
+    return () => { window.clearTimeout(initialTimer); clearInterval(tick); clearInterval(interval); };
   }, [fetchHealth]);
 
   const handleRemediate = async (action: string) => {
@@ -118,8 +121,8 @@ export function SystemHealthDashboard() {
       } else {
         setError(data.error || 'Remediation failed');
       }
-    } catch (err: any) {
-      setError(err.message || 'Connection error');
+    } catch (err: unknown) {
+      setError(adminErrorMessage(err, 'Connection error'));
     } finally {
       setRemediating(null);
     }
@@ -270,10 +273,10 @@ export function SystemHealthDashboard() {
             <Smartphone size={18} /> Client Protocols
           </h3>
           {(() => {
-            const rows: Array<{ key: ProtocolKey; label: string; icon: LucideIcon | React.ComponentType<{ size?: number; style?: React.CSSProperties }> }> = [
+            const rows: Array<{ key: ProtocolKey; label: string; icon: DashboardIcon }> = [
               { key: 'activeSync', label: 'ActiveSync / Exchange', icon: Smartphone },
               { key: 'imap', label: 'IMAP Retrieval', icon: Server },
-              { key: 'smtp', label: 'SMTP Submission', icon: MailIcon as any },
+              { key: 'smtp', label: 'SMTP Submission', icon: MailIcon },
               { key: 'caldav', label: 'CalDAV Calendars', icon: Globe },
               { key: 'carddav', label: 'CardDAV Contacts', icon: Globe },
             ];

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Globe, Trash2, Plus, Server, X, Copy, Check } from 'lucide-react';
 import { CreateDomainModal } from './AdminModals';
-import { getDomains, createDomain, deleteDomain, getDomainDns, type DomainInfo, type DnsRecord } from './adminSettingsApi';
+import { adminErrorMessage, getDomains, createDomain, deleteDomain, getDomainDns, type DomainInfo, type DnsRecord } from './adminSettingsApi';
 
 function DnsModal({ domain, onClose }: { domain: string; onClose: () => void }) {
   const [records, setRecords] = useState<DnsRecord[]>([]);
@@ -12,7 +12,7 @@ function DnsModal({ domain, onClose }: { domain: string; onClose: () => void }) 
   useEffect(() => {
     let cancelled = false;
     getDomainDns(domain).then(r => { if (!cancelled) setRecords(r); })
-      .catch(e => { if (!cancelled) setError(e.message); })
+      .catch((e: unknown) => { if (!cancelled) setError(adminErrorMessage(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [domain]);
@@ -84,7 +84,7 @@ export function DomainsPanel() {
   const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    getDomains().then(setDomains).catch(e => setError(e.message)).finally(() => setLoading(false));
+    getDomains().then(setDomains).catch((e: unknown) => setError(adminErrorMessage(e))).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -95,7 +95,7 @@ export function DomainsPanel() {
       setShowCreate(false);
       setLoading(true);
       load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(adminErrorMessage(e)); }
   };
 
   const handleDelete = async (domain: string) => {
@@ -104,7 +104,7 @@ export function DomainsPanel() {
     try {
       await deleteDomain(domain);
       load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(adminErrorMessage(e)); }
     finally { setDeleting(null); }
   };
 

@@ -97,6 +97,17 @@ export interface MessageActionResponse {
   undoUids?: number[];
 }
 
+export interface SendMessageResponse extends MessageActionResponse {
+  scheduledId?: number;
+}
+
+export interface SaveDraftResponse {
+  success?: boolean;
+  draftId?: string;
+  draftUid?: string;
+  error?: string;
+}
+
 export interface MessageListResponse {
   success: boolean;
   messages?: Message[];
@@ -144,6 +155,11 @@ export interface SavedSearch {
   id: string;
   name: string;
   query: string;
+}
+
+export interface MailIdentity {
+  address: string;
+  name: string;
 }
 
 export interface SearchHint {

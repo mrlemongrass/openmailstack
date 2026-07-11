@@ -1,5 +1,9 @@
 import type { JsonObject } from '../shared/types';
 
+export function adminErrorMessage(error: unknown, fallback = 'Request failed'): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export type AdminSettingsNamespace = 'organization' | 'publicUrls' | 'security' | 'mailPolicy' | 'system' | 'webhooks';
 
 export interface OrganizationAdminSettings {

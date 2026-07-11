@@ -36,6 +36,41 @@ interface CalendarOption {
   name: string;
 }
 
+interface ContactsImportResponse {
+  success: boolean;
+  count?: number;
+  error?: string;
+}
+
+interface AccountSession {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  isCurrent?: boolean;
+}
+
+interface SessionsResponse {
+  success: boolean;
+  sessions?: AccountSession[];
+  error?: string;
+}
+
+interface AccountMutationResponse {
+  success: boolean;
+  error?: string;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function supportedTimeZones(): string[] {
+  const intlWithValues = Intl as typeof Intl & { supportedValuesOf?: (key: 'timeZone') => string[] };
+  return intlWithValues.supportedValuesOf
+    ? intlWithValues.supportedValuesOf('timeZone')
+    : [Intl.DateTimeFormat().resolvedOptions().timeZone];
+}
+
 interface SettingsSidebarProps {
   activeTab: string;
   onTabChange: (tab: SettingsTab) => void;
@@ -437,9 +472,10 @@ function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: Sett
   // Auto-select first signature on mount
   React.useEffect(() => {
     if (signatures.length > 0 && !selectedId) {
-      setSelectedId(signatures[0].id);
+      const timer = window.setTimeout(() => setSelectedId(signatures[0].id), 0);
+      return () => window.clearTimeout(timer);
     }
-  }, [signatures.length]);
+  }, [selectedId, signatures]);
 
   const handleSave = () => {
     setSaveMessage('Saved');
@@ -1008,7 +1044,7 @@ function CalendarPane({ setupValues, calendarSettings, calendars, onCalendarSett
           <label className="settings-field">
             <span>Time Zone</span>
             <select className="glass-input glass-select" value={calendarSettings.timeZone} onChange={event => updateCalendar({ timeZone: event.target.value })}>
-              {((Intl as any).supportedValuesOf ? (Intl as any).supportedValuesOf('timeZone') : [Intl.DateTimeFormat().resolvedOptions().timeZone]).map((tz: string) => (
+              {supportedTimeZones().map((tz: string) => (
                 <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
               ))}
             </select>
@@ -1095,14 +1131,14 @@ function ContactsPane({ setupValues, contactsSettings, onContactsSettingsChange 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ format, data: text })
-      }).then(r => r.json());
+      }).then(r => r.json() as Promise<ContactsImportResponse>);
       if (res.success) {
         setImportStatus({ type: 'success', text: `Successfully imported ${res.count} contact${res.count !== 1 ? 's' : ''}.` });
       } else {
         setImportStatus({ type: 'error', text: res.error || 'Import failed.' });
       }
-    } catch (err: any) {
-      setImportStatus({ type: 'error', text: err.message || 'Network error.' });
+    } catch (err: unknown) {
+      setImportStatus({ type: 'error', text: errorMessage(err, 'Network error.') });
     }
   };
 
@@ -1234,14 +1270,19 @@ function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentPro
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState(false);
 
-  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessions, setSessions] = useState<AccountSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
 
   React.useEffect(() => {
-    fetch('/api/account/sessions').then(r => r.json()).then(data => {
-      if (data.success) setSessions(data.sessions);
+    let cancelled = false;
+    fetch('/api/account/sessions').then(r => r.json() as Promise<SessionsResponse>).then(data => {
+      if (cancelled) return;
+      if (data.success) setSessions(data.sessions || []);
       setSessionsLoading(false);
+    }).catch(() => {
+      if (!cancelled) setSessionsLoading(false);
     });
+    return () => { cancelled = true; };
   }, []);
 
   const mismatch = passwords.new && passwords.confirm && passwords.new !== passwords.confirm;
@@ -1259,7 +1300,7 @@ function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentPro
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ current: passwords.current, new: passwords.new })
-      }).then(r => r.json());
+      }).then(r => r.json() as Promise<AccountMutationResponse>);
 
       if (res.success) {
         setPwSuccess(true);
@@ -1267,8 +1308,8 @@ function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentPro
       } else {
         setPwError(res.error || 'Failed to change password');
       }
-    } catch (err: any) {
-      setPwError(err.message || 'Network error');
+    } catch (err: unknown) {
+      setPwError(errorMessage(err, 'Network error'));
     } finally {
       setPwSaving(false);
     }
@@ -1280,7 +1321,7 @@ function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentPro
   const handleRevokeSession = async () => {
     if (!revokeConfirmId) return;
     setRevokeError('');
-    const res = await fetch(`/api/account/sessions/${revokeConfirmId}`, { method: 'DELETE' }).then(r => r.json());
+    const res = await fetch(`/api/account/sessions/${revokeConfirmId}`, { method: 'DELETE' }).then(r => r.json() as Promise<AccountMutationResponse>);
     if (res.success) {
       setSessions(s => s.filter(x => x.id !== revokeConfirmId));
       setRevokeConfirmId(null);

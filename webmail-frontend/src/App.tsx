@@ -157,7 +157,10 @@ function SyncView() {
     });
   };
 
-  useEffect(() => { checkStatus(); }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(checkStatus, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   const rows: SyncRowProps[] = [
     { icon: Mail, label: 'Incoming Mail (IMAP)', host: hostname, detail: 'Port 993 · SSL/TLS required', },
     { icon: Globe, label: 'Outgoing Mail (SMTP)', host: hostname, detail: 'Port 587 · STARTTLS required', },

@@ -8,21 +8,31 @@ interface RawMessageModalProps {
 }
 
 export function RawMessageModal({ folder, uid, onClose }: RawMessageModalProps) {
-  const [raw, setRaw] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const requestKey = `${folder}:${uid}`;
+  const [rawState, setRawState] = useState<{ key: string; raw: string | null; error: string }>({
+    key: requestKey,
+    raw: null,
+    error: '',
+  });
   const [copied, setCopied] = useState(false);
+  const loading = rawState.key !== requestKey || (!rawState.raw && !rawState.error);
 
   useEffect(() => {
-    setLoading(true);
+    let cancelled = false;
     fetch(`/api/folders/${encodeURIComponent(folder)}/messages/${uid}/raw`)
       .then((res) => { if (!res.ok) throw new Error('Failed to fetch'); return res.text(); })
-      .then((text) => { setRaw(text); setLoading(false); })
-      .catch((e) => { setError(e.message); setLoading(false); });
-  }, [folder, uid]);
+      .then((text) => {
+        if (!cancelled) setRawState({ key: requestKey, raw: text, error: '' });
+      })
+      .catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : 'Failed to fetch';
+        if (!cancelled) setRawState({ key: requestKey, raw: null, error: message });
+      });
+    return () => { cancelled = true; };
+  }, [folder, uid, requestKey]);
 
   const handleCopy = async () => {
-    if (raw) { await navigator.clipboard.writeText(raw); setCopied(true); setTimeout(() => setCopied(false), 2000); }
+    if (rawState.raw) { await navigator.clipboard.writeText(rawState.raw); setCopied(true); setTimeout(() => setCopied(false), 2000); }
   };
 
   return (
@@ -42,9 +52,9 @@ export function RawMessageModal({ folder, uid, onClose }: RawMessageModalProps) 
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
           {loading && <div style={{ color: 'var(--text-secondary)' }}>Loading...</div>}
-          {error && <div style={{ color: 'var(--danger)' }}>{error}</div>}
-          {raw && <pre style={{ whiteSpace: 'pre-wrap', fontFamily: "'SF Mono','Fira Code',monospace",
-            fontSize: '0.78rem', lineHeight: 1.5, color: 'var(--text-primary)', margin: 0 }}>{raw}</pre>}
+          {rawState.error && <div style={{ color: 'var(--danger)' }}>{rawState.error}</div>}
+          {rawState.raw && <pre style={{ whiteSpace: 'pre-wrap', fontFamily: "'SF Mono','Fira Code',monospace",
+            fontSize: '0.78rem', lineHeight: 1.5, color: 'var(--text-primary)', margin: 0 }}>{rawState.raw}</pre>}
         </div>
       </div>
     </div>

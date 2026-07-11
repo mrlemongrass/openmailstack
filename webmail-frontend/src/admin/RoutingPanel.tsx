@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { GitMerge, Trash2, Plus, X } from 'lucide-react';
 import { CreateRoutingModal } from './AdminModals';
-import { getRouting, createRouting, deleteRouting, type RoutingInfo } from './adminSettingsApi';
+import { adminErrorMessage, getRouting, createRouting, deleteRouting, type RoutingInfo } from './adminSettingsApi';
 
 export function RoutingPanel() {
   const [routes, setRoutes] = useState<RoutingInfo[]>([]);
@@ -11,7 +11,7 @@ export function RoutingPanel() {
   const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    getRouting().then(setRoutes).catch(e => setError(e.message)).finally(() => setLoading(false));
+    getRouting().then(setRoutes).catch((e: unknown) => setError(adminErrorMessage(e))).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -22,13 +22,13 @@ export function RoutingPanel() {
       setShowCreate(false);
       setLoading(true);
       load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(adminErrorMessage(e)); }
   };
 
   const handleDelete = async (aliasDomain: string) => {
     if (!confirm(`Delete routing for "${aliasDomain}"?`)) return;
     setDeleting(aliasDomain);
-    try { await deleteRouting(aliasDomain); load(); } catch (e: any) { setError(e.message); }
+    try { await deleteRouting(aliasDomain); load(); } catch (e: unknown) { setError(adminErrorMessage(e)); }
     finally { setDeleting(null); }
   };
 

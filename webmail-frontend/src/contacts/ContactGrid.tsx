@@ -28,6 +28,7 @@ export function ContactGrid({ contacts: c, density }: {
     : `Showing ${c.loadedContactsCount} of ${totalContacts} contacts`;
   const remaining = Math.max(totalContacts - c.loadedContactsCount, 0);
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack virtualizer is intentional for large address books.
   const virtualizer = useVirtualizer({
     count: rows,
     getScrollElement: () => parentRef.current,

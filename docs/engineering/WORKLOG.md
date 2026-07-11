@@ -3896,3 +3896,58 @@ The previous stabilization made frontend lint usable but left 145 warnings and a
 ### Next recommended task
 
 Continue the lint backlog inside `src/mail/hooks/useMail.ts` and `src/mail/ComposeModal.tsx`, then address the React hook warnings in focused feature-module passes.
+
+## 2026-07-11 — Frontend lint backlog cleared
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean after `ae4ba760`
+Ending git state: clean after commit/push
+
+### Selected task
+
+Clear the remaining frontend lint backlog before starting Scheduler implementation.
+
+### Why this task
+
+The repository was already buildable, but frontend lint still had 112 warnings across broad `any` typing, React hook effect patterns, dependency lists, and virtualizer compatibility warnings. The user asked to continue all next tasks until the repository is ready to commit before focusing on Scheduler.
+
+### Changes made
+
+- `webmail-frontend/src/mail/*`
+  - Typed mail hook options, send/draft responses, identities, message state updates, compose contacts/templates/signatures, raw message state, and helper icons.
+- `webmail-frontend/src/admin/*`
+  - Added shared admin error handling, typed telemetry metrics/spam policy parsing, and deferred initial health/update/spam loads.
+- `webmail-frontend/src/calendar/*`, `webmail-frontend/src/contacts/*`
+  - Typed contact/calendar error paths, deferred refresh effects, removed stale dependencies, and documented intentional virtualizer use.
+- `webmail-frontend/src/notes/*`, `webmail-frontend/src/LiveNoteEditor.tsx`
+  - Added minimal Quill editor/blot interfaces, removed note save casts, and fixed notes initial load dependencies.
+- `webmail-frontend/src/settings/SettingsPanel.tsx`, shared hooks, `App.tsx`
+  - Typed account/session/import responses, removed `Intl` casts, and deferred mount checks that synchronously set state.
+- `README.md`, `docs/webmail-release-validation.md`, `.shared_memory/*`
+  - Updated current lint and bundle status.
+
+### Proof / checks run
+
+- `rtk npm --prefix webmail-frontend run lint`
+  - Passed with zero warnings.
+- `rtk npm exec eslint -- . --format json --output-file /tmp/oms-frontend-eslint-final.json`
+  - Reported `total 0`.
+- `rtk npm --prefix webmail-frontend run build`
+  - Passed with no Vite chunk-size advisory. Main chunk is `224.12 kB`; largest route chunk is `481.41 kB`.
+
+### Acceptance criteria
+
+- [x] Frontend lint exits green with zero warnings.
+- [x] No global lint policy was loosened.
+- [x] Frontend build still passes.
+- [x] Current documentation no longer describes stale frontend lint or chunk-size blockers.
+
+### Risks / notes
+
+- Two TanStack virtualizer calls remain intentionally documented with inline compatibility exceptions because virtualization is needed for large mailboxes/address books.
+- This was a static/build cleanup pass, not a browser visual regression pass or live frontend deployment.
+
+### Next recommended task
+
+Run final repo checks, commit/push this cleanup, then decide whether to run clean-VM installer validation before beginning Scheduler Phase 0.

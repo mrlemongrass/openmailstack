@@ -3,6 +3,10 @@ import { io as createSocket } from 'socket.io-client';
 import type { Calendar, CalendarEvent } from '../../shared/types';
 import * as api from '../../shared/api';
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function useCalendar() {
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -45,11 +49,17 @@ export function useCalendar() {
         setCalendars(normalized);
         setEvents(normalized.flatMap((c) => c.events));
       }
-    } catch (e: any) { setCalendarError(e?.message || 'Failed to load calendars'); console.error('Failed to fetch calendars', e); }
+    } catch (e: unknown) { setCalendarError(errorMessage(e, 'Failed to load calendars')); console.error('Failed to fetch calendars', e); }
     setIsRefreshing(false);
   }, []);
 
-  useEffect(() => { setIsLoading(true); refreshCalendars().finally(() => setIsLoading(false)); }, [refreshCalendars]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setIsLoading(true);
+      refreshCalendars().finally(() => setIsLoading(false));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshCalendars]);
 
   useEffect(() => {
     let isActive = true;
@@ -126,8 +136,8 @@ export function useCalendar() {
       await refreshCalendars();
       setEventSaving(false);
       return true;
-    } catch (e: any) { setEventError(e.message || 'Failed to save'); setEventSaving(false); return false; }
-  }, [newEvent, editingEvent, calendars, refreshCalendars]);
+    } catch (e: unknown) { setEventError(errorMessage(e, 'Failed to save')); setEventSaving(false); return false; }
+  }, [newEvent, editingEvent, refreshCalendars]);
 
   const deleteEvent = useCallback(async (eventId: string, calendarId: number, excludeDate?: string) => {
     try {

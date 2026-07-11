@@ -3,13 +3,20 @@ import type {
   Message, MailFolder, Signature, Rule, SavedSearch,
   MailUndoState,
   SearchField, SearchScope,
+  SearchIndexStatusResponse, SearchWorkerStatusResponse,
+  UserIdentities, MailIdentity,
 } from '../../shared/types';
 import * as api from '../../shared/api';
+import type { MailUserSettings } from '../../settings/settingsApi';
 
 interface UseMailOptions {
-  mailSettings: any;
+  mailSettings: MailUserSettings;
   isThreaded: boolean;
-  userIdentities: any;
+  userIdentities: UserIdentities;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 export function useMail(_opts: UseMailOptions) {
@@ -67,12 +74,12 @@ export function useMail(_opts: UseMailOptions) {
   const [searchError, setSearchError] = useState('');
   const [searchInfo, setSearchInfo] = useState('');
   const [mailError, setMailError] = useState('');
-  const [searchIndexStatus, _setSearchIndexStatus] = useState<any>(null);
-  const [searchWorkerStatus, _setSearchWorkerStatus] = useState<any>(null);
+  const [searchIndexStatus, _setSearchIndexStatus] = useState<SearchIndexStatusResponse | null>(null);
+  const [searchWorkerStatus, _setSearchWorkerStatus] = useState<SearchWorkerStatusResponse | null>(null);
   const [savedSearches, _setSavedSearches] = useState<SavedSearch[]>([]);
 
   // Derive send-as identities from auth context
-  const identities: { address: string; name: string }[] = _opts.userIdentities?.address
+  const identities: MailIdentity[] = _opts.userIdentities?.address
     ? [{ address: _opts.userIdentities.address, name: _opts.userIdentities.name || '' },
        ...(_opts.userIdentities.aliases || []).map((a: { address: string; name?: string }) => ({ address: a.address, name: a.name || '' }))]
     : [];
@@ -108,7 +115,7 @@ export function useMail(_opts: UseMailOptions) {
       const folderList = await api.fetchFolders();
       setFolders(folderList);
       setMailError('');
-    } catch (e: any) { setMailError(e?.message || 'Failed to load folders'); console.error('Failed to fetch folders', e); }
+    } catch (e: unknown) { setMailError(errorMessage(e, 'Failed to load folders')); console.error('Failed to fetch folders', e); }
   }, []);
 
   const fetchMessages = useCallback(async () => {
@@ -122,7 +129,7 @@ export function useMail(_opts: UseMailOptions) {
         setMailLowestUid(data.lowestUid || null);
         setMailMoreAvailable(data.moreAvailable !== false);
       }
-    } catch (e: any) { setMailError(e?.message || 'Failed to load messages'); console.error('Failed to fetch messages', e); }
+    } catch (e: unknown) { setMailError(errorMessage(e, 'Failed to load messages')); console.error('Failed to fetch messages', e); }
     finally { setMailLoading(false); }
   }, [activeFolder]);
 
@@ -148,7 +155,7 @@ export function useMail(_opts: UseMailOptions) {
       }
       // Undo send: add 8-second delay so user can cancel
       if (!sendAt) formData.append('delaySeconds', '8');
-      const result: any = await api.sendMessage(formData);
+      const result = await api.sendMessage(formData);
       // Store scheduled ID for undo
       if (result.scheduledId) setUndoSendId(result.scheduledId);
       // Clear compose state on success
@@ -160,9 +167,9 @@ export function useMail(_opts: UseMailOptions) {
       setShowCc(false); setShowBcc(false);
       setIsComposing(false);
       fetchFolders();
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('Send failed', e);
-      setComposeError(e?.message || 'Failed to send message');
+      setComposeError(errorMessage(e, 'Failed to send message'));
     } finally {
       setSending(false);
     }
@@ -227,7 +234,7 @@ export function useMail(_opts: UseMailOptions) {
     for (const uid of uids) {
       if (prefetchedRef.current.has(uid)) continue;
       prefetchedRef.current.add(uid);
-      api.fetchMessage(folderPath, uid).then((data: any) => {
+      api.fetchMessage(folderPath, uid).then((data) => {
         if (data.message) {
           setMessages((prev) => prev.map((m) =>
             m.uid === uid ? { ...m, html: data.message.html, text: data.message.text } : m
@@ -321,7 +328,7 @@ export function useMail(_opts: UseMailOptions) {
       const result = await api.searchMessages(query, scope === 'folder' ? activeFolder : undefined);
       if (result.messages) setMessages(result.messages);
       setSearchInfo(result.source ? `Results from ${result.source}` : '');
-    } catch (e: any) { setSearchError(e.message || 'Search failed'); }
+    } catch (e: unknown) { setSearchError(errorMessage(e, 'Search failed')); }
     setSearchLoading(false);
   }, [activeFolder, fetchMessages]);
 
@@ -344,16 +351,18 @@ export function useMail(_opts: UseMailOptions) {
 
   // ---- Initial load ----
   useEffect(() => {
-    fetchFolders();
+    const folderTimer = window.setTimeout(() => { void fetchFolders(); }, 0);
     api.fetchSignatures().then(setSignatures).catch(() => {});
     api.fetchRules().then(setRules).catch(() => {});
-  }, []);
+    return () => window.clearTimeout(folderTimer);
+  }, [fetchFolders]);
 
   // Refetch messages when folder changes
   useEffect(() => {
     activeFolderRef.current = activeFolder;
-    fetchMessages();
-  }, [activeFolder]);
+    const messageTimer = window.setTimeout(() => { void fetchMessages(); }, 0);
+    return () => window.clearTimeout(messageTimer);
+  }, [activeFolder, fetchMessages]);
 
   // ---- Draft auto-save ----
   useEffect(() => {
@@ -380,7 +389,7 @@ export function useMail(_opts: UseMailOptions) {
           formData.append('attachments', file);
         });
 
-        const result: any = await api.saveDraft(formData);
+        const result = await api.saveDraft(formData);
         if (result.draftId) setDraftId(result.draftId);
         if (result.draftUid) setDraftUid(result.draftUid);
         setDraftSaveStatus('saved');

@@ -28,7 +28,7 @@ Last reviewed: 2026-07-11. All 6 settings milestones complete. Major feature pas
 
 **ActiveSync command-only responses**: `webmail-backend/src/eas-sync.ts` centralizes whether a Sync response should include server-side `Commands`. Calendar command-only Add/Change/Delete acknowledgements now return `Responses` and the next sync key without echoing server `Commands` unless the client explicitly requested changes. `webmail-backend/test/eas-sync.test.cjs` covers command-only, explicit `GetChanges`, and current-key decisions.
 
-**Scripted release validation**: `docs/webmail-release-validation.md` was refreshed after live checks against `mail.housevo.us`. Backend tests/build, static integration, live staging smoke, ActiveSync OPTIONS, autodiscover, CalDAV/CardDAV preflights, TLS/DNS checks, and authenticated public smokes for mail, calendar, CardDAV, ActiveSync mail, and ActiveSync contacts passed. Frontend lint now exits 0, with warnings retained for the staged `any` typing and React compiler-style hook migration backlog. A follow-up frontend cleanup reduced lint warnings from 145 to 112 and split top-level routes so the main build chunk is `223.98 kB`; the largest route chunk is `481.12 kB`.
+**Scripted release validation**: `docs/webmail-release-validation.md` was refreshed after live checks against `mail.housevo.us`. Backend tests/build, static integration, live staging smoke, ActiveSync OPTIONS, autodiscover, CalDAV/CardDAV preflights, TLS/DNS checks, and authenticated public smokes for mail, calendar, CardDAV, ActiveSync mail, and ActiveSync contacts passed. Frontend lint now exits 0 with zero warnings after the typed API/admin/settings/mail/calendar/contacts/notes cleanup. Top-level route code splitting keeps the main build chunk at `224.12 kB`; the largest route chunk is `481.41 kB`.
 
 **Modern admin RBAC**: The modern Node/React Admin app is global-only until domain-admin scoping is explicitly implemented. `webmail-backend/src/auth.ts` now derives `isAdmin` from active `admin.superadmin=1` and rechecks superadmin status on Admin API requests. Non-superadmin rows in `admin` can still exist for legacy/domain-admin purposes, but they must not receive access to the modern global Admin API.
 
@@ -42,7 +42,7 @@ Last reviewed: 2026-07-11. All 6 settings milestones complete. Major feature pas
 
 **Modern webmail installer safety**: `functions/10_webmail.sh` is path-aware for `config.conf` and generates/validates a candidate Nginx config before keeping injected routes. On `nginx -t` failure it restores the previous site config. `tests/integration/run.sh` has static guards for these behaviors.
 
-**Frontend lint state**: `rtk npm --prefix webmail-frontend run lint` exits 0 after the lint policy was aligned with the current migration state. A follow-up typed shared API/admin/settings pass reduced warnings from 145 to 112. `@typescript-eslint/no-explicit-any` is a warning while feature-module response types are tightened incrementally; `react-hooks/set-state-in-effect` is a warning because the current app uses mount effects for async data loading. Keep correctness rules such as unused variables, non-empty non-catch blocks, and React refresh export boundaries as errors.
+**Frontend lint state**: `rtk npm --prefix webmail-frontend run lint` exits 0 with zero warnings. The cleanup removed the remaining staged `@typescript-eslint/no-explicit-any`, `react-hooks/set-state-in-effect`, `react-hooks/exhaustive-deps`, and documented TanStack virtualizer compatibility warnings without loosening the lint policy. Keep correctness rules such as unused variables, non-empty non-catch blocks, and React refresh export boundaries as errors.
 
 ## 2026-06-30 Additions
 
@@ -152,7 +152,7 @@ React frontend:
 - Contacts now listens for authenticated Socket.IO `contacts_updated` events from ActiveSync, CardDAV, and web-app mutations. The Contacts hook refreshes with a debounce and updates the selected detail pane when the refreshed list contains the same contact id.
 - Admin > Rspamd WebUI embeds the live Rspamd controller through the modern `/rspamd/` Nginx proxy and also offers an open-in-new-tab fallback.
 - Resizable panels now use the typed `useDefaultLayout` API with unique panel IDs instead of unsupported casted `autoSaveId` props.
-- The compose rich-text editor and top-level Mail, Calendar, Contacts, Settings, Notes, and Admin routes are lazy-loaded. The current production build main chunk is `223.98 kB`, and the largest route chunk is `481.12 kB`, below the documented 500 kB target.
+- The compose rich-text editor and top-level Mail, Calendar, Contacts, Settings, Notes, and Admin routes are lazy-loaded. The current production build main chunk is `224.12 kB`, and the largest route chunk is `481.41 kB`, below the documented 500 kB target.
 - `webmail-frontend/src/index.css` contains the actual app styling. `webmail-frontend/src/App.css` looks like leftover Vite starter CSS and is not imported by `App.tsx`.
 - `webmail/src/App.tsx` is still the default Vite starter page and is not the active product app; `webmail/README.md` marks it as a deprecated scaffold.
 

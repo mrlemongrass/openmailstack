@@ -4,6 +4,7 @@ import type { useCalendar } from './hooks/useCalendar';
 import { format } from 'date-fns';
 import * as api from '../shared/api';
 import { useToast } from '../shared/components/Toast';
+import type { Contact } from '../shared/types';
 
 const VIDEO_PROVIDERS = [
   { name: 'Google Meet', prefix: 'https://meet.google.com/' },
@@ -35,11 +36,11 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const [allGuestContacts, setAllGuestContacts] = useState<{ name: string; email: string }[]>([]);
 
   useEffect(() => {
-    api.fetchContacts(500, 0).then((data: any) => {
+    api.fetchContacts(500, 0).then((data) => {
       if (data.contacts) {
-        setAllGuestContacts((data.contacts as any[])
-          .filter((c: any) => c.email)
-          .map((c: any) => ({ name: c.name || '', email: c.email })));
+        setAllGuestContacts((data.contacts as Contact[])
+          .filter((c) => c.email)
+          .map((c) => ({ name: c.name || '', email: c.email })));
       }
     }).catch(() => {});
   }, []);
@@ -108,7 +109,8 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   // Initialize guests when modal opens
   useEffect(() => {
     if (cal.isEventModalOpen) {
-      setGuests((cal.newEvent.guests as string[]) || []);
+      const timer = window.setTimeout(() => setGuests((cal.newEvent.guests as string[]) || []), 0);
+      return () => window.clearTimeout(timer);
     }
   }, [cal.isEventModalOpen, cal.newEvent.guests]);
 

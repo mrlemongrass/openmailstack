@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Shield, ShieldCheck, ShieldOff, UserPlus, UserMinus, X } from 'lucide-react';
 import { PromoteAdminModal } from './AdminModals';
-import { demoteAdmin, demoteSuperAdmin, getAdminUsers, promoteAdmin, promoteSuperAdmin, type AdminUserInfo } from './adminSettingsApi';
+import { adminErrorMessage, demoteAdmin, demoteSuperAdmin, getAdminUsers, promoteAdmin, promoteSuperAdmin, type AdminUserInfo } from './adminSettingsApi';
 
 export function AdminsPanel() {
   const [admins, setAdmins] = useState<AdminUserInfo[]>([]);
@@ -12,7 +12,7 @@ export function AdminsPanel() {
   const [updatingSuper, setUpdatingSuper] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    getAdminUsers().then(setAdmins).catch(e => setError(e.message)).finally(() => setLoading(false));
+    getAdminUsers().then(setAdmins).catch((e: unknown) => setError(adminErrorMessage(e))).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -23,27 +23,27 @@ export function AdminsPanel() {
       setShowPromote(false);
       setLoading(true);
       load();
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(adminErrorMessage(e)); }
   };
 
   const handlePromoteSuper = async (username: string) => {
     if (!confirm(`Grant superadmin access to "${username}"? This allows full global administration.`)) return;
     setUpdatingSuper(username);
-    try { await promoteSuperAdmin(username); load(); } catch (e: any) { setError(e.message); }
+    try { await promoteSuperAdmin(username); load(); } catch (e: unknown) { setError(adminErrorMessage(e)); }
     finally { setUpdatingSuper(null); }
   };
 
   const handleDemoteSuper = async (username: string) => {
     if (!confirm(`Remove superadmin access from "${username}"? They will remain a regular admin.`)) return;
     setUpdatingSuper(username);
-    try { await demoteSuperAdmin(username); load(); } catch (e: any) { setError(e.message); }
+    try { await demoteSuperAdmin(username); load(); } catch (e: unknown) { setError(adminErrorMessage(e)); }
     finally { setUpdatingSuper(null); }
   };
 
   const handleDemote = async (username: string) => {
     if (!confirm(`Demote "${username}" from admin? They will lose admin access.`)) return;
     setDemoting(username);
-    try { await demoteAdmin(username); load(); } catch (e: any) { setError(e.message); }
+    try { await demoteAdmin(username); load(); } catch (e: unknown) { setError(adminErrorMessage(e)); }
     finally { setDemoting(null); }
   };
 

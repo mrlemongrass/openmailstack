@@ -23,34 +23,30 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showSnooze, setShowSnooze] = useState(false);
   const [showMoveTo, setShowMoveTo] = useState(false);
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
-  const [bodyLoading, setBodyLoading] = useState(false);
   const [showBackFab, setShowBackFab] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const { messages, fetchMessageBody, messageAction } = mail;
+
+  const messageUid = uid ? parseInt(uid, 10) : 0;
+  const message = messages.find((m) => m.uid === messageUid);
 
   // Fetch full message body when message is selected, and mark as read
   useEffect(() => {
-    if (uid && folder) {
-      const messageUid = parseInt(uid, 10);
-      const msg = mail.messages.find((m) => m.uid === messageUid);
-      if (msg && !msg.html && !msg.text) {
-        setBodyLoading(true);
-        mail.fetchMessageBody(messageUid, decodeURIComponent(folder));
-      }
+    if (message && uid && folder) {
+      const timer = window.setTimeout(() => {
+        if (!message.html && !message.text) {
+          void fetchMessageBody(messageUid, decodeURIComponent(folder));
+        }
       // Mark message as read automatically when viewing
-      if (msg && !msg.isRead) {
-        mail.messageAction('read', [messageUid]);
-      }
+        if (!message.isRead) {
+          void messageAction('read', [messageUid]);
+        }
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
-  }, [uid, folder]);
+  }, [message, uid, folder, messageUid, fetchMessageBody, messageAction]);
 
-  // Clear body loading when message content arrives
-  const messageUid = uid ? parseInt(uid, 10) : 0;
-  const message = mail.messages.find((m) => m.uid === messageUid);
-  useEffect(() => {
-    if (message && (message.html || message.text)) {
-      setBodyLoading(false);
-    }
-  }, [message?.html, message?.text]);
+  const bodyLoading = !!message && !message.html && !message.text;
 
   // Show back button when scrolled past message header
   useEffect(() => {

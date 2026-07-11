@@ -1,5 +1,6 @@
 import type {
   MessageListResponse, MessageResponse, MessageActionResponse,
+  SendMessageResponse, SaveDraftResponse,
   SearchResponse, SearchIndexStatusResponse, SearchIndexRefreshResponse,
   SearchWorkerStatusResponse, SavedSearch,
   MailFolder, Signature, Rule,
@@ -45,13 +46,13 @@ export async function fetchMessage(folder: string, uid: number): Promise<Message
   return res.json();
 }
 
-export async function sendMessage(formData: FormData): Promise<MessageActionResponse> {
+export async function sendMessage(formData: FormData): Promise<SendMessageResponse> {
   const res = await fetch('/api/messages/send', { method: 'POST', body: formData });
   if (!res.ok) throw new Error('Failed to send message');
   return res.json();
 }
 
-export async function saveDraft(formData: FormData): Promise<{ draftId?: string; error?: string }> {
+export async function saveDraft(formData: FormData): Promise<SaveDraftResponse> {
   const res = await fetch('/api/messages/draft', { method: 'POST', body: formData });
   return res.json();
 }

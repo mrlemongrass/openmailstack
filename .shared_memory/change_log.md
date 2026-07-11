@@ -712,3 +712,10 @@ Future entry template:
 - Changed: Lazy-loaded the Mail, Calendar, Contacts, and Settings routes from `webmail-frontend/src/App.tsx`, keeping the authenticated shell smaller and preserving the existing skeleton fallback.
 - Verified: `rtk npm --prefix webmail-frontend run lint` passed with 112 warnings, down from 145. `rtk npm --prefix webmail-frontend run build` passed with no Vite chunk-size advisory; the main chunk is `223.98 kB` and the largest route chunk is `481.12 kB`.
 - Follow-up: Continue warning cleanup in the mail feature modules, starting with `src/mail/hooks/useMail.ts` and `src/mail/ComposeModal.tsx`, then handle React hook warning classes in focused passes.
+
+## 2026-07-11 Frontend Lint Backlog Cleared
+
+- Changed: Removed the remaining frontend lint warnings across Mail, Admin, Calendar, Contacts, Notes, Settings, App, and shared hooks without loosening the lint policy.
+- Changed: Replaced broad `any` casts with local response/editor/domain types, deferred mount-time state-setting loaders where React hooks lint required it, and documented the two intentional TanStack virtualizer compatibility exceptions inline.
+- Verified: `rtk npm --prefix webmail-frontend run lint` exits 0 with zero warnings. `rtk npm --prefix webmail-frontend run build` passes with no Vite chunk-size advisory; the main chunk is `224.12 kB` and the largest route chunk is `481.41 kB`.
+- Follow-up: Frontend lint and bundle-size stabilization are no longer blockers before Scheduler. Remaining pre-Scheduler risk is the clean-VM installer validation and any additional real-client matrix rows the user wants to run before feature work.

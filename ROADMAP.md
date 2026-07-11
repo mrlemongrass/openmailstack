@@ -141,12 +141,14 @@ The contacts and notes apps have been extracted into their own directories with 
 
 `docs/product/scheduler.md` is the detailed product, parity, architecture, and delivery roadmap.
 
-- ❌ Add **Scheduler** immediately after **Notes** in the desktop and mobile web-app navigation.
-- ❌ Add an optional installer choice persisted as `ENABLE_OMS_SCHEDULER`, and install no Scheduler components when it is disabled.
-- ❌ Let only authorized admins enable/disable Scheduler per mailbox; installation alone must not publish or entitle users.
-- ❌ Publish enabled users at `/scheduler/<local-part>` without the mail domain, with admin-assigned alternate handles for reserved/invalid names or cross-domain collisions.
-- ❌ Serve the same Scheduler path on every configured OMS webmail hostname; use an administrator-selected preferred base URL for generated links and validate DNS, Nginx aliases, and TLS coverage.
-- ❌ Deliver native individual event types, availability, public booking, secure reschedule/cancel, OMS Calendar projection, and OMS email notifications.
+- ✅ **Phase 0 foundation complete and deployed with Phase 1**: DST-safe availability and host/booker timezone projection, versioned slot inventory/hold migration, transactional MariaDB repository, booking/provider/outbox/audit contracts, tenant authorization, threat model, and automated parity register are implemented. Unit/contract tests and a disposable MariaDB 11 two-connection capacity-one race pass; migration `001` is now recorded live.
+- 🟡 **Phase 1 deployed; booking workflow validation pending**: optional installation, Admin mailbox entitlements, global handles, preferred/alias hosts, navigation after Notes, event types, availability, native conflict checks, public booking, outbox email/ICS, booking management, and secure cancel/reschedule are live on `mail.housevo.us`. `thang@housevo.us` is enabled at `/scheduler/thang`; both public host aliases, live profile APIs, entitlement-aware navigation, schema migrations, service health, and staging smokes pass. Clean-VM installation plus a real SMTP/CalDAV/ActiveSync booking workflow remain release gates.
+- ✅ Add **Scheduler** immediately after **Notes** in the desktop and mobile web-app navigation.
+- ✅ Add an optional installer choice persisted as `ENABLE_OMS_SCHEDULER`, and install no Scheduler components when it is disabled.
+- ✅ Let only authorized admins enable/disable Scheduler per mailbox; installation alone must not publish or entitle users.
+- ✅ Publish enabled users at `/scheduler/<local-part>` without the mail domain, with admin-assigned alternate handles for reserved/invalid names or cross-domain collisions.
+- ✅ Serve the same Scheduler path on every configured OMS webmail hostname; use a configured preferred base URL for generated links and provision configured aliases into Nginx and TLS SANs.
+- ✅ Deliver native individual event types, availability, public booking, secure reschedule/cancel, OMS Calendar projection, and OMS email notifications.
 - ❌ Reach personal parity with advanced limits, overrides, private/single-use links, seats, recurring bookings, meeting polls, embeds, and migration/import.
 - ❌ Add durable workflows, reminders, provider-backed SMS/WhatsApp/voice, and observable background delivery.
 - ❌ Add teams, collective/group/round-robin/managed events, delegated scheduling, routing forms, attributes, fairness, and explainable assignment.

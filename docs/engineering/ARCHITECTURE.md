@@ -1020,6 +1020,20 @@ Agents should verify:
 - retention and cleanup behavior
 - whether headers can be spoofed by external senders
 
+### 8.8 OMS Scheduler
+
+Status: `Partial - Deployed`
+
+Last verified: 2026-07-11 in the repository and on `mail.housevo.us`.
+
+Phase 0 and Phase 1 are implemented behind `ENABLE_OMS_SCHEDULER`. Ordered migrations create tenant-scoped slot inventory/holds, mailbox entitlements, event types, availability windows, bookings, a leased outbox, and sanitized audit events. Disabled installations do not apply these migrations. Only the existing modern superadmin boundary can enable a mailbox and assign its globally unique public handle.
+
+The Node backend separates public, owner, and Admin Scheduler APIs. Public requests require an allowlisted hostname and unpublished, disabled, unknown, and cross-tenant resources share generic not-found behavior. Booking creation rechecks native calendar conflicts, acquires transactional capacity, stores an immutable event snapshot, projects one VEVENT into the existing `events` table, increments the calendar sync token, and enqueues email/ICS delivery. Reschedule preserves the calendar UID; cancellation deletes the event and writes `calendar_tombstones`, so existing CalDAV and ActiveSync paths consume the same source of truth.
+
+The React app lazy-loads authenticated Scheduler management and unauthenticated `/scheduler/<handle>` pages. Entitled users see Scheduler immediately after Notes. Mobile navigation keeps Mail, Calendar, Contacts, Notes, and Scheduler primary and moves Settings, Sync, and Admin into More.
+
+Evidence: `webmail-backend/src/scheduler/`, `webmail-backend/migrations/001_scheduler_phase0.sql`, `002_scheduler_phase1.sql`, `functions/12_scheduler.sh`, `webmail-frontend/src/scheduler/`, backend tests, static integration guards, the disposable MariaDB lifecycle test, and the live 2026-07-11 deployment. Live Nginx serves Scheduler on both configured hostnames, the backend/frontend match the tested build, migrations are recorded, the entitlement count is zero, and the staging smoke suite passes. Remaining validation is a clean supported VM install plus an admin-enabled physical SMTP/CalDAV/ActiveSync booking, reschedule, and cancellation.
+
 ---
 
 ## 9. ActiveSync, CalDAV, CardDAV, JMAP, and Sync Services
@@ -1306,5 +1320,5 @@ During repository intake, agents should answer these questions and update this f
 
 ## 16. Change Log for This Document
 
+- 2026-07-11: Added and live-verified the OMS Scheduler Phase 0/1 architecture, trust boundaries, native calendar projection, installer gating, alias-host routing, and remaining mailbox/client release validation.
 - 2026-07-02: Converted older root-level `TECHNICAL.md` into an agent-safe architecture document. Added status labels, maintenance policy, verification warnings, source-of-truth rules, and known ambiguity list. Reclassified many feature claims as `Needs Verification` to prevent agents from assuming aspirational or partial features are fully implemented.
-

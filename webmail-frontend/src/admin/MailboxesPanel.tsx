@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Mail, Trash2, Plus, Key, X, Edit3 } from 'lucide-react';
+import { Mail, Trash2, Plus, Key, X, Edit3, CalendarClock } from 'lucide-react';
 import { CreateMailboxModal, ChangePasswordModal } from './AdminModals';
-import { getMailboxes, createMailbox, updateMailbox, deleteMailbox, changeMailboxPassword, getDomains, type CreateMailboxPayload, type UpdateMailboxPayload, type MailboxInfo, type DomainInfo } from './adminSettingsApi';
+import { getMailboxes, createMailbox, updateMailbox, deleteMailbox, changeMailboxPassword, getDomains, getSchedulerAdminMailboxes, setSchedulerMailboxAccess, type SchedulerAdminMailbox, type CreateMailboxPayload, type UpdateMailboxPayload, type MailboxInfo, type DomainInfo } from './adminSettingsApi';
+import { notifySchedulerEntitlementChanged } from '../scheduler/entitlement';
 
 interface EditFormData {
   name: string;
@@ -53,6 +54,29 @@ function EditMailboxModal({ mailbox, onClose, onSave }: { mailbox: MailboxInfo; 
   );
 }
 
+function SchedulerAccessModal({ mailbox, current, onClose, onSave }: {
+  mailbox: MailboxInfo;
+  current?: SchedulerAdminMailbox;
+  onClose: () => void;
+  onSave: (settings: { enabled: boolean; handle: string; timeZone: string }) => Promise<void>;
+}) {
+  const [enabled, setEnabled] = useState(Boolean(current?.scheduler?.enabled));
+  const [handle, setHandle] = useState(current?.scheduler?.handle || mailbox.local_part);
+  const [timeZone, setTimeZone] = useState(current?.scheduler?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  return <div className="modal-overlay" onClick={onClose}><form className="modal-content" onSubmit={async e => { e.preventDefault(); setSaving(true); setError(''); try { await onSave({ enabled, handle, timeZone }); onClose(); } catch (err) { setError(errorMessage(err, 'Failed to update Scheduler access')); } finally { setSaving(false); } }} onClick={e => e.stopPropagation()} style={{ maxWidth: 420, width: '100%' }}>
+    <h3>Scheduler access</h3><p style={{ color: 'var(--text-secondary)', fontSize: '.82rem' }}>{mailbox.username}</p>
+    {error && <div className="status-banner status-error">{error}</div>}
+    <div className="settings-form-grid" style={{ marginTop: 16 }}>
+      <label className="settings-field" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} /><span>Enabled and published</span></label>
+      <label className="settings-field"><span>Public handle</span><input required className="glass-input" value={handle} onChange={e => setHandle(e.target.value)} /></label>
+      <label className="settings-field"><span>Time zone</span><input required className="glass-input" value={timeZone} onChange={e => setTimeZone(e.target.value)} /></label>
+    </div>
+    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button></div>
+  </form></div>;
+}
+
 export function MailboxesPanel() {
   const [mailboxes, setMailboxes] = useState<MailboxInfo[]>([]);
   const [domains, setDomains] = useState<DomainInfo[]>([]);
@@ -62,10 +86,16 @@ export function MailboxesPanel() {
   const [passwordUser, setPasswordUser] = useState<string | null>(null);
   const [editMailbox, setEditMailbox] = useState<MailboxInfo | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [schedulerMailboxes, setSchedulerMailboxes] = useState<Map<string, SchedulerAdminMailbox> | null>(null);
+  const [schedulerUpdating, setSchedulerUpdating] = useState<string | null>(null);
+  const [schedulerEdit, setSchedulerEdit] = useState<MailboxInfo | null>(null);
 
   const load = useCallback(() => {
-    Promise.all([getMailboxes(), getDomains()])
-      .then(([m, d]) => { setMailboxes(m); setDomains(d); })
+    Promise.all([getMailboxes(), getDomains(), getSchedulerAdminMailboxes()])
+      .then(([m, d, scheduler]) => {
+        setMailboxes(m); setDomains(d);
+        setSchedulerMailboxes(scheduler ? new Map(scheduler.mailboxes.map(mailbox => [mailbox.username, mailbox])) : null);
+      })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
@@ -101,6 +131,25 @@ export function MailboxesPanel() {
     setDeleting(username);
     try { await deleteMailbox(username); load(); } catch (e: unknown) { setError(errorMessage(e, 'Failed to delete mailbox')); }
     finally { setDeleting(null); }
+  };
+
+  const toggleScheduler = async (mailbox: MailboxInfo) => {
+    const current = schedulerMailboxes?.get(mailbox.username);
+    const enabled = !current?.scheduler?.enabled;
+    setSchedulerUpdating(mailbox.username);
+    try {
+      await setSchedulerMailboxAccess(mailbox.username, {
+        enabled,
+        handle: current?.scheduler?.handle || mailbox.local_part,
+        timeZone: current?.scheduler?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      });
+      notifySchedulerEntitlementChanged(mailbox.username);
+      load();
+    } catch (err) {
+      setError(errorMessage(err, 'Failed to update Scheduler access'));
+    } finally {
+      setSchedulerUpdating(null);
+    }
   };
 
   if (loading) {
@@ -141,6 +190,7 @@ export function MailboxesPanel() {
                 <th style={{ padding: '10px 12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Name</th>
                 <th style={{ padding: '10px 12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Quota</th>
                 <th style={{ padding: '10px 12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Active</th>
+                {schedulerMailboxes && <th style={{ padding: '10px 12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Scheduler</th>}
                 <th style={{ padding: '10px 12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Actions</th>
               </tr>
             </thead>
@@ -153,6 +203,20 @@ export function MailboxesPanel() {
                   <td style={{ padding: '10px 12px' }}>
                     <span style={{ color: m.active ? 'var(--success, #4caf50)' : 'var(--text-muted, #666)' }}>{m.active ? 'Yes' : 'No'}</span>
                   </td>
+                  {schedulerMailboxes && <td style={{ padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}><button
+                      className="btn btn-secondary"
+                      onClick={() => toggleScheduler(m)}
+                      disabled={!m.active || schedulerUpdating === m.username}
+                      aria-pressed={Boolean(schedulerMailboxes.get(m.username)?.scheduler?.enabled)}
+                      title={schedulerMailboxes.get(m.username)?.scheduler?.enabled ? 'Disable Scheduler' : 'Enable Scheduler'}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 9px', color: schedulerMailboxes.get(m.username)?.scheduler?.enabled ? 'var(--success, #4caf50)' : 'var(--text-secondary)' }}
+                    >
+                      <CalendarClock size={14} />
+                      {schedulerUpdating === m.username ? 'Saving' : schedulerMailboxes.get(m.username)?.scheduler?.enabled ? schedulerMailboxes.get(m.username)?.scheduler?.handle : 'Off'}
+                    </button>
+                    <button className="btn btn-secondary" style={{ padding: '5px 7px' }} title="Configure Scheduler" onClick={() => setSchedulerEdit(m)}><Edit3 size={14} /></button></div>
+                  </td>}
                   <td style={{ padding: '10px 12px', display: 'flex', gap: 6 }}>
                     <button className="btn btn-secondary" onClick={() => setEditMailbox(m)} title="Edit" style={{ padding: '4px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4 }}>
                       <Edit3 size={14} />
@@ -180,6 +244,7 @@ export function MailboxesPanel() {
       {showCreate && <CreateMailboxModal onClose={() => setShowCreate(false)} onSubmit={handleCreate} domains={domains} />}
       {passwordUser && <ChangePasswordModal onClose={() => setPasswordUser(null)} onSubmit={handlePassword} username={passwordUser} />}
       {editMailbox && <EditMailboxModal mailbox={editMailbox} onClose={() => setEditMailbox(null)} onSave={handleEdit} />}
+      {schedulerEdit && schedulerMailboxes && <SchedulerAccessModal mailbox={schedulerEdit} current={schedulerMailboxes.get(schedulerEdit.username)} onClose={() => setSchedulerEdit(null)} onSave={async settings => { await setSchedulerMailboxAccess(schedulerEdit.username, settings); notifySchedulerEntitlementChanged(schedulerEdit.username); load(); }} />}
     </div>
   );
 }

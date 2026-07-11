@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPublicBaseUrl = exports.normalizeMailboxUsername = exports.sieveConfig = exports.smtpConfig = exports.imapConfig = exports.dbConfig = exports.serverConfig = void 0;
+exports.getPublicBaseUrl = exports.normalizeMailboxUsername = exports.sieveConfig = exports.smtpConfig = exports.imapConfig = exports.dbConfig = exports.schedulerConfig = exports.serverConfig = void 0;
 const parseNumber = (name, fallback) => {
     const raw = process.env[name];
     if (!raw)
@@ -36,6 +36,25 @@ exports.serverConfig = {
     uploadLimitBytes: parseNumber('OMS_UPLOAD_LIMIT_BYTES', 25 * 1024 * 1024),
     webhookSecret: optional('OMS_WEBHOOK_SECRET'),
 };
+const schedulerPublicBaseUrl = optional('OMS_SCHEDULER_PUBLIC_BASE_URL', exports.serverConfig.publicBaseUrl).replace(/\/$/, '');
+const schedulerPublicHost = schedulerPublicBaseUrl ? new URL(schedulerPublicBaseUrl).hostname.toLowerCase() : '';
+exports.schedulerConfig = {
+    enabled: parseBoolean('ENABLE_OMS_SCHEDULER', false),
+    publicBaseUrl: schedulerPublicBaseUrl,
+    allowedHosts: Array.from(new Set([
+        schedulerPublicHost,
+        ...optional('OMS_SCHEDULER_HOST_ALIASES')
+            .split(',')
+            .map((host) => host.trim().toLowerCase())
+            .filter(Boolean),
+    ].filter(Boolean))),
+    notificationFrom: optional('OMS_SCHEDULER_NOTIFICATION_FROM', `scheduler@${exports.serverConfig.defaultDomain || 'localhost'}`),
+    smtpHost: optional('OMS_SCHEDULER_SMTP_HOST', optional('OMS_SMTP_HOST', '127.0.0.1')),
+    smtpPort: parseNumber('OMS_SCHEDULER_SMTP_PORT', 25),
+};
+if (exports.schedulerConfig.enabled && (!exports.schedulerConfig.publicBaseUrl || exports.schedulerConfig.allowedHosts.length === 0)) {
+    throw new Error('Enabled OMS Scheduler requires OMS_SCHEDULER_PUBLIC_BASE_URL and at least one allowed hostname');
+}
 exports.dbConfig = {
     host: optional('OMS_DB_HOST', '127.0.0.1'),
     port: parseNumber('OMS_DB_PORT', 3306),

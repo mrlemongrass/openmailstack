@@ -101,12 +101,17 @@ test_modern_webmail_deployment_guards() {
     assert_contains "${install_file}" '"functions/10_webmail.sh"'
     assert_contains "${webmail_file}" 'source "${REPO_DIR}/config.conf"'
     assert_contains "${webmail_file}" 'Node.js >= 20.19.0'
+    assert_contains "${webmail_file}" 'umask 022'
+    assert_contains "${webmail_file}" 'umask 077'
     assert_contains "${webmail_file}" 'write_env_line "OMS_DB_PASSWORD"'
     assert_contains "${webmail_file}" 'location ^~ /api/'
     assert_contains "${webmail_file}" 'location ^~ /carddav'
     assert_contains "${webmail_file}" 'location = /Microsoft-Server-ActiveSync'
+    assert_contains "${webmail_file}" 'if (\$request_method ~ ^(PROPFIND|OPTIONS)$)'
     assert_contains "${webmail_file}" 'END { if (!inserted) exit 2 }'
     assert_contains "${webmail_file}" 'Generated Nginx config failed validation; restoring previous config'
+    assert_contains "${webmail_file}" 'Older live deployments predate the managed marker'
+    assert_contains "${webmail_file}" '# --- OMS Scheduler Route ---'
     assert_contains "${webmail_file}" 'nginx -t'
     assert_contains "${service_file}" 'EnvironmentFile=/etc/openmailstack/webmail-backend.env'
     pass "Modern webmail deployment guards"
@@ -127,6 +132,14 @@ test_authenticated_smoke_guards() {
     assert_contains "${eas_mail_smoke}" 'PASS: ActiveSync mail smoke completed'
     assert_contains "${eas_contacts_smoke}" 'PASS: ActiveSync contacts smoke completed'
     pass "Authenticated smoke scripts are credential-gated and present"
+}
+
+test_scheduler_documentation_guards() {
+    node "${PROJECT_ROOT}/tests/integration/scheduler_docs_guard.cjs"
+}
+
+test_scheduler_phase1_guards() {
+    node "${PROJECT_ROOT}/tests/integration/scheduler_phase1_guard.cjs"
 }
 
 test_dry_run_local() {
@@ -164,6 +177,8 @@ test_rspamd_milter_timeout_guards
 test_mysql_e_reduction_guards
 test_modern_webmail_deployment_guards
 test_authenticated_smoke_guards
+test_scheduler_documentation_guards
+test_scheduler_phase1_guards
 test_dry_run_local
 
 echo "[ok] Integration checks completed."

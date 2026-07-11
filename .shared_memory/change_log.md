@@ -719,3 +719,48 @@ Future entry template:
 - Changed: Replaced broad `any` casts with local response/editor/domain types, deferred mount-time state-setting loaders where React hooks lint required it, and documented the two intentional TanStack virtualizer compatibility exceptions inline.
 - Verified: `rtk npm --prefix webmail-frontend run lint` exits 0 with zero warnings. `rtk npm --prefix webmail-frontend run build` passes with no Vite chunk-size advisory; the main chunk is `224.12 kB` and the largest route chunk is `481.41 kB`.
 - Follow-up: Frontend lint and bundle-size stabilization are no longer blockers before Scheduler. Remaining pre-Scheduler risk is the clean-VM installer validation and any additional real-client matrix rows the user wants to run before feature work.
+
+## 2026-07-11 OMS Scheduler Phase 0 Availability And Slot Holds
+
+- Changed: Added `webmail-backend/src/scheduler/availability.ts`, a pure host-timezone availability engine covering weekly windows, date overrides, busy intervals, buffers, minimum notice, DST gaps/overlaps, and local-midnight boundaries.
+- Changed: Added `webmail-backend/src/scheduler/slot-holds.ts`, a tenant-scoped MariaDB repository using an inventory-row `FOR UPDATE` lock, capacity counters, expiring holds, idempotency keys, and transaction commit/rollback.
+- Changed: Added the unapplied versioned migration `webmail-backend/migrations/001_scheduler_phase0.sql` plus migration conventions. No live schema, routes, installer, service, or production data changed.
+- Verified: Baseline backend 14/14, frontend lint, frontend production build, and static integration checks passed before edits. After edits, backend 16/16 test files pass and focused Scheduler assertions pass.
+- Verified: The migration applies to disposable MariaDB 11. A real two-connection capacity-one race exposed an initial insert deadlock; bounded transaction retry was added, and the rerun produced exactly one hold plus one `SlotUnavailableError` without touching production.
+- Follow-up: Complete the Phase 0 threat/contracts work, then implement installer flag and admin mailbox entitlements before any public booking routes.
+
+## 2026-07-11 OMS Scheduler Phase 0 Completion
+
+- Changed: Added booking/provider and calendar-projection contracts, reliable outbox/audit contracts, and explicit tenant-aware authorization for public, owner, scoped-admin, superadmin, and capability-token actions.
+- Changed: Added the Phase 0 Scheduler threat model and a machine-readable 43-capability parity register across 10 product categories. The integration suite now rejects incomplete capability metadata, non-official sources, missing implemented tests, or missing security/roadmap references.
+- Verified: Backend compilation and all 18 test files pass, including DST gap/overlap, host/booker timezone projection, booking transitions, authorization isolation, transaction retry, and slot capacity behavior. Static integration checks pass with the Scheduler documentation guard.
+- Confirmed: Phase 0 is complete but unmounted and not deployed. No public route, installer flag, Admin entitlement UI, worker, frontend, or production schema change was introduced.
+- Follow-up: Begin Phase 1 with persisted installer state and administrator-controlled per-mailbox entitlements before exposing navigation or public booking routes.
+
+## 2026-07-11 OMS Scheduler Phase 1 MVP Implementation
+
+- Changed: Added opt-in installer persistence, Scheduler component detection, ordered schema installation, disabled-install omission, backend environment rendering, explicit SPA routing, configured Nginx aliases, and multi-host TLS certificate coverage.
+- Changed: Added Admin-only mailbox entitlements with globally unique normalized handles, audit events, immediate unpublishing on disable, entitlement-aware navigation, and a configurable Admin mailbox control.
+- Changed: Added personal event/profile/availability CRUD, recurring native-calendar conflict checks, timezone-aware public slots, transactional booking/capacity confirmation, stable Calendar UID projection, expiring hashed cancel/reschedule tokens, and retrying outbox email/ICS delivery.
+- Changed: Added lazy-loaded Scheduler management after Notes, mobile five-app-plus-More navigation, booking list/detail filters, and responsive public profile, event, booking, confirmation, cancellation, and rescheduling views.
+- Verified: Backend 20/20, frontend lint and production build, full static integration suite, and memory hygiene pass. A disposable MariaDB 11 lifecycle enabled a mailbox, published a 30-minute event, booked it, projected one calendar event, rescheduled the same UID, cancelled it, wrote a tombstone, and released capacity.
+- Verified: Playwright inspected the public booking flow at 1440x900 and 390x844 plus management at desktop/mobile sizes; primary actions remained reachable and no horizontal overflow was detected.
+- Not deployed: No production database, Nginx configuration, service, mailbox entitlement, or mail/calendar data was modified. Clean-VM disabled/enabled installer execution, SMTP delivery, certificate renewal, and physical CalDAV/ActiveSync propagation remain release gates.
+
+## 2026-07-11 OMS Scheduler Phase 1 Live Deployment
+
+- Backed up: Created `/var/backups/openmailstack/20260711_141833` containing all databases, live mail-stack configuration, repository config, deployed backend, deployed frontend, and backend environment; restricted snapshot contents to root.
+- Deployed: Enabled Scheduler with preferred base `https://webmail.housevo.us` and aliases `mail.housevo.us,webmail.housevo.us`, applied migrations `001` and `002`, deployed the tested backend/frontend, restarted `openmailstack.service`, and added the explicit Scheduler SPA route without changing existing mail/DAV/Admin routes.
+- Fixed: Escaped Nginx `$request_method` in the deployment heredoc and added an upgrade-safe path that preserves older unmarked modern-webmail vhosts instead of injecting duplicate `/api`, socket, DAV, and root locations. Both failed Nginx candidates were rejected and the prior live file was automatically restored.
+- Verified: Service is active/enabled, Nginx syntax passes, migrations are recorded, entitlement count is zero, deployed artifacts match the tested build, both public hostnames return the SPA and identical generic API 404s for unpublished `thang`, unauthenticated Admin returns 401, and the full staging smoke suite passes. Live Chromium loaded both mobile SPA routes without page errors or horizontal overflow.
+- Installed: The deployment package refresh upgraded Debian `rsync` from `3.4.1+ds1-5+deb13u3` to `3.4.1+ds1-5+deb13u4`.
+- Follow-up: Enable one dedicated mailbox through modern Admin, then exercise public booking, SMTP/ICS, reschedule, cancellation, Calendar, CalDAV, and ActiveSync before marking Phase 1 release-validated.
+
+## 2026-07-11 Scheduler Entitlement Navigation And Release-Risk Fixes
+
+- Fixed: Scheduler Admin changes emit an entitlement-change event; the authenticated shell refreshes immediately and also refreshes on focus/visibility for cross-tab changes.
+- Fixed: Removed unused vulnerable `pdfjs-dist`, pinned `react-router` to Node-20-compatible `7.18.1`, pinned `react-quill-new` to `3.7.0`, and overrode Quill to non-vulnerable `2.0.2`. Frontend and backend audits now report zero vulnerabilities.
+- Fixed: Confined backend environment `umask 077` to a subshell and set dependency installs to `umask 022`, preventing live deployments from leaving repository `node_modules` unreadable.
+- Deployed: Rebuilt and redeployed the frontend/backend. `thang@housevo.us` remains enabled and published at `/scheduler/thang`; the public profile API returns 200 through both `webmail.housevo.us` and `mail.housevo.us`.
+- Verified: Backend 20/20, frontend lint/build, integration suite, shell syntax, diff checks, zero-vulnerability audits, live service/Nginx health, artifact equality, and Playwright desktop/mobile navigation checks passed.
+- Follow-up: Create the first event type and complete a real booking/reschedule/cancel cycle through SMTP/ICS, OMS Calendar, CalDAV, and ActiveSync.

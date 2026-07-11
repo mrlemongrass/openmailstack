@@ -37,6 +37,12 @@ fi
 echo ""
 read -p "Enter your primary mail domain (e.g., example.com): " USER_DOMAIN
 read -p "Enter an email for Let's Encrypt renewal alerts: " USER_EMAIL
+read -p "Install OMS Scheduler? (y/N): " INSTALL_SCHEDULER
+if [[ "${INSTALL_SCHEDULER}" =~ ^[Yy]$ ]]; then
+    ENABLE_OMS_SCHEDULER_VALUE="true"
+else
+    ENABLE_OMS_SCHEDULER_VALUE="false"
+fi
 
 # Input validation helpers
 # More robust domain validation
@@ -128,6 +134,7 @@ ESCAPED_DOMAIN=$(printf '%s' "${USER_DOMAIN}" | sed 's/[\/&]/\\&/g')
 ESCAPED_EMAIL=$(printf '%s' "${USER_EMAIL}" | sed 's/[\/&]/\\&/g')
 sed -i "s/FIRST_DOMAIN=\"example.com\"/FIRST_DOMAIN=\"${ESCAPED_DOMAIN}\"/" ./config.conf
 sed -i "s/LETSENCRYPT_EMAIL=\"admin@\${FIRST_DOMAIN}\"/LETSENCRYPT_EMAIL=\"${ESCAPED_EMAIL}\"/" ./config.conf
+sed -i "s/ENABLE_OMS_SCHEDULER=\"false\"/ENABLE_OMS_SCHEDULER=\"${ENABLE_OMS_SCHEDULER_VALUE}\"/" ./config.conf
 
 sed -i "s/ChangeMe_Vmail_Pass/$(gen_pass)/" ./config.conf
 sed -i "s/ChangeMe_PFA_Pass/$(gen_pass)/" ./config.conf
@@ -149,4 +156,5 @@ echo -e "${CYAN}===========================================${NC}"
 echo -e "Domain:     ${USER_DOMAIN}"
 echo -e "Hostname:   mail.${USER_DOMAIN}"
 echo -e "Email:      ${USER_EMAIL}"
+echo -e "Scheduler:  ${ENABLE_OMS_SCHEDULER_VALUE}"
 echo -e "${CYAN}===========================================${NC}"

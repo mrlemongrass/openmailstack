@@ -2518,6 +2518,9 @@ exports.apiRouter.put('/admin/mailboxes/:username', requireAuth, requireAdmin, a
         await withTransaction(async (connection) => {
             await connection.query('UPDATE mailbox SET name = ?, quota = ?, active = ?, phone = ?, email_other = ?, modified = NOW() WHERE username = ?', [name, quota, active, phone, emailOther, oldUsername]);
             await connection.query('UPDATE alias SET active = ?, modified = NOW() WHERE address = ? AND goto = ?', [active, oldUsername, oldUsername]);
+            if (config_1.schedulerConfig.enabled && active === 0) {
+                await connection.query('UPDATE scheduler_mailbox_entitlements SET enabled = 0, published = 0 WHERE username = ?', [oldUsername]);
+            }
             if (hasMailboxProfileFields(req.body)) {
                 await upsertMailboxProfile(connection, oldUsername, req.body, req.user.username);
             }
@@ -2554,6 +2557,9 @@ exports.apiRouter.delete('/admin/mailboxes/:username', requireAuth, requireAdmin
     try {
         const username = requireValidMailbox(req.params.username);
         await withTransaction(async (connection) => {
+            if (config_1.schedulerConfig.enabled) {
+                await connection.query('UPDATE scheduler_mailbox_entitlements SET enabled = 0, published = 0 WHERE username = ?', [username]);
+            }
             await connection.query('DELETE FROM mailbox WHERE username = ?', [username]);
             await connection.query('DELETE FROM alias WHERE address = ? AND goto = ?', [username, username]);
         });

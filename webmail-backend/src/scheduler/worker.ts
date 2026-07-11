@@ -1,0 +1,168 @@
+import crypto from 'crypto';
+import nodemailer from 'nodemailer';
+import { pool } from '../db';
+import { schedulerConfig } from '../config';
+
+interface OutboxRow {
+    id: string;
+    event_type: string;
+    payload: string;
+    attempts: number;
+}
+
+interface NotificationPayload {
+    bookingId: string;
+    hostEmail: string;
+    bookerEmail: string;
+    bookerName: string;
+    title?: string;
+    start: string;
+    end?: string;
+    timeZone?: string;
+    cancelToken?: string;
+    rescheduleToken?: string;
+    ical?: string;
+    event?: { title?: string };
+}
+
+export interface SchedulerMail {
+    to: string;
+    subject: string;
+    text: string;
+    ical?: string;
+}
+
+const readableDate = (value: string, timeZone = 'UTC'): string => new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    dateStyle: 'full',
+    timeStyle: 'short',
+}).format(new Date(value));
+
+export function schedulerNotificationMails(eventType: string, payload: NotificationPayload, baseUrl: string): SchedulerMail[] {
+    const title = payload.title || payload.event?.title || 'Meeting';
+    const when = readableDate(payload.start, payload.timeZone || 'UTC');
+    if (eventType === 'booking.confirmed') {
+        const cancelUrl = `${baseUrl}/scheduler/action/cancel/${encodeURIComponent(payload.cancelToken || '')}`;
+        const rescheduleUrl = `${baseUrl}/scheduler/action/reschedule/${encodeURIComponent(payload.rescheduleToken || '')}`;
+        return [
+            {
+                to: payload.bookerEmail,
+                subject: `Confirmed: ${title}`,
+                text: `${title} with ${payload.hostEmail} is confirmed for ${when}.\n\nCancel: ${cancelUrl}\nReschedule: ${rescheduleUrl}`,
+                ical: payload.ical,
+            },
+            {
+                to: payload.hostEmail,
+                subject: `New booking: ${title}`,
+                text: `${payload.bookerName} (${payload.bookerEmail}) booked ${title} for ${when}.`,
+                ical: payload.ical,
+            },
+        ];
+    }
+    if (eventType === 'booking.cancelled') {
+        return [payload.bookerEmail, payload.hostEmail].map((to) => ({
+            to,
+            subject: `Cancelled: ${title}`,
+            text: `${title}, previously scheduled for ${when}, has been cancelled.`,
+            ical: payload.ical,
+        }));
+    }
+    if (eventType === 'booking.rescheduled') {
+        return [payload.bookerEmail, payload.hostEmail].map((to) => ({
+            to,
+            subject: `Rescheduled: ${title}`,
+            text: `${title} is now scheduled for ${when}.`,
+            ical: payload.ical,
+        }));
+    }
+    return [];
+}
+
+async function claimOutbox(workerId: string): Promise<OutboxRow[]> {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const [rows]: any = await connection.query(
+            `SELECT id, event_type, payload, attempts
+             FROM scheduler_outbox
+             WHERE completed_at IS NULL AND dead_lettered_at IS NULL AND available_at <= UTC_TIMESTAMP(3)
+               AND (lease_expires_at IS NULL OR lease_expires_at <= UTC_TIMESTAMP(3))
+             ORDER BY created_at
+             LIMIT 10
+             FOR UPDATE SKIP LOCKED`
+        );
+        const leaseUntil = new Date(Date.now() + 60_000).toISOString().slice(0, 23).replace('T', ' ');
+        for (const row of rows) {
+            await connection.query(
+                'UPDATE scheduler_outbox SET lease_owner=?, lease_expires_at=?, attempts=attempts+1 WHERE id=?',
+                [workerId, leaseUntil, row.id]
+            );
+            row.attempts = Number(row.attempts) + 1;
+        }
+        await connection.commit();
+        return rows;
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+}
+
+async function deliverOutbox(row: OutboxRow, workerId: string): Promise<void> {
+    try {
+        const payload = JSON.parse(row.payload) as NotificationPayload;
+        const messages = schedulerNotificationMails(row.event_type, payload, schedulerConfig.publicBaseUrl);
+        const transporter = nodemailer.createTransport({
+            host: schedulerConfig.smtpHost,
+            port: schedulerConfig.smtpPort,
+            secure: false,
+            tls: { rejectUnauthorized: process.env.NODE_ENV === 'production' },
+        });
+        for (const message of messages) {
+            await transporter.sendMail({
+                from: schedulerConfig.notificationFrom,
+                to: message.to,
+                subject: message.subject,
+                text: message.text,
+                attachments: message.ical ? [{ filename: 'invite.ics', content: message.ical, contentType: 'text/calendar; charset=utf-8' }] : [],
+            });
+        }
+        await pool.query(
+            "UPDATE scheduler_outbox SET completed_at=UTC_TIMESTAMP(3), payload='{}', lease_owner=NULL, lease_expires_at=NULL WHERE id=? AND lease_owner=?",
+            [row.id, workerId]
+        );
+    } catch (error: any) {
+        const errorCode = String(error?.code || 'delivery_failed').slice(0, 80);
+        if (row.attempts >= 8) {
+            await pool.query(
+                'UPDATE scheduler_outbox SET dead_lettered_at=UTC_TIMESTAMP(3), last_error_code=?, lease_owner=NULL, lease_expires_at=NULL WHERE id=? AND lease_owner=?',
+                [errorCode, row.id, workerId]
+            );
+        } else {
+            const delaySeconds = Math.min(3600, 2 ** row.attempts * 15);
+            await pool.query(
+                'UPDATE scheduler_outbox SET available_at=DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ? SECOND), last_error_code=?, lease_owner=NULL, lease_expires_at=NULL WHERE id=? AND lease_owner=?',
+                [delaySeconds, errorCode, row.id, workerId]
+            );
+        }
+    }
+}
+
+let timer: NodeJS.Timeout | null = null;
+
+export function startSchedulerWorker(): void {
+    if (!schedulerConfig.enabled || timer) return;
+    const workerId = `scheduler-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+    const run = async () => {
+        try {
+            const rows = await claimOutbox(workerId);
+            for (const row of rows) await deliverOutbox(row, workerId);
+        } catch (error) {
+            if (process.env.NODE_ENV !== 'test') console.error('Scheduler worker failed:', error);
+        }
+    };
+    timer = setInterval(() => void run(), 15_000);
+    timer.unref();
+    void run();
+}

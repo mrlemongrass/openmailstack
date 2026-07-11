@@ -36,6 +36,28 @@ export const serverConfig = {
     webhookSecret: optional('OMS_WEBHOOK_SECRET'),
 };
 
+const schedulerPublicBaseUrl = optional('OMS_SCHEDULER_PUBLIC_BASE_URL', serverConfig.publicBaseUrl).replace(/\/$/, '');
+const schedulerPublicHost = schedulerPublicBaseUrl ? new URL(schedulerPublicBaseUrl).hostname.toLowerCase() : '';
+
+export const schedulerConfig = {
+    enabled: parseBoolean('ENABLE_OMS_SCHEDULER', false),
+    publicBaseUrl: schedulerPublicBaseUrl,
+    allowedHosts: Array.from(new Set([
+        schedulerPublicHost,
+        ...optional('OMS_SCHEDULER_HOST_ALIASES')
+            .split(',')
+            .map((host) => host.trim().toLowerCase())
+            .filter(Boolean),
+    ].filter(Boolean))),
+    notificationFrom: optional('OMS_SCHEDULER_NOTIFICATION_FROM', `scheduler@${serverConfig.defaultDomain || 'localhost'}`),
+    smtpHost: optional('OMS_SCHEDULER_SMTP_HOST', optional('OMS_SMTP_HOST', '127.0.0.1')),
+    smtpPort: parseNumber('OMS_SCHEDULER_SMTP_PORT', 25),
+};
+
+if (schedulerConfig.enabled && (!schedulerConfig.publicBaseUrl || schedulerConfig.allowedHosts.length === 0)) {
+    throw new Error('Enabled OMS Scheduler requires OMS_SCHEDULER_PUBLIC_BASE_URL and at least one allowed hostname');
+}
+
 export const dbConfig = {
     host: optional('OMS_DB_HOST', '127.0.0.1'),
     port: parseNumber('OMS_DB_PORT', 3306),

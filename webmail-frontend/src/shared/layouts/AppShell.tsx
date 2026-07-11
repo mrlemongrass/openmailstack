@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router';
 import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { Settings, ShieldAlert, Activity, Mail, CalendarDays, Users, StickyNote } from 'lucide-react';
+import { Settings, ShieldAlert, Activity, Mail, CalendarDays, Users, StickyNote, CalendarClock, MoreHorizontal } from 'lucide-react';
+import { SCHEDULER_ENTITLEMENT_CHANGED } from '../../scheduler/entitlement';
 
 function useActiveApp(): string {
   const { pathname } = useLocation();
@@ -9,6 +11,7 @@ function useActiveApp(): string {
   if (pathname.startsWith('/calendar')) return 'calendar';
   if (pathname.startsWith('/contacts')) return 'contacts';
   if (pathname.startsWith('/notes')) return 'notes';
+  if (pathname.startsWith('/scheduler-app')) return 'scheduler';
   if (pathname.startsWith('/settings')) return 'settings';
   if (pathname.startsWith('/admin')) return 'admin';
   if (pathname.startsWith('/sync')) return 'sync';
@@ -19,12 +22,39 @@ export function AppShell() {
   const { user, logout } = useAuth();
   const isMobile = useMediaQuery('(max-width: 767px)');
   const activeApp = useActiveApp();
+  const [schedulerEnabled, setSchedulerEnabled] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshSchedulerStatus = () => {
+      fetch('/api/scheduler/v1/status', { credentials: 'include' })
+        .then(async response => response.ok ? response.json() as Promise<{ enabled?: boolean }> : null)
+        .then(result => { if (!cancelled) setSchedulerEnabled(Boolean(result?.enabled)); })
+        .catch(() => { if (!cancelled) setSchedulerEnabled(false); });
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refreshSchedulerStatus();
+    };
+
+    refreshSchedulerStatus();
+    window.addEventListener(SCHEDULER_ENTITLEMENT_CHANGED, refreshSchedulerStatus);
+    window.addEventListener('focus', refreshSchedulerStatus);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(SCHEDULER_ENTITLEMENT_CHANGED, refreshSchedulerStatus);
+      window.removeEventListener('focus', refreshSchedulerStatus);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [user?.email]);
 
   const navItems = [
     { id: 'mail', label: 'Mail', icon: Mail, path: '/mail/inbox' },
     { id: 'calendar', label: 'Calendar', icon: CalendarDays, path: '/calendar/month' },
     { id: 'contacts', label: 'Contacts', icon: Users, path: '/contacts' },
     { id: 'notes', label: 'Notes', icon: StickyNote, path: '/notes' },
+    ...(schedulerEnabled ? [{ id: 'scheduler', label: 'Scheduler', icon: CalendarClock, path: '/scheduler-app' }] : []),
   ];
 
   return (
@@ -101,26 +131,25 @@ export function AppShell() {
               {item.label}
             </Link>
           ))}
-          <Link to="/settings"
+          <button type="button" onClick={() => setMoreOpen(open => !open)} aria-label="More applications"
             style={{
               flex: 1, display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center',
-              color: activeApp === 'settings' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-              textDecoration: 'none', fontSize: '0.7rem', gap: 2,
+              alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+              color: ['settings', 'sync', 'admin'].includes(activeApp) ? 'var(--accent-primary)' : 'var(--text-secondary)',
+              background: 'transparent', border: 0, fontSize: '0.7rem', gap: 2,
             }}>
-            <Settings size={20} />
-            Settings
-          </Link>
-          <Link to="/admin"
-            style={{
-              flex: 1, display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center',
-              color: activeApp === 'admin' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-              textDecoration: 'none', fontSize: '0.7rem', gap: 2,
-            }}>
-            <ShieldAlert size={20} />
-            Admin
-          </Link>
+            <MoreHorizontal size={20} />
+            More
+          </button>
+          {moreOpen && <div style={{
+            position: 'fixed', right: 10, bottom: 64, minWidth: 180, padding: 6,
+            border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-primary)', boxShadow: '0 12px 36px rgba(0,0,0,.3)', zIndex: 120,
+          }}>
+            <Link to="/settings" onClick={() => setMoreOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none' }}><Settings size={17} /> Settings</Link>
+            <Link to="/sync" onClick={() => setMoreOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none' }}><Activity size={17} /> Sync</Link>
+            <Link to="/admin" onClick={() => setMoreOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none' }}><ShieldAlert size={17} /> Admin</Link>
+          </div>}
         </nav>
       )}
     </div>

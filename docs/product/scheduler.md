@@ -1,6 +1,6 @@
 # OMS Scheduler Product And Engineering Roadmap
 
-Status: `Planned`
+Status: `Phase 1 Deployed - First Mailbox Enabled, Booking Workflow Validation Pending`
 
 Research date: 2026-07-10
 
@@ -79,6 +79,8 @@ The differentiator should be **a complete scheduling product included with the c
 ## 3. OMS Capability Contract
 
 The following register is the parity scope. A phase is complete only when its entries have automated tests and the documented acceptance behavior.
+
+Machine-readable status is maintained in [`scheduler-capabilities.json`](scheduler-capabilities.json) and validated by `tests/integration/scheduler_docs_guard.cjs`. Security boundaries and release gates are defined in [`scheduler-threat-model.md`](scheduler-threat-model.md).
 
 ### 3.1 Individual scheduling
 
@@ -288,41 +290,56 @@ Estimates are engineering ranges, not commitments. Full competitor parity is a s
 
 ### Phase 0 - Architecture and parity baseline (2-3 weeks)
 
-Deliver:
+Implementation status (2026-07-11): `Complete`
 
-- Approve the product decisions in section 8.
-- Create versioned migration and scheduler module conventions.
-- Define booking, availability, provider, permission, outbox, and audit contracts.
-- Add the parity register to automated documentation checks.
-- Threat model public booking, OAuth secrets, payments, webhooks, tenant boundaries, spam, and enumeration.
-- Prototype DST-safe availability and concurrent slot holds.
+- Implemented: pure `calculateAvailability` contract in `webmail-backend/src/scheduler/availability.ts` with weekly windows, date overrides, busy intervals, buffers, minimum notice, IANA timezones, DST gap/overlap handling, and local-midnight boundaries.
+- Implemented: versioned `001_scheduler_phase0.sql` migration defining tenant-scoped slot inventory and expiring/idempotent holds. The migration is not applied automatically or to production.
+- Implemented: `SchedulerSlotHoldRepository` in `webmail-backend/src/scheduler/slot-holds.ts` using an inventory-row `FOR UPDATE` lock, capacity counters, expiration cleanup, idempotency, commit, and rollback.
+- Implemented: booking/provider contracts in `webmail-backend/src/scheduler/contracts.ts`, outbox/audit contracts in `webmail-backend/src/scheduler/outbox.ts`, and tenant authorization in `webmail-backend/src/scheduler/authorization.ts`.
+- Verified: unit coverage for host/booker timezone projection, DST gap/overlap, overrides, conflicts/buffers, notice, midnight, validation, transaction commit/rollback, capacity rejection, idempotent replay, booking transitions, and tenant authorization.
+- Verified: `001_scheduler_phase0.sql` applies to a disposable MariaDB 11 instance, and the two-connection capacity-one race produces exactly one hold. Deadlock/lock-timeout retries are bounded at the transaction boundary.
+- Implemented: Phase 0 threat model and public/owner/admin/capability/worker API boundary decisions in `docs/product/scheduler-threat-model.md`.
+- Implemented: machine-readable parity register in `docs/product/scheduler-capabilities.json`, enforced by the static integration suite.
+
+Delivered:
+
+- [x] Approve the product decisions in section 8.
+- [x] Create versioned migration and scheduler module conventions.
+- [x] Define booking, availability, provider, permission, outbox, and audit contracts.
+- [x] Add the parity register to automated documentation checks.
+- [x] Threat model public booking, OAuth secrets, payments, webhooks, tenant boundaries, spam, and enumeration.
+- [x] Prototype DST-safe availability and concurrent slot holds.
 
 Exit criteria:
 
-- Two concurrent requests for the last slot yield one confirmed hold/booking.
-- Timezone test matrix covers DST gap/overlap and host/booker timezone differences.
-- Public/authenticated API boundaries and tenant ownership rules are reviewed.
+- [x] Two concurrent requests for the last slot yield one confirmed hold and one capacity rejection.
+- [x] Timezone test matrix covers DST gap/overlap and host/booker timezone differences.
+- [x] Public/authenticated API boundaries and tenant ownership rules are documented and enforced by contract tests.
 
 ### Phase 1 - Native individual scheduler MVP (6-8 weeks)
 
-Deliver:
+Implementation status (2026-07-11): `Deployed; first mailbox enabled; booking workflow validation pending`
 
-- Scheduler navigation after Notes, responsive app shell, onboarding, profile/handle, event-type CRUD, and reusable availability.
-- Installer opt-in, component detection, deterministic configuration, Admin per-mailbox enable/disable control, audit events, and entitlement-aware navigation.
-- Native OMS calendar conflict checks and destination-calendar selection.
-- Public profile/event pages, slot selection, booking form, confirmation, secure cancel, and secure reschedule.
-- OMS email confirmations and ICS; native Calendar event projection visible through web, CalDAV, and ActiveSync.
-- Booking list/detail and basic upcoming/past/canceled filters.
-- Lazy-loaded Scheduler bundle and installer/Nginx routes.
+Delivered:
+
+- [x] Scheduler navigation after Notes, responsive app shell, onboarding, profile/handle, event-type CRUD, and reusable availability.
+- [x] Installer opt-in, component detection, deterministic configuration, Admin per-mailbox enable/disable control, audit events, and entitlement-aware navigation.
+- [x] Native OMS calendar conflict checks and destination-calendar selection, including recurring busy events.
+- [x] Public profile/event pages, timezone-aware slot selection, booking form, confirmation, expiring secure cancel, and expiring secure reschedule.
+- [x] OMS email confirmations/cancellations/reschedules with ICS through a leased retrying outbox; native Calendar event projection writes the existing CalDAV/ActiveSync source tables.
+- [x] Booking list/detail and basic upcoming/past/canceled filters.
+- [x] Lazy-loaded Scheduler management/public bundles and installer/Nginx routes with preferred-host and alias-aware TLS provisioning.
 
 Exit criteria:
 
-- A new user can publish a 30-minute event and accept a booking without configuring an external service.
-- A fresh install can omit Scheduler completely, and an installed Scheduler publishes no mailbox until an admin enables it.
-- Enabling `user@example.com` exposes `https://<oms-host>/scheduler/user`; disabling the user removes public and authenticated access without deleting existing bookings.
-- The booking appears once in OMS Calendar and real CalDAV/ActiveSync clients.
-- Cancel/reschedule stays consistent across Scheduler and Calendar.
-- Mobile public booking and management flows meet the documented accessibility checks.
+- [x] Disposable MariaDB lifecycle proves an enabled user can publish a 30-minute event and accept a booking without an external provider.
+- [x] Installer guards prove disabled configuration omits Scheduler migrations and enabled installation begins with no entitled mailboxes; clean-VM execution remains a release gate.
+- [x] Admin enable/disable, globally unique handles, generic public not-found behavior, and entitlement-aware authenticated access are implemented and guarded.
+- [ ] Physical CalDAV/ActiveSync clients must confirm the projected booking after deployment; the disposable lifecycle proves one `events` row and sync-token changes in the shared native store.
+- [x] Disposable lifecycle proves reschedule updates the same calendar UID and cancel removes it, writes a tombstone, and releases capacity.
+- [x] Playwright verified public booking and management layouts at 1440x900 and 390x844 with reachable primary actions, mobile More navigation, and no horizontal overflow.
+
+Live upgrade deployment passed on `mail.housevo.us`: both migrations are recorded, the backend/frontend match the tested build, Nginx serves `/scheduler/` on both `mail.housevo.us` and `webmail.housevo.us`, the certificate covers both names, and the staging smoke suite passes. `thang@housevo.us` is enabled and published as `/scheduler/thang`; both hostname APIs return the profile, and the navigation refreshes immediately after an Admin entitlement change. Release validation still requires a clean supported VM with Scheduler both disabled and enabled, then a real event booking/reschedule/cancel through SMTP, CalDAV, and ActiveSync clients.
 
 ### Phase 2 - Complete personal parity (5-7 weeks)
 
@@ -487,8 +504,8 @@ No phase is `Implemented` until:
 
 ## 9. First Bounded Implementation Task
 
-Start Phase 0 with one bounded vertical slice:
+Phase 0 completed this bounded vertical slice:
 
 > Implement and test the pure availability engine contract plus MariaDB slot holds for a single native OMS calendar and a fixed-duration event type. Prove DST behavior and prove that two concurrent attempts cannot confirm the same one-seat slot.
 
-This is the highest-risk shared foundation. Navigation and event-type screens should follow only after the concurrency and timezone model is sound.
+This highest-risk shared foundation is now proven. Phase 1 begins with persisted installation and mailbox entitlement state before adding navigation, event-type screens, or public booking routes.

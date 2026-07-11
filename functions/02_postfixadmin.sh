@@ -17,6 +17,7 @@ echo -e "${YELLOW}Starting PostfixAdmin Installation...${NC}"
 source ./config.conf
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/lib_os.sh"
+source "${SCRIPT_DIR}/lib_scheduler.sh"
 detect_openmailstack_os
 
 POSTFIXADMIN_ALLOW_LAB_DOMAINS="${POSTFIXADMIN_ALLOW_LAB_DOMAINS:-0}"
@@ -122,6 +123,7 @@ chmod 640 /var/www/postfixadmin/config.local.php
 
 # 4. Configure Nginx
 echo -e "Configuring Nginx for PostfixAdmin..."
+NGINX_SERVER_NAMES="$(openmailstack_scheduler_server_names)"
 PHP_SOCK=$(openmailstack_php_fpm_socket || true)
 if [[ -z "${PHP_SOCK}" ]]; then
     echo -e "\033[0;31mError: Could not detect a PHP-FPM socket for ${OPENMAILSTACK_OS_LABEL}.\033[0m"
@@ -131,7 +133,7 @@ fi
 cat <<EOF > /etc/nginx/sites-available/mailserver.conf
 server {
     listen 80;
-    server_name ${MAIL_HOSTNAME};
+    server_name ${NGINX_SERVER_NAMES};
     root /var/www/html;
     index index.php index.html;
 

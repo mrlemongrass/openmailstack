@@ -9,6 +9,14 @@ export declare const serverConfig: {
     uploadLimitBytes: number;
     webhookSecret: string;
 };
+export declare const schedulerConfig: {
+    enabled: boolean;
+    publicBaseUrl: string;
+    allowedHosts: string[];
+    notificationFrom: string;
+    smtpHost: string;
+    smtpPort: number;
+};
 export declare const dbConfig: {
     host: string;
     port: number;

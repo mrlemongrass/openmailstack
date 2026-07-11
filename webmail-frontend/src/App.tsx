@@ -10,6 +10,9 @@ const MailRoutes = lazy(() => import('./mail/routes').then(m => ({ default: m.Ma
 const CalendarRoutes = lazy(() => import('./calendar/routes').then(m => ({ default: m.CalendarRoutes })));
 const ContactsRoutes = lazy(() => import('./contacts/routes').then(m => ({ default: m.ContactsRoutes })));
 const NotesRoutes = lazy(() => import('./notes/routes').then(m => ({ default: m.NotesRoutes })));
+const SchedulerRoutes = lazy(() => import('./scheduler/routes').then(m => ({ default: m.SchedulerRoutes })));
+const PublicSchedulerPage = lazy(() => import('./scheduler/PublicScheduler').then(m => ({ default: m.PublicSchedulerPage })));
+const SchedulerActionPage = lazy(() => import('./scheduler/PublicScheduler').then(m => ({ default: m.SchedulerActionPage })));
 const SettingsRoutes = lazy(() => import('./settings/routes').then(m => ({ default: m.SettingsRoutes })));
 const AdminRoutes = lazy(() => import('./admin/routes').then(m => ({ default: m.AdminRoutes })));
 
@@ -239,12 +242,15 @@ export default function App() {
   return (
     <ToastProvider>
     <Routes>
+      <Route path="scheduler/action/:scope/:token" element={<Suspense fallback={<Skeleton />}><SchedulerActionPage /></Suspense>} />
+      <Route path="scheduler/:handle/:slug?" element={<Suspense fallback={<Skeleton />}><PublicSchedulerPage /></Suspense>} />
       <Route element={<AuthGate />}>
         <Route element={<ErrorBoundary><AppShell /></ErrorBoundary>}>
           <Route path="mail/*" element={<Suspense fallback={<Skeleton />}><MailRoutes /></Suspense>} />
           <Route path="calendar/*" element={<Suspense fallback={<Skeleton />}><CalendarRoutes /></Suspense>} />
           <Route path="contacts/*" element={<Suspense fallback={<Skeleton />}><ContactsRoutes /></Suspense>} />
           <Route path="notes/*" element={<Suspense fallback={<Skeleton />}><NotesRoutes /></Suspense>} />
+          <Route path="scheduler-app/*" element={<Suspense fallback={<Skeleton />}><SchedulerRoutes /></Suspense>} />
           <Route path="settings/*" element={<Suspense fallback={<Skeleton />}><SettingsRoutes /></Suspense>} />
           <Route path="admin/*" element={<Suspense fallback={<Skeleton />}><AdminRoutes /></Suspense>} />
           <Route path="sync" element={<SyncView />} />

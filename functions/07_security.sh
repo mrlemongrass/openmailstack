@@ -18,6 +18,7 @@ echo -e "${YELLOW}Starting Security Configuration (SSL, Firewall, Fail2ban)...${
 source ./config.conf
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/lib_os.sh"
+source "${SCRIPT_DIR}/lib_scheduler.sh"
 detect_openmailstack_os
 
 export DEBIAN_FRONTEND=noninteractive
@@ -40,15 +41,31 @@ if openmailstack_package_installed "fail2ban"; then SEC_HAS_FAIL2BAN=1; fi
 CERT_FILE=""
 KEY_FILE=""
 LE_CERT_DIR="/etc/letsencrypt/live/${MAIL_HOSTNAME}"
+mapfile -t CERT_HOSTS < <(openmailstack_scheduler_hosts)
+
+certificate_covers_hosts() {
+    local certificate="$1" host
+    [[ -f "${certificate}" ]] || return 1
+    for host in "${CERT_HOSTS[@]}"; do
+        openssl x509 -in "${certificate}" -noout -checkhost "${host}" >/dev/null 2>&1 || return 1
+    done
+}
 
 generate_self_signed_cert() {
     echo -e "\n${YELLOW}Generating Self-Signed Certificate for local testing...${NC}"
     mkdir -p /etc/ssl/openmailstack
 
+    local san host
+    san=""
+    for host in "${CERT_HOSTS[@]}"; do
+        [[ -n "${san}" ]] && san+=","
+        san+="DNS:${host}"
+    done
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout /etc/ssl/openmailstack/privkey.pem \
         -out /etc/ssl/openmailstack/fullchain.pem \
-        -subj "/C=US/ST=Test/L=Test/O=OpenMailStack/CN=${MAIL_HOSTNAME}" 2>/dev/null
+        -subj "/C=US/ST=Test/L=Test/O=OpenMailStack/CN=${MAIL_HOSTNAME}" \
+        -addext "subjectAltName=${san}" 2>/dev/null
 
     CERT_FILE="/etc/ssl/openmailstack/fullchain.pem"
     KEY_FILE="/etc/ssl/openmailstack/privkey.pem"
@@ -101,7 +118,8 @@ configure_nginx_tls() {
 }
 
 request_letsencrypt_cert() {
-    if [[ -f "${LE_CERT_DIR}/fullchain.pem" && -f "${LE_CERT_DIR}/privkey.pem" ]]; then
+    if [[ -f "${LE_CERT_DIR}/fullchain.pem" && -f "${LE_CERT_DIR}/privkey.pem" ]] \
+        && certificate_covers_hosts "${LE_CERT_DIR}/fullchain.pem"; then
         return 0
     fi
 
@@ -109,7 +127,10 @@ request_letsencrypt_cert() {
         return 1
     fi
 
-    certbot certonly --nginx --non-interactive --agree-tos --email "${LETSENCRYPT_EMAIL}" -d "${MAIL_HOSTNAME}"
+    local domain_args=() host
+    for host in "${CERT_HOSTS[@]}"; do domain_args+=("-d" "${host}"); done
+    certbot certonly --nginx --non-interactive --agree-tos --email "${LETSENCRYPT_EMAIL}" \
+        --cert-name "${MAIL_HOSTNAME}" --expand "${domain_args[@]}"
 
     [[ -f "${LE_CERT_DIR}/fullchain.pem" && -f "${LE_CERT_DIR}/privkey.pem" ]]
 }

@@ -10,7 +10,7 @@ import { ManageSieveClient } from './managesieve';
 import bcrypt from 'bcryptjs';
 import { pool } from './db';
 import { canDemoteGlobalAdmin, clearSession, createSession, hasGlobalAdminAccess, requireAdminSession, requireSession } from './auth';
-import { imapConfig, normalizeMailboxUsername, serverConfig, sieveConfig, smtpConfig } from './config';
+import { imapConfig, normalizeMailboxUsername, schedulerConfig, serverConfig, sieveConfig, smtpConfig } from './config';
 import { compileSieve, extractJsonFromSieve } from './sieve-compiler';
 import {
     createSavedMailSearch,
@@ -2708,6 +2708,12 @@ apiRouter.put('/admin/mailboxes/:username', requireAuth, requireAdmin, async (re
                 'UPDATE alias SET active = ?, modified = NOW() WHERE address = ? AND goto = ?',
                 [active, oldUsername, oldUsername]
             );
+            if (schedulerConfig.enabled && active === 0) {
+                await connection.query(
+                    'UPDATE scheduler_mailbox_entitlements SET enabled = 0, published = 0 WHERE username = ?',
+                    [oldUsername]
+                );
+            }
             if (hasMailboxProfileFields(req.body)) {
                 await upsertMailboxProfile(connection, oldUsername, req.body, req.user.username);
             }
@@ -2744,6 +2750,12 @@ apiRouter.delete('/admin/mailboxes/:username', requireAuth, requireAdmin, async 
     try {
         const username = requireValidMailbox(req.params.username);
         await withTransaction(async (connection) => {
+            if (schedulerConfig.enabled) {
+                await connection.query(
+                    'UPDATE scheduler_mailbox_entitlements SET enabled = 0, published = 0 WHERE username = ?',
+                    [username]
+                );
+            }
             await connection.query('DELETE FROM mailbox WHERE username = ?', [username]);
             await connection.query('DELETE FROM alias WHERE address = ? AND goto = ?', [username, username]);
         });

@@ -40,6 +40,14 @@ OMS_DEFAULT_DOMAIN="${FIRST_DOMAIN}"
 OMS_COOKIE_SECURE="true"
 OMS_UPLOAD_LIMIT_BYTES="26214400"
 
+# OMS Scheduler (optional)
+# The configuration wizard asks before enabling this. Disabled installations do
+# not apply Scheduler migrations or publish Scheduler routes.
+ENABLE_OMS_SCHEDULER="false"
+OMS_SCHEDULER_PUBLIC_BASE_URL="${OMS_PUBLIC_BASE_URL}"
+# Comma-separated hostnames that may serve public Scheduler pages.
+OMS_SCHEDULER_HOST_ALIASES="${MAIL_HOSTNAME}"
+
 # Let's Encrypt Email (for expiry notifications)
 LETSENCRYPT_EMAIL="admin@${FIRST_DOMAIN}"
 

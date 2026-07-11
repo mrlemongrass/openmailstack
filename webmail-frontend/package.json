@@ -17,12 +17,11 @@
     "html2pdf.js": "^0.14.0",
     "lucide-react": "^1.21.0",
     "marked": "^18.0.5",
-    "pdfjs-dist": "^4.1.392",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-quill-new": "^3.8.3",
+    "react-quill-new": "3.7.0",
     "react-resizable-panels": "^4.11.2",
-    "react-router": "^8.1.0",
+    "react-router": "7.18.1",
     "recharts": "^3.9.0",
     "socket.io-client": "^4.8.3",
     "turndown": "^7.2.4",
@@ -46,5 +45,8 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12"
+  },
+  "overrides": {
+    "quill": "2.0.2"
   }
 }

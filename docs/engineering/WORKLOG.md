@@ -3951,3 +3951,224 @@ The repository was already buildable, but frontend lint still had 112 warnings a
 ### Next recommended task
 
 Run final repo checks, commit/push this cleanup, then decide whether to run clean-VM installer validation before beginning Scheduler Phase 0.
+
+## 2026-07-11 — OMS Scheduler Phase 0 availability and slot holds
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `5f7a3baa`, matching `origin/main`
+Ending git state: dirty with only the bounded Scheduler Phase 0 implementation and documentation
+
+### Selected task
+
+Begin the first Scheduler Phase 0 slice: a pure timezone-aware availability engine and a concurrency-safe MariaDB slot-hold contract, without exposing routes or modifying production state.
+
+### Why this task
+
+Repository stabilization, lint, bundle splitting, and the primary iPhone calendar/contact paths were complete. Availability correctness and oversubscription prevention are the highest-risk shared Scheduler foundations and can be developed independently of the still-pending clean-VM and broader client release gates.
+
+### Changes made
+
+- `webmail-backend/src/scheduler/availability.ts`
+  - Added weekly windows, date overrides, busy intervals, buffers, minimum notice, validation, IANA timezone conversion, DST gap/overlap behavior, and local-midnight boundaries.
+- `webmail-backend/src/scheduler/slot-holds.ts`
+  - Added tenant/event/host-scoped inventory locking, capacity enforcement, expiring holds, idempotent replay, UTC-safe database conversion, and transaction commit/rollback.
+- `webmail-backend/migrations/001_scheduler_phase0.sql`, `webmail-backend/migrations/README.md`
+  - Added the first versioned Scheduler schema and migration rules. Nothing applies it automatically.
+- `webmail-backend/test/scheduler-availability.test.cjs`, `webmail-backend/test/scheduler-slot-holds.test.cjs`
+  - Added engine boundary tests, transaction-contract tests, and an opt-in real MariaDB race test.
+- `docs/product/scheduler.md`, `ROADMAP.md`, `.shared_memory/*`
+  - Marked Phase 0 in progress and recorded verified versus pending behavior.
+
+### Proof / checks run
+
+- Baseline `rtk npm test` in `webmail-backend`
+  - Passed 14/14 test files.
+- Baseline `rtk npm run lint` and `rtk npm run build` in `webmail-frontend`
+  - Both passed; main production chunk was 224.12 kB.
+- Baseline `rtk bash ./tests/integration/run.sh`
+  - Passed static integration guards and local dry-run integration.
+- Final `rtk npm test` in `webmail-backend`
+  - Passed 16/16 test files after TypeScript compilation.
+- `rtk node --test test/scheduler-availability.test.cjs test/scheduler-slot-holds.test.cjs`
+  - Passed the default Scheduler assertions; the destructive MariaDB concurrency proof remains opt-in.
+- Disposable MariaDB 11 migration and concurrency proof under `/tmp`
+  - `001_scheduler_phase0.sql` applied successfully. A two-connection capacity-one race initially exposed `ER_LOCK_DEADLOCK`; bounded transaction retry was added, and the final run passed 6/6 slot-hold tests with exactly one successful hold and one capacity rejection. The temporary instance and datadir were removed afterward.
+- `rtk git diff --check`
+  - Passed.
+
+### Acceptance criteria
+
+- [x] Clean stabilized baseline reconfirmed.
+- [x] Pure availability contract implemented and tested.
+- [x] DST spring gap and fall overlap behavior tested.
+- [x] Busy intervals, buffers, notice, overrides, validation, and midnight boundaries tested.
+- [x] Versioned Phase 0 migration added without touching production.
+- [x] Transaction repository uses row locking, capacity counters, expiration, and idempotency.
+- [x] Commit, rollback, rejection, and replay behavior covered in the default suite.
+- [x] Two real concurrent MariaDB connections proved against a disposable migrated database.
+- [x] Phase 0 threat model, service contracts, authorization boundary, and automated parity register are complete.
+
+### Risks / notes
+
+- No Scheduler route, installer flag, Admin control, worker, schema runner, or frontend was added.
+- The migration was not applied to the live `postfixadmin` database.
+- Generated backend JavaScript/declaration/source-map artifacts are retained because the deployed service currently runs compiled files from `src/`.
+
+### Next recommended task
+
+Begin Phase 1 with persisted installer state and administrator-controlled mailbox entitlements before adding navigation or public booking routes.
+
+### Phase 0 completion addendum
+
+- Added `contracts.ts`, `outbox.ts`, and `authorization.ts` plus focused booking, provider-boundary, reliable-event, tenant-isolation, and capability-token tests.
+- Added `scheduler-threat-model.md` covering public booking, OAuth secrets, payments, webhooks, tenant ownership, spam/enumeration, provider callbacks, worker boundaries, and log-data classification.
+- Added the 43-capability machine-readable parity register and `scheduler_docs_guard.cjs`; wired the guard into the static integration suite.
+- Extended the timezone matrix with explicit host-to-booker projections across Phoenix, Baghdad, and Tokyo.
+- Final `rtk npm test` in `webmail-backend` passed all 18 test files.
+- Final `rtk node tests/integration/scheduler_docs_guard.cjs` passed 43 capabilities across 10 categories.
+- Final `rtk bash ./tests/integration/run.sh` passed all static guards and the local dry-run integration.
+- Final `rtk npm run lint` and `rtk npm run build` in `webmail-frontend` passed; the main chunk remains 224.12 kB and the largest route chunk remains 481.41 kB.
+- Phase 0 remains intentionally unmounted and unapplied to production.
+
+## 2026-07-11 - OMS Scheduler Phase 1 MVP implementation
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: dirty with the complete uncommitted Scheduler Phase 0 implementation
+Ending git state: dirty with the coherent uncommitted Scheduler Phase 0 and Phase 1 implementation
+
+### Selected task
+
+Implement every Phase 1 delivery item while preserving the installer opt-in, Admin-only enablement, local-part public URL, configured hostname aliases, native Calendar integration, and Phase 0 tenant/concurrency boundaries.
+
+### Acceptance criteria
+
+- [x] Persist a default-off installer choice and omit all Scheduler schema when disabled.
+- [x] Apply ordered migrations and expose no mailbox until a superadmin enables it.
+- [x] Enforce globally unique normalized handles and generic public not-found responses.
+- [x] Add Scheduler after Notes only for entitled users and keep mobile navigation usable.
+- [x] Support profile, event type, weekly availability, calendar selection, and booking management.
+- [x] Provide public profile/event/slot/booking/confirmation/cancel/reschedule flows.
+- [x] Recheck native recurring calendar conflicts and use transactional capacity holds.
+- [x] Project one stable UID into the native calendar store and keep cancel/reschedule consistent.
+- [x] Send confirmation, cancellation, and reschedule email/ICS through a leased retrying outbox.
+- [x] Preserve disabled/enabled hostname aliases in Nginx and certificate SAN provisioning.
+- [ ] Run disabled and enabled installation on a clean supported VM.
+- [ ] Confirm a deployed booking/reschedule/cancel in physical CalDAV and ActiveSync clients.
+
+### Changes made
+
+- Installer and operations
+  - Added `ENABLE_OMS_SCHEDULER`, preferred base URL, alias allowlist, notification sender, component detection, and `functions/12_scheduler.sh`.
+  - Added shared Scheduler hostname normalization and carried configured aliases into fresh/upgraded Nginx plus Let's Encrypt and self-signed certificate SANs.
+  - Added explicit `/scheduler/` SPA routing and secure backend environment rendering.
+- Persistence and backend
+  - Added `002_scheduler_phase1.sql` for entitlements, event types, availability, bookings, expiring action tokens, linked holds, outbox jobs, and audit events.
+  - Added pure handle/event/ICS helpers, tenant-aware storage, recurring native-calendar busy checks, public/owner/superadmin routers, and a leased notification worker.
+  - Booking confirmation locks capacity, stores an immutable event snapshot, projects a stable UID, increments the native sync token, and queues notification delivery. Reschedule preserves the UID; cancel deletes it, adds a calendar tombstone, releases capacity, and queues cancellation ICS.
+- Frontend and Admin
+  - Added lazy-loaded management and public Scheduler bundles.
+  - Added entitled Scheduler navigation after Notes and mobile Mail/Calendar/Contacts/Notes/Scheduler plus More navigation.
+  - Added profile, event, availability, calendar conflict/destination, booking filters/detail, public slots/form/confirmation, and capability cancel/reschedule views.
+  - Added mailbox-level Scheduler enablement, alternate handle, and timezone controls to modern Admin.
+- Guards and documentation
+  - Added Phase 1 backend unit/lifecycle tests and installer/schema/API/routing/UI integration guards.
+  - Updated the parity registry, product roadmap, architecture, project memory, and risk register without claiming deployment validation.
+
+### Proof / checks run
+
+- `rtk npm test` in `webmail-backend`: passed all 20 test files after TypeScript compilation.
+- Disposable MariaDB 11: both Scheduler migrations applied; enable, event creation, availability, booking, one-event projection, reschedule, cancellation, tombstone, and capacity lifecycle passed. Temporary server and data were removed.
+- `rtk npm run lint` in `webmail-frontend`: passed with zero findings.
+- `rtk npm run build` in `webmail-frontend`: passed; Scheduler stayed lazy-loaded, main chunk is 250.94 kB, and largest route chunk is 485.28 kB.
+- `rtk bash ./tests/integration/run.sh`: passed existing guards, the 43-capability documentation guard, the Phase 1 guard, and local dry run.
+- Playwright Chromium: public booking at 1440x900 and 390x844 plus management at desktop/mobile sizes passed visible-action and horizontal-overflow checks. Screenshots were stored under `/tmp`, not committed.
+- `rtk bash -n` passed for every modified installer/module shell script.
+
+### Risks / notes
+
+- Nothing was deployed. No live migration, service restart, Nginx edit, mailbox entitlement, SMTP delivery, or production calendar write occurred.
+- The Scheduler notification worker assumes the local Postfix listener configured by `OMS_SCHEDULER_SMTP_HOST/PORT`; clean-VM and deployed delivery tests remain required.
+- OMS Calendar storage integration is proven on disposable MariaDB, but physical CalDAV/ActiveSync clients must still verify the release path after deployment.
+- Advanced verification, limits, private links, external providers, workflows, teams, routing, payments, APIs, and enterprise controls remain later phases and are not represented as complete in the capability register.
+
+### Next recommended task
+
+Run the Phase 1 release-validation matrix on a clean supported VM, first with Scheduler disabled and then enabled. After deployment approval, enable one test mailbox and verify book/reschedule/cancel through web, CalDAV, ActiveSync, and real SMTP delivery before starting Phase 2.
+
+## 2026-07-11 - OMS Scheduler Phase 1 live deployment
+
+Agent/tool: Codex
+Target: live `mail.housevo.us` / `webmail.housevo.us`
+
+### Changes and recovery controls
+
+- Created root-restricted safety snapshot `/var/backups/openmailstack/20260711_141833` with all databases, live configurations, repository config, deployed backend/frontend, and backend environment.
+- Persisted `ENABLE_OMS_SCHEDULER=true`, preferred base `https://webmail.housevo.us`, and both configured host aliases.
+- Applied only `001_scheduler_phase0.sql` and `002_scheduler_phase1.sql`; the installed entitlement count remained zero.
+- Deployed the tested backend/frontend and restarted the backend through `functions/10_webmail.sh`.
+- The first Nginx attempt stopped before write because `$request_method` was unescaped in a strict-mode heredoc. The second generated candidate correctly failed `nginx -t` because the migrated live vhost already had unmarked modern routes. Automatic rollback preserved the live file both times.
+- Fixed both defects and added regression guards. The final run recognized the older unmarked vhost, preserved all existing routes, inserted only the Scheduler SPA location, passed `nginx -t`, and reloaded Nginx.
+- The deployment package refresh upgraded `rsync` to Debian `3.4.1+ds1-5+deb13u4`.
+
+### Live proof
+
+- `openmailstack.service`: active and enabled; no Scheduler initialization/worker errors in the post-deployment log window.
+- Nginx: syntax valid; both `mail.housevo.us` and `webmail.housevo.us` remain in the HTTPS `server_name`; both names match the active certificate; explicit `/scheduler/` route present.
+- Database: migrations `001_scheduler_phase0` and `002_scheduler_phase1` recorded; `scheduler_mailbox_entitlements` count is `0`.
+- Routing: both hostnames return `200 text/html` for `/scheduler/thang` and identical `404 {"success":false,"error":"Not found"}` for the unpublished public profile API.
+- Authorization: unauthenticated Scheduler Admin API returns `401`.
+- Artifact integrity: deployed Scheduler router and frontend index match the tested repository build byte-for-byte.
+- Live Chromium: both hostnames loaded the deployed mobile Scheduler SPA, rendered the unpublished-page state, produced no page errors, and had no horizontal overflow.
+- `tests/integration/staging_smoke.sh`: all core services, listeners, configuration checks, TLS endpoints, web endpoints, authentication rejection, and DKIM checks passed.
+
+### Remaining validation
+
+- Enable a dedicated mailbox through modern Admin; do not insert an entitlement directly.
+- Verify public profile/event publishing on both hostnames, real SMTP/ICS delivery, reschedule, cancel, native Calendar, CalDAV, and ActiveSync.
+- Run disabled/enabled clean-VM installation and complete the real booking lifecycle before release. The later risk-fix cycle resolved the React Router/Node compatibility issue.
+
+## 2026-07-11 - Scheduler entitlement navigation and release-risk fixes
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: dirty with uncommitted Scheduler Phase 0/1 implementation and live-deployment fixes
+Ending git state: clean after the requested commit
+
+### Selected task
+
+Make an Admin-enabled Scheduler entitlement appear in the app navigation without a reload, resolve the deployment dependency/Node risks, redeploy, and prove the live result.
+
+### Changes made
+
+- Added immediate Scheduler entitlement notification after Admin saves plus focus/visibility refresh in the authenticated shell.
+- Removed unused vulnerable PDF.js, pinned React Router to Node-compatible v7, and locked Quill to a non-vulnerable resolution.
+- Contained the secret environment umask and applied normal dependency-install permissions in the deployment module.
+- Redeployed the verified frontend/backend to the live server.
+
+### Proof / checks run
+
+- Backend `npm test`: 20/20 test files passed after TypeScript compilation.
+- Frontend lint and production build passed; frontend and backend registry audits report zero vulnerabilities.
+- Full integration suite, Scheduler guards, shell syntax checks, and `git diff --check` passed.
+- Live service is active/enabled, Nginx syntax passes, repository and deployed dependency files are readable, and the deployed index matches the tested build.
+- Live database confirms `thang@housevo.us` enabled/published with handle `thang`; both configured hostname APIs return the public profile and both SPA paths return 200.
+- Playwright proved Scheduler hidden before entitlement, visible immediately after the entitlement event, immediately after Notes on desktop, and visible in the 390 px mobile app bar.
+
+### Acceptance criteria
+
+- [x] Enabled user sees Scheduler without requiring a full reload.
+- [x] Scheduler remains Admin-controlled and hidden for disabled users.
+- [x] Frontend audit and Node engine mismatch risks are resolved.
+- [x] Deployment no longer damages repository dependency permissions.
+- [x] Changes are deployed and verified on both configured hostnames.
+
+### Risks / notes
+
+- The public profile currently has no event types, so real SMTP/ICS and Calendar/DAV booking lifecycle validation remains outstanding.
+- Clean-VM installs with Scheduler disabled and enabled remain release gates.
+
+### Next recommended task
+
+Create one live event type and complete booking, reschedule, and cancel through SMTP/ICS, OMS Calendar, CalDAV, and ActiveSync.

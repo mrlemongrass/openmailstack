@@ -327,6 +327,31 @@ export async function changeMailboxPassword(username: string, password: string):
   if (!r.ok || !b.success) throw new Error(b.error || 'Failed to change password');
 }
 
+export interface SchedulerAdminMailbox {
+  username: string;
+  name: string;
+  localPart: string;
+  domain: string;
+  active: boolean;
+  scheduler: { handle: string; enabled: boolean; published: boolean; timeZone: string } | null;
+}
+
+export async function getSchedulerAdminMailboxes(): Promise<{ installed: boolean; publicBaseUrl: string; allowedHosts: string[]; mailboxes: SchedulerAdminMailbox[] } | null> {
+  const response = await fetch('/api/admin/scheduler/v1/mailboxes', { credentials: 'include' });
+  if (response.status === 403 || response.status === 404) return null;
+  const body = await response.json() as { success: boolean; installed: boolean; publicBaseUrl: string; allowedHosts: string[]; mailboxes: SchedulerAdminMailbox[]; error?: string };
+  if (!response.ok || !body.success) throw new Error(body.error || 'Failed to load Scheduler access');
+  return body;
+}
+
+export async function setSchedulerMailboxAccess(username: string, settings: { enabled: boolean; handle: string; timeZone: string }): Promise<void> {
+  const response = await fetch(`/api/admin/scheduler/v1/mailboxes/${encodeURIComponent(username)}`, {
+    method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings),
+  });
+  const body = await response.json() as { success: boolean; error?: string };
+  if (!response.ok || !body.success) throw new Error(body.error || 'Failed to update Scheduler access');
+}
+
 // ─── Aliases ─────────────────────────────────────────────────────────────────
 
 export interface AliasInfo {

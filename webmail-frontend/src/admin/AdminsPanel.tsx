@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Shield, UserPlus, UserMinus, X } from 'lucide-react';
+import { Shield, ShieldCheck, ShieldOff, UserPlus, UserMinus, X } from 'lucide-react';
 import { PromoteAdminModal } from './AdminModals';
-import { getAdminUsers, promoteAdmin, demoteAdmin, type AdminUserInfo } from './adminSettingsApi';
+import { demoteAdmin, demoteSuperAdmin, getAdminUsers, promoteAdmin, promoteSuperAdmin, type AdminUserInfo } from './adminSettingsApi';
 
 export function AdminsPanel() {
   const [admins, setAdmins] = useState<AdminUserInfo[]>([]);
@@ -9,6 +9,7 @@ export function AdminsPanel() {
   const [error, setError] = useState('');
   const [showPromote, setShowPromote] = useState(false);
   const [demoting, setDemoting] = useState<string | null>(null);
+  const [updatingSuper, setUpdatingSuper] = useState<string | null>(null);
 
   const load = useCallback(() => {
     getAdminUsers().then(setAdmins).catch(e => setError(e.message)).finally(() => setLoading(false));
@@ -16,13 +17,27 @@ export function AdminsPanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handlePromote = async (data: { username: string }) => {
+  const handlePromote = async (data: { username: string; superadmin: boolean }) => {
     try {
-      await promoteAdmin(data.username);
+      await promoteAdmin(data.username, data.superadmin);
       setShowPromote(false);
       setLoading(true);
       load();
     } catch (e: any) { setError(e.message); }
+  };
+
+  const handlePromoteSuper = async (username: string) => {
+    if (!confirm(`Grant superadmin access to "${username}"? This allows full global administration.`)) return;
+    setUpdatingSuper(username);
+    try { await promoteSuperAdmin(username); load(); } catch (e: any) { setError(e.message); }
+    finally { setUpdatingSuper(null); }
+  };
+
+  const handleDemoteSuper = async (username: string) => {
+    if (!confirm(`Remove superadmin access from "${username}"? They will remain a regular admin.`)) return;
+    setUpdatingSuper(username);
+    try { await demoteSuperAdmin(username); load(); } catch (e: any) { setError(e.message); }
+    finally { setUpdatingSuper(null); }
   };
 
   const handleDemote = async (username: string) => {
@@ -86,14 +101,36 @@ export function AdminsPanel() {
                   </td>
                   <td style={{ padding: '10px 12px' }}>
                     {!a.superadmin && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => handlePromoteSuper(a.username)}
+                          disabled={updatingSuper === a.username}
+                          title="Grant superadmin"
+                          style={{ padding: '4px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                        >
+                          <ShieldCheck size={14} /> {updatingSuper === a.username ? '...' : 'Make Super'}
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => handleDemote(a.username)}
+                          disabled={demoting === a.username}
+                          title="Demote admin"
+                          style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--destructive, #ef4444)', display: 'flex', alignItems: 'center', gap: 4 }}
+                        >
+                          <UserMinus size={14} /> {demoting === a.username ? '...' : 'Demote'}
+                        </button>
+                      </div>
+                    )}
+                    {a.superadmin && (
                       <button
                         className="btn btn-secondary"
-                        onClick={() => handleDemote(a.username)}
-                        disabled={demoting === a.username}
-                        title="Demote"
+                        onClick={() => handleDemoteSuper(a.username)}
+                        disabled={updatingSuper === a.username}
+                        title="Remove superadmin"
                         style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--destructive, #ef4444)', display: 'flex', alignItems: 'center', gap: 4 }}
                       >
-                        <UserMinus size={14} /> {demoting === a.username ? '...' : 'Demote'}
+                        <ShieldOff size={14} /> {updatingSuper === a.username ? '...' : 'Remove Super'}
                       </button>
                     )}
                   </td>

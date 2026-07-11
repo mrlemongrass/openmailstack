@@ -1,6 +1,6 @@
 import { useRef, useCallback, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Users, Trash2 } from 'lucide-react';
+import { Check, Trash2, Users, X } from 'lucide-react';
 import { ContactSkeleton } from './components/ContactSkeleton';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { useToast } from '../shared/components/Toast';
@@ -16,12 +16,22 @@ export function ContactGrid({ contacts: c, density }: {
   const { showToast } = useToast();
   const parentRef = useRef<HTMLDivElement>(null);
   const cols = 3;
-  const rows = Math.ceil(c.contacts.length / cols);
+  const isListMode = c.contactViewMode === 'list';
+  const rows = isListMode ? c.contacts.length : Math.ceil(c.contacts.length / cols);
+  const visibleContactIds = c.contacts
+    .map((contact) => contact.id)
+    .filter((id): id is number => typeof id === 'number');
+  const allVisibleSelected = visibleContactIds.length > 0 && visibleContactIds.every((id) => c.selectedContactIds.has(id));
+  const totalContacts = c.totalContacts || c.loadedContactsCount;
+  const loadedSummary = c.contactSearchQuery
+    ? `Showing ${c.loadedContactsCount} of ${totalContacts} matching contacts`
+    : `Showing ${c.loadedContactsCount} of ${totalContacts} contacts`;
+  const remaining = Math.max(totalContacts - c.loadedContactsCount, 0);
 
   const virtualizer = useVirtualizer({
     count: rows,
     getScrollElement: () => parentRef.current,
-    estimateSize: useCallback(() => density === 'compact' ? 160 : density === 'cozy' ? 190 : 220, [density]),
+    estimateSize: useCallback(() => isListMode ? 74 : density === 'compact' ? 160 : density === 'cozy' ? 190 : 220, [density, isListMode]),
     overscan: 3,
   });
 
@@ -57,14 +67,47 @@ export function ContactGrid({ contacts: c, density }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)' }}>
-        <input type="text" className="glass-input" placeholder="Search contacts..."
-          value={c.contactSearchQuery} onChange={(e) => c.setContactSearchQuery(e.target.value)}
-          style={{ flex: 1, fontSize: '0.85rem' }} />
-        <button className="btn btn-ghost" onClick={() => c.setContactViewMode(c.contactViewMode === 'grid' ? 'list' : 'grid')}
-          style={{ padding: '6px 10px' }}>
-          {c.contactViewMode === 'grid' ? 'List' : 'Grid'}
-        </button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input type="text" className="glass-input" placeholder="Search contacts..."
+            value={c.contactSearchQuery} onChange={(e) => c.setContactSearchQuery(e.target.value)}
+            style={{ flex: '1 1 220px', fontSize: '0.85rem' }} />
+          <select className="glass-input" value={c.contactsSettings.sortBy}
+            onChange={(e) => c.updateContactsSettings({ sortBy: e.target.value as typeof c.contactsSettings.sortBy })}
+            style={{ width: 136, fontSize: '0.82rem' }} aria-label="Sort contacts">
+            <option value="firstName">First name</option>
+            <option value="lastName">Last name</option>
+            <option value="email">Email</option>
+          </select>
+          <select className="glass-input" value={c.contactsSettings.nameFormat}
+            onChange={(e) => c.updateContactsSettings({ nameFormat: e.target.value as typeof c.contactsSettings.nameFormat })}
+            style={{ width: 136, fontSize: '0.82rem' }} aria-label="Contact name format">
+            <option value="firstLast">First Last</option>
+            <option value="lastFirst">Last, First</option>
+          </select>
+          <button className="btn btn-ghost" onClick={() => c.setContactViewMode(c.contactViewMode === 'grid' ? 'list' : 'grid')}
+            style={{ padding: '6px 10px' }}>
+            {c.contactViewMode === 'grid' ? 'List' : 'Grid'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginRight: 'auto' }}>
+            {loadedSummary}
+          </div>
+          {visibleContactIds.length > 0 && (
+            <button className="btn btn-ghost" style={{ padding: '5px 9px', fontSize: '0.78rem' }}
+              onClick={() => c.setSelectedContactIds(allVisibleSelected ? new Set() : new Set(visibleContactIds))}>
+              {allVisibleSelected ? <X size={14} /> : <Check size={14} />}
+              {allVisibleSelected ? 'Deselect all' : 'Select all'}
+            </button>
+          )}
+          {c.selectedContactIds.size > 0 && (
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+              {c.selectedContactIds.size} selected
+            </span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <div style={{ position: 'relative' }}>
           <button className="btn btn-ghost" style={{ padding: '6px 10px' }}
             onClick={() => setShowExportMenu(!showExportMenu)}>
@@ -118,20 +161,23 @@ export function ContactGrid({ contacts: c, density }: {
             </div>
           )}
         </div>
+        </div>
       </div>
       <div ref={parentRef} style={{ flex: 1, overflow: 'auto', padding: 16 }}>
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {virtualizer.getVirtualItems().map((vr) => {
-            const startIdx = vr.index * cols;
-            const rowContacts = c.contacts.slice(startIdx, startIdx + cols);
+            const startIdx = isListMode ? vr.index : vr.index * cols;
+            const rowContacts = isListMode ? c.contacts.slice(startIdx, startIdx + 1) : c.contacts.slice(startIdx, startIdx + cols);
             return (
               <div key={vr.key} style={{
                 position: 'absolute', top: 0, left: 0, width: '100%',
                 transform: `translateY(${vr.start}px)`,
-                display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 16,
+                display: 'grid', gridTemplateColumns: isListMode ? '1fr' : `repeat(${cols}, 1fr)`, gap: isListMode ? 8 : 16,
               }}>
                 {rowContacts.map((contact) => (
                   <ContactCard key={contact.id} contact={contact}
+                    nameFormat={c.contactsSettings.nameFormat}
+                    isListMode={isListMode}
                     onClick={() => c.setSelectedContact(contact)}
                     isSelected={c.selectedContactIds.has(contact.id as number)}
                     onToggleSelect={() => {
@@ -151,7 +197,7 @@ export function ContactGrid({ contacts: c, density }: {
         <div style={{ textAlign: 'center', padding: 16 }}>
           <button className="btn btn-ghost" onClick={c.loadMoreContacts}
             style={{ fontSize: '0.85rem' }}>
-            Load More Contacts
+            Load more contacts{remaining > 0 ? ` (${remaining} remaining)` : ''}
           </button>
         </div>
       )}
@@ -160,16 +206,29 @@ export function ContactGrid({ contacts: c, density }: {
   );
 }
 
-function ContactCard({ contact, onClick, isSelected, onToggleSelect }: {
+function contactDisplayName(contact: Contact, nameFormat: 'firstLast' | 'lastFirst'): string {
+    const firstName = contact.first_name?.trim() || '';
+    const lastName = contact.last_name?.trim() || '';
+    if (nameFormat === 'lastFirst' && (firstName || lastName)) {
+        return [lastName, firstName].filter(Boolean).join(', ') || contact.name || contact.email;
+    }
+    if (firstName || lastName) return [firstName, lastName].filter(Boolean).join(' ');
+    return contact.name || contact.email;
+}
+
+function ContactCard({ contact, nameFormat, isListMode, onClick, isSelected, onToggleSelect }: {
     contact: Contact;
+    nameFormat: 'firstLast' | 'lastFirst';
+    isListMode: boolean;
     onClick: () => void;
     isSelected?: boolean;
     onToggleSelect?: () => void;
 }) {
-    const initials = (contact.name || contact.email || '?').split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase();
+    const displayName = contactDisplayName(contact, nameFormat);
+    const initials = (displayName || contact.email || '?').split(/[,\s]+/).filter(Boolean).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
     return (
         <div className="contact-card glass-panel" style={{
-            padding: 16, borderRadius: 'var(--radius-md)', cursor: 'pointer',
+            padding: isListMode ? 12 : 16, borderRadius: 'var(--radius-md)', cursor: 'pointer',
             position: 'relative',
             border: isSelected ? '1px solid var(--accent-primary)' : undefined,
             boxShadow: isSelected ? '0 0 0 1px var(--accent-primary)' : undefined,
@@ -194,9 +253,9 @@ function ContactCard({ contact, onClick, isSelected, onToggleSelect }: {
                     fontSize: '0.9rem', fontWeight: 600, color: 'white', flexShrink: 0 }}>
                     {initials}
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ flex: 1, minWidth: 0, paddingRight: onToggleSelect ? 24 : 0 }}>
                     <div style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: 2 }}>
-                        {contact.name || contact.email}
+                        {displayName}
                     </div>
                     {contact.email && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contact.email}</div>}
                     {contact.organization && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contact.organization}{contact.jobTitle ? ` · ${contact.jobTitle}` : ''}</div>}

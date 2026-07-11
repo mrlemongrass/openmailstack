@@ -2,7 +2,17 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { pool } from './db';
 import { requireSession } from './auth';
 import { createCalendar, getVisibleCalendars, expandRecurringEvent, parseIcalEvent } from './calendar-utils';
-import { normalizeVCardData, getContactDavUid, parseVCard, patchVCardData } from './contact-utils';
+import {
+    getContactDavUid,
+    nextContactSyncToken,
+    normalizeVCardData,
+    parseVCard,
+    patchVCardData,
+    recordContactTombstone,
+    restoreContactById,
+    softDeleteContactById,
+    softDeleteContactsByIds
+} from './contact-utils';
 
 export const appsApiRouter = Router();
 
@@ -74,6 +84,13 @@ async function syncBirthdayEvent(user: string, contactName: string, contactEmail
     );
 }
 
+function emitContactsUpdated(user: string, details: Record<string, any> = {}) {
+    try {
+        const { io } = require('./index');
+        io.to(user).emit('contacts_updated', details);
+    } catch {}
+}
+
 // ==========================================
 // CONTACTS API
 // ==========================================
@@ -81,18 +98,63 @@ appsApiRouter.get('/contacts', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const offset = parseInt(req.query.offset as string || '0', 10) || 0;
     const limit = Math.min(parseInt(req.query.limit as string || '200', 10) || 200, 500);
+    const query = String(req.query.q || '').trim().slice(0, 120);
+    const requestedSort = String(req.query.sortBy || 'firstName');
+    const sortBy = ['firstName', 'lastName', 'email'].includes(requestedSort) ? requestedSort : 'firstName';
+    const orderBy = sortBy === 'lastName'
+        ? `is_favorite DESC,
+           COALESCE(NULLIF(last_name, ''), NULLIF(SUBSTRING_INDEX(TRIM(name), ' ', -1), ''), email) ASC,
+           COALESCE(NULLIF(first_name, ''), NULLIF(SUBSTRING_INDEX(TRIM(name), ' ', 1), ''), name) ASC,
+           email ASC,
+           id ASC`
+        : sortBy === 'email'
+            ? `is_favorite DESC, email ASC, name ASC, id ASC`
+            : `is_favorite DESC,
+               COALESCE(NULLIF(first_name, ''), NULLIF(SUBSTRING_INDEX(TRIM(name), ' ', 1), ''), email) ASC,
+               COALESCE(NULLIF(last_name, ''), NULLIF(SUBSTRING_INDEX(TRIM(name), ' ', -1), ''), name) ASC,
+               email ASC,
+               id ASC`;
     try {
         await purgeExpiredTrash();
+        const whereParts = ['username = ?', 'deleted_at IS NULL'];
+        const whereParams: any[] = [user];
+        if (query) {
+            const likeQuery = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
+            const searchFields = [
+                'name',
+                'email',
+                'phone',
+                'organization',
+                'job_title',
+                'notes',
+                'first_name',
+                'last_name',
+                'nickname',
+                'department',
+                'website_url',
+                'vcard_data',
+                'CAST(emails_json AS CHAR)',
+                'CAST(phones_json AS CHAR)',
+                'CAST(addresses_json AS CHAR)',
+            ];
+            whereParts.push(`(${searchFields.map(field => `COALESCE(${field}, '') LIKE ? ESCAPE '\\\\'`).join(' OR ')})`);
+            whereParams.push(...searchFields.map(() => likeQuery));
+        }
+        const whereSql = whereParts.join(' AND ');
+        const [countRows]: any = await pool.query(
+            `SELECT COUNT(*) AS total FROM contacts WHERE ${whereSql}`,
+            whereParams
+        );
         const [rows]: any = await pool.query(
             `SELECT id, username, name, email, phone, dav_uid, sync_token, updated_at,
                     emails_json, phones_json, addresses_json, job_title, organization,
                     notes, labels_json, photo_url, is_favorite,
                     prefix, first_name, middle_name, last_name, suffix, nickname,
                     department, birthday, website_url
-             FROM contacts WHERE username = ? AND deleted_at IS NULL
-             ORDER BY is_favorite DESC, name ASC, email ASC, id ASC
+             FROM contacts WHERE ${whereSql}
+             ORDER BY ${orderBy}
              LIMIT ? OFFSET ?`,
-            [user, limit + 1, offset]
+            [...whereParams, limit + 1, offset]
         );
         const hasMore = rows.length > limit;
         if (hasMore) rows.pop();
@@ -104,7 +166,7 @@ appsApiRouter.get('/contacts', async (req: Request, res: Response) => {
                 }
             }
         }
-        res.json({ success: true, contacts: rows, hasMore });
+        res.json({ success: true, contacts: rows, hasMore, total: Number(countRows[0]?.total || 0) });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -129,11 +191,12 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
             name: fullName, first_name: firstName, last_name: lastName, middle_name: middleName,
             prefix, suffix, email, phone, emails_json, phones_json, job_title, organization, notes
         });
+        const syncToken = await nextContactSyncToken(user);
 
         const [result]: any = await pool.query(
             `INSERT INTO contacts
             (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, sync_token, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 user,
                 fullName || '',
@@ -149,6 +212,7 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
                 notes || null,
                 labels_json ? JSON.stringify(labels_json) : null,
                 photo_url || null,
+                syncToken,
                 prefix || null,
                 firstName || null,
                 middleName || null,
@@ -164,6 +228,7 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
             const savedName = fullName || email || '';
             await syncBirthdayEvent(user, savedName, email || '', birthday || null);
         }
+        emitContactsUpdated(user, { contactId: result.insertId });
         res.json({ success: true, id: result.insertId });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -187,6 +252,7 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
             });
         }
 
+        const syncToken = await nextContactSyncToken(user);
         const queryParams: any[] = [
             fullName || '',
             email || '',
@@ -199,14 +265,23 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
             organization || null,
             notes || null,
             labels_json ? JSON.stringify(labels_json) : null,
+            first_name || null,
+            last_name || null,
+            middle_name || null,
+            prefix || null,
+            suffix || null,
+            nickname || null,
+            department || null,
+            birthday || null,
+            website_url || null,
+            syncToken,
         ];
 
-        let updateSql = `UPDATE contacts SET name=?, email=?, phone=?, vcard_data=?, emails_json=?, phones_json=?, addresses_json=?, job_title=?, organization=?, notes=?, labels_json=?, first_name=?, last_name=?, middle_name=?, prefix=?, suffix=?, nickname=?, department=?, birthday=?, website_url=?, sync_token = sync_token + 1`;
+        let updateSql = `UPDATE contacts SET name=?, email=?, phone=?, vcard_data=?, emails_json=?, phones_json=?, addresses_json=?, job_title=?, organization=?, notes=?, labels_json=?, first_name=?, last_name=?, middle_name=?, prefix=?, suffix=?, nickname=?, department=?, birthday=?, website_url=?, sync_token=?`;
         if (photo_url !== undefined) {
             updateSql += `, photo_url=?`;
             queryParams.push(photo_url || null);
         }
-        queryParams.push(first_name || null, last_name || null, middle_name || null, prefix || null, suffix || null, nickname || null, department || null, birthday || null, website_url || null);
 
         updateSql += ` WHERE id=? AND username=?`;
         queryParams.push(req.params.id as string, user);
@@ -216,6 +291,7 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
         const savedEmail = email || existingContact.email || '';
         const savedBirthday = birthday !== undefined ? (birthday || null) : existingContact.birthday || null;
         await syncBirthdayEvent(user, savedName, savedEmail, savedBirthday);
+        emitContactsUpdated(user, { contactId: req.params.id });
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -225,12 +301,14 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
 appsApiRouter.put('/contacts/:id/favorite', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
+        const syncToken = await nextContactSyncToken(user);
         const [result]: any = await pool.query(
-            'UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1) WHERE id = ? AND username = ? AND deleted_at IS NULL',
-            [req.params.id, user]
+            'UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1), sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NULL',
+            [syncToken, req.params.id, user]
         );
         if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
         const [rows]: any = await pool.query('SELECT is_favorite FROM contacts WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+        emitContactsUpdated(user, { contactId: req.params.id });
         res.json({ success: true, is_favorite: rows[0]?.is_favorite === 1 });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -242,12 +320,9 @@ appsApiRouter.post('/contacts/bulk-delete', async (req: Request, res: Response) 
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, error: 'ids array required' });
     try {
-        const placeholders = ids.map(() => '?').join(',');
-        const [result]: any = await pool.query(
-            `UPDATE contacts SET deleted_at = NOW() WHERE id IN (${placeholders}) AND username = ? AND deleted_at IS NULL`,
-            [...ids, user]
-        );
-        res.json({ success: true, deleted: result.affectedRows });
+        const deleted = await softDeleteContactsByIds(user, ids);
+        if (deleted > 0) emitContactsUpdated(user, { deleted: true });
+        res.json({ success: true, deleted });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -256,10 +331,9 @@ appsApiRouter.post('/contacts/bulk-delete', async (req: Request, res: Response) 
 appsApiRouter.delete('/contacts/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        await pool.query(
-            'UPDATE contacts SET deleted_at = NOW() WHERE id=? AND username=? AND deleted_at IS NULL',
-            [req.params.id as string, user]
-        );
+        const deleted = await softDeleteContactById(user, req.params.id as string);
+        if (!deleted) return res.status(404).json({ success: false, error: 'Contact not found' });
+        emitContactsUpdated(user, { contactId: req.params.id, deleted: true });
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -285,11 +359,9 @@ appsApiRouter.get('/contacts/trash', async (req: Request, res: Response) => {
 appsApiRouter.post('/contacts/:id/restore', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        const [result]: any = await pool.query(
-            'UPDATE contacts SET deleted_at = NULL WHERE id=? AND username=? AND deleted_at IS NOT NULL',
-            [req.params.id as string, user]
-        );
-        if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Contact not found in trash' });
+        const restored = await restoreContactById(user, req.params.id as string);
+        if (!restored) return res.status(404).json({ success: false, error: 'Contact not found in trash' });
+        emitContactsUpdated(user, { contactId: req.params.id, restored: true });
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -300,11 +372,12 @@ appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Respon
     const user = (req as any).username;
     try {
         const [contactToDelete]: any = await pool.query(
-            'SELECT name, email FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
+            'SELECT id, name, email, dav_uid FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
             [req.params.id as string, user]
         );
         if (contactToDelete.length > 0) {
             await syncBirthdayEvent(user, contactToDelete[0].name, contactToDelete[0].email, null);
+            await recordContactTombstone(user, contactToDelete[0].dav_uid || `contact-${contactToDelete[0].id}`);
         }
         await pool.query(
             'DELETE FROM contact_group_members WHERE contact_id = ?',
@@ -315,6 +388,7 @@ appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Respon
             [req.params.id as string, user]
         );
         if (delResult.affectedRows === 0) return res.status(404).json({ success: false, error: 'Contact not found in trash' });
+        emitContactsUpdated(user, { contactId: req.params.id, deleted: true });
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -490,9 +564,10 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
 
                 if (!name && !email) { skippedNoFields++; continue; }
                 try {
+                    const syncToken = await nextContactSyncToken(user);
                     const [result]: any = await pool.query(
-                        `INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, dav_uid)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, CONCAT('import-csv-', UNIX_TIMESTAMP(), '-', ?))
+                        `INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, dav_uid, sync_token)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, CONCAT('import-csv-', UNIX_TIMESTAMP(), '-', ?), ?)
                          ON DUPLICATE KEY UPDATE
                            name = VALUES(name),
                            phone = VALUES(phone),
@@ -500,8 +575,8 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                            organization = VALUES(organization),
                            notes = VALUES(notes),
                            deleted_at = NULL,
-                           sync_token = sync_token + 1`,
-                        [user, name, email, phone, jobTitle, organization, notes, imported]
+                           sync_token = VALUES(sync_token)`,
+                        [user, name, email, phone, jobTitle, organization, notes, imported, syncToken]
                     );
                     if (result.affectedRows > 0) imported++; else skippedDuplicate++;
                 } catch { skippedDuplicate++; }
@@ -516,12 +591,13 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                 const emailsJson = (parsed.emails && parsed.emails.length > 0) ? JSON.stringify(parsed.emails.map((e: string) => ({ value: e, label: 'Other' }))) : null;
                 const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p: string) => ({ value: p, label: 'Other' }))) : null;
                 try {
+                    const syncToken = await nextContactSyncToken(user);
                     const [result]: any = await pool.query(
                         `INSERT INTO contacts
                          (username, name, email, phone, job_title, organization, notes,
                           emails_json, phones_json, vcard_data,
-                          prefix, first_name, middle_name, last_name, suffix, dav_uid)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CONCAT('import-vcard-', UNIX_TIMESTAMP(), '-', ?))
+                          prefix, first_name, middle_name, last_name, suffix, dav_uid, sync_token)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CONCAT('import-vcard-', UNIX_TIMESTAMP(), '-', ?), ?)
                          ON DUPLICATE KEY UPDATE
                            name = VALUES(name),
                            phone = VALUES(phone),
@@ -537,17 +613,18 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                            last_name = VALUES(last_name),
                            suffix = VALUES(suffix),
                            deleted_at = NULL,
-                           sync_token = sync_token + 1`,
+                           sync_token = VALUES(sync_token)`,
                         [user, parsed.name || '', parsed.email || '', parsed.phone || '',
                          parsed.title || '', parsed.organization || '', parsed.note || '',
                          emailsJson, phonesJson, vcard,
                          parsed.prefix || null, parsed.firstName || null, parsed.middleName || null,
-                         parsed.lastName || null, parsed.suffix || null, imported]
+                         parsed.lastName || null, parsed.suffix || null, imported, syncToken]
                     );
                     if (result.affectedRows > 0) imported++; else skippedDuplicate++;
                 } catch { skippedDuplicate++; }
             }
         }
+        if (imported > 0) emitContactsUpdated(user, { imported });
         res.json({ success: true, imported, skippedDuplicate, skippedNoFields, total: imported + skippedDuplicate + skippedNoFields });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -673,14 +750,20 @@ appsApiRouter.post('/contacts-merge', async (req: Request, res: Response) => {
         const newVcardData = patchVCardData(primary.vcard_data || '', primary.dav_uid || `contact-${primary.id}`, {
             name, email, phone, emails_json: emails, phones_json: phones, job_title, organization, notes
         });
+        const syncToken = await nextContactSyncToken(user);
 
         await pool.query(
-            `UPDATE contacts SET name=?, email=?, phone=?, job_title=?, organization=?, notes=?, emails_json=?, phones_json=?, addresses_json=?, labels_json=?, vcard_data=?, photo_url=?, sync_token = sync_token + 1 WHERE id=? AND username=?`,
-            [name, email, phone, job_title, organization, notes, JSON.stringify(emails), JSON.stringify(phones), JSON.stringify(addresses), JSON.stringify(labels), newVcardData, photo_url || null, primaryId, user]
+            `UPDATE contacts SET name=?, email=?, phone=?, job_title=?, organization=?, notes=?, emails_json=?, phones_json=?, addresses_json=?, labels_json=?, vcard_data=?, photo_url=?, sync_token=? WHERE id=? AND username=?`,
+            [name, email, phone, job_title, organization, notes, JSON.stringify(emails), JSON.stringify(phones), JSON.stringify(addresses), JSON.stringify(labels), newVcardData, photo_url || null, syncToken, primaryId, user]
         );
+
+        for (const dup of dupRows) {
+            await recordContactTombstone(user, dup.dav_uid || `contact-${dup.id}`);
+        }
         
         await pool.query('DELETE FROM contacts WHERE id IN (?) AND username=?', [dupRows.map((d: any) => d.id), user]);
         
+        emitContactsUpdated(user, { contactId: primaryId, merged: true });
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });

@@ -99,11 +99,14 @@ test_modern_webmail_deployment_guards() {
 
     assert_contains "${install_file}" 'INSTALLED_COMPONENTS["modern_webmail"]'
     assert_contains "${install_file}" '"functions/10_webmail.sh"'
+    assert_contains "${webmail_file}" 'source "${REPO_DIR}/config.conf"'
     assert_contains "${webmail_file}" 'Node.js >= 20.19.0'
     assert_contains "${webmail_file}" 'write_env_line "OMS_DB_PASSWORD"'
     assert_contains "${webmail_file}" 'location ^~ /api/'
     assert_contains "${webmail_file}" 'location ^~ /carddav'
     assert_contains "${webmail_file}" 'location = /Microsoft-Server-ActiveSync'
+    assert_contains "${webmail_file}" 'END { if (!inserted) exit 2 }'
+    assert_contains "${webmail_file}" 'Generated Nginx config failed validation; restoring previous config'
     assert_contains "${webmail_file}" 'nginx -t'
     assert_contains "${service_file}" 'EnvironmentFile=/etc/openmailstack/webmail-backend.env'
     pass "Modern webmail deployment guards"
@@ -113,12 +116,15 @@ test_authenticated_smoke_guards() {
     local mail_smoke="${PROJECT_ROOT}/tests/integration/mail_sync_smoke.sh"
     local calendar_smoke="${PROJECT_ROOT}/tests/integration/calendar_sync_smoke.sh"
     local carddav_smoke="${PROJECT_ROOT}/tests/integration/carddav_sync_smoke.sh"
+    local eas_mail_smoke="${PROJECT_ROOT}/tests/integration/activesync_mail_smoke.sh"
     local eas_contacts_smoke="${PROJECT_ROOT}/tests/integration/activesync_contacts_smoke.sh"
 
     assert_contains "${mail_smoke}" 'SKIP: set OMS_SMOKE_USER and OMS_SMOKE_PASSWORD'
     assert_contains "${mail_smoke}" 'PASS: mail sync smoke completed'
     assert_contains "${calendar_smoke}" 'PASS: calendar sync smoke completed'
     assert_contains "${carddav_smoke}" 'PASS: CardDAV sync smoke completed'
+    assert_contains "${eas_mail_smoke}" 'SKIP: set OMS_SMOKE_USER and OMS_SMOKE_PASSWORD'
+    assert_contains "${eas_mail_smoke}" 'PASS: ActiveSync mail smoke completed'
     assert_contains "${eas_contacts_smoke}" 'PASS: ActiveSync contacts smoke completed'
     pass "Authenticated smoke scripts are credential-gated and present"
 }

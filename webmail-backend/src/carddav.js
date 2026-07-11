@@ -6,9 +6,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const xml2js_1 = __importDefault(require("xml2js"));
 const dav_auth_1 = require("./dav-auth");
+const dav_report_1 = require("./dav-report");
 const contact_utils_1 = require("./contact-utils");
 const router = express_1.default.Router();
 const ADDRESSBOOK_SLUGS = new Set(['personal', 'contacts']);
+function emitContactsUpdated(user, details = {}) {
+    try {
+        const { io } = require('./index');
+        io.to(user).emit('contacts_updated', details);
+    }
+    catch { }
+}
 function addressBookCollectionMatch(path) {
     return path.match(/^(?:\/carddav)?\/addressbooks\/[^\/]+\/([^\/]+)\/?$/);
 }
@@ -27,6 +35,13 @@ function hrefToDavUid(href) {
         .replace(/&apos;/g, "'");
     const match = decodedHref.match(/\/addressbooks\/[^\/]+\/(?:personal|contacts)\/([^\/]+)\.vcf$/i);
     return match ? (0, contact_utils_1.normalizeDavUid)(match[1]) : null;
+}
+function normalizeReportSyncToken(token) {
+    if (!token)
+        return null;
+    const trimmed = token.trim();
+    const lastSlash = trimmed.lastIndexOf('/');
+    return lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
 }
 function responseForAddressBook(user, syncToken, includeChildren) {
     return `
@@ -60,6 +75,13 @@ async function contactResourceResponse(user, contact, includeData) {
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
+  </D:response>`;
+}
+function deletedContactResponse(user, davUid) {
+    return `
+  <D:response>
+    <D:href>${(0, contact_utils_1.xmlEscape)((0, contact_utils_1.getContactHrefForDavUid)(user, davUid))}</D:href>
+    <D:status>HTTP/1.1 404 Not Found</D:status>
   </D:response>`;
 }
 async function parseRequestedHrefs(req) {
@@ -171,7 +193,11 @@ async function handlePropfind(req, res, user) {
         let contactResponses = '';
         if (depth === '1') {
             const contacts = await (0, contact_utils_1.listContacts)(user);
-            contactResponses = (await Promise.all(contacts.map(contact => contactResourceResponse(user, contact, false)))).join('');
+            const tombstones = await (0, contact_utils_1.listRecentContactTombstones)(user);
+            contactResponses = [
+                ...(await Promise.all(contacts.map(contact => contactResourceResponse(user, contact, false)))),
+                ...tombstones.flatMap(contact_utils_1.contactTombstoneDavUids).map(davUid => deletedContactResponse(user, davUid))
+            ].join('');
         }
         xml = `<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav" xmlns:CS="http://calendarserver.org/ns/">
@@ -203,16 +229,41 @@ async function handleReport(req, res, user) {
     if (!collectionMatch || !isAddressBookSlug(collectionMatch[1])) {
         return res.status(404).send();
     }
+    const rawBody = req.body ? req.body.toString('utf-8') : '';
+    const rawBodyLower = rawBody.toLowerCase();
+    const isSyncCollection = (0, dav_report_1.isSyncCollectionReport)(rawBody);
+    const requestedSyncToken = normalizeReportSyncToken((0, dav_report_1.syncTokenFromReportBody)(rawBody));
+    const syncToken = await (0, contact_utils_1.addressBookSyncToken)(user);
     const requestedHrefs = await parseRequestedHrefs(req);
     const requestedUids = new Set(requestedHrefs.map(hrefToDavUid).filter(Boolean));
-    let contacts = await (0, contact_utils_1.listContacts)(user);
-    if (requestedUids.size > 0) {
-        contacts = contacts.filter(contact => requestedUids.has(contact.dav_uid || `contact-${contact.id}`));
+    let contacts = [];
+    let tombstoneUids = [];
+    if (isSyncCollection && requestedSyncToken === syncToken) {
+        contacts = [];
     }
-    const rawBody = req.body ? req.body.toString('utf-8') : '';
-    const includeData = rawBody.includes('address-data') || rawBody.includes('addressbook-multiget');
-    const responses = (await Promise.all(contacts.map(contact => contactResourceResponse(user, contact, includeData)))).join('');
-    const syncToken = await (0, contact_utils_1.addressBookSyncToken)(user);
+    else if (isSyncCollection) {
+        const previousVersion = (0, contact_utils_1.contactSyncTokenVersion)(requestedSyncToken);
+        contacts = previousVersion > 0
+            ? await (0, contact_utils_1.listContactsUpdatedSince)(user, previousVersion)
+            : await (0, contact_utils_1.listContacts)(user);
+        tombstoneUids = previousVersion > 0
+            ? (await (0, contact_utils_1.listContactTombstonesSince)(user, previousVersion)).flatMap(contact_utils_1.contactTombstoneDavUids)
+            : [];
+    }
+    else if (requestedUids.size > 0) {
+        contacts = await (0, contact_utils_1.listContacts)(user);
+        contacts = contacts.filter(contact => requestedUids.has(contact.dav_uid || `contact-${contact.id}`));
+        tombstoneUids = (await (0, contact_utils_1.listRecentContactTombstones)(user))
+            .flatMap(contact_utils_1.contactTombstoneDavUids)
+            .filter(davUid => requestedUids.has(davUid));
+    }
+    else {
+        contacts = await (0, contact_utils_1.listContacts)(user);
+    }
+    const includeData = rawBodyLower.includes('address-data') || rawBodyLower.includes('addressbook-multiget');
+    const contactResponses = (await Promise.all(contacts.map(contact => contactResourceResponse(user, contact, includeData)))).join('');
+    const deletedResponses = tombstoneUids.map(davUid => deletedContactResponse(user, davUid)).join('');
+    const responses = `${contactResponses}${deletedResponses}`;
     res.set('Content-Type', 'application/xml; charset=utf-8');
     const xml = `<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
@@ -249,6 +300,7 @@ async function handlePut(req, res, user) {
         return res.status(400).send();
     }
     const result = await (0, contact_utils_1.saveContactFromVCard)(user, davUid, vcard);
+    emitContactsUpdated(user, { davUid });
     res.set('ETag', (0, contact_utils_1.contactEtag)(result.contact));
     res.set('Location', (0, contact_utils_1.getContactHref)(user, result.contact));
     return res.status(result.created ? 201 : 204).send();
@@ -259,6 +311,8 @@ async function handleDelete(req, res, user) {
         return res.status(400).send();
     }
     const deleted = await (0, contact_utils_1.deleteContactByDavUid)(user, (0, contact_utils_1.normalizeDavUid)(match[2]));
+    if (deleted)
+        emitContactsUpdated(user, { davUid: (0, contact_utils_1.normalizeDavUid)(match[2]), deleted: true });
     return res.status(deleted ? 204 : 404).send();
 }
 async function handleProppatch(req, res, user) {

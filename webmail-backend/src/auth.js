@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.requireAdminSession = exports.requireSession = exports.clearSession = exports.getSession = exports.createSession = exports.decryptPassword = exports.SESSION_COOKIE = void 0;
+exports.requireAdminSession = exports.requireSession = exports.clearSession = exports.getSession = exports.createSession = exports.canDemoteGlobalAdmin = exports.hasGlobalAdminAccess = exports.decryptPassword = exports.SESSION_COOKIE = void 0;
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("./db");
 const config_1 = require("./config");
@@ -87,6 +87,18 @@ const cleanupExpiredSessions = async () => {
     await ensureSessionSchema();
     await db_1.pool.query('DELETE FROM webmail_sessions WHERE expires_at <= NOW()');
 };
+const hasGlobalAdminAccess = (row) => (Number(row?.superadmin || 0) === 1);
+exports.hasGlobalAdminAccess = hasGlobalAdminAccess;
+const canDemoteGlobalAdmin = (actorUsername, targetUsername, activeSuperAdminCount) => {
+    if (actorUsername === targetUsername) {
+        return { allowed: false, reason: 'You cannot remove your own superadmin role.' };
+    }
+    if (activeSuperAdminCount <= 1) {
+        return { allowed: false, reason: 'At least one active superadmin is required.' };
+    }
+    return { allowed: true, reason: '' };
+};
+exports.canDemoteGlobalAdmin = canDemoteGlobalAdmin;
 const createSession = async (res, data) => {
     await cleanupExpiredSessions();
     const id = crypto_1.default.randomBytes(32).toString('base64url');
@@ -120,9 +132,17 @@ const getSession = async (req) => {
     if (!id)
         return null;
     await ensureSessionSchema();
-    const [rows] = await db_1.pool.query(`SELECT username, password_ciphertext, password_iv, password_tag, is_admin, expires_at
-         FROM webmail_sessions
-         WHERE id_hash = ? AND expires_at > NOW()
+    const [rows] = await db_1.pool.query(`SELECT
+            s.username,
+            s.password_ciphertext,
+            s.password_iv,
+            s.password_tag,
+            s.is_admin,
+            s.expires_at,
+            a.superadmin
+         FROM webmail_sessions s
+         LEFT JOIN admin a ON a.username = s.username AND a.active = 1
+         WHERE s.id_hash = ? AND s.expires_at > NOW()
          LIMIT 1`, [hashSessionId(id)]);
     if (rows.length === 0) {
         await db_1.pool.query('DELETE FROM webmail_sessions WHERE id_hash = ?', [hashSessionId(id)]);
@@ -132,11 +152,13 @@ const getSession = async (req) => {
     const expiresAt = Date.now() + config_1.serverConfig.sessionTtlMs;
     await db_1.pool.query('UPDATE webmail_sessions SET expires_at = ? WHERE id_hash = ?', [toMysqlDate(expiresAt), hashSessionId(id)]);
     try {
+        const isSuperAdmin = (0, exports.hasGlobalAdminAccess)(row);
         return {
             id,
             username: row.username,
             password: (0, exports.decryptPassword)(row.password_ciphertext, row.password_iv, row.password_tag),
-            isAdmin: !!row.is_admin,
+            isAdmin: isSuperAdmin,
+            isSuperAdmin,
             expiresAt
         };
     }
@@ -165,13 +187,27 @@ const requireSession = async (req, res, next) => {
         username: session.username,
         password: session.password,
         isAdmin: session.isAdmin,
+        isSuperAdmin: session.isSuperAdmin,
     };
     next();
 };
 exports.requireSession = requireSession;
-const requireAdminSession = (req, res, next) => {
+const requireAdminSession = async (req, res, next) => {
     if (!req.user || !req.user.isAdmin) {
         return res.status(403).json({ success: false, error: 'Forbidden: Admins only' });
+    }
+    try {
+        const [rows] = await db_1.pool.query('SELECT superadmin FROM admin WHERE username = ? AND active = 1 LIMIT 1', [req.user.username]);
+        if (rows.length === 0 || !(0, exports.hasGlobalAdminAccess)(rows[0])) {
+            req.user.isAdmin = false;
+            req.user.isSuperAdmin = false;
+            return res.status(403).json({ success: false, error: 'Forbidden: Superadmins only' });
+        }
+        req.user.isSuperAdmin = true;
+    }
+    catch (err) {
+        console.error('Failed to verify admin privileges:', err);
+        return res.status(500).json({ success: false, error: 'Failed to verify admin privileges' });
     }
     next();
 };

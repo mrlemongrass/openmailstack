@@ -14,9 +14,9 @@ NC='\033[0m'
 
 echo -e "${YELLOW}Starting Modern Webmail Deployment...${NC}"
 
-source ./config.conf
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
+source "${REPO_DIR}/config.conf"
 source "${SCRIPT_DIR}/lib_os.sh"
 detect_openmailstack_os
 
@@ -27,6 +27,8 @@ FRONTEND_DIR="${OPENMAILSTACK_WEB_ROOT:-/var/www/openmailstack}"
 ENV_DIR="/etc/openmailstack"
 ENV_FILE="${ENV_DIR}/webmail-backend.env"
 SERVICE_FILE="/etc/systemd/system/openmailstack.service"
+REMEDIATE_SCRIPT="/usr/local/sbin/openmailstack-remediate"
+REMEDIATE_SUDOERS="/etc/sudoers.d/openmailstack-remediate"
 NGINX_CONF="/etc/nginx/sites-available/mailserver.conf"
 WEBMAIL_USER="openmailstack"
 WEBMAIL_GROUP="openmailstack"
@@ -89,6 +91,13 @@ ensure_service_user() {
     fi
 }
 
+install_remediation_bridge() {
+    require_path "${REPO_DIR}/functions/openmailstack-remediate.sh"
+    install -o root -g root -m 0750 "${REPO_DIR}/functions/openmailstack-remediate.sh" "${REMEDIATE_SCRIPT}"
+    printf '%s ALL=(root) NOPASSWD: %s restart-openmailstack\n' "${WEBMAIL_USER}" "${REMEDIATE_SCRIPT}" > "${REMEDIATE_SUDOERS}"
+    chmod 0440 "${REMEDIATE_SUDOERS}"
+}
+
 render_backend_env() {
     echo -e "Writing ${ENV_FILE}..."
     install -d -m 0700 "${ENV_DIR}"
@@ -128,6 +137,7 @@ deploy_backend() {
     npm --prefix "${BACKEND_SRC}" run build
 
     ensure_service_user
+    install_remediation_bridge
     install -d -o "${WEBMAIL_USER}" -g "${WEBMAIL_GROUP}" -m 0755 "${BACKEND_DIR}"
     rsync -a --delete \
         --exclude node_modules \
@@ -165,12 +175,14 @@ configure_nginx() {
     echo -e "Configuring Nginx for modern webmail..."
     require_path "${NGINX_CONF}"
 
-    local tmp snippet
-    tmp="$(mktemp)"
+    local backup cleaned candidate snippet
+    backup="$(mktemp)"
+    cleaned="$(mktemp)"
+    candidate="$(mktemp)"
     snippet="$(mktemp)"
 
-    sed '/# --- OpenMailStack Modern Webmail ---/,/# --- End OpenMailStack Modern Webmail ---/d' "${NGINX_CONF}" > "${tmp}"
-    mv "${tmp}" "${NGINX_CONF}"
+    cp -a "${NGINX_CONF}" "${backup}"
+    sed '/# --- OpenMailStack Modern Webmail ---/,/# --- End OpenMailStack Modern Webmail ---/d' "${NGINX_CONF}" > "${cleaned}"
 
     cat > "${snippet}" <<EOF
     # --- OpenMailStack Modern Webmail ---
@@ -191,6 +203,17 @@ configure_nginx() {
     location = /api {
         proxy_pass http://${WEBMAIL_HOST}:${WEBMAIL_PORT};
         proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location ^~ /socket.io/ {
+        proxy_pass http://${WEBMAIL_HOST}:${WEBMAIL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -271,7 +294,7 @@ configure_nginx() {
     # --- End OpenMailStack Modern Webmail ---
 EOF
 
-    awk -v snippet="${snippet}" '
+    if ! awk -v snippet="${snippet}" '
         /^}[[:space:]]*$/ && !inserted {
             while ((getline line < snippet) > 0) {
                 print line
@@ -280,11 +303,28 @@ EOF
             inserted = 1
         }
         { print }
-    ' "${NGINX_CONF}" > "${tmp}"
-    mv "${tmp}" "${NGINX_CONF}"
-    rm -f "${snippet}"
+        END { if (!inserted) exit 2 }
+    ' "${cleaned}" > "${candidate}"; then
+        rm -f "${backup}" "${cleaned}" "${candidate}" "${snippet}"
+        echo -e "${RED}Error: Could not find an insertion point in ${NGINX_CONF}.${NC}" >&2
+        exit 1
+    fi
 
-    nginx -t
+    if ! grep -Fq '# --- OpenMailStack Modern Webmail ---' "${candidate}"; then
+        rm -f "${backup}" "${cleaned}" "${candidate}" "${snippet}"
+        echo -e "${RED}Error: Generated Nginx config is missing the modern webmail marker.${NC}" >&2
+        exit 1
+    fi
+
+    cat "${candidate}" > "${NGINX_CONF}"
+    if ! nginx -t; then
+        echo -e "${RED}Error: Generated Nginx config failed validation; restoring previous config.${NC}" >&2
+        cp -a "${backup}" "${NGINX_CONF}"
+        nginx -t || true
+        rm -f "${backup}" "${cleaned}" "${candidate}" "${snippet}"
+        exit 1
+    fi
+    rm -f "${backup}" "${cleaned}" "${candidate}" "${snippet}"
     systemctl reload nginx || systemctl restart nginx
 }
 

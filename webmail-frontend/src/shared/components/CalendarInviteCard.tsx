@@ -32,10 +32,11 @@ function parseIcsInvite(ics: string): CalendarInvite | null {
 }
 
 export function CalendarInviteCard({ calendarData }: { calendarData?: CalendarData }) {
+  const ics = calendarData?.ics;
   const invite = useMemo(() => {
-    if (!calendarData?.ics) return null;
-    return parseIcsInvite(calendarData.ics);
-  }, [calendarData?.ics]);
+    if (!ics) return null;
+    return parseIcsInvite(ics);
+  }, [ics]);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
 

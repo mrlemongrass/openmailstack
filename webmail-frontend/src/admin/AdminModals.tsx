@@ -181,16 +181,21 @@ export function CreateRoutingModal({ onClose, onSubmit }: ModalProps & { onSubmi
   );
 }
 
-export function PromoteAdminModal({ onClose, onSubmit }: ModalProps & { onSubmit: (data: { username: string }) => void }) {
+export function PromoteAdminModal({ onClose, onSubmit }: ModalProps & { onSubmit: (data: { username: string; superadmin: boolean }) => void }) {
   const [username, setUsername] = useState('');
+  const [superadmin, setSuperadmin] = useState(false);
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px', width: '100%' }}>
         <h3>Promote Admin</h3>
-        <form onSubmit={e => { e.preventDefault(); onSubmit({ username }); }} className="settings-form-grid" style={{ marginTop: '16px' }}>
+        <form onSubmit={e => { e.preventDefault(); onSubmit({ username, superadmin }); }} className="settings-form-grid" style={{ marginTop: '16px' }}>
           <label className="settings-field">
             <span>Full Mailbox Address</span>
             <input required type="email" className="glass-input" value={username} onChange={e => setUsername(e.target.value)} placeholder="user@example.com" />
+          </label>
+          <label className="settings-toggle" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input type="checkbox" checked={superadmin} onChange={e => setSuperadmin(e.target.checked)} />
+            <span>Grant superadmin access</span>
           </label>
           <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
@@ -201,4 +206,3 @@ export function PromoteAdminModal({ onClose, onSubmit }: ModalProps & { onSubmit
     </div>
   );
 }
-

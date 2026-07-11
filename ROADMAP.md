@@ -1,6 +1,6 @@
 # OpenMailStack Roadmap
 
-Last reviewed: 2026-07-01
+Last reviewed: 2026-07-11
 
 This roadmap tracks the remaining product and release work for the modern OpenMailStack suite. The current product direction is a native React webmail, calendar, and contacts experience backed by the Node/Express sync proxy, while Roundcube and older SOGo-compatible paths remain compatibility or fallback surfaces.
 
@@ -31,10 +31,12 @@ webmail-frontend/src/
 ## 1. Real Client Validation
 
 - Validate iPhone Exchange setup for Mail, Calendar, and Contacts. ✅
-- Validate macOS Mail, Calendar, and Contacts through IMAP, CalDAV, and CardDAV. ✅
-- Validate Android mail and DAV clients such as K-9/Thunderbird and DAVx5. ✅
-- Validate Thunderbird IMAP/SMTP, CalDAV, and CardDAV. ✅
+- Validate macOS Mail, Calendar, and Contacts through IMAP, CalDAV, and CardDAV. 🟡
+- Validate Android mail and DAV clients such as K-9/Thunderbird and DAVx5. 🟡
+- Validate Thunderbird IMAP/SMTP, CalDAV, and CardDAV. 🟡
 - Record exact setup steps and failures in `docs/webmail-release-validation.md`. ✅
+
+Current note: iOS Exchange mail/calendar/contacts passed on the live server after the July 2026 protocol fixes. macOS Calendar and Contacts passed the observed iOS-driven calendar/contact workflows, but the standalone macOS, Android/DAVx5, and Thunderbird matrix still needs a post-fix rerun with exact client versions before release.
 
 ## 2. Contacts & Notes UI Modernization 🟡
 
@@ -134,3 +136,19 @@ The contacts and notes apps have been extracted into their own directories with 
 - ❌ **Control Plane (Node.js)**: Build API endpoints to manage credentials and sync jobs, securely storing encrypted App-Specific Passwords (AES-256-GCM) in MySQL.
 - ❌ **Settings UI (React)**: Create a React-based connection wizard in the settings panel to allow users to link iCloud, Google Contacts, and custom CardDAV servers.
 - ❌ **Continuous Syncing**: Complete engine implementation to successfully push, pull, and merge vCards continuously in the background, serving as a native, free alternative to premium services like sync.blue.
+
+## 10. OMS Scheduler ❌
+
+`docs/product/scheduler.md` is the detailed product, parity, architecture, and delivery roadmap.
+
+- ❌ Add **Scheduler** immediately after **Notes** in the desktop and mobile web-app navigation.
+- ❌ Add an optional installer choice persisted as `ENABLE_OMS_SCHEDULER`, and install no Scheduler components when it is disabled.
+- ❌ Let only authorized admins enable/disable Scheduler per mailbox; installation alone must not publish or entitle users.
+- ❌ Publish enabled users at `/scheduler/<local-part>` without the mail domain, with admin-assigned alternate handles for reserved/invalid names or cross-domain collisions.
+- ❌ Serve the same Scheduler path on every configured OMS webmail hostname; use an administrator-selected preferred base URL for generated links and validate DNS, Nginx aliases, and TLS coverage.
+- ❌ Deliver native individual event types, availability, public booking, secure reschedule/cancel, OMS Calendar projection, and OMS email notifications.
+- ❌ Reach personal parity with advanced limits, overrides, private/single-use links, seats, recurring bookings, meeting polls, embeds, and migration/import.
+- ❌ Add durable workflows, reminders, provider-backed SMS/WhatsApp/voice, and observable background delivery.
+- ❌ Add teams, collective/group/round-robin/managed events, delegated scheduling, routing forms, attributes, fairness, and explainable assignment.
+- ❌ Add payments, external calendars/conferencing, CRM/automation adapters, analytics, public APIs, OAuth, webhooks, CLI, embeds, and MCP/agent support.
+- ❌ Add enterprise organization controls, SSO/SCIM reuse, audit/export/deletion/retention, operational recovery, and continuous competitor-parity review.

@@ -37,7 +37,10 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
   const initialized = useRef(false);
   const initTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   useEffect(() => {
     if (!quillRef.current || initialized.current) return;

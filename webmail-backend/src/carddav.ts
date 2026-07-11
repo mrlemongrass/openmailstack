@@ -1,15 +1,22 @@
 import express, { Request, Response } from 'express';
 import xml2js from 'xml2js';
 import { davBasicAuth } from './dav-auth';
+import { isSyncCollectionReport, syncTokenFromReportBody } from './dav-report';
 import {
     addressBookSyncToken,
     contactEtag,
+    contactSyncTokenVersion,
+    contactTombstoneDavUids,
     contactVCard,
     deleteContactByDavUid,
     ensureContactsSchema,
     getContactByDavUid,
     getContactHref,
+    getContactHrefForDavUid,
+    listContactTombstonesSince,
     listContacts,
+    listContactsUpdatedSince,
+    listRecentContactTombstones,
     normalizeDavUid,
     saveContactFromVCard,
     xmlEscape
@@ -17,6 +24,13 @@ import {
 
 const router = express.Router();
 const ADDRESSBOOK_SLUGS = new Set(['personal', 'contacts']);
+
+function emitContactsUpdated(user: string, details: Record<string, any> = {}) {
+    try {
+        const { io } = require('./index');
+        io.to(user).emit('contacts_updated', details);
+    } catch {}
+}
 
 function addressBookCollectionMatch(path: string): RegExpMatchArray | null {
     return path.match(/^(?:\/carddav)?\/addressbooks\/[^\/]+\/([^\/]+)\/?$/);
@@ -39,6 +53,13 @@ function hrefToDavUid(href: string): string | null {
         .replace(/&apos;/g, "'");
     const match = decodedHref.match(/\/addressbooks\/[^\/]+\/(?:personal|contacts)\/([^\/]+)\.vcf$/i);
     return match ? normalizeDavUid(match[1]) : null;
+}
+
+function normalizeReportSyncToken(token: string | null): string | null {
+    if (!token) return null;
+    const trimmed = token.trim();
+    const lastSlash = trimmed.lastIndexOf('/');
+    return lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
 }
 
 function responseForAddressBook(user: string, syncToken: string, includeChildren: string): string {
@@ -74,6 +95,14 @@ async function contactResourceResponse(user: string, contact: any, includeData: 
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
+  </D:response>`;
+}
+
+function deletedContactResponse(user: string, davUid: string): string {
+    return `
+  <D:response>
+    <D:href>${xmlEscape(getContactHrefForDavUid(user, davUid))}</D:href>
+    <D:status>HTTP/1.1 404 Not Found</D:status>
   </D:response>`;
 }
 
@@ -185,7 +214,11 @@ async function handlePropfind(req: Request, res: Response, user: string) {
         let contactResponses = '';
         if (depth === '1') {
             const contacts = await listContacts(user);
-            contactResponses = (await Promise.all(contacts.map(contact => contactResourceResponse(user, contact, false)))).join('');
+            const tombstones = await listRecentContactTombstones(user);
+            contactResponses = [
+                ...(await Promise.all(contacts.map(contact => contactResourceResponse(user, contact, false)))),
+                ...tombstones.flatMap(contactTombstoneDavUids).map(davUid => deletedContactResponse(user, davUid))
+            ].join('');
         }
         xml = `<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav" xmlns:CS="http://calendarserver.org/ns/">
@@ -221,18 +254,41 @@ async function handleReport(req: Request, res: Response, user: string) {
         return res.status(404).send();
     }
 
+    const rawBody = req.body ? req.body.toString('utf-8') : '';
+    const rawBodyLower = rawBody.toLowerCase();
+    const isSyncCollection = isSyncCollectionReport(rawBody);
+    const requestedSyncToken = normalizeReportSyncToken(syncTokenFromReportBody(rawBody));
+    const syncToken = await addressBookSyncToken(user);
     const requestedHrefs = await parseRequestedHrefs(req);
     const requestedUids = new Set(requestedHrefs.map(hrefToDavUid).filter(Boolean) as string[]);
-    let contacts = await listContacts(user);
-    if (requestedUids.size > 0) {
+    let contacts: any[] = [];
+    let tombstoneUids: string[] = [];
+
+    if (isSyncCollection && requestedSyncToken === syncToken) {
+        contacts = [];
+    } else if (isSyncCollection) {
+        const previousVersion = contactSyncTokenVersion(requestedSyncToken);
+        contacts = previousVersion > 0
+            ? await listContactsUpdatedSince(user, previousVersion)
+            : await listContacts(user);
+        tombstoneUids = previousVersion > 0
+            ? (await listContactTombstonesSince(user, previousVersion)).flatMap(contactTombstoneDavUids)
+            : [];
+    } else if (requestedUids.size > 0) {
+        contacts = await listContacts(user);
         contacts = contacts.filter(contact => requestedUids.has(contact.dav_uid || `contact-${contact.id}`));
+        tombstoneUids = (await listRecentContactTombstones(user))
+            .flatMap(contactTombstoneDavUids)
+            .filter(davUid => requestedUids.has(davUid));
+    } else {
+        contacts = await listContacts(user);
     }
 
-    const rawBody = req.body ? req.body.toString('utf-8') : '';
-    const includeData = rawBody.includes('address-data') || rawBody.includes('addressbook-multiget');
+    const includeData = rawBodyLower.includes('address-data') || rawBodyLower.includes('addressbook-multiget');
 
-    const responses = (await Promise.all(contacts.map(contact => contactResourceResponse(user, contact, includeData)))).join('');
-    const syncToken = await addressBookSyncToken(user);
+    const contactResponses = (await Promise.all(contacts.map(contact => contactResourceResponse(user, contact, includeData)))).join('');
+    const deletedResponses = tombstoneUids.map(davUid => deletedContactResponse(user, davUid)).join('');
+    const responses = `${contactResponses}${deletedResponses}`;
     res.set('Content-Type', 'application/xml; charset=utf-8');
     const xml = `<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
@@ -274,6 +330,7 @@ async function handlePut(req: Request, res: Response, user: string) {
     }
 
     const result = await saveContactFromVCard(user, davUid, vcard);
+    emitContactsUpdated(user, { davUid });
     res.set('ETag', contactEtag(result.contact));
     res.set('Location', getContactHref(user, result.contact));
     return res.status(result.created ? 201 : 204).send();
@@ -286,6 +343,7 @@ async function handleDelete(req: Request, res: Response, user: string) {
     }
 
     const deleted = await deleteContactByDavUid(user, normalizeDavUid(match[2]));
+    if (deleted) emitContactsUpdated(user, { davUid: normalizeDavUid(match[2]), deleted: true });
     return res.status(deleted ? 204 : 404).send();
 }
 

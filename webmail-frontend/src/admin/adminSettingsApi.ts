@@ -393,14 +393,30 @@ export async function getAdminUsers(): Promise<AdminUserInfo[]> {
   return b.data;
 }
 
-export async function promoteAdmin(username: string): Promise<void> {
+export async function promoteAdmin(username: string, superadmin = false): Promise<void> {
   const r = await fetch('/api/admin/admins', {
     method: 'POST', credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username }),
+    body: JSON.stringify({ username, superadmin }),
   });
   const b = await r.json() as { success: boolean; error?: string };
   if (!r.ok || !b.success) throw new Error(b.error || 'Failed to promote admin');
+}
+
+export async function promoteSuperAdmin(username: string): Promise<void> {
+  const r = await fetch(`/api/admin/admins/${encodeURIComponent(username)}/superadmin`, {
+    method: 'POST', credentials: 'include',
+  });
+  const b = await r.json() as { success: boolean; error?: string };
+  if (!r.ok || !b.success) throw new Error(b.error || 'Failed to promote superadmin');
+}
+
+export async function demoteSuperAdmin(username: string): Promise<void> {
+  const r = await fetch(`/api/admin/admins/${encodeURIComponent(username)}/superadmin`, {
+    method: 'DELETE', credentials: 'include',
+  });
+  const b = await r.json() as { success: boolean; error?: string };
+  if (!r.ok || !b.success) throw new Error(b.error || 'Failed to demote superadmin');
 }
 
 export async function demoteAdmin(username: string): Promise<void> {

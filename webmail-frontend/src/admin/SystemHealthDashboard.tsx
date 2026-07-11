@@ -1,6 +1,19 @@
-import { useEffect, useState } from 'react';
-import { Server, Shield, HardDrive, Activity, Database, Globe, Clock } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Server, Shield, HardDrive, Activity, Database, Globe, Clock, RefreshCw, AlertTriangle, Smartphone } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+
+interface ProtocolHealth {
+  ok: boolean;
+  status: number | null;
+  latencyMs: number | null;
+  lastError: string | null;
+  checkedAt: string;
+  endpoint: string;
+  greeting?: string | null;
+  protocolVersions?: string | null;
+  recentErrors?: number | null;
+  recentErrorWindowMinutes?: number;
+}
 
 interface SystemHealth {
   success: boolean;
@@ -8,9 +21,18 @@ interface SystemHealth {
   memory: { total: number; free: number; used: number; usedPercent: number };
   disk: { total: number; used: number; usedPercent: number };
   services: Record<string, boolean>;
+  protocols?: {
+    activeSync?: ProtocolHealth;
+    imap?: ProtocolHealth;
+    smtp?: ProtocolHealth;
+    caldav?: ProtocolHealth;
+    carddav?: ProtocolHealth;
+  };
   mailQueue: number;
   connections: { imap: number; smtp: number; http: number };
 }
+
+type ProtocolKey = 'activeSync' | 'imap' | 'smtp' | 'caldav' | 'carddav';
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
@@ -27,6 +49,8 @@ const SERVICE_META: Record<string, { label: string; icon: LucideIcon | React.Com
   dovecot: { label: 'Dovecot (IMAP)', icon: Server },
   rspamd: { label: 'Rspamd', icon: Shield },
   fail2ban: { label: 'Fail2ban', icon: Shield },
+  openmailstack: { label: 'OpenMailStack Backend', icon: Activity },
+  nginx: { label: 'Nginx (HTTPS Proxy)', icon: Globe },
 };
 
 function MailIcon({ size = 24 }: { size?: number }) {
@@ -41,36 +65,65 @@ function MailIcon({ size = 24 }: { size?: number }) {
 export function SystemHealthDashboard() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [error, setError] = useState('');
+  const [status, setStatus] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [countdown, setCountdown] = useState(5);
+  const [countdown, setCountdown] = useState(15);
   const [refreshing, setRefreshing] = useState(false);
+  const [remediating, setRemediating] = useState<string | null>(null);
+
+  const fetchHealth = useCallback(() => {
+    setRefreshing(true);
+    fetch('/api/admin/telemetry/system-health')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setHealth(data);
+          setLastUpdated(new Date());
+          setError('');
+        } else {
+          setError(data.error || 'Failed to load system health');
+        }
+      })
+      .catch(err => {
+        setError(err.message || 'Connection error');
+      })
+      .finally(() => setRefreshing(false));
+    setCountdown(15);
+  }, []);
 
   useEffect(() => {
-    const fetchHealth = () => {
-      setRefreshing(true);
-      fetch('/api/admin/telemetry/system-health')
-        .then(res => res.json())
-        .then(data => {
-          if (data.success) {
-            setHealth(data);
-            setLastUpdated(new Date());
-            setError('');
-          } else {
-            setError(data.error || 'Failed to load system health');
-          }
-        })
-        .catch(err => {
-          setError(err.message || 'Connection error');
-        })
-        .finally(() => setRefreshing(false));
-      setCountdown(5);
-    };
-
     fetchHealth();
-    const tick = setInterval(() => setCountdown(c => (c > 1 ? c - 1 : 5)), 1000);
-    const interval = setInterval(fetchHealth, 5000);
+    const tick = setInterval(() => setCountdown(c => (c > 1 ? c - 1 : 15)), 1000);
+    const interval = setInterval(fetchHealth, 15000);
     return () => { clearInterval(tick); clearInterval(interval); };
-  }, []);
+  }, [fetchHealth]);
+
+  const handleRemediate = async (action: string) => {
+    const confirmed = window.confirm('Restart the OpenMailStack backend? Active webmail and ActiveSync requests may reconnect.');
+    if (!confirmed) return;
+
+    setRemediating(action);
+    setStatus('');
+    setError('');
+    try {
+      const res = await fetch('/api/admin/telemetry/remediate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatus(data.message || 'Remediation scheduled.');
+        setTimeout(fetchHealth, 6000);
+      } else {
+        setError(data.error || 'Remediation failed');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Connection error');
+    } finally {
+      setRemediating(null);
+    }
+  };
 
   if (error && !health) {
     return (
@@ -101,7 +154,10 @@ export function SystemHealthDashboard() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '20px' }}>
+      {error && health && <div className="status-banner status-error" style={{ marginBottom: 12 }}>{error}</div>}
+      {status && <div className="status-banner status-success" style={{ marginBottom: 12 }}>{status}</div>}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px', marginBottom: '20px' }}>
         {/* System Services Card */}
         <div className="glass-panel" style={{ padding: '20px' }}>
           <h3 style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -134,7 +190,7 @@ export function SystemHealthDashboard() {
         </div>
 
         {/* Server Resources Card */}
-        <div className="glass-panel" style={{ padding: '20px', gridColumn: 'span 2' }}>
+        <div className="glass-panel" style={{ padding: '20px', minWidth: 0 }}>
           <h3 style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Activity size={18} /> Server Resources
           </h3>
@@ -208,8 +264,92 @@ export function SystemHealthDashboard() {
         </div>
       </div>
 
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+        <div className="glass-panel" style={{ padding: '20px' }}>
+          <h3 style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Smartphone size={18} /> Client Protocols
+          </h3>
+          {(() => {
+            const rows: Array<{ key: ProtocolKey; label: string; icon: LucideIcon | React.ComponentType<{ size?: number; style?: React.CSSProperties }> }> = [
+              { key: 'activeSync', label: 'ActiveSync / Exchange', icon: Smartphone },
+              { key: 'imap', label: 'IMAP Retrieval', icon: Server },
+              { key: 'smtp', label: 'SMTP Submission', icon: MailIcon as any },
+              { key: 'caldav', label: 'CalDAV Calendars', icon: Globe },
+              { key: 'carddav', label: 'CardDAV Contacts', icon: Globe },
+            ];
+            const protocolDetail = (protocol: ProtocolHealth | undefined, key: ProtocolKey) => {
+              if (!protocol) return 'Loading...';
+              if (!protocol.ok) return protocol.lastError || (protocol.status ? `HTTP ${protocol.status}` : 'Probe failed');
+              const base = protocol.status
+                ? `HTTP ${protocol.status}`
+                : protocol.greeting
+                  ? 'Greeting OK'
+                  : 'Ready';
+              const version = key === 'activeSync' && protocol.protocolVersions ? ` · ${protocol.protocolVersions}` : '';
+              return `${base} · ${protocol.latencyMs ?? '-'}ms${version}`;
+            };
+            const isHealthy = (protocol: ProtocolHealth | undefined) => Boolean(protocol?.ok && (protocol.recentErrors ?? 0) === 0);
+            const anyDegraded = health ? rows.some(row => !isHealthy(health.protocols?.[row.key])) : false;
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {rows.map(row => {
+                  const protocol = health?.protocols?.[row.key];
+                  const healthy = isHealthy(protocol);
+                  const Icon = row.icon;
+                  return (
+                    <div key={row.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                          <Icon size={16} style={{ color: healthy ? 'var(--success)' : 'var(--danger)' }} />
+                          {row.label}
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          {protocolDetail(protocol, row.key)}
+                        </div>
+                        {protocol && protocol.recentErrors !== undefined && (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                            {protocol.recentErrors ?? '-'} server errors in {protocol.recentErrorWindowMinutes || 15}m
+                          </div>
+                        )}
+                      </div>
+                      <span style={{
+                        fontSize: '0.75rem', fontWeight: 600, padding: '2px 10px', borderRadius: '12px',
+                        background: healthy ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                        color: healthy ? 'var(--success)' : 'var(--danger)',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {healthy ? 'Ready' : 'Degraded'}
+                      </span>
+                    </div>
+                  );
+                })}
+                {anyDegraded && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.78rem', color: 'var(--danger)' }}>
+                    <AlertTriangle size={14} />
+                    One or more client protocols are degraded; mail apps or sync clients may fail until this recovers.
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                  <button className="btn btn-secondary" onClick={fetchHealth} disabled={refreshing}>
+                    <RefreshCw size={16} className={refreshing ? 'spin' : ''} /> Refresh
+                  </button>
+                  <button
+                    className={anyDegraded ? 'btn btn-primary' : 'btn btn-secondary'}
+                    onClick={() => handleRemediate('restart-openmailstack')}
+                    disabled={remediating === 'restart-openmailstack'}
+                  >
+                    <RefreshCw size={16} className={remediating === 'restart-openmailstack' ? 'spin' : ''} />
+                    {remediating === 'restart-openmailstack' ? 'Scheduling...' : 'Restart Backend'}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
       {/* Quick Stats Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '16px' }}>
         <div className="glass-panel" style={{ padding: '16px', textAlign: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '8px' }}>
             <Database size={16} style={{ color: 'var(--accent-primary)' }} />

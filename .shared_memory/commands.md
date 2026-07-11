@@ -29,6 +29,9 @@ rtk npm --prefix webmail-frontend run lint
 rtk npm --prefix webmail-frontend run build
 ```
 
+`webmail-frontend run lint` is currently expected to exit 0 with warnings for
+the staged `any` typing cleanup and React compiler-style hook migration.
+
 Backend notes:
 
 - `webmail-backend/package.json` has a working build script:
@@ -55,12 +58,26 @@ rtk bash -lc 'for q in A AAAA MX; do echo "== housevo.us $q"; dig +short @1.1.1.
 rtk bash -lc 'curl -k -sS -D - -o /dev/null -X OPTIONS https://mail.housevo.us/Microsoft-Server-ActiveSync | sed -n "1,40p"'
 ```
 
+Live iPhone Exchange validation helpers:
+
+```bash
+rtk journalctl -u openmailstack -f -g 'ActiveSync|Microsoft-Server-ActiveSync|Error handling ActiveSync|Unknown tag'
+rtk journalctl -u openmailstack --since '10 minutes ago' --no-pager -g 'ActiveSync|Microsoft-Server-ActiveSync|Error handling ActiveSync|Unknown tag'
+```
+
+SMTP submission health probe:
+
+```bash
+rtk curl -v --connect-timeout 8 --max-time 8 telnet://127.0.0.1:587
+```
+
 Authenticated client-protocol smokes:
 
 ```bash
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> OMS_SMOKE_IMAP_HOST=127.0.0.1 OMS_SMOKE_IMAP_PORT=143 rtk bash tests/integration/mail_sync_smoke.sh
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integration/calendar_sync_smoke.sh
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integration/carddav_sync_smoke.sh
+OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integration/activesync_mail_smoke.sh
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integration/activesync_contacts_smoke.sh
 ```
 

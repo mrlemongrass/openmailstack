@@ -19,17 +19,22 @@ import { ensureBrandingSchema } from './branding';
 import { ensureCalendarSchema, ensureDefaultCalendar, formatActiveSyncDate, getCalendarFolderSyncKey, getVisibleCalendars, parseIcalEvent } from './calendar-utils';
 import {
     addressBookSyncToken,
+    contactSyncTokenVersion,
     contactVCard,
     deleteContactByDavUid,
     ensureContactsSchema,
     getContactDavUid,
+    listContactTombstonesSince,
     listContacts,
+    listContactsUpdatedSince,
     normalizeDavUid,
-    saveContactFromVCard,
-    type ContactRow
+    saveContactFromVCard
 } from './contact-utils';
 import { ensureNotesSchema, ensureRemindersSchema, ensureAttachmentsSchema, listNotes, saveNote, deleteNote, getNotesSyncToken } from './notes-utils';
 import { activeSyncToDbNote, dbNoteToActiveSync } from './eas-notes';
+import { activeSyncContactApplicationDataToVCard, contactToActiveSyncApplicationData } from './eas-contacts';
+import { shouldSendActiveSyncServerChanges } from './eas-sync';
+import { buildActiveSyncSendMailEnvelope, extractActiveSyncSendMailMime, summarizeActiveSyncNodeForLog } from './eas-send';
 import { syncNotesWithImap } from './notes-imap-sync';
 import { startSearchWorker } from './search-worker';
 import { startScheduledSender } from './scheduled-send';
@@ -42,9 +47,16 @@ export const io = new SocketIOServer(server, {
 });
 
 io.on('connection', (socket) => {
-    socket.on('join', (username) => {
-        if (username) {
-            socket.join(username);
+    socket.on('join', async () => {
+        try {
+            const session = await getSession(socket.request);
+            if (session?.username) {
+                socket.join(session.username);
+            }
+        } catch (err) {
+            if (process.env.NODE_ENV !== 'test') {
+                console.error('Failed to authorize socket join:', err);
+            }
         }
     });
 });
@@ -73,7 +85,7 @@ app.use(bodyParser.raw({
 }));
 
 import * as path from 'path';
-import { requireSession } from './auth';
+import { getSession, requireSession } from './auth';
 app.use('/uploads', (req, res, next) => {
     requireSession(req, res, () => {
         next();
@@ -92,101 +104,12 @@ const childNode = (node: any, tag: string): any => node?.children?.find((child: 
 const childText = (node: any, tag: string): string => nodeText(childNode(node, tag));
 const firstNonEmpty = (...values: string[]): string => values.map(value => value.trim()).find(Boolean) || '';
 
-function vcardEscape(value: string): string {
-    return value
-        .replace(/\\/g, '\\\\')
-        .replace(/\n/g, '\\n')
-        .replace(/;/g, '\\;')
-        .replace(/,/g, '\\,');
-}
-
 function icalEscape(value: string): string {
     return value
         .replace(/\\/g, '\\\\')
         .replace(/\n/g, '\\n')
         .replace(/;/g, '\\;')
         .replace(/,/g, '\\,');
-}
-
-function splitContactName(name: string): { firstName: string; lastName: string } {
-    const parts = name.trim().split(/\s+/).filter(Boolean);
-    if (parts.length <= 1) return { firstName: parts[0] || '', lastName: '' };
-    return { firstName: parts.slice(0, -1).join(' '), lastName: parts[parts.length - 1] };
-}
-
-function contactToActiveSyncApplicationData(contact: ContactRow): any[] {
-    const fileAs = contact.name || contact.email || 'Unnamed Contact';
-    const { firstName, lastName } = splitContactName(contact.name || '');
-    const data: any[] = [
-        { tag: 'FileAs', page: 1, content: fileAs }
-    ];
-
-    if (firstName) data.push({ tag: 'FirstName', page: 1, content: firstName });
-    if (lastName) data.push({ tag: 'LastName', page: 1, content: lastName });
-    if (contact.email) data.push({ tag: 'Email1Address', page: 1, content: contact.email });
-    if (contact.phone) data.push({ tag: 'MobilePhoneNumber', page: 1, content: contact.phone });
-    if (contact.organization) data.push({ tag: 'CompanyName', page: 1, content: contact.organization });
-    if (contact.job_title) data.push({ tag: 'JobTitle', page: 1, content: contact.job_title });
-    if ((contact as any).photo_url) {
-        const photo = (contact as any).photo_url;
-        if (photo.startsWith('data:image/')) {
-            data.push({ tag: 'Picture', page: 1, content: photo });
-        }
-    }
-
-    const vcard = contactVCard(contact);
-    if (vcard) {
-        data.push({
-            tag: 'Body',
-            page: 17,
-            children: [
-                { tag: 'Type', page: 17, content: '1' },
-                { tag: 'Data', page: 17, content: vcard },
-                { tag: 'EstimatedDataSize', page: 17, content: vcard.length.toString() }
-            ]
-        });
-    }
-
-    return data;
-}
-
-function activeSyncApplicationDataToVCard(davUid: string, applicationData: any): string {
-    const firstName = childText(applicationData, 'FirstName');
-    const lastName = childText(applicationData, 'LastName');
-    const fileAs = childText(applicationData, 'FileAs');
-    const email = firstNonEmpty(
-        childText(applicationData, 'Email1Address'),
-        childText(applicationData, 'Email2Address'),
-        childText(applicationData, 'Email3Address')
-    );
-    const phone = firstNonEmpty(
-        childText(applicationData, 'MobilePhoneNumber'),
-        childText(applicationData, 'BusinessPhoneNumber'),
-        childText(applicationData, 'HomePhoneNumber'),
-        childText(applicationData, 'Business2PhoneNumber'),
-        childText(applicationData, 'Home2PhoneNumber')
-    );
-    const company = childText(applicationData, 'CompanyName');
-    const displayName = firstNonEmpty([firstName, lastName].filter(Boolean).join(' '), fileAs, email, 'Unnamed Contact');
-
-    const lines = [
-        'BEGIN:VCARD',
-        'VERSION:3.0',
-        `UID:${vcardEscape(davUid)}`,
-        `FN:${vcardEscape(displayName)}`,
-        `N:${vcardEscape(lastName)};${vcardEscape(firstName)};;;`
-    ];
-    if (email) lines.push(`EMAIL;TYPE=INTERNET:${vcardEscape(email)}`);
-    if (phone) lines.push(`TEL;TYPE=CELL:${vcardEscape(phone)}`);
-    if (company) lines.push(`ORG:${vcardEscape(company)}`);
-    const picture = childText(applicationData, 'Picture');
-    if (picture && picture.startsWith('data:image/')) {
-        const b64 = picture.replace(/^data:image\/[^;]+;base64,/, '');
-        lines.push(`PHOTO;ENCODING=BASE64;TYPE=JPEG:${b64}`);
-    }
-    lines.push('END:VCARD');
-
-    return `${lines.join('\r\n')}\r\n`;
 }
 
 function normalizeCalendarEventUid(value: string): string {
@@ -388,7 +311,11 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         try {
             const parser = new WbxmlParser(req.body);
             const decoded = parser.parse();
-            console.log("Decoded Request:", JSON.stringify(decoded, null, 2));
+            const activeSyncCommand = String(req.query.Cmd || '');
+            const decodedForLog = ['SendMail', 'SmartForward', 'SmartReply'].includes(activeSyncCommand)
+                ? summarizeActiveSyncNodeForLog(decoded)
+                : decoded;
+            console.log("Decoded Request:", JSON.stringify(decodedForLog, null, 2));
         } catch (err) {
             console.error("Failed to parse WBXML:", err);
         }
@@ -845,8 +772,9 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     if (commandNode.tag === 'Add') {
                         const clientId = childText(commandNode, 'ClientId') || `client-${Date.now()}`;
                         const davUid = normalizeDavUid(`eas-${clientId}`);
-                        const vcard = activeSyncApplicationDataToVCard(davUid, applicationData);
+                        const vcard = activeSyncContactApplicationDataToVCard(davUid, applicationData);
                         await saveContactFromVCard(creds.user, davUid, vcard);
+                        io.to(creds.user).emit('contacts_updated', { davUid });
                         responses.push({
                             tag: 'Add',
                             page: 0,
@@ -860,8 +788,9 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                         const serverId = childText(commandNode, 'ServerId');
                         if (serverId && applicationData) {
                             const davUid = normalizeDavUid(serverId);
-                            const vcard = activeSyncApplicationDataToVCard(davUid, applicationData);
+                            const vcard = activeSyncContactApplicationDataToVCard(davUid, applicationData);
                             await saveContactFromVCard(creds.user, davUid, vcard);
+                            io.to(creds.user).emit('contacts_updated', { davUid });
                             responses.push({
                                 tag: 'Change',
                                 page: 0,
@@ -884,6 +813,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                         const serverId = childText(commandNode, 'ServerId');
                         if (serverId) {
                             await deleteContactByDavUid(creds.user, normalizeDavUid(serverId));
+                            io.to(creds.user).emit('contacts_updated', { davUid: normalizeDavUid(serverId), deleted: true });
                         }
                         responses.push({
                             tag: 'Delete',
@@ -898,30 +828,42 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 
                 const nextSyncKey = `contacts-${await addressBookSyncToken(creds.user)}`;
                 const isInitialSync = syncKey === '0' || syncKey === '1';
-                const shouldSendContacts = isInitialSync || syncKey !== nextSyncKey;
-                const addNodes: any[] = [];
+                const shouldSendContacts = shouldSendActiveSyncServerChanges({
+                    syncKey,
+                    nextSyncKey,
+                    hasClientCommands: Boolean(commandsNode?.children?.length),
+                    getChangesRequested: Boolean(childNode(syncCollectionNode, 'GetChanges'))
+                });
+                const commandNodes: any[] = [];
                 if (shouldSendContacts) {
                     let contacts;
                     if (isInitialSync) {
                         contacts = await listContacts(creds.user);
                     } else {
-                        // Delta: only send contacts updated since last sync
-                        const lastSyncToken = parseInt(syncKey.replace(/[^0-9]/g, '').slice(-8), 10) || 0;
-                        const [deltaContacts]: any = await pool.query(
-                            'SELECT * FROM contacts WHERE username = ? AND sync_token > ? ORDER BY id ASC',
-                            [creds.user, lastSyncToken]
-                        );
-                        contacts = deltaContacts;
+                        contacts = await listContactsUpdatedSince(creds.user, contactSyncTokenVersion(syncKey));
                     }
                     for (const contact of contacts) {
-                        addNodes.push({
-                            tag: 'Add',
+                        commandNodes.push({
+                            tag: isInitialSync ? 'Add' : 'Change',
                             page: 0,
                             children: [
                                 { tag: 'ServerId', page: 0, content: getContactDavUid(contact) },
-                                { tag: 'ApplicationData', page: 0, children: contactToActiveSyncApplicationData(contact) }
+                                { tag: 'ApplicationData', page: 0, children: contactToActiveSyncApplicationData(contact, contactVCard(contact)) }
                             ]
                         });
+                    }
+
+                    if (!isInitialSync) {
+                        const tombstones = await listContactTombstonesSince(creds.user, contactSyncTokenVersion(syncKey));
+                        for (const tombstone of tombstones) {
+                            commandNodes.push({
+                                tag: 'Delete',
+                                page: 0,
+                                children: [
+                                    { tag: 'ServerId', page: 0, content: tombstone.dav_uid }
+                                ]
+                            });
+                        }
                     }
                 }
 
@@ -936,7 +878,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                                 { tag: 'CollectionId', page: 0, content: collectionId },
                                 { tag: 'Status', page: 0, content: '1' },
                                 ...(responses.length > 0 ? [{ tag: 'Responses', page: 0, children: responses }] : []),
-                                ...(addNodes.length > 0 ? [{ tag: 'Commands', page: 0, children: addNodes }] : [])
+                                ...(commandNodes.length > 0 ? [{ tag: 'Commands', page: 0, children: commandNodes }] : [])
                             ]}
                         ]}
                     ]
@@ -944,7 +886,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 
                 const writer = new WbxmlWriter();
                 writer.writeNode(responseAst);
-                console.log(`[SYNC] Sending Contacts Sync Response for ${collectionId} with ${addNodes.length} contacts. SyncKey going to ${nextSyncKey}`);
+                console.log(`[SYNC] Sending Contacts Sync Response for ${collectionId} with ${commandNodes.length} commands. SyncKey going to ${nextSyncKey}`);
                 res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
                 return res.status(200).send(writer.getBuffer());
             } catch (e) {
@@ -1100,10 +1042,16 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     if (updatedCalendars.length > 0) {
                         calendar = updatedCalendars[0];
                     }
+                    io.to(creds.user).emit('calendar_updated', { calendarId: calendar.id });
                 }
 
                 const nextSyncKey = `cal-${calendar.id}-${calendar.sync_token || 1}`;
-                const shouldSendEvents = syncKey === "0" || syncKey === "1" || syncKey !== nextSyncKey;
+                const shouldSendEvents = shouldSendActiveSyncServerChanges({
+                    syncKey,
+                    nextSyncKey,
+                    hasClientCommands: Boolean(commandsNode?.children?.length),
+                    getChangesRequested: Boolean(childNode(syncCollectionNode, 'GetChanges'))
+                });
                 const addNodes: any[] = [];
 
                 if (shouldSendEvents) {
@@ -1514,7 +1462,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                             children: [
                                 { tag: "ServerId", page: 0, content: `${collectionId}-${c.uid}` },
                                 { tag: "ApplicationData", page: 0, children: [
-                                    { tag: "Read", page: 17, content: c.flags.includes('\\Seen') ? "1" : "0" }
+                                    { tag: "Read", page: 2, content: c.flags.includes('\\Seen') ? "1" : "0" }
                                 ]}
                             ]
                         });
@@ -1692,7 +1640,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         const creds = getAuthCredentials();
         if (!creds) return res.status(401).send();
 
-        let mimeContent = "";
+        let mimeContent: Buffer | string = "";
         let saveInSent = false;
 
         if (req.body && req.body.length > 0) {
@@ -1700,7 +1648,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 const parser = new WbxmlParser(req.body);
                 const decoded = parser.parse();
                 
-                // Find Mime and SaveInSentItems recursively
+                // Find SaveInSentItems recursively. MIME extraction searches all payload-bearing
+                // nodes because iOS may place the raw RFC822 bytes under a decoded fallback tag.
                 const findNode = (node: any, tag: string): any => {
                     if (!node) return null;
                     if (node.tag === tag) return node;
@@ -1713,11 +1662,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     return null;
                 };
 
-                const mimeNode = findNode(decoded, 'Mime');
-                if (mimeNode && mimeNode.content) {
-                    mimeContent = mimeNode.content.toString();
-                }
-
+                mimeContent = extractActiveSyncSendMailMime(decoded);
                 const saveNode = findNode(decoded, 'SaveInSentItems');
                 if (saveNode) saveInSent = true;
             } catch (e) {
@@ -1738,8 +1683,9 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     }
                 });
 
-                console.log(`[EAS] Sending email for ${creds.user} via SMTP localhost:25...`);
-                await transporter.sendMail({ raw: mimeContent });
+                const envelope = await buildActiveSyncSendMailEnvelope(mimeContent, creds.user);
+                console.log(`[EAS] Sending email for ${creds.user} to ${envelope.to.length} recipient(s) via SMTP ${smtpConfig.host}:${smtpConfig.port}...`);
+                await transporter.sendMail({ raw: mimeContent, envelope });
                 console.log(`[EAS] Email sent successfully.`);
 
                 // If saveInSent is true, we should append to Sent folder via IMAP

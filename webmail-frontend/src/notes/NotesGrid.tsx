@@ -24,6 +24,15 @@ function formatRelativeTime(date: Date): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function parseNoteLabels(raw?: string | null): string[] {
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNotes> }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const filtered = n.notes.filter((note) => {
@@ -108,9 +117,7 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
 
 function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
   const { showToast } = useToast();
-  note.labels_json = note.labels_json || '[]';
-  let labels: string[] = [];
-  try { labels = JSON.parse(note.labels_json); } catch { labels = []; }
+  const labels = parseNoteLabels(note.labels_json);
 
   const stripsHtml = note.content?.replace(/<[^>]*>/g, '') || '';
   const updatedAt = note.updated_at ? new Date(note.updated_at) : null;

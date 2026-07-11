@@ -22,3 +22,5 @@ AGENTS.md
 .playwright-mcp/
 *.swp
 *.png
+graphify-out/
+live_migration_backups/

@@ -7,6 +7,7 @@ export interface WebmailSession {
     username: string;
     password: string;
     isAdmin: boolean;
+    isSuperAdmin?: boolean;
     expiresAt: number;
 }
 
@@ -99,6 +100,20 @@ const cleanupExpiredSessions = async () => {
     await pool.query('DELETE FROM webmail_sessions WHERE expires_at <= NOW()');
 };
 
+export const hasGlobalAdminAccess = (row: { superadmin?: unknown } | null | undefined): boolean => (
+    Number(row?.superadmin || 0) === 1
+);
+
+export const canDemoteGlobalAdmin = (actorUsername: string, targetUsername: string, activeSuperAdminCount: number) => {
+    if (actorUsername === targetUsername) {
+        return { allowed: false, reason: 'You cannot remove your own superadmin role.' };
+    }
+    if (activeSuperAdminCount <= 1) {
+        return { allowed: false, reason: 'At least one active superadmin is required.' };
+    }
+    return { allowed: true, reason: '' };
+};
+
 export const createSession = async (res: any, data: Omit<WebmailSession, 'id' | 'expiresAt'>): Promise<WebmailSession> => {
     await cleanupExpiredSessions();
     const id = crypto.randomBytes(32).toString('base64url');
@@ -142,9 +157,17 @@ export const getSession = async (req: any): Promise<WebmailSession | null> => {
 
     await ensureSessionSchema();
     const [rows]: any = await pool.query(
-        `SELECT username, password_ciphertext, password_iv, password_tag, is_admin, expires_at
-         FROM webmail_sessions
-         WHERE id_hash = ? AND expires_at > NOW()
+        `SELECT
+            s.username,
+            s.password_ciphertext,
+            s.password_iv,
+            s.password_tag,
+            s.is_admin,
+            s.expires_at,
+            a.superadmin
+         FROM webmail_sessions s
+         LEFT JOIN admin a ON a.username = s.username AND a.active = 1
+         WHERE s.id_hash = ? AND s.expires_at > NOW()
          LIMIT 1`,
         [hashSessionId(id)]
     );
@@ -162,11 +185,13 @@ export const getSession = async (req: any): Promise<WebmailSession | null> => {
     );
 
     try {
+        const isSuperAdmin = hasGlobalAdminAccess(row);
         return {
             id,
             username: row.username,
             password: decryptPassword(row.password_ciphertext, row.password_iv, row.password_tag),
-            isAdmin: !!row.is_admin,
+            isAdmin: isSuperAdmin,
+            isSuperAdmin,
             expiresAt
         };
     } catch (err) {
@@ -194,13 +219,29 @@ export const requireSession = async (req: any, res: any, next: any) => {
         username: session.username,
         password: session.password,
         isAdmin: session.isAdmin,
+        isSuperAdmin: session.isSuperAdmin,
     };
     next();
 };
 
-export const requireAdminSession = (req: any, res: any, next: any) => {
+export const requireAdminSession = async (req: any, res: any, next: any) => {
     if (!req.user || !req.user.isAdmin) {
         return res.status(403).json({ success: false, error: 'Forbidden: Admins only' });
+    }
+    try {
+        const [rows]: any = await pool.query(
+            'SELECT superadmin FROM admin WHERE username = ? AND active = 1 LIMIT 1',
+            [req.user.username]
+        );
+        if (rows.length === 0 || !hasGlobalAdminAccess(rows[0])) {
+            req.user.isAdmin = false;
+            req.user.isSuperAdmin = false;
+            return res.status(403).json({ success: false, error: 'Forbidden: Superadmins only' });
+        }
+        req.user.isSuperAdmin = true;
+    } catch (err) {
+        console.error('Failed to verify admin privileges:', err);
+        return res.status(500).json({ success: false, error: 'Failed to verify admin privileges' });
     }
     next();
 };

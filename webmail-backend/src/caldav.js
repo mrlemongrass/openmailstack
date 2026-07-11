@@ -8,7 +8,16 @@ const db_1 = require("./db");
 const xml2js_1 = __importDefault(require("xml2js"));
 const calendar_utils_1 = require("./calendar-utils");
 const dav_auth_1 = require("./dav-auth");
+const dav_etag_1 = require("./dav-etag");
+const dav_report_1 = require("./dav-report");
 const router = express_1.default.Router();
+function emitCalendarUpdated(user, calendarId) {
+    try {
+        const { io } = require('./index');
+        io.to(user).emit('calendar_updated', { calendarId });
+    }
+    catch { }
+}
 async function userHasCalendarAccess(calendarId, user, requireWrite = false) {
     const [rows] = await db_1.pool.query(`SELECT c.user_id, cs.permission 
          FROM calendars c 
@@ -222,7 +231,7 @@ async function handlePropfind(req, res, user) {
     <D:href>${isLegacy ? `/SOGo/dav/${user}/Calendar/` : `/caldav/calendars/${user}/${(cal && cal.dav_slug) || calendarId}/`}${ev.uid}.ics</D:href>
     <D:propstat>
       <D:prop>
-        <D:getetag>"${ev.uid}"</D:getetag>
+        <D:getetag>${(0, dav_etag_1.calendarEventEtag)(ev)}</D:getetag>
         <D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
@@ -291,9 +300,8 @@ async function handleReport(req, res, user) {
         // Parse REPORT body to detect sync-collection vs calendar-query
         const body = req.body || '';
         const bodyStr = typeof body === 'string' ? body : (body instanceof Buffer ? body.toString('utf8') : '');
-        const isSyncCollection = /<sync-collection/i.test(bodyStr);
-        const syncTokenMatch = bodyStr.match(/<D:sync-token>([^<]+)<\/D:sync-token>/i);
-        const requestedToken = syncTokenMatch ? syncTokenMatch[1] : null;
+        const isSyncCollection = (0, dav_report_1.isSyncCollectionReport)(bodyStr);
+        const requestedToken = (0, dav_report_1.syncTokenFromReportBody)(bodyStr);
         // Build the base href for this calendar
         const hrefBase = isLegacy
             ? `/SOGo/dav/${user}/Calendar/`
@@ -326,7 +334,7 @@ async function handleReport(req, res, user) {
     <D:href>${hrefBase}${ev.uid}.ics</D:href>
     <D:propstat>
       <D:prop>
-        <D:getetag>"${ev.uid}"</D:getetag>
+        <D:getetag>${(0, dav_etag_1.calendarEventEtag)(ev)}</D:getetag>
         <C:calendar-data><![CDATA[${ev.ical_data}]]></C:calendar-data>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
@@ -368,7 +376,7 @@ async function handleGet(req, res, user) {
         if (events.length === 0)
             return res.status(404).send();
         res.set('Content-Type', 'text/calendar; charset=utf-8');
-        res.set('ETag', `"${events[0].uid}"`);
+        res.set('ETag', (0, dav_etag_1.calendarEventEtag)(events[0]));
         res.status(200).send(events[0].ical_data);
     }
     catch (e) {
@@ -408,7 +416,8 @@ async function handlePut(req, res, user) {
         await db_1.pool.query(`INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?)
              ON DUPLICATE KEY UPDATE ical_data = ?`, [calendarId, uid, icalData, icalData]);
         await db_1.pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendarId]);
-        res.set('ETag', `"${uid}"`);
+        emitCalendarUpdated(user, calendarId);
+        res.set('ETag', (0, dav_etag_1.calendarEventEtag)({ uid, ical_data: icalData }));
         res.status(201).send();
     }
     catch (e) {
@@ -445,6 +454,7 @@ async function handleProppatch(req, res, user) {
     }
     try {
         const rawBody = req.body ? req.body.toString('utf-8') : '';
+        let changed = false;
         if (rawBody.trim()) {
             const parsed = await xml2js_1.default.parseStringPromise(rawBody, { explicitArray: false });
             const propertyupdate = parsed['D:propertyupdate'] || parsed['d:propertyupdate'] || parsed.propertyupdate;
@@ -454,10 +464,15 @@ async function handleProppatch(req, res, user) {
             const calendarColor = prop?.['A:calendar-color'] || prop?.['a:calendar-color'] || prop?.['calendar-color'];
             if (typeof displayName === 'string' && displayName.trim()) {
                 await db_1.pool.query('UPDATE calendars SET name = ?, sync_token = sync_token + 1 WHERE id = ? AND user_id = ?', [displayName.trim(), calendarId, user]);
+                changed = true;
             }
             if (typeof calendarColor === 'string' && /^#[0-9a-f]{6}$/i.test(calendarColor.trim())) {
                 await db_1.pool.query('UPDATE calendars SET color = ?, sync_token = sync_token + 1 WHERE id = ? AND user_id = ?', [calendarColor.trim(), calendarId, user]);
+                changed = true;
             }
+        }
+        if (changed) {
+            emitCalendarUpdated(user, calendarId);
         }
         res.set('Content-Type', 'application/xml; charset=utf-8');
         const xml = `<?xml version="1.0" encoding="utf-8" ?>
@@ -491,6 +506,7 @@ async function handleMkcalendar(req, res, user) {
     try {
         const props = await readCalendarProperties(req, requestedSlug);
         const calendar = await (0, calendar_utils_1.createCalendar)(user, props.name, { slug: requestedSlug, color: props.color, components: props.components });
+        emitCalendarUpdated(user, calendar.id);
         res.set('Location', (0, calendar_utils_1.getCalendarHref)(user, calendar));
         res.status(201).send();
     }
@@ -511,6 +527,7 @@ async function handleDelete(req, res, user) {
             await db_1.pool.query('DELETE FROM events WHERE calendar_id = ?', [cal.id]);
             await db_1.pool.query('DELETE FROM calendars WHERE id = ? AND user_id = ?', [cal.id, user]);
             await (0, calendar_utils_1.ensureDefaultCalendar)(user);
+            emitCalendarUpdated(user, cal.id);
             return res.status(204).send();
         }
         catch (e) {
@@ -532,6 +549,7 @@ async function handleDelete(req, res, user) {
         await db_1.pool.query('INSERT INTO calendar_tombstones (calendar_id, uid) VALUES (?, ?)', [calendarId, uid]);
         await db_1.pool.query('DELETE FROM events WHERE calendar_id = ? AND uid = ?', [calendarId, uid]);
         await db_1.pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendarId]);
+        emitCalendarUpdated(user, calendarId);
         res.status(204).send();
     }
     catch (e) {

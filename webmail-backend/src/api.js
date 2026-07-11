@@ -41,6 +41,7 @@ const express_1 = require("express");
 const crypto_1 = __importDefault(require("crypto"));
 const child_process_1 = require("child_process");
 const fs_1 = __importDefault(require("fs"));
+const net_1 = __importDefault(require("net"));
 const os_1 = __importDefault(require("os"));
 const util_1 = __importDefault(require("util"));
 const managesieve_1 = require("./managesieve");
@@ -103,8 +104,184 @@ const servicePostfixGauge = new promClient.Gauge({ name: 'openmailstack_service_
 const serviceDovecotGauge = new promClient.Gauge({ name: 'openmailstack_service_dovecot_status', help: 'Dovecot service status (1=running)' });
 const serviceRspamdGauge = new promClient.Gauge({ name: 'openmailstack_service_rspamd_status', help: 'Rspamd service status (1=running)' });
 const serviceFail2banGauge = new promClient.Gauge({ name: 'openmailstack_service_fail2ban_status', help: 'Fail2ban service status (1=running)' });
+const serviceOpenmailstackGauge = new promClient.Gauge({ name: 'openmailstack_service_backend_status', help: 'OpenMailStack backend service status (1=running)' });
+const serviceNginxGauge = new promClient.Gauge({ name: 'openmailstack_service_nginx_status', help: 'Nginx service status (1=running)' });
+const activeSyncReadyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_activesync_ready', help: 'ActiveSync OPTIONS readiness (1=ready)' });
+const activeSyncLatencyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_activesync_latency_ms', help: 'ActiveSync OPTIONS probe latency in milliseconds' });
+const imapReadyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_imap_ready', help: 'IMAP greeting readiness (1=ready)' });
+const imapLatencyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_imap_latency_ms', help: 'IMAP greeting probe latency in milliseconds' });
+const smtpReadyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_smtp_ready', help: 'SMTP submission greeting readiness (1=ready)' });
+const smtpLatencyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_smtp_latency_ms', help: 'SMTP submission greeting probe latency in milliseconds' });
+const caldavReadyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_caldav_ready', help: 'CalDAV challenge readiness (1=ready)' });
+const caldavLatencyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_caldav_latency_ms', help: 'CalDAV challenge probe latency in milliseconds' });
+const carddavReadyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_carddav_ready', help: 'CardDAV challenge readiness (1=ready)' });
+const carddavLatencyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_carddav_latency_ms', help: 'CardDAV challenge probe latency in milliseconds' });
 // Fail2ban per-jail banned IP count
 const fail2banBannedGauge = new promClient.Gauge({ name: 'openmailstack_fail2ban_banned_total', help: 'Currently banned IPs per jail', labelNames: ['jail'] });
+const MONITORED_SERVICES = ['postfix', 'dovecot', 'rspamd', 'fail2ban', 'openmailstack', 'nginx'];
+const SERVICE_GAUGES = {
+    postfix: servicePostfixGauge,
+    dovecot: serviceDovecotGauge,
+    rspamd: serviceRspamdGauge,
+    fail2ban: serviceFail2banGauge,
+    openmailstack: serviceOpenmailstackGauge,
+    nginx: serviceNginxGauge,
+};
+const localBackendHost = () => {
+    if (config_1.serverConfig.host === '0.0.0.0' || config_1.serverConfig.host === '::')
+        return '127.0.0.1';
+    if (config_1.serverConfig.host.includes(':') && !config_1.serverConfig.host.startsWith('['))
+        return `[${config_1.serverConfig.host}]`;
+    return config_1.serverConfig.host;
+};
+const activeSyncProbeUrl = () => `http://${localBackendHost()}:${config_1.serverConfig.port}/Microsoft-Server-ActiveSync`;
+const localBackendUrl = (path) => `http://${localBackendHost()}:${config_1.serverConfig.port}${path}`;
+const checkTcpGreetingHealth = (label, host, port, expectedGreeting, timeoutMs = 4000) => new Promise((resolve) => {
+    const endpoint = `${host}:${port}`;
+    const checkedAt = new Date().toISOString();
+    const startedAt = Date.now();
+    let settled = false;
+    let greeting = '';
+    const socket = net_1.default.createConnection({ host, port });
+    let timer;
+    const finish = (result) => {
+        if (settled)
+            return;
+        settled = true;
+        if (timer)
+            clearTimeout(timer);
+        socket.destroy();
+        resolve({
+            checkedAt,
+            endpoint,
+            latencyMs: result.latencyMs === undefined ? Date.now() - startedAt : result.latencyMs,
+            ...result,
+        });
+    };
+    timer = setTimeout(() => finish({
+        ok: false,
+        status: null,
+        latencyMs: null,
+        lastError: `${label} greeting timed out`,
+        greeting: greeting || null,
+    }), timeoutMs);
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk) => {
+        greeting += chunk;
+        if (expectedGreeting.test(greeting)) {
+            finish({
+                ok: true,
+                status: null,
+                lastError: null,
+                greeting: greeting.trim().slice(0, 120),
+            });
+        }
+    });
+    socket.on('error', (err) => finish({
+        ok: false,
+        status: null,
+        latencyMs: null,
+        lastError: err?.message || `${label} connection failed`,
+        greeting: greeting || null,
+    }));
+});
+const checkHttpChallengeHealth = async (label, path, expectedRealm) => {
+    const endpoint = localBackendUrl(path);
+    const checkedAt = new Date().toISOString();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const startedAt = Date.now();
+    try {
+        const response = await fetch(endpoint, { method: 'GET', signal: controller.signal });
+        const latencyMs = Date.now() - startedAt;
+        const challenge = response.headers.get('www-authenticate') || '';
+        const ok = response.status === 401 && challenge.toLowerCase().includes(expectedRealm.toLowerCase());
+        return {
+            ok,
+            status: response.status,
+            latencyMs,
+            lastError: ok ? null : `${label} did not return the expected Basic auth challenge`,
+            checkedAt,
+            endpoint,
+        };
+    }
+    catch (err) {
+        return {
+            ok: false,
+            status: null,
+            latencyMs: null,
+            lastError: err?.name === 'AbortError' ? `${label} probe timed out` : err?.message || `${label} probe failed`,
+            checkedAt,
+            endpoint,
+        };
+    }
+    finally {
+        clearTimeout(timeout);
+    }
+};
+const checkImapHealth = () => checkTcpGreetingHealth('IMAP', config_1.imapConfig.host, config_1.imapConfig.port, /^\* OK/im);
+const checkSmtpHealth = () => checkTcpGreetingHealth('SMTP submission', config_1.smtpConfig.host, config_1.smtpConfig.port, /^220/im, 8000);
+const checkCalDavHealth = () => checkHttpChallengeHealth('CalDAV', '/caldav/', 'OpenMailStack CalDAV');
+const checkCardDavHealth = () => checkHttpChallengeHealth('CardDAV', '/carddav/', 'OpenMailStack CardDAV');
+const setProtocolGauge = (readyGauge, latencyGauge, health) => {
+    readyGauge.set(health.ok ? 1 : 0);
+    if (health.latencyMs !== null)
+        latencyGauge.set(health.latencyMs);
+};
+const countRecentActiveSyncErrors = async () => {
+    try {
+        const { stdout } = await execPromise('journalctl -u openmailstack --since "15 minutes ago" --no-pager -g "ActiveSync|Unknown tag" -n 300 2>/dev/null || true', { timeout: 4000 });
+        return stdout.split('\n').filter((line) => (/Error handling ActiveSync/i.test(line) ||
+            /Unknown tag .*page/i.test(line) ||
+            /ActiveSync.*(TypeError|ReferenceError|SyntaxError)/i.test(line))).length;
+    }
+    catch {
+        return null;
+    }
+};
+const checkActiveSyncHealth = async (includeRecentErrors = false) => {
+    const endpoint = activeSyncProbeUrl();
+    const checkedAt = new Date().toISOString();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const recentErrorsPromise = includeRecentErrors ? countRecentActiveSyncErrors() : Promise.resolve(undefined);
+    const startedAt = Date.now();
+    try {
+        const response = await fetch(endpoint, { method: 'OPTIONS', signal: controller.signal });
+        const latencyMs = Date.now() - startedAt;
+        const recentErrors = await recentErrorsPromise;
+        const protocolVersions = response.headers.get('ms-asprotocolversions');
+        const ok = response.ok && Boolean(protocolVersions) && (recentErrors === undefined || recentErrors === null || recentErrors === 0);
+        return {
+            ok,
+            status: response.status,
+            latencyMs,
+            lastError: ok ? null : recentErrors ? `${recentErrors} ActiveSync server errors in the last 15 minutes` : 'ActiveSync OPTIONS did not return protocol metadata',
+            checkedAt,
+            endpoint,
+            protocolVersions,
+            recentErrors,
+            recentErrorWindowMinutes: includeRecentErrors ? 15 : undefined,
+        };
+    }
+    catch (err) {
+        const recentErrors = await recentErrorsPromise;
+        return {
+            ok: false,
+            status: null,
+            latencyMs: null,
+            lastError: recentErrors ? `${recentErrors} ActiveSync server errors in the last 15 minutes` : err?.name === 'AbortError' ? 'ActiveSync OPTIONS timed out' : err?.message || 'ActiveSync OPTIONS failed',
+            checkedAt,
+            endpoint,
+            protocolVersions: null,
+            recentErrors,
+            recentErrorWindowMinutes: includeRecentErrors ? 15 : undefined,
+        };
+    }
+    finally {
+        clearTimeout(timeout);
+    }
+};
 setInterval(async () => {
     try {
         try {
@@ -160,24 +337,38 @@ setInterval(async () => {
         catch (e) { }
         // Service health status
         try {
-            const services = ['postfix', 'dovecot', 'rspamd', 'fail2ban'];
-            const gauges = {
-                postfix: servicePostfixGauge,
-                dovecot: serviceDovecotGauge,
-                rspamd: serviceRspamdGauge,
-                fail2ban: serviceFail2banGauge,
-            };
-            for (const svc of services) {
+            for (const svc of MONITORED_SERVICES) {
                 try {
                     await execPromise(`systemctl is-active --quiet ${svc}`);
-                    gauges[svc].set(1);
+                    SERVICE_GAUGES[svc].set(1);
                 }
                 catch {
-                    gauges[svc].set(0);
+                    SERVICE_GAUGES[svc].set(0);
                 }
             }
         }
         catch (e) { }
+        try {
+            const [activeSync, imap, smtp, caldav, carddav] = await Promise.all([
+                checkActiveSyncHealth(),
+                checkImapHealth(),
+                checkSmtpHealth(),
+                checkCalDavHealth(),
+                checkCardDavHealth(),
+            ]);
+            setProtocolGauge(activeSyncReadyGauge, activeSyncLatencyGauge, activeSync);
+            setProtocolGauge(imapReadyGauge, imapLatencyGauge, imap);
+            setProtocolGauge(smtpReadyGauge, smtpLatencyGauge, smtp);
+            setProtocolGauge(caldavReadyGauge, caldavLatencyGauge, caldav);
+            setProtocolGauge(carddavReadyGauge, carddavLatencyGauge, carddav);
+        }
+        catch (e) {
+            activeSyncReadyGauge.set(0);
+            imapReadyGauge.set(0);
+            smtpReadyGauge.set(0);
+            caldavReadyGauge.set(0);
+            carddavReadyGauge.set(0);
+        }
         // Fail2ban banned IP counts per jail
         try {
             const jails = ['sshd', 'postfix', 'dovecot', 'openmailstack-webmail'];
@@ -677,9 +868,9 @@ exports.apiRouter.post('/auth/login', async (req, res) => {
             isValid = false;
         }
         if (isValid) {
-            // Check if user is an admin
-            const [adminRows] = await db_1.pool.query('SELECT 1 FROM admin WHERE username = ? AND active = 1', [normalizedUsername]);
-            const isAdmin = adminRows.length > 0;
+            // The modern Admin app is global-only until domain-admin scoping is implemented.
+            const [adminRows] = await db_1.pool.query('SELECT superadmin FROM admin WHERE username = ? AND active = 1 LIMIT 1', [normalizedUsername]);
+            const isAdmin = adminRows.length > 0 && (0, auth_1.hasGlobalAdminAccess)(adminRows[0]);
             await (0, auth_1.createSession)(res, { username: normalizedUsername, password, isAdmin });
             res.json({ success: true, isAdmin, username: normalizedUsername });
         }
@@ -1936,23 +2127,70 @@ exports.apiRouter.get('/admin/admins', requireAuth, requireAdmin, async (req, re
         res.status(500).json({ success: false, error: err.message });
     }
 });
+const activeSuperAdminCount = async () => {
+    const [rows] = await db_1.pool.query('SELECT COUNT(*) AS count FROM admin WHERE active = 1 AND superadmin = 1');
+    return Number(rows[0]?.count || 0);
+};
+const isSuperAdmin = async (username) => {
+    const [rows] = await db_1.pool.query('SELECT superadmin FROM admin WHERE username = ? AND active = 1 LIMIT 1', [username]);
+    return rows.length > 0 && (0, auth_1.hasGlobalAdminAccess)(rows[0]);
+};
 exports.apiRouter.post('/admin/admins', requireAuth, requireAdmin, async (req, res) => {
     try {
         const username = requireValidMailbox(req.body?.username);
+        const superadmin = req.body?.superadmin === true || req.body?.superadmin === 1 ? 1 : 0;
         // Copy password from mailbox if they exist, otherwise use dummy password
         const [mbRows] = await db_1.pool.query('SELECT password FROM mailbox WHERE username = ?', [username]);
         const pass = mbRows.length > 0 ? mbRows[0].password : '';
-        await db_1.pool.query('INSERT INTO admin (username, password, created, modified) VALUES (?, ?, NOW(), NOW()) ON DUPLICATE KEY UPDATE active=1', [username, pass]);
-        await logAdminAction(req, 'admin.promote', 'admin', username, { username });
+        await db_1.pool.query(`INSERT INTO admin (username, password, created, modified, superadmin)
+             VALUES (?, ?, NOW(), NOW(), ?)
+             ON DUPLICATE KEY UPDATE active = 1, superadmin = IF(COALESCE(superadmin, 0) = 1 OR VALUES(superadmin) = 1, 1, 0), modified = NOW()`, [username, pass, superadmin]);
+        await logAdminAction(req, superadmin ? 'admin.promote_superadmin' : 'admin.promote', 'admin', username, { username, superadmin: Boolean(superadmin) });
         res.json({ success: true });
     }
     catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+exports.apiRouter.post('/admin/admins/:username/superadmin', requireAuth, requireAdmin, async (req, res) => {
+    try {
+        const username = requireValidMailbox(req.params.username);
+        const [result] = await db_1.pool.query('UPDATE admin SET superadmin = 1, active = 1, modified = NOW() WHERE username = ?', [username]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ success: false, error: 'Admin not found' });
+        }
+        await logAdminAction(req, 'admin.promote_superadmin', 'admin', username, { username, superadmin: true });
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(adminErrorStatus(err)).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.delete('/admin/admins/:username/superadmin', requireAuth, requireAdmin, async (req, res) => {
+    try {
+        const username = requireValidMailbox(req.params.username);
+        const count = await activeSuperAdminCount();
+        const decision = (0, auth_1.canDemoteGlobalAdmin)(req.user.username, username, count);
+        if (!decision.allowed) {
+            return res.status(400).json({ success: false, error: decision.reason });
+        }
+        const [result] = await db_1.pool.query('UPDATE admin SET superadmin = 0, modified = NOW() WHERE username = ? AND active = 1 AND superadmin = 1', [username]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ success: false, error: 'Superadmin not found' });
+        }
+        await logAdminAction(req, 'admin.demote_superadmin', 'admin', username, { username, superadmin: false });
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(adminErrorStatus(err)).json({ success: false, error: err.message });
+    }
+});
 exports.apiRouter.delete('/admin/admins/:username', requireAuth, requireAdmin, async (req, res) => {
     try {
         const username = requireValidMailbox(req.params.username);
+        if (await isSuperAdmin(username)) {
+            return res.status(400).json({ success: false, error: 'Remove the superadmin role before demoting this admin.' });
+        }
         await db_1.pool.query('DELETE FROM admin WHERE username = ?', [username]);
         await logAdminAction(req, 'admin.demote', 'admin', username, { username });
         res.json({ success: true });
@@ -2004,7 +2242,7 @@ exports.apiRouter.get('/admin/telemetry/system-health', requireAuth, requireAdmi
         const diskTotal = parseInt(dfParts[1], 10);
         const diskUsed = parseInt(dfParts[2], 10);
         const services = {};
-        for (const svc of ['postfix', 'dovecot', 'rspamd', 'fail2ban']) {
+        for (const svc of MONITORED_SERVICES) {
             try {
                 await execPromise(`systemctl is-active --quiet ${svc}`);
                 services[svc] = true;
@@ -2032,6 +2270,13 @@ exports.apiRouter.get('/admin/telemetry/system-health', requireAuth, requireAdmi
             });
         }
         catch { }
+        const [activeSync, imap, smtp, caldav, carddav] = await Promise.all([
+            checkActiveSyncHealth(true),
+            checkImapHealth(),
+            checkSmtpHealth(),
+            checkCalDavHealth(),
+            checkCardDavHealth(),
+        ]);
         res.json({
             success: true,
             cpu: { load1, load5, load15 },
@@ -2047,12 +2292,52 @@ exports.apiRouter.get('/admin/telemetry/system-health', requireAuth, requireAdmi
                 usedPercent: Math.round((diskUsed / diskTotal) * 100),
             },
             services,
+            protocols: {
+                activeSync,
+                imap,
+                smtp,
+                caldav,
+                carddav,
+            },
             mailQueue,
             connections,
         });
     }
     catch (err) {
         res.status(500).json({ success: false, error: err.message });
+    }
+});
+const REMEDIATION_ACTIONS = {
+    'restart-openmailstack': {
+        label: 'Restart OpenMailStack backend',
+        command: 'sudo /usr/local/sbin/openmailstack-remediate restart-openmailstack',
+        targetType: 'service',
+        targetId: 'openmailstack',
+    },
+};
+exports.apiRouter.post('/admin/telemetry/remediate', requireAuth, requireAdmin, async (req, res) => {
+    const action = String(req.body?.action || '');
+    const remedy = REMEDIATION_ACTIONS[action];
+    if (!remedy) {
+        return res.status(400).json({ success: false, error: 'Unsupported remediation action' });
+    }
+    try {
+        await execPromise(remedy.command, { timeout: 10000 });
+        await logAdminAction(req, 'telemetry.remediate', remedy.targetType, remedy.targetId, {
+            action,
+            label: remedy.label,
+            result: 'scheduled',
+        });
+        res.json({ success: true, action, message: `${remedy.label} scheduled.` });
+    }
+    catch (err) {
+        await logAdminAction(req, 'telemetry.remediate_failed', remedy.targetType, remedy.targetId, {
+            action,
+            label: remedy.label,
+            result: 'failed',
+            error: String(err?.message || err || 'unknown').slice(0, 300),
+        });
+        res.status(500).json({ success: false, error: err.message || 'Remediation failed' });
     }
 });
 // Fail2ban status with jail details

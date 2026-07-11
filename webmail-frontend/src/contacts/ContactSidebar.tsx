@@ -35,6 +35,22 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
     } catch { showToast({ type: 'error', message: 'Failed to create group' }); }
   };
 
+  const handleMergeDuplicates = async (group: ReturnType<typeof useContacts>['duplicateGroups'][number]) => {
+    const ids = group.map((contact) => contact.id).filter((id): id is number => typeof id === 'number');
+    if (ids.length < 2) return;
+    const primary = group[0]?.name || group[0]?.email || 'this contact';
+    if (!confirm(`Merge ${ids.length - 1} duplicate contact(s) into ${primary}?`)) return;
+    try {
+      await api.mergeContacts(ids[0], ids.slice(1));
+      showToast({ type: 'success', message: 'Duplicate contacts merged' });
+      c.setSelectedContactIds(new Set());
+      c.refreshContacts();
+      c.refreshDuplicates();
+    } catch {
+      showToast({ type: 'error', message: 'Failed to merge duplicate contacts' });
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 12 }}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -63,7 +79,7 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
           <Users size={16} />
           <span>Personal Contacts</span>
           <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
-            {c.contacts.length}
+            {c.totalContacts}
           </span>
         </div>
         <div className="nav-item" style={{ display: 'flex', alignItems: 'center', gap: 8,
@@ -74,6 +90,53 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
           <Building2 size={16} />
           <span>Global Directory</span>
         </div>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase',
+            color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>Duplicates</span>
+          <button className="btn btn-ghost" style={{ padding: '2px 6px', fontSize: '0.75rem' }}
+            onClick={() => c.refreshDuplicates()}
+            disabled={c.isDedupLoading}
+            title="Find duplicate contacts">
+            <ScanLine size={14} /> Scan
+          </button>
+        </div>
+        {c.isDedupLoading ? (
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', padding: '4px 10px' }}>
+            Scanning contacts...
+          </div>
+        ) : c.duplicateGroups.length === 0 ? (
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', padding: '4px 10px' }}>
+            No duplicate groups found.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {c.duplicateGroups.slice(0, 5).map((group, index) => (
+              <div key={group.map(contact => contact.id).join('-') || index}
+                className="glass-panel"
+                style={{ padding: 8, borderRadius: 'var(--radius-md)' }}>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {group[0]?.name || group[0]?.email || 'Duplicate contacts'}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: 2 }}>
+                  {group.length} matching contacts
+                </div>
+                <button className="btn btn-ghost"
+                  style={{ width: '100%', justifyContent: 'center', marginTop: 6, padding: '4px 8px', fontSize: '0.75rem' }}
+                  onClick={() => handleMergeDuplicates(group)}>
+                  Merge
+                </button>
+              </div>
+            ))}
+            {c.duplicateGroups.length > 5 && (
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', padding: '0 10px' }}>
+                {c.duplicateGroups.length - 5} more duplicate group(s)
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ marginBottom: 12 }}>

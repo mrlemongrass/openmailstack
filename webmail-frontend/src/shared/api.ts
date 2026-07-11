@@ -130,8 +130,15 @@ export async function fetchRules(): Promise<Rule[]> {
 }
 
 // ---- Contacts ----
-export async function fetchContacts(limit = 200, offset = 0): Promise<ContactsResponse> {
-  const res = await fetch(`/api/apps/contacts?limit=${limit}&offset=${offset}`);
+export async function fetchContacts(limit = 200, offset = 0, sortBy = 'firstName', query = ''): Promise<ContactsResponse> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+    sortBy,
+  });
+  const trimmedQuery = query.trim();
+  if (trimmedQuery) params.set('q', trimmedQuery);
+  const res = await fetch(`/api/apps/contacts?${params.toString()}`);
   return res.json();
 }
 
@@ -143,7 +150,8 @@ export async function fetchDirectoryContacts(query?: string): Promise<{ success:
 
 export async function fetchContactDuplicates(): Promise<{ success: boolean; groups?: Contact[][] }> {
   const res = await fetch('/api/apps/contacts-duplicates');
-  return res.json();
+  const data = await res.json();
+  return { ...data, groups: data.groups || data.duplicates || [] };
 }
 
 export async function saveContact(contact: Partial<Contact>): Promise<{ success: boolean; contact?: Contact; error?: string }> {

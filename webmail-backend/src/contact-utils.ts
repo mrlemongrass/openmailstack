@@ -38,6 +38,15 @@ export interface ContactLabelRow {
     color: string;
 }
 
+export interface ContactTombstoneRow {
+    id: number;
+    username: string;
+    dav_uid: string;
+    deleted_at: string | Date;
+    sync_token: number;
+    contact_id?: number | null;
+}
+
 export interface ParsedVCardContact {
     name: string;
     email: string;
@@ -91,6 +100,19 @@ export async function ensureContactsSchema(): Promise<void> {
                     name VARCHAR(255) NOT NULL,
                     color VARCHAR(32) NOT NULL DEFAULT '#60a5fa',
                     KEY idx_contact_labels_username (username)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS contact_tombstones (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    username VARCHAR(255) NOT NULL,
+                    dav_uid VARCHAR(255) NOT NULL,
+                    deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    sync_token BIGINT UNSIGNED NOT NULL DEFAULT 1,
+                    UNIQUE KEY uniq_contact_tombstone_user_uid (username, dav_uid),
+                    KEY idx_contact_tombstones_user_sync (username, sync_token),
+                    KEY idx_contact_tombstones_deleted_at (deleted_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
 
@@ -218,6 +240,33 @@ function vcardUnescape(value: string): string {
         .replace(/\\\\/g, '\\');
 }
 
+function vcardRevisionTimestamp(date: Date): string {
+    return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+}
+
+function vcardPropertyName(line: string): string {
+    const separatorIndex = line.indexOf(':');
+    const raw = separatorIndex >= 0 ? line.slice(0, separatorIndex) : line;
+    const baseName = raw.split(';')[0].toUpperCase();
+    const dotIndex = baseName.indexOf('.');
+    return dotIndex >= 0 ? baseName.slice(dotIndex + 1) : baseName;
+}
+
+export function stampVCardRevision(vcard: string, date = new Date()): string {
+    const lines = unfoldVCard(vcard);
+    if (lines.length === 0) return vcard;
+
+    const nextLines = lines.filter(line => vcardPropertyName(line) !== 'REV');
+    const endIndex = nextLines.findIndex(line => line.toUpperCase() === 'END:VCARD');
+    const revisionLine = `REV:${vcardRevisionTimestamp(date)}`;
+    if (endIndex >= 0) {
+        nextLines.splice(endIndex, 0, revisionLine);
+    } else {
+        nextLines.push(revisionLine);
+    }
+    return `${nextLines.join('\r\n')}\r\n`;
+}
+
 function unfoldVCard(vcard: string): string[] {
     return vcard
         .replace(/\r\n[ \t]/g, '')
@@ -326,7 +375,11 @@ export function getContactDavUid(contact: ContactRow): string {
 }
 
 export function getContactHref(user: string, contact: ContactRow): string {
-    return `/carddav/addressbooks/${user}/personal/${encodeURIComponent(getContactDavUid(contact))}.vcf`;
+    return getContactHrefForDavUid(user, getContactDavUid(contact));
+}
+
+export function getContactHrefForDavUid(user: string, davUid: string): string {
+    return `/carddav/addressbooks/${user}/personal/${encodeURIComponent(normalizeDavUid(davUid))}.vcf`;
 }
 
 export function normalizeVCardData(vcard: string, davUid: string, fallback: ParsedVCardContact): string {
@@ -418,7 +471,7 @@ export function patchVCardData(vcard: string, davUid: string, updates: any): str
     if (updates.photo_url && /^data:image\//.test(updates.photo_url)) newLines.splice(insertAt + 2, 0, `PHOTO;ENCODING=BASE64;TYPE=JPEG:${(updates.photo_url as string).replace(/^data:image\/[^;]+;base64,/, '')}`);
 
     if (endIndex < 0) newLines.push('END:VCARD');
-    return `${newLines.join('\r\n')}\r\n`;
+    return stampVCardRevision(`${newLines.join('\r\n')}\r\n`);
 }
 
 export function contactEtag(contact: ContactRow): string {
@@ -448,6 +501,84 @@ export async function listContacts(user: string): Promise<ContactRow[]> {
     return rows;
 }
 
+export async function listContactsUpdatedSince(user: string, syncToken: number): Promise<ContactRow[]> {
+    await ensureContactsSchema();
+    const [rows]: any = await pool.query(
+        `SELECT * FROM contacts
+         WHERE username = ? AND deleted_at IS NULL AND sync_token > ?
+         ORDER BY sync_token ASC, id ASC`,
+        [user, syncToken]
+    );
+    return rows;
+}
+
+export async function listContactTombstonesSince(user: string, syncToken: number): Promise<ContactTombstoneRow[]> {
+    await ensureContactsSchema();
+    const [rows]: any = await pool.query(
+        `SELECT contact_tombstones.*,
+                (SELECT MIN(contacts.id)
+                 FROM contacts
+                 WHERE contacts.username = ?
+                   AND contacts.dav_uid COLLATE utf8mb4_unicode_ci = contact_tombstones.dav_uid) AS contact_id
+         FROM contact_tombstones
+         WHERE username = ? AND sync_token > ?
+         ORDER BY sync_token ASC, id ASC`,
+        [user, user, syncToken]
+    );
+    return rows;
+}
+
+export async function listRecentContactTombstones(user: string): Promise<ContactTombstoneRow[]> {
+    await ensureContactsSchema();
+    const [rows]: any = await pool.query(
+        `SELECT contact_tombstones.*,
+                (SELECT MIN(contacts.id)
+                 FROM contacts
+                 WHERE contacts.username = ?
+                   AND contacts.dav_uid COLLATE utf8mb4_unicode_ci = contact_tombstones.dav_uid) AS contact_id
+         FROM contact_tombstones
+         WHERE username = ? AND deleted_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
+         ORDER BY sync_token ASC, id ASC`,
+        [user, user]
+    );
+    return rows;
+}
+
+export function contactTombstoneDavUids(tombstone: ContactTombstoneRow): string[] {
+    const uids = [normalizeDavUid(tombstone.dav_uid)];
+    if (tombstone.contact_id) {
+        uids.push(normalizeDavUid(`contact-${tombstone.contact_id}`));
+    }
+    return Array.from(new Set(uids));
+}
+
+export function contactSyncTokenVersion(token: string | null | undefined): number {
+    if (!token) return 0;
+    const trimmed = String(token).trim();
+    const lastSegment = trimmed.slice(trimmed.lastIndexOf('/') + 1);
+    const normalized = lastSegment.startsWith('contacts-') ? lastSegment.slice('contacts-'.length) : lastSegment;
+    const parts = normalized.split('-');
+    if (parts.length >= 2) {
+        const parsed = Number.parseInt(parts[1], 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    }
+
+    const parsed = Number.parseInt(normalized, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+export async function nextContactSyncToken(user: string): Promise<number> {
+    await ensureContactsSchema();
+    const [rows]: any = await pool.query(
+        `SELECT GREATEST(
+                    COALESCE((SELECT MAX(sync_token) FROM contacts WHERE username = ?), 0),
+                    COALESCE((SELECT MAX(sync_token) FROM contact_tombstones WHERE username = ?), 0)
+                ) + 1 AS next_sync_token`,
+        [user, user]
+    );
+    return Number(rows[0]?.next_sync_token || 1);
+}
+
 export async function getContactByDavUid(user: string, davUid: string): Promise<ContactRow | null> {
     await ensureContactsSchema();
     const [rows]: any = await pool.query(
@@ -457,27 +588,120 @@ export async function getContactByDavUid(user: string, davUid: string): Promise<
     return rows.length > 0 ? rows[0] : null;
 }
 
+async function upsertContactTombstone(user: string, davUid: string, syncToken: number): Promise<void> {
+    await pool.query(
+        `INSERT INTO contact_tombstones (username, dav_uid, deleted_at, sync_token)
+         VALUES (?, ?, NOW(), ?)
+         ON DUPLICATE KEY UPDATE deleted_at = NOW(), sync_token = VALUES(sync_token)`,
+        [user, normalizeDavUid(davUid), syncToken]
+    );
+}
+
+export async function recordContactTombstone(user: string, davUid: string): Promise<number> {
+    await ensureContactsSchema();
+    const syncToken = await nextContactSyncToken(user);
+    await upsertContactTombstone(user, davUid, syncToken);
+    return syncToken;
+}
+
+async function clearContactTombstone(user: string, davUid: string): Promise<void> {
+    await pool.query('DELETE FROM contact_tombstones WHERE username = ? AND dav_uid = ?', [user, normalizeDavUid(davUid)]);
+}
+
 export async function saveContactFromVCard(user: string, davUid: string, vcard: string): Promise<{ contact: ContactRow; created: boolean }> {
     await ensureContactsSchema();
+    const normalizedDavUid = normalizeDavUid(davUid);
     const parsed = parseVCard(vcard);
-    const normalized = normalizeVCardData(vcard, davUid, parsed);
-    const existing = await getContactByDavUid(user, davUid);
+    const normalized = stampVCardRevision(normalizeVCardData(vcard, normalizedDavUid, parsed));
+    const [existingRows]: any = await pool.query(
+        'SELECT * FROM contacts WHERE username = ? AND dav_uid = ? ORDER BY deleted_at IS NULL DESC, id ASC LIMIT 1',
+        [user, normalizedDavUid]
+    );
+    const existing = existingRows.length > 0 ? existingRows[0] : null;
+    const syncToken = await nextContactSyncToken(user);
+    const emailsJson = parsed.emails && parsed.emails.length > 1
+        ? JSON.stringify(parsed.emails.map(value => ({ value, label: 'Other' })))
+        : null;
+    const phonesJson = parsed.phones && parsed.phones.length > 1
+        ? JSON.stringify(parsed.phones.map(value => ({ value, label: 'Other' })))
+        : null;
+    const addressesJson = parsed.address
+        ? JSON.stringify([{ value: parsed.address, label: 'Other' }])
+        : null;
 
     if (existing) {
         await pool.query(
             `UPDATE contacts
-             SET name = ?, email = ?, phone = ?, vcard_data = ?, sync_token = sync_token + 1
+             SET name = ?,
+                 email = ?,
+                 phone = ?,
+                 vcard_data = ?,
+                 emails_json = ?,
+                 phones_json = ?,
+                 addresses_json = ?,
+                 job_title = ?,
+                 organization = ?,
+                 notes = ?,
+                 first_name = ?,
+                 last_name = ?,
+                 middle_name = ?,
+                 prefix = ?,
+                 suffix = ?,
+                 deleted_at = NULL,
+                 sync_token = ?
              WHERE id = ? AND username = ?`,
-            [parsed.name || '', parsed.email || '', parsed.phone || '', normalized, existing.id, user]
+            [
+                parsed.name || '',
+                parsed.email || '',
+                parsed.phone || '',
+                normalized,
+                emailsJson,
+                phonesJson,
+                addressesJson,
+                parsed.title || null,
+                parsed.organization || null,
+                parsed.note || null,
+                parsed.firstName || null,
+                parsed.lastName || null,
+                parsed.middleName || null,
+                parsed.prefix || null,
+                parsed.suffix || null,
+                syncToken,
+                existing.id,
+                user
+            ]
         );
-        const updated = await getContactByDavUid(user, davUid);
+        await clearContactTombstone(user, normalizedDavUid);
+        const updated = await getContactByDavUid(user, normalizedDavUid);
         return { contact: updated!, created: false };
     }
 
     const [result]: any = await pool.query(
-        `INSERT INTO contacts (username, name, email, phone, vcard_data, dav_uid, sync_token)
-         VALUES (?, ?, ?, ?, ?, ?, 1)`,
-        [user, parsed.name || '', parsed.email || '', parsed.phone || '', normalized, davUid]
+        `INSERT INTO contacts
+         (username, name, email, phone, vcard_data, dav_uid, sync_token,
+          emails_json, phones_json, addresses_json, job_title, organization, notes,
+          first_name, last_name, middle_name, prefix, suffix)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            user,
+            parsed.name || '',
+            parsed.email || '',
+            parsed.phone || '',
+            normalized,
+            normalizedDavUid,
+            syncToken,
+            emailsJson,
+            phonesJson,
+            addressesJson,
+            parsed.title || null,
+            parsed.organization || null,
+            parsed.note || null,
+            parsed.firstName || null,
+            parsed.lastName || null,
+            parsed.middleName || null,
+            parsed.prefix || null,
+            parsed.suffix || null
+        ]
     );
     const [rows]: any = await pool.query('SELECT * FROM contacts WHERE id = ?', [result.insertId]);
     return { contact: rows[0], created: true };
@@ -485,19 +709,101 @@ export async function saveContactFromVCard(user: string, davUid: string, vcard: 
 
 export async function deleteContactByDavUid(user: string, davUid: string): Promise<boolean> {
     await ensureContactsSchema();
-    const [result]: any = await pool.query('DELETE FROM contacts WHERE username = ? AND dav_uid = ?', [user, davUid]);
+    const normalizedDavUid = normalizeDavUid(davUid);
+    const [rows]: any = await pool.query(
+        'SELECT id FROM contacts WHERE username = ? AND dav_uid = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1',
+        [user, normalizedDavUid]
+    );
+    if (rows.length === 0) return false;
+
+    const syncToken = await nextContactSyncToken(user);
+    const [result]: any = await pool.query(
+        'UPDATE contacts SET deleted_at = NOW(), sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NULL',
+        [syncToken, rows[0].id, user]
+    );
+    if (result.affectedRows > 0) {
+        await upsertContactTombstone(user, normalizedDavUid, syncToken);
+    }
+    return result.affectedRows > 0;
+}
+
+export async function softDeleteContactById(user: string, id: string | number): Promise<boolean> {
+    await ensureContactsSchema();
+    const [rows]: any = await pool.query(
+        'SELECT id, dav_uid FROM contacts WHERE id = ? AND username = ? AND deleted_at IS NULL LIMIT 1',
+        [id, user]
+    );
+    if (rows.length === 0) return false;
+
+    const davUid = rows[0].dav_uid || `contact-${rows[0].id}`;
+    const syncToken = await nextContactSyncToken(user);
+    const [result]: any = await pool.query(
+        'UPDATE contacts SET dav_uid = ?, deleted_at = NOW(), sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NULL',
+        [davUid, syncToken, rows[0].id, user]
+    );
+    if (result.affectedRows > 0) {
+        await upsertContactTombstone(user, davUid, syncToken);
+    }
+    return result.affectedRows > 0;
+}
+
+export async function softDeleteContactsByIds(user: string, ids: Array<string | number>): Promise<number> {
+    await ensureContactsSchema();
+    if (ids.length === 0) return 0;
+    const placeholders = ids.map(() => '?').join(',');
+    const [rows]: any = await pool.query(
+        `SELECT id, dav_uid FROM contacts WHERE id IN (${placeholders}) AND username = ? AND deleted_at IS NULL`,
+        [...ids, user]
+    );
+    if (rows.length === 0) return 0;
+
+    const syncToken = await nextContactSyncToken(user);
+    const activeIds = rows.map((row: any) => row.id);
+    const activePlaceholders = activeIds.map(() => '?').join(',');
+    const [result]: any = await pool.query(
+        `UPDATE contacts SET deleted_at = NOW(), sync_token = ? WHERE id IN (${activePlaceholders}) AND username = ? AND deleted_at IS NULL`,
+        [syncToken, ...activeIds, user]
+    );
+    for (const row of rows) {
+        await upsertContactTombstone(user, row.dav_uid || `contact-${row.id}`, syncToken);
+    }
+    return Number(result.affectedRows || 0);
+}
+
+export async function restoreContactById(user: string, id: string | number): Promise<boolean> {
+    await ensureContactsSchema();
+    const [rows]: any = await pool.query(
+        'SELECT id, dav_uid FROM contacts WHERE id = ? AND username = ? AND deleted_at IS NOT NULL LIMIT 1',
+        [id, user]
+    );
+    if (rows.length === 0) return false;
+
+    const davUid = rows[0].dav_uid || `contact-${rows[0].id}`;
+    const syncToken = await nextContactSyncToken(user);
+    const [result]: any = await pool.query(
+        'UPDATE contacts SET dav_uid = ?, deleted_at = NULL, sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NOT NULL',
+        [davUid, syncToken, rows[0].id, user]
+    );
+    if (result.affectedRows > 0) {
+        await clearContactTombstone(user, davUid);
+    }
     return result.affectedRows > 0;
 }
 
 export async function addressBookSyncToken(user: string): Promise<string> {
     await ensureContactsSchema();
     const [rows]: any = await pool.query(
-        `SELECT COUNT(*) AS contact_count,
-                COALESCE(MAX(sync_token), 1) AS max_sync_token,
-                COALESCE(UNIX_TIMESTAMP(MAX(updated_at)), 1) AS max_updated_at
-         FROM contacts
-         WHERE username = ? AND deleted_at IS NULL`,
-        [user]
+        `SELECT
+            (SELECT COUNT(*) FROM contacts WHERE username = ? AND deleted_at IS NULL) AS contact_count,
+            GREATEST(
+                COALESCE((SELECT MAX(sync_token) FROM contacts WHERE username = ?), 1),
+                COALESCE((SELECT MAX(sync_token) FROM contact_tombstones WHERE username = ?), 1)
+            ) AS max_sync_token,
+            GREATEST(
+                COALESCE((SELECT UNIX_TIMESTAMP(MAX(updated_at)) FROM contacts WHERE username = ?), 1),
+                COALESCE((SELECT UNIX_TIMESTAMP(MAX(deleted_at)) FROM contact_tombstones WHERE username = ?), 1)
+            ) AS max_updated_at`,
+        [user, user, user, user, user]
     );
     const row = rows[0] || {};
     return `${row.contact_count || 0}-${row.max_sync_token || 1}-${row.max_updated_at || 1}`;

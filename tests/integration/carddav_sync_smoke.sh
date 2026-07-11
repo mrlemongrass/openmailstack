@@ -16,7 +16,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-timestamp=$(date +%s)
+timestamp="$(date +%s)-$$"
 contact_uid="oms-smoke-contact-${timestamp}"
 contact_name="OMS Smoke Contact ${timestamp}"
 contact_email="oms-smoke-${timestamp}@example.invalid"
@@ -93,6 +93,19 @@ if [[ "${status}" != "200" ]] || ! grep -q "${contact_name}" "${tmpdir}/get.out"
   exit 1
 fi
 
+status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X PROPFIND \
+  -H 'Depth: 0' \
+  -H 'Content-Type: application/xml; charset=utf-8' \
+  -o "${tmpdir}/propfind-addressbook.out" \
+  -w '%{http_code}' \
+  "${addressbook_url}")
+sync_token=$(grep -oE 'http://openmailstack\.local/carddav/[^<]+' "${tmpdir}/propfind-addressbook.out" | tail -n 1 || true)
+if [[ "${status}" != "207" || -z "${sync_token}" ]]; then
+  echo "FAIL: CardDAV addressbook PROPFIND did not return a sync token"
+  cat "${tmpdir}/propfind-addressbook.out"
+  exit 1
+fi
+
 status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X DELETE \
   -o "${tmpdir}/delete.out" \
   -w '%{http_code}' \
@@ -100,6 +113,44 @@ status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X DELETE \
 if [[ "${status}" != "204" && "${status}" != "404" ]]; then
   echo "FAIL: CardDAV DELETE returned HTTP ${status}"
   cat "${tmpdir}/delete.out"
+  exit 1
+fi
+
+status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X PROPFIND \
+  -H 'Depth: 1' \
+  -H 'Content-Type: application/xml; charset=utf-8' \
+  -o "${tmpdir}/propfind-addressbook-after-delete.out" \
+  -w '%{http_code}' \
+  "${addressbook_url}")
+if [[ "${status}" != "207" ]] || ! grep -q "${contact_uid}.vcf" "${tmpdir}/propfind-addressbook-after-delete.out" || ! grep -q 'HTTP/1.1 404 Not Found' "${tmpdir}/propfind-addressbook-after-delete.out"; then
+  echo "FAIL: CardDAV addressbook PROPFIND did not return a 404 tombstone for the deleted smoke contact"
+  cat "${tmpdir}/propfind-addressbook-after-delete.out"
+  exit 1
+fi
+
+sync_report_body="${tmpdir}/sync-collection.xml"
+cat > "${sync_report_body}" <<XML
+<?xml version="1.0" encoding="utf-8" ?>
+<D:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:sync-token>${sync_token}</D:sync-token>
+  <D:sync-level>1</D:sync-level>
+  <D:prop>
+    <D:getetag/>
+    <C:address-data/>
+  </D:prop>
+</D:sync-collection>
+XML
+
+status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X REPORT \
+  -H 'Depth: 1' \
+  -H 'Content-Type: application/xml; charset=utf-8' \
+  --data-binary @"${sync_report_body}" \
+  -o "${tmpdir}/sync-report.out" \
+  -w '%{http_code}' \
+  "${addressbook_url}")
+if [[ "${status}" != "207" ]] || ! grep -q "${contact_uid}.vcf" "${tmpdir}/sync-report.out" || ! grep -q 'HTTP/1.1 404 Not Found' "${tmpdir}/sync-report.out"; then
+  echo "FAIL: CardDAV sync-collection did not return a 404 tombstone for the deleted smoke contact"
+  cat "${tmpdir}/sync-report.out"
   exit 1
 fi
 

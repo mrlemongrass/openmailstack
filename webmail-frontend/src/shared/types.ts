@@ -182,6 +182,7 @@ export interface Contact {
   alternateEmail?: string;
   company?: string;
   jobTitle?: string;
+  job_title?: string;
   organization?: string;
   address?: string;
   notes?: string;
@@ -217,6 +218,8 @@ export interface ContactGroup {
 export interface ContactsResponse {
   success: boolean;
   contacts?: Contact[];
+  hasMore?: boolean;
+  total?: number;
   error?: string;
 }
 

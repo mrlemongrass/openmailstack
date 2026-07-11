@@ -16,7 +16,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-timestamp=$(date +%s)
+timestamp="$(date +%s)-$$"
 contact_uid="oms-eas-contact-${timestamp}"
 contact_name="OMS EAS Contact ${timestamp}"
 contact_email="oms-eas-${timestamp}@example.invalid"
@@ -160,13 +160,14 @@ curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X POST \
   -o "${tmpdir}/contacts-sync.out" \
   "${eas_base}&Cmd=Sync"
 
-node - "${tmpdir}/contacts-sync.out" "${contact_email}" "${contact_name}" <<'NODE'
+contacts_sync_key=$(node - "${tmpdir}/contacts-sync.out" "${contact_email}" "${contact_name}" <<'NODE'
 const fs = require('fs');
 const { WbxmlParser } = require('./webmail-backend/src/wbxml/parser.js');
 const ast = new WbxmlParser(fs.readFileSync(process.argv[2])).parse();
 const expectedEmail = process.argv[3];
 const expectedName = process.argv[4];
 const values = [];
+let syncKey = '';
 function walk(node) {
   if (!node) return;
   if (node.content) values.push({ tag: node.tag, content: node.content.toString() });
@@ -176,7 +177,8 @@ walk(ast);
 if (!values.some(value => value.tag === 'Status' && value.content === '1')) {
   throw new Error('Contacts Sync did not return Status 1');
 }
-if (!values.some(value => value.tag === 'SyncKey' && value.content.startsWith('contacts-'))) {
+syncKey = values.find(value => value.tag === 'SyncKey' && value.content.startsWith('contacts-'))?.content || '';
+if (!syncKey) {
   throw new Error('Contacts Sync did not return a contacts SyncKey');
 }
 if (!values.some(value => value.tag === 'Email1Address' && value.content === expectedEmail)) {
@@ -185,11 +187,68 @@ if (!values.some(value => value.tag === 'Email1Address' && value.content === exp
 if (!values.some(value => value.tag === 'FileAs' && value.content === expectedName)) {
   throw new Error(`Contacts Sync did not return ${expectedName}`);
 }
+process.stdout.write(syncKey);
+NODE
+)
+
+delete_status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X DELETE \
+  -o "${tmpdir}/delete.out" \
+  -w '%{http_code}' \
+  "${contact_url}")
+if [[ ! "${delete_status}" =~ ^(204|404)$ ]]; then
+  echo "FAIL: seed contact DELETE returned HTTP ${delete_status}"
+  cat "${tmpdir}/delete.out"
+  exit 1
+fi
+
+node - "${contacts_collection_id}" "${contacts_sync_key}" <<'NODE' > "${tmpdir}/contacts-delete-sync.wbxml"
+const { WbxmlWriter } = require('./webmail-backend/src/wbxml/writer.js');
+const collectionId = process.argv[2];
+const syncKey = process.argv[3];
+const writer = new WbxmlWriter();
+writer.writeNode({
+  tag: 'Sync',
+  page: 0,
+  children: [
+    { tag: 'Collections', page: 0, children: [
+      { tag: 'Collection', page: 0, children: [
+        { tag: 'SyncKey', page: 0, content: syncKey },
+        { tag: 'CollectionId', page: 0, content: collectionId },
+        { tag: 'GetChanges', page: 0, content: '1' }
+      ]}
+    ]}
+  ]
+});
+process.stdout.write(writer.getBuffer());
 NODE
 
-curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X DELETE \
-  -o /dev/null \
-  -w '%{http_code}' \
-  "${contact_url}" | grep -Eq '^(204|404)$'
+curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X POST \
+  -H 'Content-Type: application/vnd.ms-sync.wbxml' \
+  --data-binary @"${tmpdir}/contacts-delete-sync.wbxml" \
+  -o "${tmpdir}/contacts-delete-sync.out" \
+  "${eas_base}&Cmd=Sync"
+
+node - "${tmpdir}/contacts-delete-sync.out" "${contact_uid}" <<'NODE'
+const fs = require('fs');
+const { WbxmlParser } = require('./webmail-backend/src/wbxml/parser.js');
+const ast = new WbxmlParser(fs.readFileSync(process.argv[2])).parse();
+const expectedServerId = process.argv[3];
+
+function childText(node, tag) {
+  return (node.children || []).find(child => child.tag === tag)?.content?.toString() || '';
+}
+
+let ok = false;
+let deleteSeen = false;
+function walk(node) {
+  if (!node) return;
+  if (node.tag === 'Status' && node.content?.toString() === '1') ok = true;
+  if (node.tag === 'Delete' && childText(node, 'ServerId') === expectedServerId) deleteSeen = true;
+  for (const child of node.children || []) walk(child);
+}
+walk(ast);
+if (!ok) throw new Error('Contacts delete Sync did not return Status 1');
+if (!deleteSeen) throw new Error(`Contacts delete Sync did not return Delete for ${expectedServerId}`);
+NODE
 
 echo "PASS: ActiveSync contacts smoke completed"

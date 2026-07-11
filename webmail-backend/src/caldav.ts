@@ -3,8 +3,17 @@ import { pool } from './db';
 import xml2js from 'xml2js';
 import { createCalendar, ensureDefaultCalendar, getCalendarByToken, getCalendarHref, getVisibleCalendars } from './calendar-utils';
 import { davBasicAuth } from './dav-auth';
+import { calendarEventEtag } from './dav-etag';
+import { isSyncCollectionReport, syncTokenFromReportBody } from './dav-report';
 
 const router = express.Router();
+
+function emitCalendarUpdated(user: string, calendarId: string | number) {
+    try {
+        const { io } = require('./index');
+        io.to(user).emit('calendar_updated', { calendarId });
+    } catch {}
+}
 
 async function userHasCalendarAccess(calendarId: string, user: string, requireWrite: boolean = false): Promise<boolean> {
     const [rows]: any = await pool.query(
@@ -235,7 +244,7 @@ async function handlePropfind(req: Request, res: Response, user: string) {
     <D:href>${isLegacy ? `/SOGo/dav/${user}/Calendar/` : `/caldav/calendars/${user}/${(cal && cal.dav_slug) || calendarId}/`}${ev.uid}.ics</D:href>
     <D:propstat>
       <D:prop>
-        <D:getetag>"${ev.uid}"</D:getetag>
+        <D:getetag>${calendarEventEtag(ev)}</D:getetag>
         <D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
@@ -305,9 +314,8 @@ async function handleReport(req: Request, res: Response, user: string) {
         // Parse REPORT body to detect sync-collection vs calendar-query
         const body = (req as any).body || '';
         const bodyStr = typeof body === 'string' ? body : (body instanceof Buffer ? body.toString('utf8') : '');
-        const isSyncCollection = /<sync-collection/i.test(bodyStr);
-        const syncTokenMatch = bodyStr.match(/<D:sync-token>([^<]+)<\/D:sync-token>/i);
-        const requestedToken = syncTokenMatch ? syncTokenMatch[1] : null;
+        const isSyncCollection = isSyncCollectionReport(bodyStr);
+        const requestedToken = syncTokenFromReportBody(bodyStr);
 
         // Build the base href for this calendar
         const hrefBase = isLegacy
@@ -349,7 +357,7 @@ async function handleReport(req: Request, res: Response, user: string) {
     <D:href>${hrefBase}${ev.uid}.ics</D:href>
     <D:propstat>
       <D:prop>
-        <D:getetag>"${ev.uid}"</D:getetag>
+        <D:getetag>${calendarEventEtag(ev)}</D:getetag>
         <C:calendar-data><![CDATA[${ev.ical_data}]]></C:calendar-data>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
@@ -394,7 +402,7 @@ async function handleGet(req: Request, res: Response, user: string) {
         if (events.length === 0) return res.status(404).send();
 
         res.set('Content-Type', 'text/calendar; charset=utf-8');
-        res.set('ETag', `"${events[0].uid}"`);
+        res.set('ETag', calendarEventEtag(events[0]));
         res.status(200).send(events[0].ical_data);
     } catch (e) {
         console.error(e);
@@ -438,8 +446,9 @@ async function handlePut(req: Request, res: Response, user: string) {
             [calendarId, uid, icalData, icalData]
         );
         await pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendarId]);
+        emitCalendarUpdated(user, calendarId);
         
-        res.set('ETag', `"${uid}"`);
+        res.set('ETag', calendarEventEtag({ uid, ical_data: icalData }));
         res.status(201).send();
     } catch (e) {
         console.error(e);
@@ -477,6 +486,7 @@ async function handleProppatch(req: Request, res: Response, user: string) {
 
     try {
         const rawBody = req.body ? req.body.toString('utf-8') : '';
+        let changed = false;
         if (rawBody.trim()) {
             const parsed = await xml2js.parseStringPromise(rawBody, { explicitArray: false });
             const propertyupdate = parsed['D:propertyupdate'] || parsed['d:propertyupdate'] || parsed.propertyupdate;
@@ -487,10 +497,16 @@ async function handleProppatch(req: Request, res: Response, user: string) {
 
             if (typeof displayName === 'string' && displayName.trim()) {
                 await pool.query('UPDATE calendars SET name = ?, sync_token = sync_token + 1 WHERE id = ? AND user_id = ?', [displayName.trim(), calendarId, user]);
+                changed = true;
             }
             if (typeof calendarColor === 'string' && /^#[0-9a-f]{6}$/i.test(calendarColor.trim())) {
                 await pool.query('UPDATE calendars SET color = ?, sync_token = sync_token + 1 WHERE id = ? AND user_id = ?', [calendarColor.trim(), calendarId, user]);
+                changed = true;
             }
+        }
+
+        if (changed) {
+            emitCalendarUpdated(user, calendarId);
         }
 
         res.set('Content-Type', 'application/xml; charset=utf-8');
@@ -527,6 +543,7 @@ async function handleMkcalendar(req: Request, res: Response, user: string) {
     try {
         const props = await readCalendarProperties(req, requestedSlug);
         const calendar = await createCalendar(user, props.name, { slug: requestedSlug, color: props.color, components: props.components });
+        emitCalendarUpdated(user, calendar.id);
         res.set('Location', getCalendarHref(user, calendar));
         res.status(201).send();
     } catch (e) {
@@ -548,6 +565,7 @@ async function handleDelete(req: Request, res: Response, user: string) {
             await pool.query('DELETE FROM events WHERE calendar_id = ?', [cal.id]);
             await pool.query('DELETE FROM calendars WHERE id = ? AND user_id = ?', [cal.id, user]);
             await ensureDefaultCalendar(user);
+            emitCalendarUpdated(user, cal.id);
             return res.status(204).send();
         } catch (e) {
             console.error(e);
@@ -569,6 +587,7 @@ async function handleDelete(req: Request, res: Response, user: string) {
         await pool.query('INSERT INTO calendar_tombstones (calendar_id, uid) VALUES (?, ?)', [calendarId, uid]);
         await pool.query('DELETE FROM events WHERE calendar_id = ? AND uid = ?', [calendarId, uid]);
         await pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendarId]);
+        emitCalendarUpdated(user, calendarId);
         res.status(204).send();
     } catch (e) {
         console.error(e);

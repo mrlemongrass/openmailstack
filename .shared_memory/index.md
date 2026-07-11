@@ -1,6 +1,6 @@
 # OpenMailStack Shared Memory Index
 
-Last reviewed: 2026-06-21.
+Last reviewed: 2026-07-11.
 
 Use this folder for repo-specific implementation state, commands, risks, and task lessons. Do not store secrets, passwords, raw credential logs, or mailbox contents.
 

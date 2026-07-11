@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { io as createSocket } from 'socket.io-client';
 import type { Calendar, CalendarEvent } from '../../shared/types';
 import * as api from '../../shared/api';
 
@@ -48,7 +49,49 @@ export function useCalendar() {
     setIsRefreshing(false);
   }, []);
 
-  useEffect(() => { setIsLoading(true); refreshCalendars().finally(() => setIsLoading(false)); }, []);
+  useEffect(() => { setIsLoading(true); refreshCalendars().finally(() => setIsLoading(false)); }, [refreshCalendars]);
+
+  useEffect(() => {
+    let isActive = true;
+    let socket: ReturnType<typeof createSocket> | null = null;
+    let refreshTimer: ReturnType<typeof window.setTimeout> | undefined;
+
+    const scheduleRefresh = () => {
+      if (!isActive) return;
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        void refreshCalendars();
+      }, 250);
+    };
+
+    const connectCalendarUpdates = async () => {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (!res.ok || !isActive) return;
+        const data = await res.json();
+        const username = data?.user?.username || data?.email;
+        if (!username || !isActive) return;
+
+        socket = createSocket({ withCredentials: true });
+        socket.emit('join', username);
+        socket.on('connect', () => {
+          socket?.emit('join', username);
+        });
+        socket.on('calendar_updated', scheduleRefresh);
+      } catch (e) {
+        console.error('Failed to start calendar realtime updates', e);
+      }
+    };
+
+    void connectCalendarUpdates();
+
+    return () => {
+      isActive = false;
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      socket?.off('calendar_updated', scheduleRefresh);
+      socket?.disconnect();
+    };
+  }, [refreshCalendars]);
 
   // Persist calendar visibility to localStorage
   useEffect(() => {

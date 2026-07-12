@@ -51,8 +51,8 @@ class SchedulerPhase2Store {
                 await connection.query(`INSERT INTO scheduler_poll_options (id,poll_id,slot_start,slot_end,position) VALUES (?,?,?,?,?)`, [crypto_1.default.randomUUID(), id, mysqlDate(start), mysqlDate(new Date(start.getTime() + event.durationMinutes * 60_000)), position]);
             }
             await connection.query(`INSERT INTO scheduler_audit_events
-                 (id,tenant_key,actor_type,actor_id,action,target_type,target_id,correlation_id,metadata)
-                 VALUES (?,?,'user',?,'poll.create','poll',?,?,'{}')`, [crypto_1.default.randomUUID(), entitlement.tenantKey, username, id, crypto_1.default.randomUUID()]);
+                 (id,tenant_key,actor_type,actor_id,action,target_type,target_id,correlation_id,metadata,occurred_at)
+                 VALUES (?,?,'user',?,'poll.create','poll',?,?,'{}',UTC_TIMESTAMP(3))`, [crypto_1.default.randomUUID(), entitlement.tenantKey, username, id, crypto_1.default.randomUUID()]);
             await connection.commit();
         }
         catch (error) {

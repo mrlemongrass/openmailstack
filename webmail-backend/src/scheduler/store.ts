@@ -18,6 +18,7 @@ import {
     normalizeSchedulerHandle,
     schedulerTokenHash,
     schedulerBookingActionPolicy,
+    SchedulerGuestPolicyError,
     type SchedulerEventInput,
     type SchedulerBookingAnswer,
     type SchedulerBookingAnswerInput,
@@ -1082,7 +1083,7 @@ export class SchedulerStore {
         const publicEvent = await this.getPublicEvent(handle, slug, input.privateAccessToken);
         if (!publicEvent || publicEvent.event.id !== input.eventTypeId) throw new Error('Event type not found');
         if (publicEvent.event.lockedTimeZone && bookerTimeZone !== publicEvent.event.lockedTimeZone) {
-            throw new Error(`This event requires the ${publicEvent.event.lockedTimeZone} time zone`);
+            throw new SchedulerGuestPolicyError(`This event requires the ${publicEvent.event.lockedTimeZone} time zone`);
         }
         assertSchedulerGuestEligible(bookerEmail, publicEvent.event.guestAllowList, publicEvent.event.guestDenyList);
         const bookingAnswers = normalizeSchedulerBookingAnswers(publicEvent.event.questions, input.bookingAnswers);
@@ -1093,10 +1094,10 @@ export class SchedulerStore {
         }
         const seats = Number(input.seats ?? 1);
         if (!Number.isInteger(seats) || seats < 1 || seats > publicEvent.event.capacity) {
-            throw new Error(`Seats must be an integer between 1 and ${publicEvent.event.capacity}`);
+            throw new SchedulerGuestPolicyError(`Seats must be an integer between 1 and ${publicEvent.event.capacity}`);
         }
         if (seats < attendees.length + 1) {
-            throw new Error('Seats must include the booker and every additional guest');
+            throw new SchedulerGuestPolicyError('Seats must include the booker and every additional guest');
         }
         let verification: any = null;
         if (publicEvent.event.requireEmailVerification && !input.waitlistEntryId && !input.bookedByUsername && !input.verificationBypass) {
@@ -1198,11 +1199,13 @@ export class SchedulerStore {
             }
             if (input.waitlistEntryId) {
                 const [waitlistRows]: any = await connection.query(
-                    `SELECT id FROM scheduler_waitlist_entries
-                     WHERE id=? AND event_type_id=? AND booker_email=? AND status='promoting' AND verified_at IS NOT NULL FOR UPDATE`,
+                    `SELECT id, verified_at FROM scheduler_waitlist_entries
+                     WHERE id=? AND event_type_id=? AND booker_email=? AND status='promoting' FOR UPDATE`,
                     [input.waitlistEntryId, publicEvent.event.id, bookerEmail]
                 );
-                if (!waitlistRows.length) throw new Error('Waitlist promotion is no longer available');
+                if (!waitlistRows.length || (publicEvent.event.requireEmailVerification && !waitlistRows[0].verified_at)) {
+                    throw new SchedulerGuestPolicyError('Waitlist promotion is no longer available');
+                }
             }
             if (privateLink) {
                 const [privateLinks]: any = await connection.query(
@@ -1521,8 +1524,10 @@ export class SchedulerStore {
             await this.pool.query("UPDATE scheduler_waitlist_entries SET status='promoted', promoted_booking_id=? WHERE id=?", [booking.id, entry.id]);
             return booking;
         } catch (error) {
-            const status = error instanceof Error && /not eligible|not found|verification/i.test(error.message) ? 'failed' : 'pending';
+            const permanentlyIneligible = error instanceof SchedulerGuestPolicyError;
+            const status = permanentlyIneligible ? 'failed' : 'pending';
             await this.pool.query("UPDATE scheduler_waitlist_entries SET status=? WHERE id=? AND status='promoting'", [status, entry.id]);
+            if (permanentlyIneligible) return this.promoteWaitlist(eventTypeId, start);
             return null;
         }
     }

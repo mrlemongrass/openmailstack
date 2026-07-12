@@ -206,26 +206,28 @@ const guestRuleMatches = (email: string, rule: string): boolean => rule.startsWi
     ? email.endsWith(rule) && email.length > rule.length
     : email === rule;
 
+export class SchedulerGuestPolicyError extends Error {}
+
 export function assertSchedulerGuestEligible(email: string, allowList: string[], denyList: string[]): void {
     const normalized = String(email || '').trim().toLowerCase();
     if (denyList.some((rule) => guestRuleMatches(normalized, rule))
         || (allowList.length > 0 && !allowList.some((rule) => guestRuleMatches(normalized, rule)))) {
-        throw new Error('This email address is not eligible for this event');
+        throw new SchedulerGuestPolicyError('This email address is not eligible for this event');
     }
 }
 
 export function normalizeSchedulerAttendees(value: unknown, bookerEmail: string, maximum: number): SchedulerAttendee[] {
     if (value == null) return [];
-    if (!Array.isArray(value) || value.length > maximum) throw new Error(`This event allows up to ${maximum} additional guests`);
+    if (!Array.isArray(value) || value.length > maximum) throw new SchedulerGuestPolicyError(`This event allows up to ${maximum} additional guests`);
     const normalizedBookerEmail = bookerEmail.toLowerCase();
     const seen = new Set<string>();
     return value.map((candidate) => {
         const input = candidate as Partial<SchedulerAttendeeInput>;
         const email = String(input.email || '').trim().toLowerCase();
         const name = String(input.name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 160);
-        if (!validEmail(email) || email.length > 255) throw new Error('Each additional guest needs a valid email address');
-        if (email === normalizedBookerEmail) throw new Error('Additional guest email addresses must be different from the booker');
-        if (seen.has(email)) throw new Error('Additional guest email addresses must be unique');
+        if (!validEmail(email) || email.length > 255) throw new SchedulerGuestPolicyError('Each additional guest needs a valid email address');
+        if (email === normalizedBookerEmail) throw new SchedulerGuestPolicyError('Additional guest email addresses must be different from the booker');
+        if (seen.has(email)) throw new SchedulerGuestPolicyError('Additional guest email addresses must be unique');
         seen.add(email);
         return { name, email };
     });

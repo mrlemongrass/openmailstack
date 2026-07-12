@@ -1028,9 +1028,9 @@ Agents should verify:
 
 ### 8.8 OMS Scheduler
 
-Status: `Partial - Deployed`
+Status: `Partial - Phase 2 Repository Complete; Hardening Deployment Pending`
 
-Last verified: 2026-07-12 in the repository and on `mail.housevo.us`.
+Last verified: 2026-07-12 in the repository; the preceding Phase 2 release is deployed on `mail.housevo.us`, while the current waitlist/poll hardening remains pending live synchronization.
 
 Phase 0 and Phase 1 are implemented behind `ENABLE_OMS_SCHEDULER`. Ordered migrations create tenant-scoped slot inventory/holds, mailbox entitlements, event types, availability windows, bookings, a leased outbox, and sanitized audit events. Disabled installations do not apply these migrations. Only the existing modern superadmin boundary can enable a mailbox and assign its globally unique public handle.
 
@@ -1038,9 +1038,11 @@ The Node backend separates public, owner, and Admin Scheduler APIs. Public reque
 
 Phase 2 booking integrity runs eligibility and verification before capacity acquisition. Exact-email and `@domain` allow/deny rules apply to the booker and each named attendee but are stripped from public event responses. Optional verification challenges bind a hash to event plus normalized email, expire after 15 minutes, and are consumed under the booking transaction. Active-booking limits serialize on a durable event/email mutex so simultaneous requests cannot both pass the count. Group bookings reserve an explicit seat count; every named attendee consumes a seat, while remaining capacity comes from slot inventory rather than Calendar busy parsing. Same-event confirmed projections are excluded from ordinary conflict input and remain governed by that inventory, whereas unrelated Calendar events still block the slot. Cancellation, rejection, and reschedule move the exact seat count, and a booking-row recheck prevents concurrent reschedules from retaining capacity at two destinations.
 
+Phase 2 personal scheduling extends through migrations `017`-`023`: host-local holiday/out-of-office exclusions, capacity-aware waitlists, DST-safe recurring series, verified meeting polls, delegated booking and completed/no-show outcomes, public embed/customization/attribution controls, and guarded JSON/CSV portability. Waitlist admission snapshots verification state, while promotion rechecks current event policy. Permanently ineligible entries are marked failed and promotion continues to the next oldest party whose seats fit; transient capacity failures remain pending. Meeting-poll creation writes a complete sanitized audit record including the required occurrence timestamp. Import creates inactive unlisted drafts, and booking CSV cells are neutralized against spreadsheet formulas.
+
 The React app lazy-loads authenticated Scheduler management and unauthenticated `/scheduler/<handle>` pages. Entitled users see Scheduler immediately after Notes. Mobile navigation keeps Mail, Calendar, Contacts, Notes, and Scheduler primary and moves Settings, Sync, and Admin into More.
 
-Evidence: `webmail-backend/src/scheduler/`, versioned migrations `001` through `016`, `functions/12_scheduler.sh`, `webmail-frontend/src/scheduler/`, backend tests, static integration guards, disposable MariaDB lifecycle/concurrency tests, and the live 2026-07-12 deployment. Live Nginx serves Scheduler on both configured hostnames, the backend/frontend match the tested build, real booking/private-link lifecycles pass, one-off filtering, booking questions, host confirmation, guest action policies, active limits, eligibility/verification, attendees, and multi-seat capacity contracts pass, and the staging smoke suite passes. Remaining validation is physical CalDAV/ActiveSync observation and clean-VM work after a second development Linux server is available.
+Evidence: `webmail-backend/src/scheduler/`, versioned migrations `001` through `023`, `functions/12_scheduler.sh`, `webmail-frontend/src/scheduler/`, backend tests, static integration guards, disposable MariaDB lifecycle/concurrency tests, and the live 2026-07-12 deployment. Live Nginx serves Scheduler on both configured hostnames; real booking/private-link lifecycles and the staging smoke suite pass. The repository hardening applies all migrations twice and passes 90/90 backend tests with policy-change waitlist promotion, poll audit, outcomes/delegation, recurrence, and portability coverage, but those hardening artifacts are not yet deployed. Remaining validation is the guarded backend synchronization, physical CalDAV/ActiveSync observation, and clean-VM work after a second development Linux server is available.
 
 ---
 

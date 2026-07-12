@@ -99,6 +99,8 @@ export declare function defaultSchedulerHandle(username: string): string;
 export declare function normalizeSchedulerQuestions(value: unknown): SchedulerBookingQuestion[];
 export declare function normalizeSchedulerBookingAnswers(questions: SchedulerBookingQuestion[], value: unknown): SchedulerBookingAnswer[];
 export declare function normalizeSchedulerGuestRules(value: unknown): string[];
+export declare class SchedulerGuestPolicyError extends Error {
+}
 export declare function assertSchedulerGuestEligible(email: string, allowList: string[], denyList: string[]): void;
 export declare function normalizeSchedulerAttendees(value: unknown, bookerEmail: string, maximum: number): SchedulerAttendee[];
 export declare function normalizeSchedulerEventInput(input: SchedulerEventInput): Required<Omit<SchedulerEventInput, 'destinationCalendarId'>> & {

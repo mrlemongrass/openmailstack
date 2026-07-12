@@ -903,3 +903,11 @@ Future entry template:
 - Verified: normal backend, frontend lint/build/tests, full integration, desktop/mobile Playwright, migration idempotence, and disposable MariaDB 90/90 passed. Live migrations/tables, artifact contents, public routes, `postqueue`, `ss`, services, Nginx, and staging smoke pass.
 - Deployed: `/var/backups/openmailstack/20260712_064405_scheduler_phase2_complete` is the root-only rollback snapshot; migrations `017`-`023` and tested artifacts are live.
 - Next: Phase 3 durable reminders, reconfirmation, follow-ups, and observable provider-independent workflow delivery.
+
+## 2026-07-12 Scheduler Phase 2 Hardening Revalidation
+
+- Fixed: Non-verification waitlist entries can now promote after capacity release; events that require email verification still require a verified waitlist entry, and a permanently ineligible oldest entry no longer prevents promotion of the next eligible fitting party.
+- Fixed: Meeting-poll creation supplies the required `scheduler_audit_events.occurred_at` value.
+- Fixed: The completed/no-show database fixture moves both booking timestamps into the past and preserves `slot_end > slot_start`.
+- Verified: A disposable MariaDB applied migrations `001`-`023` twice and passed all 90 backend tests with no skips. Frontend lint/tests/build, full integration and Scheduler guards, `git diff --check`, and read-only staging smoke pass.
+- Status: Repository Phase 2 is complete. Guarded deployment of the hardening artifacts is required before Phase 3 starts.

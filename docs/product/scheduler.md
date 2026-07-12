@@ -1,6 +1,6 @@
 # OMS Scheduler Product And Engineering Roadmap
 
-Status: `Phase 2 In Progress - Private Links And Core Booking Policies Deployed; Physical Client Validation Pending`
+Status: `Phase 2 Repository Complete - Live Hardening Deployment Pending; Phase 3 Starts After Deployment`
 
 Research date: 2026-07-10
 
@@ -343,7 +343,7 @@ Exit criteria:
 - [x] Disposable lifecycle proves reschedule updates the same calendar UID and cancel removes it, writes a tombstone, and releases capacity.
 - [x] Playwright verified public booking and management layouts at 1440x900 and 390x844 with reachable primary actions, mobile More navigation, and no horizontal overflow.
 
-Live upgrade deployment passed on `mail.housevo.us`: migrations `001` through `023` are recorded, the backend/frontend match the tested build, Nginx serves `/scheduler/` on both configured hostnames, and the staging smoke suite passes. A live create/reschedule/cancel cycle completed all three owned-sender notification jobs, received three Google SMTP acceptances and three local LMTP deliveries, preserved the Calendar UID on reschedule, deleted the projection on cancel, wrote a tombstone, released capacity, and restored the public slot. Phase 2 is complete and live: private links, booking integrity, holidays/out-of-office, waitlists, recurring bookings, meeting polls, outcomes/delegation, public distribution, and portability are guarded by disposable-database lifecycle/concurrency coverage plus desktop/mobile browser checks. Physical macOS/Android/Thunderbird and CalDAV/ActiveSync observation remains pending. Clean-VM validation is intentionally deferred until a second development Linux server is available.
+The Phase 2 live upgrade passed on `mail.housevo.us`: migrations `001` through `023` are recorded, Nginx serves `/scheduler/` on both configured hostnames, and the staging smoke suite passes. A live create/reschedule/cancel cycle completed all three owned-sender notification jobs, received three Google SMTP acceptances and three local LMTP deliveries, preserved the Calendar UID on reschedule, deleted the projection on cancel, wrote a tombstone, released capacity, and restored the public slot. Private links, booking integrity, holidays/out-of-office, waitlists, recurring bookings, meeting polls, outcomes/delegation, public distribution, and portability are deployed. The repository now also contains validated waitlist/poll hardening that has not yet been synchronized to the live backend, so production does not yet match the current tested artifact. Physical macOS/Android/Thunderbird and CalDAV/ActiveSync observation remains pending. Clean-VM validation is intentionally deferred until a second development Linux server is available.
 
 ### Phase 2 - Complete personal parity (5-7 weeks)
 
@@ -379,9 +379,11 @@ Implementation progress (2026-07-12):
 - [x] Phase 2 migrations `017` through `023` are additive/idempotent and are recorded live. Disposable MariaDB applies the full `001` through `023` chain twice and passes the complete 90-test lifecycle without skips.
 - [x] Group events expose database-backed remaining seats and let a booking reserve multiple seats transactionally. Named attendees consume seats; cancellation, rejection, and reschedule restore/move the exact count; same-event Calendar projections no longer hide partially filled slots; and concurrent reschedules cannot retain two destinations.
 
+Post-completion hardening revalidated the full database lifecycle after fixing non-verification waitlist promotion, continuing past entries that fail current eligibility/verification policy, adding the required poll-audit timestamp, and preserving the booking-range constraint in the past-outcome fixture. The disposable MariaDB run again applies migrations `001` through `023` twice and passes all 90 tests without skips.
+
 Exit criteria:
 
-- Every item in sections 3.1 and 3.2 has a passing acceptance test.
+- Every capability assigned to Phase 2 in `scheduler-capabilities.json` is implemented and references a passing acceptance test.
 - Capacity, recurrence, expiry, active-booker limits, and approval races are covered by integration tests.
 
 ### Phase 3 - Durable workflows (4-6 weeks)

@@ -4906,3 +4906,66 @@ Deliver every remaining Phase 2 personal-scheduling slice as one backward-compat
 ### Next recommended task
 
 Begin Phase 3 with durable event-driven workflow automation: reminder/follow-up rules, reconfirmation, observable delivery, and provider-independent email actions before adding paid messaging channels.
+
+## 2026-07-12 — Scheduler Phase 2 hardening revalidation
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `de84c43a` except unrelated untracked `.opencode/`
+Ending git state: clean after the focused commit except unrelated untracked `.opencode/`
+
+### Selected task
+
+Resolve the Phase 2 readiness blocker found by rerunning the full database-gated Scheduler lifecycle, then reconcile the status documentation with current proof.
+
+### Why this task
+
+Automatic waitlist promotion is an explicit Phase 2 acceptance behavior. The normal backend suite skipped the database lifecycle, while a disposable MariaDB run reproduced a non-verification promotion failure twice, so Phase 3 should not start until that boundary is green.
+
+### Changes made
+
+- `webmail-backend/src/scheduler/store.ts` and generated artifacts
+  - Permit promotion with a null `verified_at` only when the event does not require email verification, use a typed guest-policy failure instead of matching error text, mark current-policy rejections failed, and continue to the next oldest eligible fitting entry.
+- `webmail-backend/src/scheduler/phase2-store.ts` and generated artifacts
+  - Supply the schema-required `occurred_at` timestamp for meeting-poll audit events.
+- `webmail-backend/test/scheduler-phase1-db.test.cjs`
+  - Preserve the booking-range constraint when moving a finalized poll booking into the past for outcome testing.
+- `docs/product/scheduler.md`, `docs/product/scheduler-capabilities.json`, `ROADMAP.md`, `docs/engineering/ARCHITECTURE.md`, and project memory
+  - Mark Phase 2 repository scope complete, add explicit waitlist/delegation/portability capability entries, update the architecture evidence through migration `023`, clarify the capability-scoped exit criterion, and record that guarded live deployment is required before Phase 3 starts.
+
+### Proof / checks run
+
+- `rtk bash /tmp/oms-scheduler-single-use-db-test.sh`
+  - Applied migrations `001`-`023` twice; all 90 backend tests passed with no skips, including verification and attendee-policy waitlist changes, the MariaDB lifecycle, and the concurrency proof.
+- `rtk npm --prefix webmail-frontend run lint`
+  - Passed.
+- `rtk npm --prefix webmail-frontend test`
+  - Passed 3/3.
+- `rtk npm --prefix webmail-frontend run build`
+  - Passed; largest route chunk remains below 500 kB.
+- `rtk bash tests/integration/run.sh`
+  - Passed, including Scheduler documentation and schema/API/UI guards.
+- `rtk bash tests/integration/staging_smoke.sh ./config.conf`
+  - Passed read-only service, listener, TLS, configuration, and endpoint checks.
+- `rtk git diff --check`
+  - Passed.
+
+### Acceptance criteria
+
+- [x] Non-verification waitlist entries promote after capacity release.
+- [x] Verification-required waitlist promotions retain the verification guard.
+- [x] A permanently ineligible oldest entry does not block the next eligible fitting party.
+- [x] Tightened attendee/seat policy does not let an oversized older party block a later eligible party.
+- [x] Meeting-poll audit writes satisfy the current schema.
+- [x] The complete database lifecycle passes 90/90 with no skips.
+- [x] Phase 2 status and exit-criterion documentation match current proof.
+
+### Risks / notes
+
+- The tested backend hardening artifacts are not yet deployed to `/opt/openmailstack-backend`.
+- Physical CalDAV/ActiveSync observation and clean-VM installation remain deferred release gates.
+- No production data, credentials, or Scheduler records were changed during this pass.
+
+### Next recommended task
+
+Guardedly deploy the tested backend hardening commit, verify artifact equality and staging health, then begin Phase 3 durable workflows.

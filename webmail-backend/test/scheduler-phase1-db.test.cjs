@@ -736,6 +736,67 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const [waitlistOutbox] = await pool.query("SELECT COUNT(*) AS total FROM scheduler_outbox WHERE aggregate_id=? AND event_type='waitlist.joined'", [waitlistEntry.id]);
     assert.equal(Number(waitlistOutbox[0].total), 1);
 
+    const policyWaitlistEvent = await store.saveEventType(username, {
+        title: 'Policy Waitlist Test', slug: 'policy-waitlist-test', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        capacity: 1, waitlistEnabled: true,
+    });
+    const policyWaitlistStart = new Date('2026-08-11T16:00:00.000Z');
+    const policyCapacityBooking = await store.createBooking('phase1', policyWaitlistEvent.slug, {
+        eventTypeId: policyWaitlistEvent.id, start: policyWaitlistStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Policy Capacity Guest', bookerEmail: 'policy-capacity@example.net', idempotencyKey: 'phase2-policy-waitlist-capacity-0001',
+    });
+    const unverifiedPolicyEntry = await store.joinWaitlist('phase1', policyWaitlistEvent.slug, {
+        eventTypeId: policyWaitlistEvent.id, start: policyWaitlistStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Unverified Waiting Guest', bookerEmail: 'unverified-waiting@example.net', idempotencyKey: 'phase2-policy-waitlist-unverified-0001',
+    });
+    const verificationRequiredWaitlistEvent = await store.saveEventType(username, {
+        ...policyWaitlistEvent, requireEmailVerification: true,
+    }, policyWaitlistEvent.id);
+    const policyChallenge = await store.requestEmailVerification('phase1', verificationRequiredWaitlistEvent.slug, 'verified-waiting@example.net');
+    const [policyVerificationJobs] = await pool.query(
+        "SELECT payload FROM scheduler_outbox WHERE aggregate_id=? AND event_type='booking.verification'",
+        [policyChallenge.challengeId]
+    );
+    const policyVerificationCode = JSON.parse(policyVerificationJobs[0].payload).verificationCode;
+    const verifiedPolicyEntry = await store.joinWaitlist('phase1', verificationRequiredWaitlistEvent.slug, {
+        eventTypeId: verificationRequiredWaitlistEvent.id, start: policyWaitlistStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Verified Waiting Guest', bookerEmail: 'verified-waiting@example.net', idempotencyKey: 'phase2-policy-waitlist-verified-0001',
+        verificationChallengeId: policyChallenge.challengeId, verificationCode: policyVerificationCode,
+    });
+    await store.cancelBookingByToken(policyCapacityBooking.cancelToken);
+    const policyWaitlist = await store.listWaitlist(username);
+    assert.equal(policyWaitlist.find(item => item.id === unverifiedPolicyEntry.id).status, 'failed', 'new verification policy must reject an older unverified waitlist entry');
+    assert.equal(policyWaitlist.find(item => item.id === verifiedPolicyEntry.id).status, 'promoted', 'promotion must continue to the oldest eligible fitting party');
+
+    const attendeePolicyEvent = await store.saveEventType(username, {
+        title: 'Attendee Policy Waitlist Test', slug: 'attendee-policy-waitlist-test', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        capacity: 3, maxAdditionalGuests: 1, waitlistEnabled: true,
+    });
+    const attendeePolicyStart = new Date('2026-08-18T16:00:00.000Z');
+    const attendeeCapacityBooking = await store.createBooking('phase1', attendeePolicyEvent.slug, {
+        eventTypeId: attendeePolicyEvent.id, start: attendeePolicyStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Attendee Capacity Guest', bookerEmail: 'attendee-capacity@example.net', seats: 3,
+        idempotencyKey: 'phase2-attendee-policy-capacity-0001',
+    });
+    const attendeePolicyEntry = await store.joinWaitlist('phase1', attendeePolicyEvent.slug, {
+        eventTypeId: attendeePolicyEvent.id, start: attendeePolicyStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Waiting Party', bookerEmail: 'waiting-party@example.net', seats: 2,
+        attendees: [{ name: 'Waiting Guest', email: 'waiting-guest@example.net' }],
+        idempotencyKey: 'phase2-attendee-policy-party-0001',
+    });
+    const singleSeatPolicyEntry = await store.joinWaitlist('phase1', attendeePolicyEvent.slug, {
+        eventTypeId: attendeePolicyEvent.id, start: attendeePolicyStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Single Waiting Guest', bookerEmail: 'single-waiting@example.net', seats: 1,
+        idempotencyKey: 'phase2-attendee-policy-single-0001',
+    });
+    await store.saveEventType(username, { ...attendeePolicyEvent, maxAdditionalGuests: 0 }, attendeePolicyEvent.id);
+    await store.cancelBookingByToken(attendeeCapacityBooking.cancelToken);
+    const attendeePolicyWaitlist = await store.listWaitlist(username);
+    assert.equal(attendeePolicyWaitlist.find(item => item.id === attendeePolicyEntry.id).status, 'failed', 'new attendee policy must reject an older oversized party');
+    assert.equal(attendeePolicyWaitlist.find(item => item.id === singleSeatPolicyEntry.id).status, 'promoted', 'attendee-policy rejection must not block the next eligible fitting party');
+
     const phase2Store = new SchedulerPhase2Store(pool, store);
     const pollEvent = await store.saveEventType(username, {
         title: 'Verified Poll', slug: 'verified-poll', durationMinutes: 30, intervalMinutes: 30,
@@ -772,7 +833,10 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const finalizedOwnerBooking = (await store.listBookings(username, 'upcoming')).find(item => item.id === finalizedPollBooking.id);
     assert.equal(finalizedOwnerBooking.bookedByUsername, username, 'poll finalization must use the trusted owner booking path');
     await assert.rejects(() => store.markBookingOutcome(username, finalizedPollBooking.id, 'no_show'), /only after it ends/);
-    await pool.query("UPDATE scheduler_bookings SET slot_end='2020-01-01 00:00:00.000' WHERE id=?", [finalizedPollBooking.id]);
+    await pool.query(
+        "UPDATE scheduler_bookings SET slot_start='2020-01-01 00:00:00.000', slot_end='2020-01-01 00:30:00.000' WHERE id=?",
+        [finalizedPollBooking.id]
+    );
     await store.markBookingOutcome(username, finalizedPollBooking.id, 'no_show');
     const [outcomeRows] = await pool.query('SELECT status,no_show_at FROM scheduler_bookings WHERE id=?', [finalizedPollBooking.id]);
     assert.equal(outcomeRows[0].status, 'no_show');

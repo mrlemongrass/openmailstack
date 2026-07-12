@@ -81,6 +81,28 @@
       "release": "phase-2-complete-2026-07-12"
     },
     {
+      "id": "individual.waitlists",
+      "category": "individual",
+      "name": "Capacity-aware policy-preserving waitlists",
+      "source": "https://cal.com/help/event-types/offer-seats",
+      "observedAt": "2026-07-10",
+      "status": "implemented",
+      "phase": "phase-2",
+      "test": "webmail-backend/test/scheduler-phase1-db.test.cjs",
+      "release": "phase-2-complete-2026-07-12"
+    },
+    {
+      "id": "individual.delegation-outcomes",
+      "category": "individual",
+      "name": "Book-on-behalf, completed, and no-show outcomes",
+      "source": "https://cal.com/help/bookings/insights",
+      "observedAt": "2026-07-10",
+      "status": "implemented",
+      "phase": "phase-2",
+      "test": "webmail-backend/test/scheduler-phase1-db.test.cjs",
+      "release": "phase-2-complete-2026-07-12"
+    },
+    {
       "id": "public.profile-pages",
       "category": "public",
       "name": "Public profile and event booking pages",
@@ -431,6 +453,17 @@
       "phase": "phase-8",
       "test": null,
       "release": null
+    },
+    {
+      "id": "developer.portability",
+      "category": "developer",
+      "name": "Scheduler JSON and CSV export with guided draft import",
+      "source": "https://developer.calendly.com/getting-started",
+      "observedAt": "2026-07-10",
+      "status": "implemented",
+      "phase": "phase-2",
+      "test": "webmail-backend/test/scheduler-phase1-db.test.cjs",
+      "release": "phase-2-complete-2026-07-12"
     },
     {
       "id": "developer.rest-oauth",

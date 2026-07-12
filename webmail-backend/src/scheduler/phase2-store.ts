@@ -52,8 +52,8 @@ export class SchedulerPhase2Store {
             }
             await connection.query(
                 `INSERT INTO scheduler_audit_events
-                 (id,tenant_key,actor_type,actor_id,action,target_type,target_id,correlation_id,metadata)
-                 VALUES (?,?,'user',?,'poll.create','poll',?,?,'{}')`,
+                 (id,tenant_key,actor_type,actor_id,action,target_type,target_id,correlation_id,metadata,occurred_at)
+                 VALUES (?,?,'user',?,'poll.create','poll',?,?,'{}',UTC_TIMESTAMP(3))`,
                 [crypto.randomUUID(), entitlement.tenantKey, username, id, crypto.randomUUID()]
             );
             await connection.commit();

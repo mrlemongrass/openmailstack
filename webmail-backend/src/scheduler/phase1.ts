@@ -22,6 +22,7 @@ export interface SchedulerEventInput {
     availabilityScheduleId?: string | null;
     visibility?: 'public' | 'unlisted' | 'private';
     active?: boolean;
+    requiresConfirmation?: boolean;
     windows?: Array<{ weekday: number; startMinute: number; endMinute: number }>;
     questions?: SchedulerBookingQuestion[];
 }
@@ -204,6 +205,7 @@ export function normalizeSchedulerEventInput(input: SchedulerEventInput): Requir
         availabilityScheduleId,
         visibility,
         active: input.active !== false,
+        requiresConfirmation: input.requiresConfirmation === true,
         windows,
         questions: normalizeSchedulerQuestions(input.questions),
     };

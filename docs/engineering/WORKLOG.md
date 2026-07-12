@@ -4690,3 +4690,55 @@ Ending git state: clean after the focused Phase 2 release commit
 ### Next recommended task
 
 Add optional host confirmation with requested/confirmed/rejected transitions, explicit capacity-hold semantics, owner approve/reject actions, and idempotent notifications.
+
+## 2026-07-12 — Scheduler optional host confirmation
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `3408fe55`
+Ending git state: clean after the focused Phase 2 release commit
+
+### Selected task
+
+Add optional per-event host confirmation as the next bounded Scheduler Phase 2 slice.
+
+### Acceptance criteria
+
+- [x] A confirmation-required request reserves capacity but does not create a Calendar projection.
+- [x] Owner approval creates the stable Calendar projection and confirmation notifications exactly once.
+- [x] Owner rejection releases capacity, expires the request capability, and notifies the guest exactly once.
+- [x] Matching retries are idempotent, opposing terminal decisions fail, and simultaneous approve/reject requests serialize to one winner.
+- [x] Requested guest cancellation releases capacity without creating a phantom Calendar tombstone.
+- [x] Existing instant-confirmation event types retain their behavior.
+- [x] Owner/public desktop and mobile UI clearly distinguish requested, confirmed, and rejected state.
+
+### Changes
+
+- Added additive, idempotent migration `010_scheduler_host_confirmation.sql` with per-event confirmation policy plus booking confirmation/rejection timestamps.
+- Added requested-capacity reservation, row-locked owner decisions, approval-time capability rotation and Calendar projection, rejection release, and idempotent outbox/audit boundaries.
+- Added request/rejection mail, owner Approve/Reject controls and filters, and public Request sent UX without a pre-approval ICS download.
+- Repaired the booking-question router handoff so public `bookingAnswers` reach the existing server-side validation boundary.
+
+### Proof / checks run
+
+- Normal backend suite: 83 passed and two optional database-gated tests skipped.
+- Disposable MariaDB: migrations `001` through `010` applied twice; all 85 backend tests passed with no skips, including requested capacity, approval/rejection, cancellation, idempotency, and simultaneous opposing decisions.
+- Frontend lint and production build, full integration/static guards, and `git diff --check` passed.
+- Playwright covered the approval policy, owner requested-booking actions, public request state, no pre-approval ICS, hostile answer escaping, and desktop/mobile overflow/page-error guards.
+- Live migration `010` is recorded with all three columns. A reversible public API check proved the confirmation contract and booking-answer validation occurs before any booking, hold, outbox, or audit write; temporary data was removed without sending mail.
+- Deployed Scheduler/browser checks, the mail-reader refresh regression, artifact equality, `openmailstack.service`, Nginx validation, and full staging smoke passed.
+
+### Deployment and rollback
+
+- Root-only backend, frontend, Scheduler-table, and service-unit snapshot: `/var/backups/openmailstack/20260712T042421Z_scheduler_host_confirmation`.
+- Applied only additive migration `010`, synchronized the tested backend, normalized deployment permissions, restarted only `openmailstack.service`, and deployed the tested frontend.
+
+### Risks and remaining work
+
+- Requested bookings intentionally use the existing `confirmed_seats` inventory counter as reserved capacity; the name is historical, while the capacity behavior is authoritative and covered by tests.
+- Approval is an explicit owner decision and does not perform a second busy-calendar rejection after the request was accepted; owners can see the request before approving. Revisit this policy if external-calendar reconciliation is added.
+- Clean-VM validation remains deferred until the second development Linux server is available; remaining physical-client observation is still pending.
+
+### Next recommended task
+
+Add owner-configurable cancellation/reschedule cutoffs and reason collection, snapshot the policy on bookings, and enforce it server-side for guest capability actions.

@@ -192,6 +192,22 @@ exports.schedulerRouter.post('/scheduler/v1/bookings/:id/cancel', authenticatedI
         ownerError(res, error);
     }
 });
+exports.schedulerRouter.post('/scheduler/v1/bookings/:id/confirm', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        res.json({ success: true, booking: await store.decideBooking(req.user.username, req.params.id, 'confirmed') });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/scheduler/v1/bookings/:id/reject', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        res.json({ success: true, booking: await store.decideBooking(req.user.username, req.params.id, 'rejected') });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
 exports.schedulerRouter.get('/admin/scheduler/v1/mailboxes', authenticatedInstalled, auth_1.requireSession, auth_1.requireAdminSession, async (_req, res) => {
     try {
         const mailboxes = await store.listAdminMailboxes();
@@ -264,6 +280,7 @@ exports.schedulerRouter.post('/public/scheduler/v1/profiles/:handle/events/:slug
             bookerName: String(req.body?.bookerName || ''),
             bookerEmail: String(req.body?.bookerEmail || ''),
             bookerNotes: String(req.body?.bookerNotes || ''),
+            bookingAnswers: req.body?.bookingAnswers,
             idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || ''),
             privateAccessToken: privateAccessToken(req),
         });
@@ -276,7 +293,7 @@ exports.schedulerRouter.post('/public/scheduler/v1/profiles/:handle/events/:slug
         if (/no longer available|enough capacity|slot definition/i.test(message)) {
             return res.status(409).json({ success: false, error: 'The selected time is no longer available' });
         }
-        if (/name is required|valid email|time zone|idempotency key|required|valid new start|already used for another booking/i.test(message)) {
+        if (/name is required|valid email|time zone|idempotency key|required|booking answers|invalid selection|too long|valid new start|already used for another booking/i.test(message)) {
             return res.status(400).json({ success: false, error: message });
         }
         res.status(500).json({ success: false, error: 'Unable to create booking' });

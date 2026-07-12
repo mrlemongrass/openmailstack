@@ -34,12 +34,14 @@ test('normalizes a useful 30-minute event with weekday availability', () => {
     assert.equal(event.intervalMinutes, 30);
     assert.equal(event.capacity, 1);
     assert.equal(event.visibility, 'public');
+    assert.equal(event.requiresConfirmation, false);
     assert.deepEqual(event.windows.map((window) => window.weekday), [1, 2, 3, 4, 5]);
     assert.equal(normalizeSchedulerEventInput({ title: 'Hair Coloring', durationMinutes: 180 }).durationMinutes, 180);
     const scheduleId = '12345678-1234-1234-1234-123456789abc';
     assert.equal(normalizeSchedulerEventInput({ title: 'Consultation', durationMinutes: 60, availabilityScheduleId: scheduleId }).availabilityScheduleId, scheduleId);
     assert.equal(normalizeSchedulerEventInput({ title: 'Private consult', visibility: 'unlisted' }).visibility, 'unlisted');
     assert.equal(normalizeSchedulerEventInput({ title: 'Token consult', visibility: 'private' }).visibility, 'private');
+    assert.equal(normalizeSchedulerEventInput({ title: 'Approval consult', requiresConfirmation: true }).requiresConfirmation, true);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad visibility', visibility: 'secret' }), /event visibility/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad schedule', availabilityScheduleId: 'not-an-id' }), /availability schedule/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad', durationMinutes: 0 }), /durationMinutes/);
@@ -162,6 +164,33 @@ test('confirmation mail contains secure capability links and ICS', () => {
     assert.deepEqual(messages[0].from, { name: 'Thang Vo', address: 'thang@housevo.us' });
     assert.equal(messages[0].replyTo, 'thang@housevo.us');
     assert.equal(schedulerTokenHash('cancel-secret').length, 64);
+});
+
+test('request and rejection mail explain the approval lifecycle without calendar attachments', () => {
+    const payload = {
+        bookingId: 'booking-request-1',
+        hostEmail: 'thang@housevo.us',
+        bookerEmail: 'ada@example.net',
+        bookerName: 'Ada',
+        title: 'Approval Call',
+        start: '2026-07-20T16:00:00.000Z',
+        end: '2026-07-20T16:30:00.000Z',
+        timeZone: 'America/Phoenix',
+        notificationFrom: 'thang@housevo.us',
+        notificationName: 'Thang Vo',
+        cancelToken: 'cancel-request-secret',
+    };
+    const requested = schedulerNotificationMails('booking.requested', payload, 'https://webmail.housevo.us');
+    assert.equal(requested.length, 2);
+    assert.match(requested[0].subject, /Request received/);
+    assert.match(requested[0].text, /waiting for approval/);
+    assert.match(requested[0].text, /cancel-request-secret/);
+    assert.equal(requested[0].ical, undefined);
+    assert.match(requested[1].text, /scheduler-app/);
+    const rejected = schedulerNotificationMails('booking.rejected', payload, 'https://webmail.housevo.us');
+    assert.equal(rejected.length, 1);
+    assert.match(rejected[0].subject, /declined/);
+    assert.equal(rejected[0].ical, undefined);
 });
 
 test('Scheduler SMTP verifies the certificate using the configured mail hostname', () => {

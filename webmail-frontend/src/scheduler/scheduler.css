@@ -43,6 +43,8 @@
 .scheduler-booking-list article > div { flex: 1; min-width: 0; }
 .booking-status { font-size: .7rem; text-transform: capitalize; padding: 3px 8px; border-radius: var(--radius-sm); background: rgba(255,255,255,.06); }
 .booking-status.confirmed { color: #1f9d68; background: rgba(31,157,104,.12); }
+.booking-status.requested { color: #d49125; background: rgba(212,145,37,.12); }
+.booking-status.rejected,
 .booking-status.cancelled { color: var(--danger); background: rgba(239,68,68,.1); }
 .segmented-control { display: inline-flex; padding: 3px; border: 1px solid var(--border-glass); border-radius: var(--radius-md); }
 .segmented-control button { border: 0; background: transparent; color: var(--text-secondary); padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer; }

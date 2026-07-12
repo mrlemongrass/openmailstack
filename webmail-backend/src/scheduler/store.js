@@ -92,6 +92,7 @@ const eventFromRow = (row, windows = []) => ({
     systemManaged: booleanValue(row.system_managed),
     visibility: row.visibility === 'private' ? 'private' : row.visibility === 'unlisted' ? 'unlisted' : 'public',
     active: booleanValue(row.active),
+    requiresConfirmation: booleanValue(row.requires_confirmation),
     windows,
     questions: bookingQuestionsFromRow(row),
 });
@@ -398,7 +399,7 @@ class SchedulerStore {
         try {
             await connection.beginTransaction();
             if (eventId) {
-                const [owned] = await connection.query('SELECT id, visibility, booking_questions FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [id, username]);
+                const [owned] = await connection.query('SELECT id, visibility, booking_questions, requires_confirmation FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [id, username]);
                 if (!owned.length)
                     throw new Error('Event type not found');
                 const visibility = input.visibility === undefined
@@ -407,13 +408,16 @@ class SchedulerStore {
                 const bookingQuestions = input.questions === undefined
                     ? String(owned[0].booking_questions || '[]')
                     : JSON.stringify(normalized.questions);
+                const requiresConfirmation = input.requiresConfirmation === undefined
+                    ? booleanValue(owned[0].requires_confirmation)
+                    : normalized.requiresConfirmation;
                 await connection.query(`UPDATE scheduler_event_types SET slug=?, title=?, description=?, duration_minutes=?, interval_minutes=?,
                         buffer_before_minutes=?, buffer_after_minutes=?, minimum_notice_minutes=?, capacity=?, location_type=?,
-                        location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, availability_schedule_id=?, visibility=?, active=?, booking_questions=? WHERE id=? AND system_managed = 0`, [normalized.slug, normalized.title, normalized.description, normalized.durationMinutes, normalized.intervalMinutes,
+                        location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, availability_schedule_id=?, visibility=?, active=?, booking_questions=?, requires_confirmation=? WHERE id=? AND system_managed = 0`, [normalized.slug, normalized.title, normalized.description, normalized.durationMinutes, normalized.intervalMinutes,
                     normalized.bufferBeforeMinutes, normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                     normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
                     JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, visibility, normalized.active ? 1 : 0,
-                    bookingQuestions, id]);
+                    bookingQuestions, requiresConfirmation ? 1 : 0, id]);
                 if (visibility !== 'private') {
                     await connection.query('UPDATE scheduler_private_links SET revoked_at = UTC_TIMESTAMP(3) WHERE event_type_id = ? AND revoked_at IS NULL', [id]);
                 }
@@ -423,13 +427,13 @@ class SchedulerStore {
                 await connection.query(`INSERT INTO scheduler_event_types
                         (id, tenant_key, owner_username, slug, title, description, duration_minutes, interval_minutes,
                          buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, capacity, location_type,
-                         location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, visibility, active, booking_questions)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`, [id, entitlement.tenantKey, username, normalized.slug, normalized.title, normalized.description,
+                         location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, visibility, active, booking_questions, requires_confirmation)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`, [id, entitlement.tenantKey, username, normalized.slug, normalized.title, normalized.description,
                     normalized.durationMinutes, normalized.intervalMinutes, normalized.bufferBeforeMinutes,
                     normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                     normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
                     JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, normalized.visibility,
-                    normalized.active ? 1 : 0, JSON.stringify(normalized.questions)]);
+                    normalized.active ? 1 : 0, JSON.stringify(normalized.questions), normalized.requiresConfirmation ? 1 : 0]);
             }
             for (const window of normalized.windows) {
                 await connection.query('INSERT INTO scheduler_availability_windows (event_type_id, weekday, start_minute, end_minute) VALUES (?, ?, ?, ?)', [id, window.weekday, window.startMinute, window.endMinute]);
@@ -737,7 +741,8 @@ class SchedulerStore {
             : await (0, calendar_utils_1.ensureDefaultCalendar)(publicEvent.entitlement.username);
         const calendarUid = `scheduler-${bookingId}@openmailstack`;
         const eventSnapshot = JSON.stringify(publicEvent.event);
-        const ical = (0, phase1_1.buildSchedulerCalendarEvent)({
+        const bookingStatus = publicEvent.event.requiresConfirmation ? 'requested' : 'confirmed';
+        const ical = bookingStatus === 'confirmed' ? (0, phase1_1.buildSchedulerCalendarEvent)({
             uid: calendarUid,
             title: publicEvent.event.title,
             description: input.bookerNotes || '',
@@ -748,7 +753,7 @@ class SchedulerStore {
             bookerName,
             bookerEmail,
             sequence: 0,
-        });
+        }) : null;
         const connection = await this.pool.getConnection();
         try {
             await connection.beginTransaction();
@@ -775,25 +780,32 @@ class SchedulerStore {
             await connection.query(`INSERT INTO scheduler_bookings
                     (id, tenant_key, event_type_id, host_username, status, slot_start, slot_end, host_time_zone,
                      booker_time_zone, booker_name, booker_email, booker_notes, booking_answers, event_snapshot, cancel_token_hash,
-                     reschedule_token_hash, action_tokens_expires_at, slot_hold_token, calendar_id, calendar_event_uid, idempotency_key)
-                 VALUES (?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [bookingId, publicEvent.entitlement.tenantKey, publicEvent.event.id, publicEvent.entitlement.username,
-                mysqlDate(input.start), mysqlDate(end), publicEvent.entitlement.timeZone, bookerTimeZone, bookerName,
+                     reschedule_token_hash, action_tokens_expires_at, slot_hold_token, calendar_id, calendar_event_uid, idempotency_key, confirmed_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [bookingId, publicEvent.entitlement.tenantKey, publicEvent.event.id, publicEvent.entitlement.username,
+                bookingStatus, mysqlDate(input.start), mysqlDate(end), publicEvent.entitlement.timeZone, bookerTimeZone, bookerName,
                 bookerEmail, String(input.bookerNotes || '').trim().slice(0, 4000), JSON.stringify(bookingAnswers), eventSnapshot,
                 (0, phase1_1.schedulerTokenHash)(cancelToken), (0, phase1_1.schedulerTokenHash)(rescheduleToken), mysqlDate(new Date(end.getTime() + 30 * 24 * 60 * 60 * 1000)),
-                hold.token, calendar.id, calendarUid, idempotencyKey]);
-            await connection.query(`INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?)
-                 ON DUPLICATE KEY UPDATE ical_data = VALUES(ical_data)`, [calendar.id, calendarUid, ical]);
-            await connection.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar.id]);
+                hold.token, calendar.id, calendarUid, idempotencyKey, bookingStatus === 'confirmed' ? mysqlDate(new Date()) : null]);
+            if (ical) {
+                await connection.query(`INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?)
+                     ON DUPLICATE KEY UPDATE ical_data = VALUES(ical_data)`, [calendar.id, calendarUid, ical]);
+                await connection.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar.id]);
+            }
             await connection.query("UPDATE scheduler_slot_holds SET status = 'confirmed' WHERE hold_token = ?", [hold.token]);
             await connection.query(`UPDATE scheduler_slot_inventory SET held_seats = GREATEST(held_seats - ?, 0), confirmed_seats = confirmed_seats + ?
                  WHERE tenant_key = ? AND event_type_key = ? AND host_username = ? AND slot_start = ?`, [hold.seats, hold.seats, hold.tenantKey, hold.eventTypeKey, hold.hostUsername, mysqlDate(hold.slotStart)]);
-            await this.enqueue(connection, publicEvent.entitlement.tenantKey, bookingId, 'booking.confirmed', `booking:${bookingId}:confirmed`, {
+            const notificationType = bookingStatus === 'requested' ? 'booking.requested' : 'booking.confirmed';
+            await this.enqueue(connection, publicEvent.entitlement.tenantKey, bookingId, notificationType, `booking:${bookingId}:${bookingStatus}`, {
                 bookingId, hostEmail: publicEvent.entitlement.username, bookerEmail, bookerName,
                 notificationFrom: publicEvent.entitlement.notificationFrom, notificationName: publicEvent.entitlement.displayName,
                 title: publicEvent.event.title, start: input.start.toISOString(), end: end.toISOString(),
-                timeZone: bookerTimeZone, cancelToken, rescheduleToken, ical,
+                timeZone: bookerTimeZone, cancelToken,
+                ...(bookingStatus === 'confirmed' ? { rescheduleToken, ical } : {}),
             });
-            await this.writeAudit(connection, publicEvent.entitlement.tenantKey, 'anonymous', bookerEmail, 'booking.create', 'booking', bookingId, { eventTypeId: publicEvent.event.id });
+            await this.writeAudit(connection, publicEvent.entitlement.tenantKey, 'anonymous', bookerEmail, 'booking.create', 'booking', bookingId, {
+                eventTypeId: publicEvent.event.id,
+                status: bookingStatus,
+            });
             await connection.commit();
         }
         catch (error) {
@@ -804,7 +816,7 @@ class SchedulerStore {
         finally {
             connection.release();
         }
-        return { id: bookingId, status: 'confirmed', start: input.start, end, cancelToken, rescheduleToken };
+        return { id: bookingId, status: bookingStatus, start: input.start, end, cancelToken, rescheduleToken };
     }
     async listBookings(username, filter = 'upcoming') {
         await this.requireOwner(username);
@@ -815,6 +827,8 @@ class SchedulerStore {
             clauses.push("slot_end < UTC_TIMESTAMP(3) AND status <> 'cancelled'");
         if (filter === 'cancelled')
             clauses.push("status = 'cancelled'");
+        if (filter === 'rejected')
+            clauses.push("status = 'rejected'");
         const [rows] = await this.pool.query(`SELECT id, event_type_id, status, CAST(slot_start AS CHAR) AS slot_start_utc,
                     CAST(slot_end AS CHAR) AS slot_end_utc, host_time_zone, booker_time_zone,
                     booker_name, booker_email, booker_notes, booking_answers, event_snapshot, calendar_id, calendar_event_uid,
@@ -872,6 +886,82 @@ class SchedulerStore {
         if (!rows.length)
             throw new Error('Booking not found');
         await this.cancelBooking(rows[0], 'user', username);
+    }
+    async decideBooking(username, bookingId, decision) {
+        await this.requireOwner(username);
+        const nextCancelToken = decision === 'confirmed' ? (0, phase1_1.createSchedulerToken)() : '';
+        const nextRescheduleToken = decision === 'confirmed' ? (0, phase1_1.createSchedulerToken)() : '';
+        const connection = await this.pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [rows] = await connection.query(`SELECT b.*, CAST(b.slot_start AS CHAR) AS slot_start_utc, CAST(b.slot_end AS CHAR) AS slot_end_utc,
+                        m.notification_from, m.display_name
+                 FROM scheduler_bookings b
+                 JOIN scheduler_mailbox_entitlements m ON m.username = b.host_username
+                 WHERE b.id = ? AND b.host_username = ? FOR UPDATE`, [bookingId, username]);
+            const booking = rows[0];
+            if (!booking)
+                throw new Error('Booking not found');
+            if (booking.status === decision) {
+                await connection.commit();
+                return { id: booking.id, status: decision, idempotentReplay: true };
+            }
+            if (booking.status !== 'requested')
+                throw new Error('Booking can no longer be approved or rejected');
+            const snapshot = JSON.parse(booking.event_snapshot);
+            if (decision === 'confirmed') {
+                const start = utcDate(booking.slot_start_utc);
+                const end = utcDate(booking.slot_end_utc);
+                const ical = (0, phase1_1.buildSchedulerCalendarEvent)({
+                    uid: booking.calendar_event_uid,
+                    title: snapshot.title || 'Meeting',
+                    description: booking.booker_notes || '',
+                    location: snapshot.locationLabel || '',
+                    start,
+                    end,
+                    hostEmail: booking.host_username,
+                    bookerName: booking.booker_name,
+                    bookerEmail: booking.booker_email,
+                    sequence: 0,
+                });
+                await connection.query(`UPDATE scheduler_bookings
+                     SET status='confirmed', confirmed_at=UTC_TIMESTAMP(3), rejected_at=NULL,
+                         cancel_token_hash=?, reschedule_token_hash=?, action_tokens_expires_at=?
+                     WHERE id=?`, [(0, phase1_1.schedulerTokenHash)(nextCancelToken), (0, phase1_1.schedulerTokenHash)(nextRescheduleToken),
+                    mysqlDate(new Date(end.getTime() + 30 * 24 * 60 * 60 * 1000)), booking.id]);
+                await connection.query(`INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?)
+                     ON DUPLICATE KEY UPDATE ical_data=VALUES(ical_data)`, [booking.calendar_id, booking.calendar_event_uid, ical]);
+                await connection.query('UPDATE calendars SET sync_token=sync_token+1 WHERE id=?', [booking.calendar_id]);
+                await this.enqueue(connection, booking.tenant_key, booking.id, 'booking.confirmed', `booking:${booking.id}:confirmed`, {
+                    bookingId: booking.id, hostEmail: booking.host_username, bookerEmail: booking.booker_email,
+                    notificationFrom: booking.notification_from || booking.host_username, notificationName: booking.display_name,
+                    bookerName: booking.booker_name, title: snapshot.title, start: start.toISOString(), end: end.toISOString(),
+                    timeZone: booking.booker_time_zone, cancelToken: nextCancelToken, rescheduleToken: nextRescheduleToken, ical,
+                });
+            }
+            else {
+                await connection.query("UPDATE scheduler_bookings SET status='rejected', rejected_at=UTC_TIMESTAMP(3), action_tokens_expires_at=UTC_TIMESTAMP(3) WHERE id=?", [booking.id]);
+                await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [booking.slot_hold_token]);
+                await connection.query(`UPDATE scheduler_slot_inventory SET confirmed_seats=GREATEST(confirmed_seats-1,0)
+                     WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [booking.tenant_key, booking.event_type_id, booking.host_username, booking.slot_start_utc]);
+                await this.enqueue(connection, booking.tenant_key, booking.id, 'booking.rejected', `booking:${booking.id}:rejected`, {
+                    bookingId: booking.id, hostEmail: booking.host_username, bookerEmail: booking.booker_email,
+                    notificationFrom: booking.notification_from || booking.host_username, notificationName: booking.display_name,
+                    bookerName: booking.booker_name, title: snapshot.title, start: utcDate(booking.slot_start_utc).toISOString(),
+                    end: utcDate(booking.slot_end_utc).toISOString(), timeZone: booking.booker_time_zone,
+                });
+            }
+            await this.writeAudit(connection, booking.tenant_key, 'user', username, decision === 'confirmed' ? 'booking.confirm' : 'booking.reject', 'booking', booking.id, {});
+            await connection.commit();
+            return { id: booking.id, status: decision };
+        }
+        catch (error) {
+            await connection.rollback();
+            throw error;
+        }
+        finally {
+            connection.release();
+        }
     }
     async rescheduleBookingByToken(token, newStart) {
         if (!Number.isFinite(newStart.getTime()))
@@ -964,11 +1054,14 @@ class SchedulerStore {
                 await connection.commit();
                 return;
             }
+            if (!['requested', 'confirmed'].includes(current.status))
+                throw new Error('Booking can no longer be cancelled');
+            const wasConfirmed = current.status === 'confirmed';
             await connection.query("UPDATE scheduler_bookings SET status='cancelled', cancelled_at=UTC_TIMESTAMP(3) WHERE id=?", [current.id]);
             if (current.slot_hold_token) {
                 await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [current.slot_hold_token]);
             }
-            if (current.calendar_id && current.calendar_event_uid) {
+            if (wasConfirmed && current.calendar_id && current.calendar_event_uid) {
                 await connection.query('INSERT INTO calendar_tombstones (calendar_id, uid) VALUES (?, ?)', [current.calendar_id, current.calendar_event_uid]);
                 await connection.query('DELETE FROM events WHERE calendar_id = ? AND uid = ?', [current.calendar_id, current.calendar_event_uid]);
                 await connection.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [current.calendar_id]);
@@ -976,7 +1069,7 @@ class SchedulerStore {
             await connection.query(`UPDATE scheduler_slot_inventory SET confirmed_seats = GREATEST(confirmed_seats - 1, 0)
                  WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [current.tenant_key, current.event_type_id, current.host_username, current.slot_start_utc]);
             const snapshot = JSON.parse(current.event_snapshot);
-            const cancellationIcal = (0, phase1_1.buildSchedulerCalendarEvent)({
+            const cancellationIcal = wasConfirmed ? (0, phase1_1.buildSchedulerCalendarEvent)({
                 uid: current.calendar_event_uid,
                 title: snapshot.title || 'Meeting',
                 description: current.booker_notes || '',
@@ -988,7 +1081,7 @@ class SchedulerStore {
                 bookerEmail: current.booker_email,
                 sequence: 1,
                 cancelled: true,
-            });
+            }) : undefined;
             await this.enqueue(connection, current.tenant_key, current.id, 'booking.cancelled', `booking:${current.id}:cancelled`, {
                 bookingId: current.id, hostEmail: current.host_username, bookerEmail: current.booker_email,
                 notificationFrom: current.notification_from || current.host_username, notificationName: current.display_name,

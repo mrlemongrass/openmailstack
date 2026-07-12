@@ -41,6 +41,7 @@ export interface SchedulerEventType {
   availabilityScheduleId: string | null;
   systemManaged: boolean;
   visibility: 'public' | 'unlisted' | 'private';
+  requiresConfirmation: boolean;
   questions: SchedulerBookingQuestion[];
 }
 
@@ -186,6 +187,10 @@ export async function revokeSchedulerPrivateLink(id: string): Promise<void> {
 
 export async function cancelSchedulerBooking(id: string): Promise<void> {
   await request(`/api/scheduler/v1/bookings/${id}/cancel`, { method: 'POST' });
+}
+
+export async function decideSchedulerBooking(id: string, decision: 'confirm' | 'reject'): Promise<void> {
+  await request(`/api/scheduler/v1/bookings/${id}/${decision}`, { method: 'POST' });
 }
 
 export async function getPublicProfile(handle: string): Promise<{ profile: SchedulerEntitlement; events: SchedulerEventType[]; defaultEvent: SchedulerEventType | null }> {

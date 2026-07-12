@@ -866,3 +866,12 @@ Future entry template:
 - Verified: Normal backend tests passed 82/84 with two database gates skipped; disposable MariaDB applied migrations `001`-`009` twice and passed 84/84. Frontend lint/build, full integration, systemd verification, ten-question desktop/mobile stress, hostile-text escaping, reversible live validation, mail-reader regression, staging smoke, artifact equality, and repeated health-probe cycles pass.
 - Deployed: Root-only backend/frontend/Scheduler/service-unit snapshot `/var/backups/openmailstack/20260712T035811Z_scheduler_questions_postqueue`; migration `009`, tested artifacts, and sandbox correction are live. Temporary Scheduler data was removed without creating a booking or sending email.
 - Follow-up: Add optional host confirmation with requested/confirmed/rejected transitions, capacity semantics, owner actions, and idempotent notifications.
+
+## 2026-07-12 Scheduler Optional Host Confirmation
+
+- Changed: Added migration `010_scheduler_host_confirmation.sql`, per-event approval policy, requested/confirmed/rejected timestamps and transitions, owner Approve/Reject actions, public request-state UX, and request/rejection mail.
+- Reliability: A request reserves capacity without projecting to Calendar. Approval/rejection locks the booking row; approval rotates capability tokens and projects/notifies once, rejection expires the request token and releases/notifies once, matching retries are idempotent, and a simultaneous opposing decision yields one winner.
+- Fixed: The public booking router now forwards `bookingAnswers` into server validation, closing the prior UI-to-store handoff gap.
+- Verified: Normal backend tests passed 83/85 with two optional database gates skipped; disposable MariaDB applied migrations `001`-`010` twice and passed 85/85. Frontend lint/build, full integration, owner/public desktop-mobile browser checks, mail-reader regression, reversible no-mail live validation, artifact equality, service/Nginx health, and staging smoke pass.
+- Deployed: Root-only rollback snapshot `/var/backups/openmailstack/20260712T042421Z_scheduler_host_confirmation`; migration `010` and tested backend/frontend artifacts are live. Temporary Scheduler data was removed.
+- Follow-up: Add owner-configurable cancellation/reschedule cutoffs and reason collection with policy snapshots and server-side capability enforcement.

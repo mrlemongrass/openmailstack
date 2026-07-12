@@ -67,6 +67,23 @@ export function schedulerNotificationMails(eventType: string, payload: Notificat
     const senderAddress = payload.notificationFrom || payload.hostEmail || schedulerConfig.notificationFrom;
     const sender = { name: payload.notificationName || payload.hostEmail || 'OpenMailStack Scheduler', address: senderAddress };
     const common = { from: sender, replyTo: payload.hostEmail };
+    if (eventType === 'booking.requested') {
+        const cancelUrl = `${baseUrl}/scheduler/action/cancel/${encodeURIComponent(payload.cancelToken || '')}`;
+        return [
+            {
+                to: payload.bookerEmail,
+                subject: `Request received: ${title}`,
+                text: `Your request for ${title} with ${payload.hostEmail} at ${when} is waiting for approval. We will email you when it is reviewed.\n\nCancel request: ${cancelUrl}`,
+                ...common,
+            },
+            {
+                to: payload.hostEmail,
+                subject: `Booking approval requested: ${title}`,
+                text: `${payload.bookerName} (${payload.bookerEmail}) requested ${title} for ${when}. Review it in Scheduler: ${baseUrl}/scheduler-app`,
+                ...common,
+            },
+        ];
+    }
     if (eventType === 'booking.confirmed') {
         const cancelUrl = `${baseUrl}/scheduler/action/cancel/${encodeURIComponent(payload.cancelToken || '')}`;
         const rescheduleUrl = `${baseUrl}/scheduler/action/reschedule/${encodeURIComponent(payload.rescheduleToken || '')}`;
@@ -95,6 +112,14 @@ export function schedulerNotificationMails(eventType: string, payload: Notificat
             text: `${title}, previously scheduled for ${when}, has been cancelled.`,
             ical: payload.ical,
         }));
+    }
+    if (eventType === 'booking.rejected') {
+        return [{
+            ...common,
+            to: payload.bookerEmail,
+            subject: `Booking request declined: ${title}`,
+            text: `Your request for ${title} at ${when} could not be confirmed. Please return to the scheduling page to choose another time.`,
+        }];
     }
     if (eventType === 'booking.rescheduled') {
         return [payload.bookerEmail, payload.hostEmail].map((to) => ({

@@ -164,6 +164,7 @@ function normalizeSchedulerEventInput(input) {
         availabilityScheduleId,
         visibility,
         active: input.active !== false,
+        requiresConfirmation: input.requiresConfirmation === true,
         windows,
         questions: normalizeSchedulerQuestions(input.questions),
     };

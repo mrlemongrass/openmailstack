@@ -5,6 +5,7 @@ import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { useToast } from '../shared/components/Toast';
 import {
   cancelSchedulerBooking,
+  decideSchedulerBooking,
   deleteSchedulerEvent,
   getSchedulerPrivateLink,
   getSchedulerState,
@@ -64,6 +65,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
     conflictCalendarIds: event?.conflictCalendarIds?.length ? event.conflictCalendarIds : calendars.map(calendar => calendar.id),
     active: event?.active ?? true, windows: event?.windows?.length ? event.windows : DEFAULT_WINDOWS,
     visibility: event?.visibility || 'public',
+    requiresConfirmation: event?.requiresConfirmation ?? false,
     availabilityScheduleId: event ? event.availabilityScheduleId : defaultAvailability.id,
     questions: event?.questions || [],
     id: event?.id,
@@ -248,6 +250,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
           })}</>}
         </section>}
         {section === 'limits' && <div className="scheduler-form-grid scheduler-editor-section">
+          <label className="scheduler-publish span-2"><input type="checkbox" checked={form.requiresConfirmation === true} onChange={e => setForm({ ...form, requiresConfirmation: e.target.checked })} /><span>Require host approval<small>Reserve the requested time, then add it to Calendar only after you approve it.</small></span></label>
           <label>Start-time increments<input type="number" min={5} max={1440} step={5} value={form.intervalMinutes} onChange={e => setForm({ ...form, intervalMinutes: Number(e.target.value) })} /><small>Minutes between offered start times</small></label>
           <label>Minimum notice<input type="number" min={0} max={525600} step={15} value={form.minimumNoticeMinutes} onChange={e => setForm({ ...form, minimumNoticeMinutes: Number(e.target.value) })} /><small>Minutes guests must book ahead</small></label>
           <label>Buffer before<input type="number" min={0} max={1440} step={5} value={form.bufferBeforeMinutes} onChange={e => setForm({ ...form, bufferBeforeMinutes: Number(e.target.value) })} /></label>
@@ -304,6 +307,7 @@ export function SchedulerRoutes() {
   const [filter, setFilter] = useState('upcoming');
   const [editor, setEditor] = useState<Partial<SchedulerEventType> | null | undefined>(undefined);
   const [selectedBooking, setSelectedBooking] = useState<SchedulerState['bookings'][number] | null>(null);
+  const [reviewingBookingId, setReviewingBookingId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -329,6 +333,18 @@ export function SchedulerRoutes() {
       showToast({ type: 'error', message: 'Unable to copy the link' });
     }
   };
+  const reviewBooking = async (bookingId: string, decision: 'confirm' | 'reject') => {
+    setReviewingBookingId(bookingId); setError('');
+    try {
+      await decideSchedulerBooking(bookingId, decision);
+      showToast({ type: 'success', message: decision === 'confirm' ? 'Booking approved' : 'Booking rejected' });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to review booking');
+    } finally {
+      setReviewingBookingId('');
+    }
+  };
 
   const tabs: Array<{ id: SchedulerTab; label: string; icon: React.ElementType }> = [
     { id: 'events', label: 'Event Types', icon: CalendarClock },
@@ -349,8 +365,8 @@ export function SchedulerRoutes() {
         </article>)}</div>}
       </>}
       {tab === 'bookings' && <>
-        <div className="scheduler-section-title"><div><h1>Bookings</h1><p>Calendar-backed meetings</p></div><div className="segmented-control">{['upcoming', 'past', 'cancelled'].map(value => <button className={filter === value ? 'active' : ''} onClick={() => setFilter(value)} key={value}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div></div>
-        {state.bookings.length === 0 ? <EmptyState icon={CalendarDays} title={`No ${filter} bookings`} description="" /> : <div className="scheduler-booking-list">{state.bookings.map(booking => <article key={booking.id}><time>{new Date(booking.start).toLocaleDateString([], { month: 'short', day: 'numeric' })}<strong>{new Date(booking.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong></time><div><h3>{booking.event.title}</h3><p>{booking.bookerName} · {booking.bookerEmail}</p></div><span className={`booking-status ${booking.status}`}>{booking.status}</span><button className="btn btn-secondary" onClick={() => setSelectedBooking(booking)}>View</button>{booking.status === 'confirmed' && <button className="btn btn-secondary" onClick={async () => { if (confirm('Cancel this booking?')) { await cancelSchedulerBooking(booking.id); await load(); } }}>Cancel</button>}</article>)}</div>}
+        <div className="scheduler-section-title"><div><h1>Bookings</h1><p>Calendar-backed meetings and approval requests</p></div><div className="segmented-control">{['upcoming', 'past', 'cancelled', 'rejected'].map(value => <button className={filter === value ? 'active' : ''} onClick={() => setFilter(value)} key={value}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div></div>
+        {state.bookings.length === 0 ? <EmptyState icon={CalendarDays} title={`No ${filter} bookings`} description="" /> : <div className="scheduler-booking-list">{state.bookings.map(booking => <article key={booking.id}><time>{new Date(booking.start).toLocaleDateString([], { month: 'short', day: 'numeric' })}<strong>{new Date(booking.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong></time><div><h3>{booking.event.title}</h3><p>{booking.bookerName} · {booking.bookerEmail}</p></div><span className={`booking-status ${booking.status}`}>{booking.status}</span><button className="btn btn-secondary" onClick={() => setSelectedBooking(booking)}>View</button>{booking.status === 'requested' && <><button className="btn btn-primary" disabled={reviewingBookingId === booking.id} onClick={() => void reviewBooking(booking.id, 'confirm')}>Approve</button><button className="btn btn-secondary" disabled={reviewingBookingId === booking.id} onClick={() => { if (confirm('Reject this booking request?')) void reviewBooking(booking.id, 'reject'); }}>Reject</button></>}{booking.status === 'confirmed' && <button className="btn btn-secondary" onClick={async () => { if (confirm('Cancel this booking?')) { await cancelSchedulerBooking(booking.id); await load(); } }}>Cancel</button>}</article>)}</div>}
       </>}
       {tab === 'availability' && <AvailabilityPanel availability={state.defaultAvailability} onSaved={load} />}
       {tab === 'profile' && <ProfilePanel state={state} onSaved={load} />}

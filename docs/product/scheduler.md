@@ -1,6 +1,6 @@
 # OMS Scheduler Product And Engineering Roadmap
 
-Status: `Phase 2 In Progress - Private Links And Booking Questions Deployed, Physical Client Validation Pending`
+Status: `Phase 2 In Progress - Private Links, Booking Questions, And Host Confirmation Deployed; Physical Client Validation Pending`
 
 Research date: 2026-07-10
 
@@ -343,7 +343,7 @@ Exit criteria:
 - [x] Disposable lifecycle proves reschedule updates the same calendar UID and cancel removes it, writes a tombstone, and releases capacity.
 - [x] Playwright verified public booking and management layouts at 1440x900 and 390x844 with reachable primary actions, mobile More navigation, and no horizontal overflow.
 
-Live upgrade deployment passed on `mail.housevo.us`: migrations `001` through `005` are recorded, the backend/frontend match the tested build, Nginx serves `/scheduler/` on both configured hostnames, and the staging smoke suite passes. A live create/reschedule/cancel cycle completed all three owned-sender notification jobs, received three Google SMTP acceptances and three local LMTP deliveries, preserved the Calendar UID on reschedule, deleted the projection on cancel, wrote a tombstone, released capacity, and restored the public slot. Physical macOS/Android/Thunderbird and CalDAV/ActiveSync observation remains pending. Clean-VM validation is intentionally deferred until a second development Linux server is available.
+Live upgrade deployment passed on `mail.housevo.us`: migrations `001` through `010` are recorded, the backend/frontend match the tested build, Nginx serves `/scheduler/` on both configured hostnames, and the staging smoke suite passes. A live create/reschedule/cancel cycle completed all three owned-sender notification jobs, received three Google SMTP acceptances and three local LMTP deliveries, preserved the Calendar UID on reschedule, deleted the projection on cancel, wrote a tombstone, released capacity, and restored the public slot. Phase 2 private links, booking questions, and optional host confirmation are also deployed and guarded by disposable-database lifecycle/concurrency coverage plus reversible no-mail live checks. Physical macOS/Android/Thunderbird and CalDAV/ActiveSync observation remains pending. Clean-VM validation is intentionally deferred until a second development Linux server is available.
 
 ### Phase 2 - Complete personal parity (5-7 weeks)
 
@@ -362,6 +362,7 @@ Implementation progress (2026-07-12):
 - [x] Owners can make a private link single-use. Page views and failed bookings do not consume it; the first successful booking decrements the remaining-use counter inside the booking transaction. Two concurrent final-use attempts yield one booking, and the successful request can be replayed with its original idempotency key after consumption.
 - [x] Owners can attach one to fourteen date/time windows in their Scheduler timezone to a one-off private link. Those windows replace recurring availability while retaining duration, interval, notice, conflict, buffer, and capacity checks; one-off links are always consumed only by a successful booking.
 - [x] Owners can configure up to ten required or optional short-answer, long-answer, and dropdown questions. The public form validates answers server-side, confirmed bookings retain immutable question labels and answers, older owner clients cannot erase definitions by omission, and answers stay out of audits, logs, outbox payloads, and Calendar projections.
+- [x] Owners can require confirmation per event type. A guest request reserves capacity without creating a Calendar projection; exactly one owner approve/reject decision either creates the stable Calendar event and confirmation notifications or releases capacity and sends a rejection. Repeated matching decisions are idempotent, opposing or late terminal decisions fail, and instant-confirmation event types retain their prior behavior.
 
 Exit criteria:
 

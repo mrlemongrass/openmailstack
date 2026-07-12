@@ -2,7 +2,7 @@
 
 Status: `Phase 0 Approved Baseline`
 
-Last reviewed: 2026-07-11
+Last reviewed: 2026-07-12
 
 This document defines the security boundaries that must exist before OMS Scheduler exposes public or authenticated routes. It covers the complete planned surface, even when the feature is not yet implemented.
 
@@ -95,8 +95,11 @@ The first-party UI must use these same APIs. No UI-only permission rule is autho
 - Limit query range, slot density, requests per handle/IP/network, and cache key cardinality.
 - Booking is the workflow source of truth; VEVENT is an idempotent projection with stable booking/event IDs and sequence.
 - Transactional capacity holds are authoritative; cached availability is advisory.
+- Events that require host confirmation commit a `requested` booking and convert its hold into reserved capacity without creating a VEVENT. Owner approval/rejection locks the booking row: approval rotates guest action tokens, creates the projection, advances the calendar sync token, and enqueues confirmation once; rejection expires the request token, releases capacity, and enqueues rejection once. Matching retries are idempotent and an approve/reject race can produce only one terminal decision.
 - Reconciliation records drift without logging private calendar bodies.
 - DST gap, overlap, midnight, notice, buffer, and concurrent-capacity tests remain release gates.
+
+Required tests include requested-capacity exclusion, no pre-approval Calendar projection, token rotation, rejection release, requested cancellation without a phantom tombstone, repeated-decision idempotency, and simultaneous approve/reject serialization.
 
 ## 6. Public Abuse, Spam, And Enumeration
 

@@ -15,6 +15,7 @@ export interface SchedulerEventInput {
     availabilityScheduleId?: string | null;
     visibility?: 'public' | 'unlisted' | 'private';
     active?: boolean;
+    requiresConfirmation?: boolean;
     windows?: Array<{
         weekday: number;
         startMinute: number;

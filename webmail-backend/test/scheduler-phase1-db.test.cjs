@@ -147,6 +147,96 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(Number(answerAuditLeaks[0].total), 0, 'booking answers must not be copied into audit metadata');
     await store.cancelBookingByToken(questionBooking.cancelToken);
 
+    const approvalEvent = await store.saveEventType(username, {
+        title: 'Approval Test', slug: 'approval-test', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        requiresConfirmation: true,
+    });
+    assert.equal(approvalEvent.requiresConfirmation, true);
+    const approvalEventAfterLegacyUpdate = await store.saveEventType(username, {
+        ...approvalEvent, title: 'Approval Test Legacy Update', requiresConfirmation: undefined,
+    }, approvalEvent.id);
+    assert.equal(approvalEventAfterLegacyUpdate.requiresConfirmation, true, 'older clients must not disable host confirmation');
+    const approvalStart = new Date('2026-07-16T16:00:00.000Z');
+    const approvalRequest = await store.createBooking('phase1', approvalEvent.slug, {
+        eventTypeId: approvalEvent.id, start: approvalStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Approval Guest', bookerEmail: 'approval@example.net', idempotencyKey: 'phase1-approval-0001',
+    });
+    assert.equal(approvalRequest.status, 'requested');
+    const [requestedRows] = await pool.query('SELECT status, confirmed_at, rejected_at FROM scheduler_bookings WHERE id=?', [approvalRequest.id]);
+    assert.equal(requestedRows[0].status, 'requested');
+    assert.equal(requestedRows[0].confirmed_at, null);
+    assert.equal(requestedRows[0].rejected_at, null);
+    const [requestedProjection] = await pool.query('SELECT COUNT(*) AS total FROM events WHERE uid=?', [`scheduler-${approvalRequest.id}@openmailstack`]);
+    assert.equal(Number(requestedProjection[0].total), 0, 'requested bookings must not project Calendar events');
+    const approvalSlotsWhileRequested = await store.listSlots('phase1', approvalEvent.slug, new Date(approvalStart.getTime() - 1), new Date(approvalStart.getTime() + 31 * 60 * 1000));
+    assert.equal(approvalSlotsWhileRequested.some(slot => slot.start.getTime() === approvalStart.getTime()), false, 'requested bookings must reserve capacity');
+    const [requestedOutbox] = await pool.query("SELECT payload FROM scheduler_outbox WHERE aggregate_id=? AND event_type='booking.requested'", [approvalRequest.id]);
+    assert.equal(requestedOutbox.length, 1);
+    assert.equal(Object.hasOwn(JSON.parse(requestedOutbox[0].payload), 'bookingAnswers'), false, 'request notifications must not contain answers');
+    const approved = await store.decideBooking(username, approvalRequest.id, 'confirmed');
+    assert.equal(approved.status, 'confirmed');
+    const approvedReplay = await store.decideBooking(username, approvalRequest.id, 'confirmed');
+    assert.equal(approvedReplay.idempotentReplay, true);
+    const [approvedRows] = await pool.query('SELECT status, confirmed_at FROM scheduler_bookings WHERE id=?', [approvalRequest.id]);
+    assert.equal(approvedRows[0].status, 'confirmed');
+    assert.ok(approvedRows[0].confirmed_at);
+    const [approvedProjection] = await pool.query('SELECT COUNT(*) AS total FROM events WHERE uid=?', [`scheduler-${approvalRequest.id}@openmailstack`]);
+    assert.equal(Number(approvedProjection[0].total), 1);
+    const [approvedOutbox] = await pool.query("SELECT COUNT(*) AS total FROM scheduler_outbox WHERE aggregate_id=? AND event_type='booking.confirmed'", [approvalRequest.id]);
+    assert.equal(Number(approvedOutbox[0].total), 1, 'idempotent approval must enqueue one confirmation');
+    assert.equal(await store.cancelBookingByToken(approvalRequest.cancelToken), null, 'approval must rotate the request cancellation token');
+    await assert.rejects(() => store.decideBooking(username, approvalRequest.id, 'rejected'), /no longer be approved or rejected/);
+    await store.cancelOwnedBooking(username, approvalRequest.id);
+
+    const rejectionStart = new Date('2026-07-16T16:30:00.000Z');
+    const rejectionRequest = await store.createBooking('phase1', approvalEvent.slug, {
+        eventTypeId: approvalEvent.id, start: rejectionStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Rejected Guest', bookerEmail: 'rejected@example.net', idempotencyKey: 'phase1-rejection-0001',
+    });
+    const rejected = await store.decideBooking(username, rejectionRequest.id, 'rejected');
+    assert.equal(rejected.status, 'rejected');
+    assert.equal((await store.decideBooking(username, rejectionRequest.id, 'rejected')).idempotentReplay, true);
+    const [rejectedRows] = await pool.query('SELECT status, rejected_at FROM scheduler_bookings WHERE id=?', [rejectionRequest.id]);
+    assert.equal(rejectedRows[0].status, 'rejected');
+    assert.ok(rejectedRows[0].rejected_at);
+    const [rejectedProjection] = await pool.query('SELECT COUNT(*) AS total FROM events WHERE uid=?', [`scheduler-${rejectionRequest.id}@openmailstack`]);
+    assert.equal(Number(rejectedProjection[0].total), 0);
+    const rejectionSlots = await store.listSlots('phase1', approvalEvent.slug, new Date(rejectionStart.getTime() - 1), new Date(rejectionStart.getTime() + 31 * 60 * 1000));
+    assert.equal(rejectionSlots.some(slot => slot.start.getTime() === rejectionStart.getTime()), true, 'rejection must release capacity');
+    assert.equal(await store.cancelBookingByToken(rejectionRequest.cancelToken), null, 'rejection must expire request action tokens');
+    const [rejectedOutbox] = await pool.query("SELECT COUNT(*) AS total FROM scheduler_outbox WHERE aggregate_id=? AND event_type='booking.rejected'", [rejectionRequest.id]);
+    assert.equal(Number(rejectedOutbox[0].total), 1);
+    assert.equal((await store.listBookings(username, 'rejected')).some(item => item.id === rejectionRequest.id), true);
+
+    const requestedCancelStart = new Date('2026-07-17T16:00:00.000Z');
+    const requestedCancel = await store.createBooking('phase1', approvalEvent.slug, {
+        eventTypeId: approvalEvent.id, start: requestedCancelStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Cancel Request', bookerEmail: 'cancel-request@example.net', idempotencyKey: 'phase1-request-cancel-0001',
+    });
+    const [tombstonesBeforeRequestedCancel] = await pool.query('SELECT COUNT(*) AS total FROM calendar_tombstones');
+    await store.cancelBookingByToken(requestedCancel.cancelToken);
+    const [tombstonesAfterRequestedCancel] = await pool.query('SELECT COUNT(*) AS total FROM calendar_tombstones');
+    assert.equal(Number(tombstonesAfterRequestedCancel[0].total), Number(tombstonesBeforeRequestedCancel[0].total), 'requested cancellation must not write a phantom Calendar tombstone');
+
+    const raceStart = new Date('2026-07-17T16:30:00.000Z');
+    const raceRequest = await store.createBooking('phase1', approvalEvent.slug, {
+        eventTypeId: approvalEvent.id, start: raceStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Decision Race', bookerEmail: 'decision-race@example.net', idempotencyKey: 'phase1-decision-race-0001',
+    });
+    const decisionRace = await Promise.allSettled([
+        store.decideBooking(username, raceRequest.id, 'confirmed'),
+        store.decideBooking(username, raceRequest.id, 'rejected'),
+    ]);
+    assert.equal(decisionRace.filter(result => result.status === 'fulfilled').length, 1, 'concurrent opposite decisions must yield one winner');
+    const raceDecision = decisionRace.find(result => result.status === 'fulfilled').value.status;
+    const [raceRows] = await pool.query('SELECT status FROM scheduler_bookings WHERE id=?', [raceRequest.id]);
+    assert.equal(raceRows[0].status, raceDecision);
+    const [raceAudits] = await pool.query("SELECT COUNT(*) AS total FROM scheduler_audit_events WHERE target_id=? AND action IN ('booking.confirm','booking.reject')", [raceRequest.id]);
+    assert.equal(Number(raceAudits[0].total), 1);
+    assert.equal((await store.decideBooking(username, raceRequest.id, raceDecision)).idempotentReplay, true);
+    if (raceDecision === 'confirmed') await store.cancelOwnedBooking(username, raceRequest.id);
+
     const privateEvent = await store.saveEventType(username, { ...event, visibility: 'private' }, event.id);
     assert.equal(privateEvent.visibility, 'private');
     assert.equal(await store.getPublicEvent('phase1', event.slug), null);

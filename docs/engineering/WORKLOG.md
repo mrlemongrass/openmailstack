@@ -4637,3 +4637,56 @@ Complete the private-links capability with one-off private links whose availabil
 ### Next recommended task
 
 Add owner-configurable required/optional booking questions with immutable booking answer snapshots, strict validation, confirmation rendering, and secret-safe audit/log boundaries.
+
+## 2026-07-12 — Scheduler booking questions and Postfix queue-probe fix
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `cf7fcdbd`
+Ending git state: clean after the focused Phase 2 release commit
+
+### Selected tasks
+
+- Add owner-configurable required/optional booking questions as the next bounded Scheduler Phase 2 slice.
+- Diagnose and fix the recurring Postfix `postqueue/getifaddrs` health-probe error.
+
+### Acceptance criteria
+
+- [x] Owners can configure up to ten required/optional short, long, or dropdown questions.
+- [x] Public booking validates required values, IDs, lengths, and dropdown membership server-side before capacity acquisition.
+- [x] Confirmed bookings retain immutable question labels/types/answers after event edits, while older clients that omit questions do not erase definitions.
+- [x] Guests see safe confirmation rendering and owners see answers; answers do not enter audits, logs, outbox payloads, iCalendar, or public capability responses.
+- [x] Ten-question desktop/mobile layouts have no horizontal overflow and hostile-looking answer text is rendered inertly.
+- [x] The recurring queue and connection probes work inside the deployed service sandbox without Postfix/netlink fatalities.
+
+### Changes
+
+- Added additive migration `009_scheduler_booking_questions.sql` with event-definition and booking-answer JSON columns.
+- Added bounded question/answer normalization, pre-hold booking validation, immutable event/answer snapshots, and legacy update preservation.
+- Added owner form-builder controls and booking detail, plus public question inputs and confirmation summaries.
+- Added `AF_NETLINK` to the packaged systemd address-family allowlist after transient units proved both `postqueue` and `ss` fail without it and pass with it.
+
+### Proof / checks run
+
+- Normal backend suite: 82 passed and two optional database-gated tests skipped.
+- Disposable MariaDB: migrations `001` through `009` applied twice; all 84 tests passed with no skips, including missing/invalid answers, successful persistence, legacy update preservation, immutable labels, and audit redaction.
+- Frontend lint/build, full integration, Scheduler/static documentation guards, systemd unit verification, and diff checks passed.
+- Playwright at 1440x900 and 390x844 covered a ten-question owner form, public submission, confirmation rendering, hostile-looking text escaping, and zero horizontal overflow/page errors.
+- Live reversible event check proved schema/state, required/dropdown rejection, zero bookings, and audit redaction; temporary data was removed without email delivery.
+- Actual service completed repeated 15-second probe cycles with `AF_NETLINK` present and zero new `postqueue`, `getifaddrs`, netlink, or address-family errors.
+- Deployed mail-reader browser regression, Nginx/service health, artifact equality, and full staging smoke passed.
+
+### Deployment and rollback
+
+- Root-only backend, frontend, Scheduler-table, and prior service-unit snapshot: `/var/backups/openmailstack/20260712T035811Z_scheduler_questions_postqueue`.
+- Applied only additive migration `009`, synchronized tested backend/frontend artifacts, installed the tested service unit, reloaded systemd, and restarted only `openmailstack.service`.
+
+### Risks and remaining work
+
+- Answers are confidential booking data and currently follow booking-record retention; dedicated retention/export/deletion policies remain later Scheduler work.
+- `AF_NETLINK` is deliberately allowed for fixed queue/connection probes. Do not remove it without replacing those probes or proving an equivalent sandbox-safe path.
+- Clean-VM validation remains deferred until the second development Linux server is available; remaining physical-client observation is still pending.
+
+### Next recommended task
+
+Add optional host confirmation with requested/confirmed/rejected transitions, explicit capacity-hold semantics, owner approve/reject actions, and idempotent notifications.

@@ -36,6 +36,8 @@ requireText('webmail-backend/migrations/007_scheduler_private_link_uses.sql', /u
 requireText('webmail-backend/migrations/007_scheduler_private_link_uses.sql', /consumed_at/, 'Single-use private-link migration is missing consumption state');
 requireText('webmail-backend/migrations/008_scheduler_one_off_availability.sql', /one_off_time_zone/, 'One-off availability migration is missing its timezone');
 requireText('webmail-backend/migrations/008_scheduler_one_off_availability.sql', /one_off_windows/, 'One-off availability migration is missing its custom windows');
+requireText('webmail-backend/migrations/009_scheduler_booking_questions.sql', /booking_questions/, 'Booking-question migration is missing event definitions');
+requireText('webmail-backend/migrations/009_scheduler_booking_questions.sql', /booking_answers/, 'Booking-question migration is missing immutable answers');
 requireText('webmail-backend/src/index.ts', /app\.use\('\/api'.*schedulerRouter/, 'Backend must mount Scheduler APIs');
 requireText('webmail-backend/src/scheduler/router.ts', /\/public\/scheduler\/v1/, 'Public Scheduler API boundary is missing');
 requireText('webmail-backend/src/scheduler/router.ts', /\/admin\/scheduler\/v1/, 'Admin Scheduler API boundary is missing');
@@ -74,6 +76,10 @@ requireText('webmail-backend/src/scheduler/router.ts', /Cache-Control', 'no-stor
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Single-use link: disable it after the first successful booking/, 'Owner UI must explain single-use consumption');
 requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /bookingAttemptKeyRef[\s\S]*createPublicBooking/, 'Public booking retries must keep a stable idempotency key');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Offer only selected one-off times/, 'Owner UI must expose one-off availability');
+requireText('webmail-frontend/src/scheduler/routes.tsx', /Ask up to 10 required or optional questions/, 'Owner UI must expose booking questions');
+requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /bookingAnswers.*questionId/s, 'Public booking must submit custom answers');
+requireText('webmail-backend/src/scheduler/store.ts', /normalizeSchedulerBookingAnswers/, 'Booking creation must validate custom answers server-side');
+requireText('packaging/systemd/openmailstack.service', /RestrictAddressFamilies=.*AF_NETLINK/, 'Backend health probes require AF_NETLINK for postqueue and ss');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Scheduler email sender/, 'Scheduler profile must expose the owned notification sender');
 requireText('webmail-backend/src/scheduler/store.ts', /Scheduler sender must be your mailbox or an active alias/, 'Scheduler notification sender must reject spoofed addresses');
 requireText('webmail-frontend/src/scheduler/scheduler.css', /scheduler-modal[^}]+background: var\(--surface-color\)/s, 'Scheduler modal must use an opaque surface token');

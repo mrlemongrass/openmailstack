@@ -1,6 +1,6 @@
 # OMS Scheduler Product And Engineering Roadmap
 
-Status: `Phase 2 In Progress - Transactional Single-Use Links Deployed, Physical Client Validation Pending`
+Status: `Phase 2 In Progress - Private Links And Booking Questions Deployed, Physical Client Validation Pending`
 
 Research date: 2026-07-10
 
@@ -361,6 +361,7 @@ Implementation progress (2026-07-12):
 - [x] Private event links use 256-bit random bearer tokens stored only as SHA-256 hashes. Owners can generate, rotate, expire, and revoke links; tokens travel in URL fragments, move to tab-only storage, leave the address bar, and reach APIs only through a no-store request header.
 - [x] Owners can make a private link single-use. Page views and failed bookings do not consume it; the first successful booking decrements the remaining-use counter inside the booking transaction. Two concurrent final-use attempts yield one booking, and the successful request can be replayed with its original idempotency key after consumption.
 - [x] Owners can attach one to fourteen date/time windows in their Scheduler timezone to a one-off private link. Those windows replace recurring availability while retaining duration, interval, notice, conflict, buffer, and capacity checks; one-off links are always consumed only by a successful booking.
+- [x] Owners can configure up to ten required or optional short-answer, long-answer, and dropdown questions. The public form validates answers server-side, confirmed bookings retain immutable question labels and answers, older owner clients cannot erase definitions by omission, and answers stay out of audits, logs, outbox payloads, and Calendar projections.
 
 Exit criteria:
 

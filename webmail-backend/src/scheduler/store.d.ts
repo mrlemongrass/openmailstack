@@ -1,6 +1,6 @@
 import type { Pool } from 'mysql2/promise';
 import { type AvailabilitySlot } from './availability';
-import { type SchedulerEventInput, type SchedulerOneOffWindow } from './phase1';
+import { type SchedulerEventInput, type SchedulerBookingAnswerInput, type SchedulerBookingQuestion, type SchedulerOneOffWindow } from './phase1';
 export interface SchedulerEntitlement {
     username: string;
     tenantKey: string;
@@ -39,6 +39,7 @@ export interface SchedulerEventType {
         startMinute: number;
         endMinute: number;
     }>;
+    questions: SchedulerBookingQuestion[];
 }
 export interface SchedulerScheduleWindow {
     weekday: number;
@@ -77,6 +78,7 @@ export interface SchedulerBookingInput {
     bookerName: string;
     bookerEmail: string;
     bookerNotes?: string;
+    bookingAnswers?: SchedulerBookingAnswerInput[];
     idempotencyKey: string;
     privateAccessToken?: string;
 }

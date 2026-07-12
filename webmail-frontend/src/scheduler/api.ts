@@ -4,6 +4,23 @@ export interface SchedulerWindow {
   endMinute: number;
 }
 
+export type SchedulerBookingQuestionType = 'short_text' | 'long_text' | 'select';
+
+export interface SchedulerBookingQuestion {
+  id: string;
+  label: string;
+  type: SchedulerBookingQuestionType;
+  required: boolean;
+  options: string[];
+}
+
+export interface SchedulerBookingAnswer {
+  questionId: string;
+  label: string;
+  type: SchedulerBookingQuestionType;
+  value: string;
+}
+
 export interface SchedulerEventType {
   id: string;
   slug: string;
@@ -24,6 +41,7 @@ export interface SchedulerEventType {
   availabilityScheduleId: string | null;
   systemManaged: boolean;
   visibility: 'public' | 'unlisted' | 'private';
+  questions: SchedulerBookingQuestion[];
 }
 
 export interface SchedulerPrivateLinkState {
@@ -84,6 +102,7 @@ export interface SchedulerBooking {
   bookerName: string;
   bookerEmail: string;
   bookerNotes: string;
+  bookingAnswers: SchedulerBookingAnswer[];
   event: SchedulerEventType;
 }
 

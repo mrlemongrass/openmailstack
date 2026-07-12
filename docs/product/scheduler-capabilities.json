@@ -50,7 +50,7 @@
     {
       "id": "individual.booking-controls",
       "category": "individual",
-      "name": "Buffers, notice, limits, confirmation, cancellation, and rescheduling",
+      "name": "Questions, buffers, notice, limits, confirmation, cancellation, and rescheduling",
       "source": "https://cal.com/docs/atoms/event-type",
       "observedAt": "2026-07-10",
       "status": "in_progress",

@@ -9,6 +9,7 @@ const {
     createSchedulerToken,
     defaultSchedulerHandle,
     normalizeSchedulerEventInput,
+    normalizeSchedulerBookingAnswers,
     normalizeSchedulerHandle,
     normalizeOneOffAvailability,
     normalizePrivateLinkExpiry,
@@ -43,6 +44,32 @@ test('normalizes a useful 30-minute event with weekday availability', () => {
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad schedule', availabilityScheduleId: 'not-an-id' }), /availability schedule/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad', durationMinutes: 0 }), /durationMinutes/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Too Long', durationMinutes: 1441 }), /durationMinutes/);
+});
+
+test('normalizes booking questions and snapshots validated answers', () => {
+    const event = normalizeSchedulerEventInput({
+        title: 'Consultation',
+        questions: [
+            { id: 'question-goal', label: 'What is your goal?', type: 'long_text', required: true, options: [] },
+            { id: 'question-plan', label: 'Choose a plan', type: 'select', required: false, options: ['Basic', 'Pro', 'Pro'] },
+        ],
+    });
+    assert.deepEqual(event.questions[1].options, ['Basic', 'Pro']);
+    assert.deepEqual(normalizeSchedulerBookingAnswers(event.questions, [
+        { questionId: 'question-goal', value: 'Plan a migration' },
+        { questionId: 'question-plan', value: 'Pro' },
+    ]), [
+        { questionId: 'question-goal', label: 'What is your goal?', type: 'long_text', value: 'Plan a migration' },
+        { questionId: 'question-plan', label: 'Choose a plan', type: 'select', value: 'Pro' },
+    ]);
+    assert.throws(() => normalizeSchedulerBookingAnswers(event.questions, []), /What is your goal\? is required/);
+    assert.throws(() => normalizeSchedulerBookingAnswers(event.questions, [
+        { questionId: 'question-goal', value: 'Plan a migration' },
+        { questionId: 'question-plan', value: 'Enterprise' },
+    ]), /invalid selection/);
+    assert.throws(() => normalizeSchedulerEventInput({
+        title: 'Broken form', questions: [{ id: 'question-plan', label: 'Choose', type: 'select', options: ['Only one'] }],
+    }), /2 to 20/);
 });
 
 test('private-link tokens are high entropy and expiry is bounded', () => {

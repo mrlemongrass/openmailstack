@@ -20,6 +20,23 @@ export interface SchedulerEventInput {
         startMinute: number;
         endMinute: number;
     }>;
+    questions?: SchedulerBookingQuestion[];
+}
+export type SchedulerBookingQuestionType = 'short_text' | 'long_text' | 'select';
+export interface SchedulerBookingQuestion {
+    id: string;
+    label: string;
+    type: SchedulerBookingQuestionType;
+    required: boolean;
+    options: string[];
+}
+export interface SchedulerBookingAnswerInput {
+    questionId: string;
+    value: string;
+}
+export interface SchedulerBookingAnswer extends SchedulerBookingAnswerInput {
+    label: string;
+    type: SchedulerBookingQuestionType;
 }
 export interface BookingCalendarEvent {
     uid: string;
@@ -45,6 +62,8 @@ export interface SchedulerOneOffAvailability {
 }
 export declare function normalizeSchedulerHandle(value: string): string;
 export declare function defaultSchedulerHandle(username: string): string;
+export declare function normalizeSchedulerQuestions(value: unknown): SchedulerBookingQuestion[];
+export declare function normalizeSchedulerBookingAnswers(questions: SchedulerBookingQuestion[], value: unknown): SchedulerBookingAnswer[];
 export declare function normalizeSchedulerEventInput(input: SchedulerEventInput): Required<Omit<SchedulerEventInput, 'destinationCalendarId'>> & {
     destinationCalendarId: number | null;
 };

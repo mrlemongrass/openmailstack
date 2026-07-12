@@ -100,6 +100,53 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     });
     assert.equal(booking.status, 'confirmed');
 
+    const questionEvent = await store.saveEventType(username, {
+        title: 'Question Test', slug: 'question-test', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        questions: [
+            { id: 'question-goal', label: 'What is your goal?', type: 'long_text', required: true, options: [] },
+            { id: 'question-plan', label: 'Choose a plan', type: 'select', required: false, options: ['Basic', 'Pro'] },
+        ],
+    });
+    assert.equal(questionEvent.questions.length, 2);
+    const questionStart = new Date('2026-07-15T16:00:00.000Z');
+    await assert.rejects(() => store.createBooking('phase1', questionEvent.slug, {
+        eventTypeId: questionEvent.id, start: questionStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Missing Answer', bookerEmail: 'missing-answer@example.net',
+        idempotencyKey: 'phase1-question-missing-0001',
+    }), /What is your goal\? is required/);
+    const questionBooking = await store.createBooking('phase1', questionEvent.slug, {
+        eventTypeId: questionEvent.id, start: questionStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Question Guest', bookerEmail: 'questions@example.net',
+        bookingAnswers: [
+            { questionId: 'question-goal', value: 'Plan a migration' },
+            { questionId: 'question-plan', value: 'Pro' },
+        ],
+        idempotencyKey: 'phase1-question-success-0001',
+    });
+    const legacyQuestionEvent = await store.saveEventType(username, {
+        ...questionEvent,
+        title: 'Question Test Legacy Update',
+        questions: undefined,
+    }, questionEvent.id);
+    assert.equal(legacyQuestionEvent.questions[0].label, 'What is your goal?', 'older clients must not erase booking questions');
+    const updatedQuestionEvent = await store.saveEventType(username, {
+        ...questionEvent,
+        questions: questionEvent.questions.map(question => question.id === 'question-goal'
+            ? { ...question, label: 'What changed?' }
+            : question),
+    }, questionEvent.id);
+    assert.equal(updatedQuestionEvent.questions[0].label, 'What changed?');
+    const questionOwnerBooking = (await store.listBookings(username, 'upcoming')).find(item => item.id === questionBooking.id);
+    assert.equal(questionOwnerBooking.bookingAnswers[0].label, 'What is your goal?');
+    assert.equal(questionOwnerBooking.bookingAnswers[0].value, 'Plan a migration');
+    assert.equal(questionOwnerBooking.event.questions[0].label, 'What is your goal?', 'booking event snapshot must be immutable');
+    const [storedQuestionBooking] = await pool.query('SELECT booking_answers FROM scheduler_bookings WHERE id=?', [questionBooking.id]);
+    assert.equal(JSON.parse(storedQuestionBooking[0].booking_answers)[1].value, 'Pro');
+    const [answerAuditLeaks] = await pool.query("SELECT COUNT(*) AS total FROM scheduler_audit_events WHERE metadata LIKE '%Plan a migration%'");
+    assert.equal(Number(answerAuditLeaks[0].total), 0, 'booking answers must not be copied into audit metadata');
+    await store.cancelBookingByToken(questionBooking.cancelToken);
+
     const privateEvent = await store.saveEventType(username, { ...event, visibility: 'private' }, event.id);
     assert.equal(privateEvent.visibility, 'private');
     assert.equal(await store.getPublicEvent('phase1', event.slug), null);
@@ -160,7 +207,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(cancelled[0].status, 'cancelled');
     const [remaining] = await pool.query('SELECT uid FROM events WHERE calendar_id=?', [calendarId]);
     assert.equal(remaining.length, 0);
-    const [tombstones] = await pool.query('SELECT uid FROM calendar_tombstones WHERE calendar_id=?', [calendarId]);
+    const [tombstones] = await pool.query('SELECT uid FROM calendar_tombstones WHERE calendar_id=? AND uid=?', [calendarId, `scheduler-${booking.id}@openmailstack`]);
     assert.equal(tombstones.length, 1);
 
     const singleUseLink = await store.rotatePrivateLink(username, event.id, null, true);

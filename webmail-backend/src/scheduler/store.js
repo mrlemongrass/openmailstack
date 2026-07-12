@@ -21,6 +21,24 @@ const jsonArray = (value) => {
         return [];
     }
 };
+const bookingQuestionsFromRow = (row) => {
+    try {
+        const parsed = JSON.parse(String(row.booking_questions || '[]'));
+        return (0, phase1_1.normalizeSchedulerQuestions)(parsed);
+    }
+    catch {
+        return [];
+    }
+};
+const bookingAnswersFromRow = (value) => {
+    try {
+        const parsed = JSON.parse(String(value || '[]'));
+        return Array.isArray(parsed) ? parsed : [];
+    }
+    catch {
+        return [];
+    }
+};
 const oneOffAvailabilityFromRow = (row) => {
     if (!row.one_off_time_zone || !row.one_off_windows)
         return null;
@@ -75,6 +93,7 @@ const eventFromRow = (row, windows = []) => ({
     visibility: row.visibility === 'private' ? 'private' : row.visibility === 'unlisted' ? 'unlisted' : 'public',
     active: booleanValue(row.active),
     windows,
+    questions: bookingQuestionsFromRow(row),
 });
 const normalizeWindows = (windows, requireWeekday) => {
     const normalized = windows.map((window) => ({
@@ -379,18 +398,22 @@ class SchedulerStore {
         try {
             await connection.beginTransaction();
             if (eventId) {
-                const [owned] = await connection.query('SELECT id, visibility FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [id, username]);
+                const [owned] = await connection.query('SELECT id, visibility, booking_questions FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [id, username]);
                 if (!owned.length)
                     throw new Error('Event type not found');
                 const visibility = input.visibility === undefined
                     ? (owned[0].visibility === 'private' ? 'private' : owned[0].visibility === 'unlisted' ? 'unlisted' : 'public')
                     : normalized.visibility;
+                const bookingQuestions = input.questions === undefined
+                    ? String(owned[0].booking_questions || '[]')
+                    : JSON.stringify(normalized.questions);
                 await connection.query(`UPDATE scheduler_event_types SET slug=?, title=?, description=?, duration_minutes=?, interval_minutes=?,
                         buffer_before_minutes=?, buffer_after_minutes=?, minimum_notice_minutes=?, capacity=?, location_type=?,
-                        location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, availability_schedule_id=?, visibility=?, active=? WHERE id=? AND system_managed = 0`, [normalized.slug, normalized.title, normalized.description, normalized.durationMinutes, normalized.intervalMinutes,
+                        location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, availability_schedule_id=?, visibility=?, active=?, booking_questions=? WHERE id=? AND system_managed = 0`, [normalized.slug, normalized.title, normalized.description, normalized.durationMinutes, normalized.intervalMinutes,
                     normalized.bufferBeforeMinutes, normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                     normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
-                    JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, visibility, normalized.active ? 1 : 0, id]);
+                    JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, visibility, normalized.active ? 1 : 0,
+                    bookingQuestions, id]);
                 if (visibility !== 'private') {
                     await connection.query('UPDATE scheduler_private_links SET revoked_at = UTC_TIMESTAMP(3) WHERE event_type_id = ? AND revoked_at IS NULL', [id]);
                 }
@@ -400,12 +423,13 @@ class SchedulerStore {
                 await connection.query(`INSERT INTO scheduler_event_types
                         (id, tenant_key, owner_username, slug, title, description, duration_minutes, interval_minutes,
                          buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, capacity, location_type,
-                         location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, visibility, active)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`, [id, entitlement.tenantKey, username, normalized.slug, normalized.title, normalized.description,
+                         location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, visibility, active, booking_questions)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`, [id, entitlement.tenantKey, username, normalized.slug, normalized.title, normalized.description,
                     normalized.durationMinutes, normalized.intervalMinutes, normalized.bufferBeforeMinutes,
                     normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                     normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
-                    JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, normalized.visibility, normalized.active ? 1 : 0]);
+                    JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, normalized.visibility,
+                    normalized.active ? 1 : 0, JSON.stringify(normalized.questions)]);
             }
             for (const window of normalized.windows) {
                 await connection.query('INSERT INTO scheduler_availability_windows (event_type_id, weekday, start_minute, end_minute) VALUES (?, ?, ?, ?)', [id, window.weekday, window.startMinute, window.endMinute]);
@@ -685,6 +709,7 @@ class SchedulerStore {
         const publicEvent = await this.getPublicEvent(handle, slug, input.privateAccessToken);
         if (!publicEvent || publicEvent.event.id !== input.eventTypeId)
             throw new Error('Event type not found');
+        const bookingAnswers = (0, phase1_1.normalizeSchedulerBookingAnswers)(publicEvent.event.questions, input.bookingAnswers);
         const privateLink = publicEvent.event.visibility === 'private'
             ? await this.activePrivateLink(publicEvent.event.id, input.privateAccessToken || '')
             : null;
@@ -749,11 +774,11 @@ class SchedulerStore {
             }
             await connection.query(`INSERT INTO scheduler_bookings
                     (id, tenant_key, event_type_id, host_username, status, slot_start, slot_end, host_time_zone,
-                     booker_time_zone, booker_name, booker_email, booker_notes, event_snapshot, cancel_token_hash,
+                     booker_time_zone, booker_name, booker_email, booker_notes, booking_answers, event_snapshot, cancel_token_hash,
                      reschedule_token_hash, action_tokens_expires_at, slot_hold_token, calendar_id, calendar_event_uid, idempotency_key)
-                 VALUES (?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [bookingId, publicEvent.entitlement.tenantKey, publicEvent.event.id, publicEvent.entitlement.username,
+                 VALUES (?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [bookingId, publicEvent.entitlement.tenantKey, publicEvent.event.id, publicEvent.entitlement.username,
                 mysqlDate(input.start), mysqlDate(end), publicEvent.entitlement.timeZone, bookerTimeZone, bookerName,
-                bookerEmail, String(input.bookerNotes || '').trim().slice(0, 4000), eventSnapshot,
+                bookerEmail, String(input.bookerNotes || '').trim().slice(0, 4000), JSON.stringify(bookingAnswers), eventSnapshot,
                 (0, phase1_1.schedulerTokenHash)(cancelToken), (0, phase1_1.schedulerTokenHash)(rescheduleToken), mysqlDate(new Date(end.getTime() + 30 * 24 * 60 * 60 * 1000)),
                 hold.token, calendar.id, calendarUid, idempotencyKey]);
             await connection.query(`INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?)
@@ -792,7 +817,7 @@ class SchedulerStore {
             clauses.push("status = 'cancelled'");
         const [rows] = await this.pool.query(`SELECT id, event_type_id, status, CAST(slot_start AS CHAR) AS slot_start_utc,
                     CAST(slot_end AS CHAR) AS slot_end_utc, host_time_zone, booker_time_zone,
-                    booker_name, booker_email, booker_notes, event_snapshot, calendar_id, calendar_event_uid,
+                    booker_name, booker_email, booker_notes, booking_answers, event_snapshot, calendar_id, calendar_event_uid,
                     UNIX_TIMESTAMP(created_at) * 1000 AS created_at_epoch
              FROM scheduler_bookings WHERE ${clauses.join(' AND ')} ORDER BY slot_start ASC`, [username]);
         return rows.map((row) => ({
@@ -806,6 +831,7 @@ class SchedulerStore {
             bookerName: row.booker_name,
             bookerEmail: row.booker_email,
             bookerNotes: row.booker_notes || '',
+            bookingAnswers: bookingAnswersFromRow(row.booking_answers),
             event: JSON.parse(row.event_snapshot),
             calendarId: row.calendar_id,
             calendarEventUid: row.calendar_event_uid,

@@ -13,6 +13,8 @@ import {
   saveSchedulerEvent,
   saveSchedulerProfile,
   type SchedulerEntitlement,
+  type SchedulerBookingQuestion,
+  type SchedulerBookingQuestionType,
   type SchedulerEventType,
   type SchedulerOneOffWindow,
   type SchedulerPrivateLinkState,
@@ -63,6 +65,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
     active: event?.active ?? true, windows: event?.windows?.length ? event.windows : DEFAULT_WINDOWS,
     visibility: event?.visibility || 'public',
     availabilityScheduleId: event ? event.availabilityScheduleId : defaultAvailability.id,
+    questions: event?.questions || [],
     id: event?.id,
   });
   const [saving, setSaving] = useState(false);
@@ -121,6 +124,24 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
 
   const updateWindow = (weekday: number, key: 'startMinute' | 'endMinute', value: number) => {
     setForm({ ...form, windows: (form.windows || []).map(window => window.weekday === weekday ? { ...window, [key]: value } : window) });
+  };
+
+  const addQuestion = () => {
+    if ((form.questions?.length || 0) >= 10) return;
+    setForm({
+      ...form,
+      questions: [...(form.questions || []), {
+        id: crypto.randomUUID(), label: '', type: 'short_text', required: false, options: [],
+      }],
+    });
+  };
+
+  const updateQuestion = (id: string, patch: Partial<SchedulerBookingQuestion>) => {
+    setForm({ ...form, questions: (form.questions || []).map(question => question.id === id ? { ...question, ...patch } : question) });
+  };
+
+  const updateQuestionType = (question: SchedulerBookingQuestion, type: SchedulerBookingQuestionType) => {
+    updateQuestion(question.id, { type, options: type === 'select' ? (question.options.length >= 2 ? question.options : ['Option 1', 'Option 2']) : [] });
   };
 
   const privateLinkOptions = () => ({
@@ -213,6 +234,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
           <label>Location<select value={form.locationType} onChange={e => setForm({ ...form, locationType: e.target.value as SchedulerEventType['locationType'] })}><option value="custom">Custom</option><option value="phone">Phone</option><option value="in_person">In person</option><option value="conference">Conference link</option></select></label>
           <label>Location details<input value={form.locationLabel} onChange={e => setForm({ ...form, locationLabel: e.target.value })} /></label>
           <label className="span-2">Destination calendar<select value={form.destinationCalendarId || ''} onChange={e => setForm({ ...form, destinationCalendarId: Number(e.target.value) })}>{calendars.map(calendar => <option value={calendar.id} key={calendar.id}>{calendar.name}</option>)}</select></label>
+          <section className="scheduler-question-editor span-2"><header><div><strong>Booking questions</strong><span>Ask up to 10 required or optional questions.</span></div><button type="button" className="btn btn-secondary" disabled={(form.questions?.length || 0) >= 10} onClick={addQuestion}><Plus size={15} /> Add question</button></header>{(form.questions || []).length === 0 ? <p>Guests will only be asked for their name, email, and notes.</p> : <div className="scheduler-question-list">{(form.questions || []).map((question, index) => <article key={question.id}><div className="scheduler-question-row"><label>Question {index + 1}<input required maxLength={160} value={question.label} onChange={e => updateQuestion(question.id, { label: e.target.value })} placeholder="What should we prepare?" /></label><label>Answer type<select value={question.type} onChange={e => updateQuestionType(question, e.target.value as SchedulerBookingQuestionType)}><option value="short_text">Short answer</option><option value="long_text">Long answer</option><option value="select">Dropdown</option></select></label><label className="scheduler-question-required"><input type="checkbox" checked={question.required} onChange={e => updateQuestion(question.id, { required: e.target.checked })} /><span>Required</span></label><button type="button" className="icon-button danger" aria-label={`Remove booking question ${index + 1}`} onClick={() => setForm({ ...form, questions: (form.questions || []).filter(candidate => candidate.id !== question.id) })}><Trash2 size={15} /></button></div>{question.type === 'select' && <label>Dropdown options<textarea aria-label={`Options for booking question ${index + 1}`} rows={3} value={question.options.join('\n')} onChange={e => updateQuestion(question.id, { options: e.target.value.split('\n') })} /><small>One option per line, between 2 and 20 choices.</small></label>}</article>)}</div>}</section>
         </div>}
         {section === 'availability' && <section className="scheduler-window-editor scheduler-editor-section">
           <div className="scheduler-schedule-choice"><label><input type="radio" checked={form.availabilityScheduleId === defaultAvailability.id} onChange={() => setForm({ ...form, availabilityScheduleId: defaultAvailability.id })} /><span><strong>Use default availability</strong><small>{defaultAvailability.name} · changes stay in sync automatically</small></span></label><label><input type="radio" checked={!form.availabilityScheduleId} onChange={() => setForm({ ...form, availabilityScheduleId: null })} /><span><strong>Use custom hours</strong><small>Only this event type uses the hours below</small></span></label></div>
@@ -334,6 +356,6 @@ export function SchedulerRoutes() {
       {tab === 'profile' && <ProfilePanel state={state} onSaved={load} />}
     </main>
     {editor !== undefined && <EventEditor event={editor} calendars={state.calendars} defaultAvailability={state.defaultAvailability} onClose={() => setEditor(undefined)} onSaved={async (close = true) => { if (close) setEditor(undefined); await load(); }} />}
-    {selectedBooking && <div className="scheduler-modal-backdrop" onMouseDown={() => setSelectedBooking(null)}><section className="scheduler-booking-detail" onMouseDown={event => event.stopPropagation()}><header><div><h2>{selectedBooking.event.title}</h2><p>{selectedBooking.status}</p></div><button className="icon-button" onClick={() => setSelectedBooking(null)} aria-label="Close"><X size={18} /></button></header><dl><div><dt>Guest</dt><dd>{selectedBooking.bookerName}<span>{selectedBooking.bookerEmail}</span></dd></div><div><dt>When</dt><dd>{new Date(selectedBooking.start).toLocaleString()}<span>{selectedBooking.event.durationMinutes} minutes</span></dd></div><div><dt>Location</dt><dd>{selectedBooking.event.locationLabel || 'Not specified'}</dd></div>{selectedBooking.bookerNotes && <div><dt>Notes</dt><dd>{selectedBooking.bookerNotes}</dd></div>}</dl></section></div>}
+    {selectedBooking && <div className="scheduler-modal-backdrop" onMouseDown={() => setSelectedBooking(null)}><section className="scheduler-booking-detail" onMouseDown={event => event.stopPropagation()}><header><div><h2>{selectedBooking.event.title}</h2><p>{selectedBooking.status}</p></div><button className="icon-button" onClick={() => setSelectedBooking(null)} aria-label="Close"><X size={18} /></button></header><dl><div><dt>Guest</dt><dd>{selectedBooking.bookerName}<span>{selectedBooking.bookerEmail}</span></dd></div><div><dt>When</dt><dd>{new Date(selectedBooking.start).toLocaleString()}<span>{selectedBooking.event.durationMinutes} minutes</span></dd></div><div><dt>Location</dt><dd>{selectedBooking.event.locationLabel || 'Not specified'}</dd></div>{selectedBooking.bookerNotes && <div><dt>Notes</dt><dd>{selectedBooking.bookerNotes}</dd></div>}{(selectedBooking.bookingAnswers || []).map(answer => <div key={answer.questionId}><dt>{answer.label}</dt><dd>{answer.value}</dd></div>)}</dl></section></div>}
   </div>;
 }

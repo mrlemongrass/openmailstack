@@ -62,6 +62,15 @@
 .scheduler-form-grid label > small { color: var(--text-secondary); font-size: .68rem; font-weight: 400; line-height: 1.4; }
 .scheduler-form-grid .span-2 { grid-column: 1 / -1; }
 .scheduler-form-grid input, .scheduler-form-grid select, .scheduler-form-grid textarea, .scheduler-window-row input { width: 100%; box-sizing: border-box; border: 1px solid var(--border-glass); border-radius: var(--radius-md); background: rgba(255,255,255,.035); color: var(--text-primary); padding: 9px 10px; font: inherit; letter-spacing: 0; }
+.scheduler-question-editor { display: grid; gap: 12px; margin-top: 4px; padding-top: 16px; border-top: 1px solid var(--border-glass); }
+.scheduler-question-editor > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.scheduler-question-editor > header div { display: grid; gap: 3px; }
+.scheduler-question-editor > header span, .scheduler-question-editor > p { margin: 0; color: var(--text-secondary); font-size: .72rem; font-weight: 400; }
+.scheduler-question-list { display: grid; gap: 10px; }
+.scheduler-question-list article { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border-glass); border-radius: var(--radius-md); background: rgba(255,255,255,.025); }
+.scheduler-question-row { display: grid; grid-template-columns: minmax(180px, 1fr) 150px auto 34px; align-items: end; gap: 10px; }
+.scheduler-question-required { display: flex !important; align-items: center; min-height: 37px; }
+.scheduler-question-required input { width: auto; }
 .scheduler-duration { min-width: 0; margin: 0; padding: 0; border: 0; }
 .scheduler-duration legend { margin-bottom: 6px; color: var(--text-secondary); font-size: .76rem; font-weight: 600; }
 .scheduler-duration > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -197,6 +206,9 @@
   .scheduler-booking-list article > div { min-width: calc(100% - 110px); }
   .scheduler-form-grid { grid-template-columns: 1fr; }
   .scheduler-form-grid .span-2 { grid-column: auto; }
+  .scheduler-question-editor > header { align-items: flex-start; flex-direction: column; }
+  .scheduler-question-row { grid-template-columns: 1fr 34px; }
+  .scheduler-question-row > label:first-child, .scheduler-question-row > label:nth-child(2) { grid-column: 1 / -1; }
   .scheduler-window-row { grid-template-columns: 68px 1fr 18px 1fr; }
   .scheduler-modal { max-height: calc(100vh - 20px); padding: 16px; }
   .scheduler-schedule-choice { grid-template-columns: 1fr; }
@@ -258,7 +270,8 @@
 .public-slot-days button.selected, .action-slots button.selected { background: #245fc7; border-color: #245fc7; color: #fff; }
 .public-booking-form > p { color: #536174; font-size: .78rem; margin: 6px 0 18px; }
 .public-booking-form label { display: grid; gap: 6px; margin-bottom: 12px; color: #4d5968; font-size: .75rem; font-weight: 600; }
-.public-booking-form input, .public-booking-form textarea { box-sizing: border-box; width: 100%; border: 1px solid #cfd6df; border-radius: 5px; padding: 9px 10px; background: #fff; color: #18202b; font: inherit; letter-spacing: 0; }
+.public-booking-form input, .public-booking-form select, .public-booking-form textarea { box-sizing: border-box; width: 100%; border: 1px solid #cfd6df; border-radius: 5px; padding: 9px 10px; background: #fff; color: #18202b; font: inherit; letter-spacing: 0; }
+.public-required { justify-self: start; border-radius: 999px; padding: 2px 6px; background: #eaf1ff; color: #245fc7; font-size: .62rem; font-weight: 700; text-transform: uppercase; }
 .public-booking-form .btn { width: 100%; margin-top: 5px; }
 .public-muted { color: #687385; font-size: .82rem; }
 .booking-confirmation, .public-not-found, .scheduler-action-page { width: min(560px, calc(100% - 32px)); margin: 0 auto; padding: 74px 0; text-align: center; }

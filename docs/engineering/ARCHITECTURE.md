@@ -66,7 +66,7 @@ Notes: Express backend starts locally; ActiveSync route exists but lacks integra
 
 ## 1. Product and System Overview
 
-Status: `Needs Verification`
+Status: `Partial - Deployed`
 
 OpenMailStack is intended to be a free and open-source mail platform with a modern webmail experience comparable in ambition to iCloud Mail, Gmail, and Office 365 Outlook Web.
 
@@ -815,7 +815,13 @@ This section preserves detailed implementation notes from the older technical do
 
 Status: `Needs Verification`
 
-Previously documented behavior:
+Current modern-backend behavior:
+
+- The authenticated Admin System Health API reports allowlisted service state, host load/memory/disk, Postfix queue size, network connection counts, and focused ActiveSync/IMAP/SMTP/CalDAV/CardDAV probes.
+- Prometheus gauges refresh every 15 seconds. `postqueue -j` counts JSON queue records and `ss` classifies established connections without accepting user-controlled commands.
+- `openmailstack.service` runs as the unprivileged `openmailstack` user with `ProtectSystem=full` and an address-family allowlist. That allowlist includes `AF_NETLINK` because both Postfix `getifaddrs()` and `ss` require a netlink socket; transient-unit reproduction proves the commands fail without it and pass with it.
+
+Legacy behavior still requiring separate verification:
 
 - Admin Portal displays real-time server health.
 - `api.php` may expose a `get_system_health` action.
@@ -1028,11 +1034,11 @@ Last verified: 2026-07-12 in the repository and on `mail.housevo.us`.
 
 Phase 0 and Phase 1 are implemented behind `ENABLE_OMS_SCHEDULER`. Ordered migrations create tenant-scoped slot inventory/holds, mailbox entitlements, event types, availability windows, bookings, a leased outbox, and sanitized audit events. Disabled installations do not apply these migrations. Only the existing modern superadmin boundary can enable a mailbox and assign its globally unique public handle.
 
-The Node backend separates public, owner, and Admin Scheduler APIs. Public requests require an allowlisted hostname and unpublished, disabled, unknown, and cross-tenant resources share generic not-found behavior. Booking creation rechecks native calendar conflicts, acquires transactional capacity, stores an immutable event snapshot, projects one VEVENT into the existing `events` table, increments the calendar sync token, and enqueues email/ICS delivery. Reschedule preserves the calendar UID; cancellation deletes the event and writes `calendar_tombstones`, so existing CalDAV and ActiveSync paths consume the same source of truth. Event visibility is persisted as `public`, `unlisted`, or `private`; only public events appear in profile directories, unlisted events remain reachable through exact slugs, and private events require an active, unexpired bearer token. Private tokens are 256-bit random values stored only as SHA-256 hashes. The browser receives them in URL fragments, moves them to tab-only storage, removes the fragment from history, and sends them only through `X-Scheduler-Access` on no-store API requests. Optional single-use links keep a database remaining-use counter; booking commits lock and decrement that counter atomically, while failed transactions preserve it. One-off links add a bounded owner timezone plus one to fourteen date/time windows, force single-use, and replace the recurring availability source while reusing the normal duration, interval, notice, conflict, buffer, capacity, and transactional-consumption boundaries. Idempotent booking lookup precedes consumed-token rejection so a successful attempt can be replayed safely after a lost response.
+The Node backend separates public, owner, and Admin Scheduler APIs. Public requests require an allowlisted hostname and unpublished, disabled, unknown, and cross-tenant resources share generic not-found behavior. Booking creation rechecks native calendar conflicts, acquires transactional capacity, stores an immutable event snapshot, projects one VEVENT into the existing `events` table, increments the calendar sync token, and enqueues email/ICS delivery. Event types may define up to ten required/optional short, long, or dropdown questions. Booking creation validates IDs, required values, sizes, and dropdown membership before acquiring capacity, then stores immutable label/type/value answer snapshots; answers are owner-visible but excluded from audits, outbox payloads, iCalendar, and public capability responses. Reschedule preserves the calendar UID; cancellation deletes the event and writes `calendar_tombstones`, so existing CalDAV and ActiveSync paths consume the same source of truth. Event visibility is persisted as `public`, `unlisted`, or `private`; only public events appear in profile directories, unlisted events remain reachable through exact slugs, and private events require an active, unexpired bearer token. Private tokens are 256-bit random values stored only as SHA-256 hashes. The browser receives them in URL fragments, moves them to tab-only storage, removes the fragment from history, and sends them only through `X-Scheduler-Access` on no-store API requests. Optional single-use links keep a database remaining-use counter; booking commits lock and decrement that counter atomically, while failed transactions preserve it. One-off links add a bounded owner timezone plus one to fourteen date/time windows, force single-use, and replace the recurring availability source while reusing the normal duration, interval, notice, conflict, buffer, capacity, and transactional-consumption boundaries. Idempotent booking lookup precedes consumed-token rejection so a successful attempt can be replayed safely after a lost response.
 
 The React app lazy-loads authenticated Scheduler management and unauthenticated `/scheduler/<handle>` pages. Entitled users see Scheduler immediately after Notes. Mobile navigation keeps Mail, Calendar, Contacts, Notes, and Scheduler primary and moves Settings, Sync, and Admin into More.
 
-Evidence: `webmail-backend/src/scheduler/`, versioned migrations `001` through `008`, `functions/12_scheduler.sh`, `webmail-frontend/src/scheduler/`, backend tests, static integration guards, disposable MariaDB lifecycle/concurrency tests, and the live 2026-07-12 deployment. Live Nginx serves Scheduler on both configured hostnames, the backend/frontend match the tested build, real booking and private-link lifecycles pass, one-off slot filtering and failed-booking preservation pass live, and the staging smoke suite passes. Remaining validation is physical CalDAV/ActiveSync observation and clean-VM work after a second development Linux server is available.
+Evidence: `webmail-backend/src/scheduler/`, versioned migrations `001` through `009`, `functions/12_scheduler.sh`, `webmail-frontend/src/scheduler/`, backend tests, static integration guards, disposable MariaDB lifecycle/concurrency tests, and the live 2026-07-12 deployment. Live Nginx serves Scheduler on both configured hostnames, the backend/frontend match the tested build, real booking/private-link lifecycles pass, one-off filtering and booking-question validation pass live, and the staging smoke suite passes. Remaining validation is physical CalDAV/ActiveSync observation and clean-VM work after a second development Linux server is available.
 
 ---
 

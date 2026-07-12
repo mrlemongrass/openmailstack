@@ -23,6 +23,27 @@ export interface SchedulerEventInput {
     visibility?: 'public' | 'unlisted' | 'private';
     active?: boolean;
     windows?: Array<{ weekday: number; startMinute: number; endMinute: number }>;
+    questions?: SchedulerBookingQuestion[];
+}
+
+export type SchedulerBookingQuestionType = 'short_text' | 'long_text' | 'select';
+
+export interface SchedulerBookingQuestion {
+    id: string;
+    label: string;
+    type: SchedulerBookingQuestionType;
+    required: boolean;
+    options: string[];
+}
+
+export interface SchedulerBookingAnswerInput {
+    questionId: string;
+    value: string;
+}
+
+export interface SchedulerBookingAnswer extends SchedulerBookingAnswerInput {
+    label: string;
+    type: SchedulerBookingQuestionType;
 }
 
 export interface BookingCalendarEvent {
@@ -71,6 +92,57 @@ export function defaultSchedulerHandle(username: string): string {
     const separator = username.lastIndexOf('@');
     if (separator <= 0) throw new Error('Scheduler username must be a full mailbox address');
     return normalizeSchedulerHandle(username.slice(0, separator));
+}
+
+export function normalizeSchedulerQuestions(value: unknown): SchedulerBookingQuestion[] {
+    if (value == null) return [];
+    if (!Array.isArray(value) || value.length > 10) throw new Error('Booking forms support up to 10 custom questions');
+    const questions = value.map((candidate) => {
+        const input = candidate as Partial<SchedulerBookingQuestion>;
+        const id = /^[A-Za-z0-9_-]{8,64}$/.test(String(input.id || '')) ? String(input.id) : crypto.randomUUID();
+        const label = String(input.label || '').replace(/[\r\n]+/g, ' ').trim();
+        if (!label || label.length > 160) throw new Error('Each booking question needs a label of 160 characters or fewer');
+        const type = String(input.type || 'short_text') as SchedulerBookingQuestionType;
+        if (!['short_text', 'long_text', 'select'].includes(type)) throw new Error('Booking question type is invalid');
+        let options: string[] = [];
+        if (type === 'select') {
+            if (!Array.isArray(input.options)) throw new Error('Dropdown questions require options');
+            options = Array.from(new Set(input.options.map((option) => String(option).replace(/[\r\n]+/g, ' ').trim())
+                .filter(Boolean)));
+            if (options.length < 2 || options.length > 20 || options.some((option) => option.length > 100)) {
+                throw new Error('Dropdown questions require 2 to 20 unique options of 100 characters or fewer');
+            }
+        }
+        return { id, label, type, required: input.required === true, options };
+    });
+    if (new Set(questions.map((question) => question.id)).size !== questions.length) {
+        throw new Error('Booking question identifiers must be unique');
+    }
+    return questions;
+}
+
+export function normalizeSchedulerBookingAnswers(questions: SchedulerBookingQuestion[], value: unknown): SchedulerBookingAnswer[] {
+    const input = value == null ? [] : value;
+    if (!Array.isArray(input) || input.length > questions.length) throw new Error('Booking answers are invalid');
+    const answers = new Map<string, string>();
+    for (const candidate of input) {
+        const questionId = String((candidate as Partial<SchedulerBookingAnswerInput>).questionId || '');
+        if (!questions.some((question) => question.id === questionId) || answers.has(questionId)) {
+            throw new Error('Booking answers are invalid');
+        }
+        answers.set(questionId, String((candidate as Partial<SchedulerBookingAnswerInput>).value || '').replace(/\r\n/g, '\n').trim());
+    }
+    return questions.flatMap((question) => {
+        let answer = answers.get(question.id) || '';
+        if (question.type === 'short_text') answer = answer.replace(/\s*\n\s*/g, ' ');
+        if (question.required && !answer) throw new Error(`${question.label} is required`);
+        const maximum = question.type === 'long_text' ? 2000 : question.type === 'select' ? 100 : 255;
+        if (answer.length > maximum) throw new Error(`${question.label} is too long`);
+        if (question.type === 'select' && answer && !question.options.includes(answer)) {
+            throw new Error(`${question.label} has an invalid selection`);
+        }
+        return answer ? [{ questionId: question.id, label: question.label, type: question.type, value: answer }] : [];
+    });
 }
 
 export function normalizeSchedulerEventInput(input: SchedulerEventInput): Required<Omit<SchedulerEventInput, 'destinationCalendarId'>> & { destinationCalendarId: number | null } {
@@ -133,6 +205,7 @@ export function normalizeSchedulerEventInput(input: SchedulerEventInput): Requir
         visibility,
         active: input.active !== false,
         windows,
+        questions: normalizeSchedulerQuestions(input.questions),
     };
 }
 

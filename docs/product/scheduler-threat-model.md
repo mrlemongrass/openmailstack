@@ -115,7 +115,10 @@ The first-party UI must use these same APIs. No UI-only permission rule is autho
 - Short hold TTL, per-origin hold limits, cleanup on every locked acquisition, and background expiration.
 - Strict field sizes/types, allowlisted redirect schemes/hosts, output encoding, HTML sanitization, and safe template interpolation.
 - Do not place free-text answers in logs, metrics labels, routing traces, webhook errors, or audit metadata.
+- Booking-question definitions are owner-controlled and bounded to ten fields. Short, long, and dropdown answers are revalidated against the current public event immediately before booking; confirmed rows store the validated answer plus the immutable question label/type alongside the immutable event snapshot. React renders submitted text without raw HTML, and answers are excluded from the outbox, iCalendar projection, capability responses, and audit metadata.
 - Notification and webhook fan-out quotas with loop detection.
+
+Required tests include missing required answers, unknown/duplicate question IDs, invalid dropdown choices, maximum lengths, legacy owner updates, immutable answer snapshots after definition edits, output escaping, and absence from audit metadata.
 
 ## 7. OAuth And Provider Secrets
 

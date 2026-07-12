@@ -857,3 +857,12 @@ Future entry template:
 - Verified: Normal backend tests passed 81/83 with two optional database tests skipped; disposable MariaDB applied migrations `001`-`008` twice and passed all 83 tests with no skips. Frontend lint/build, full integration, desktop/mobile UI, live custom-slot filtering, failed-booking preservation, the mail-reader browser regression, Nginx, service health, and staging smoke pass.
 - Deployed: Root-only rollback snapshot `/var/backups/openmailstack/20260712T032110Z_scheduler_one_off`; migration `008`, tested backend, and tested frontend are live. Temporary live Scheduler data was removed.
 - Follow-up: Add owner-configurable required/optional booking questions with immutable booking snapshots and secret-safe rendering/logging boundaries.
+
+## 2026-07-12 Scheduler Booking Questions And Postqueue Probe Fix
+
+- Changed: Added migration `009_scheduler_booking_questions.sql`, owner controls for up to ten required/optional short, long, and dropdown questions, public form/confirmation rendering, and authenticated owner answer detail.
+- Secured: Server validation rejects missing required values, unknown/duplicate IDs, invalid dropdown choices, and oversized answers before capacity acquisition. Confirmed rows keep immutable question/answer snapshots; answers stay out of audits, outbox payloads, iCalendar, logs, and public capability responses.
+- Fixed: `postqueue -j` and `ss` inherited the backend systemd address-family sandbox without `AF_NETLINK`. The packaged/live unit now includes only that additional socket family, eliminating recurring `getifaddrs` fatalities and restoring connection telemetry.
+- Verified: Normal backend tests passed 82/84 with two database gates skipped; disposable MariaDB applied migrations `001`-`009` twice and passed 84/84. Frontend lint/build, full integration, systemd verification, ten-question desktop/mobile stress, hostile-text escaping, reversible live validation, mail-reader regression, staging smoke, artifact equality, and repeated health-probe cycles pass.
+- Deployed: Root-only backend/frontend/Scheduler/service-unit snapshot `/var/backups/openmailstack/20260712T035811Z_scheduler_questions_postqueue`; migration `009`, tested artifacts, and sandbox correction are live. Temporary Scheduler data was removed without creating a booking or sending email.
+- Follow-up: Add optional host confirmation with requested/confirmed/rejected transitions, capacity semantics, owner actions, and idempotent notifications.

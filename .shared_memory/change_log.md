@@ -912,3 +912,13 @@ Future entry template:
 - Verified: A disposable MariaDB applied migrations `001`-`023` twice and passed all 90 backend tests with no skips. Frontend lint/tests/build, full integration and Scheduler guards, `git diff --check`, and read-only staging smoke pass.
 - Deployed: Commit `60864417` runtime modules are live and byte-for-byte equal under `/opt/openmailstack-backend`; services, both Scheduler host aliases, queue probes, logs, and staging smoke pass. Rollback snapshot: `/var/backups/openmailstack/20260712T142629Z_scheduler_phase2_hardening_60864417`.
 - Status: Phase 2 is complete and live; Phase 3 may start.
+
+## 2026-07-12 Admin Branding Persistence Hardening
+
+- Fixed: The live branding record already contained HouseVo, but sign-in and authenticated header rendered hardcoded OpenMailStack. One shared provider now drives login, header, title/favicon, Sync copy, and public Scheduler branding.
+- Resiliency: Last-known branding is cached, initial loading is bounded, retries occur after transient failures, and legacy custom-name/default-title records consistently render the custom identity.
+- UX: PNG/JPG/WebP/GIF uploads up to 40 MB are automatically cropped/contained, progressively compressed/downscaled, and reported with original/final dimensions, saved size, accessible status, and explicit unsaved state.
+- Safety: The backend rejects images it cannot preserve instead of silently clearing them. The guarded rollout changed four backend runtime artifacts plus the tested frontend bundle and did not touch data, migrations, credentials, dependencies, or uploads.
+- Verified: Backend 91 tests with two optional database gates skipped, frontend lint/13 tests/build, full integration, artifact equality, both live browser aliases, service logs, and staging smoke pass.
+- Deployed: Commit `8b83b268` is live. Root-only rollback snapshot: `/var/backups/openmailstack/20260712T213933Z_branding_8b83b268`.
+- Convention: `.opencode/` is ignored because OpenMailStack is not using OpenCode.

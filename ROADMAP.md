@@ -100,7 +100,7 @@ The contacts and notes apps have been extracted into their own directories with 
 
 - ✅ M1: Settings Shell And Navigation
 - ✅ M2: Server-Backed Settings Foundation
-- ✅ M2A: Admin Branding Settings (site-wide persistence and automatic image fitting hardened 2026-07-12; live deployment pending)
+- ✅ M2A: Admin Branding Settings (site-wide persistence and automatic image fitting hardened and deployed 2026-07-12)
 - ✅ M3: Mail Settings Product Pass
 - ✅ M4: Calendar Settings Product Pass
 - ✅ M5: Contacts Settings Product Pass

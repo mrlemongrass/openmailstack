@@ -5034,7 +5034,7 @@ Begin Phase 3 with the durable workflow foundation: versioned workflow definitio
 Agent/tool: Codex
 Branch: `main`
 Starting git state: commit `79844002`, two commits ahead of `origin/main`, plus unrelated untracked `.opencode/`
-Ending git state: focused implementation validated locally; live deployment pending
+Ending git state: commit `8b83b268` deployed and live-verified; deployment record and `.opencode/` ignore commit pending
 
 ### Selected task
 
@@ -5062,7 +5062,9 @@ Make Admin > Branding intuitive about image dimensions and saved-size handling, 
 - Frontend lint passed with zero warnings; 13 frontend tests passed, including real `AuthGate` and `AppShell` rendering, legacy-title reconciliation, cached fallback, square crop, wide-logo containment, icon compression, and background downscaling.
 - Frontend production build passed; largest route chunk remained below 500 kB.
 - Playwright rendered the real saved House Vo branding on sign-in and the authenticated header, verified the redesigned Admin panel at 1440×1000 and 390×844, converted a 1440×1000 source into a 512×512 149 KB app icon, and confirmed a save updates the header/title immediately. Admin auth and writes were mocked; production data was not changed.
-- `git diff --check` passed before documentation; the final focused-diff check is required after artifact cleanup.
+- Repository and deployed `api.js`/`branding.js` hashes match exactly, and `diff -qr` reports the deployed frontend equal to the tested `dist/` bundle.
+- Live Playwright on both `mail.housevo.us` and `webmail.housevo.us` rendered title `HouseVo | House Vo Consulting`, the saved HouseVo logo, heading `HouseVo Webmail`, and subtitle `Sign in to continue`. The only console error was the expected unauthenticated `/api/auth/me` `401`.
+- Both public aliases returned `200`; the live API retained the saved names and non-empty favicon/logo; the service restart produced no warning-or-higher journal entries; and full staging smoke passed.
 
 ### Acceptance criteria
 
@@ -5074,12 +5076,18 @@ Make Admin > Branding intuitive about image dimensions and saved-size handling, 
 - [x] Unsaved and saved states are explicit and accessible on desktop and mobile.
 - [x] Regression tests cover the actual login/header consumers and the image-adjustment boundaries.
 
+### Deployment and rollback
+
+- Root-only rollback snapshot: `/var/backups/openmailstack/20260712T213933Z_branding_8b83b268`.
+- Synchronized only `api.js`, `api.js.map`, `branding.js`, and `branding.js.map` into the backend runtime, deployed the tested frontend bundle, normalized runtime/webroot permissions, and restarted only `openmailstack.service`.
+- No database rows, branding settings, mail data, credentials, dependencies, migrations, or persistent uploads were changed.
+
 ### Risks / notes
 
 - Raster uploads intentionally exclude SVG, AVIF, and HEIC; the UI now names the supported formats explicitly.
 - GIF uploads are rasterized to a static optimized image by the browser canvas.
-- The implementation and generated backend artifacts are not yet deployed to `/opt/openmailstack-backend` or `/var/www/openmailstack`.
+- The initial static page title remains `OpenMailStack` for the brief pre-hydration interval on a first uncached visit; the bounded public-branding request then applies the saved title and identity.
 
 ### Next recommended task
 
-Guardedly deploy this focused frontend/backend branding release with a rollback snapshot, confirm live House Vo login/header rendering and persistence, then resume Scheduler Phase 3 workflow foundations.
+Resume Scheduler Phase 3 with the durable workflow foundation: versioned workflow definitions, leased jobs, retries/dead letters, and provider-independent OMS email reminders.

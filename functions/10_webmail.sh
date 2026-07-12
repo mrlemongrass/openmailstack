@@ -139,6 +139,8 @@ render_backend_env() {
             write_env_line "OMS_SCHEDULER_NOTIFICATION_FROM" "${OMS_SCHEDULER_NOTIFICATION_FROM:-scheduler@${DEFAULT_DOMAIN}}"
             write_env_line "OMS_SCHEDULER_SMTP_HOST" "${OMS_SCHEDULER_SMTP_HOST:-127.0.0.1}"
             write_env_line "OMS_SCHEDULER_SMTP_PORT" "${OMS_SCHEDULER_SMTP_PORT:-25}"
+            write_env_line "OMS_SCHEDULER_SMTP_SERVER_NAME" "${OMS_SCHEDULER_SMTP_SERVER_NAME:-${MAIL_HOSTNAME}}"
+            write_env_line "OMS_SCHEDULER_SMTP_REJECT_UNAUTHORIZED" "${OMS_SCHEDULER_SMTP_REJECT_UNAUTHORIZED:-true}"
             write_env_line "OMS_DB_HOST" "${OMS_DB_HOST:-127.0.0.1}"
             write_env_line "OMS_DB_PORT" "${OMS_DB_PORT:-3306}"
             write_env_line "OMS_DB_USER" "${OMS_DB_USER:-${POSTFIXADMIN_DB_USER}}"

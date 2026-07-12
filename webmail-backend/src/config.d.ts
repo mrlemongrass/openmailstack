@@ -16,6 +16,8 @@ export declare const schedulerConfig: {
     notificationFrom: string;
     smtpHost: string;
     smtpPort: number;
+    smtpServerName: string;
+    smtpRejectUnauthorized: boolean;
 };
 export declare const dbConfig: {
     host: string;

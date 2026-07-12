@@ -11,6 +11,7 @@ export interface SchedulerEntitlement {
     welcomeMessage: string;
     timeZone: string;
     defaultCalendarId: number | null;
+    notificationFrom: string;
 }
 export interface SchedulerEventType {
     id: string;
@@ -29,12 +30,44 @@ export interface SchedulerEventType {
     locationLabel: string;
     destinationCalendarId: number | null;
     conflictCalendarIds: number[];
+    availabilityScheduleId: string | null;
+    systemManaged: boolean;
     active: boolean;
     windows: Array<{
         weekday: number;
         startMinute: number;
         endMinute: number;
     }>;
+}
+export interface SchedulerScheduleWindow {
+    weekday: number;
+    startMinute: number;
+    endMinute: number;
+}
+export interface SchedulerScheduleOverride {
+    id?: string;
+    date: string;
+    unavailableAllDay: boolean;
+    windows: Array<{
+        startMinute: number;
+        endMinute: number;
+    }>;
+}
+export interface SchedulerAvailabilitySchedule {
+    id: string;
+    name: string;
+    timeZone: string;
+    isDefault: boolean;
+    published: boolean;
+    windows: SchedulerScheduleWindow[];
+    overrides: SchedulerScheduleOverride[];
+}
+export interface SchedulerAvailabilityInput {
+    name?: string;
+    timeZone?: string;
+    published?: boolean;
+    windows?: SchedulerScheduleWindow[];
+    overrides?: SchedulerScheduleOverride[];
 }
 export interface SchedulerBookingInput {
     eventTypeId: string;
@@ -57,12 +90,24 @@ export declare class SchedulerStore {
     }): Promise<SchedulerEntitlement>;
     getEntitlement(username: string): Promise<SchedulerEntitlement | null>;
     requireOwner(username: string): Promise<SchedulerEntitlement>;
+    listNotificationIdentities(username: string): Promise<Array<{
+        address: string;
+        name: string;
+    }>>;
+    getDefaultAvailability(username: string): Promise<SchedulerAvailabilitySchedule>;
+    saveDefaultAvailability(username: string, input: SchedulerAvailabilityInput): Promise<SchedulerAvailabilitySchedule>;
+    previewDefaultAvailability(username: string, rangeStart: Date, rangeEnd: Date): Promise<{
+        slots: AvailabilitySlot[];
+        busyIntervalCount: number;
+        overrideCount: number;
+    }>;
     updateProfile(username: string, input: {
         displayName?: string;
         welcomeMessage?: string;
         timeZone?: string;
         published?: boolean;
         defaultCalendarId?: number | null;
+        notificationFrom?: string;
     }): Promise<SchedulerEntitlement>;
     listEventTypes(username: string, includeInactive?: boolean): Promise<SchedulerEventType[]>;
     saveEventType(username: string, input: SchedulerEventInput, eventId?: string): Promise<SchedulerEventType>;
@@ -71,6 +116,7 @@ export declare class SchedulerStore {
     getPublicProfile(handle: string): Promise<{
         entitlement: SchedulerEntitlement;
         events: SchedulerEventType[];
+        defaultEvent: SchedulerEventType | null;
     } | null>;
     getPublicEvent(handle: string, slug: string): Promise<{
         entitlement: SchedulerEntitlement;
@@ -85,7 +131,13 @@ export declare class SchedulerStore {
     rescheduleBookingByToken(token: string, newStart: Date): Promise<Record<string, unknown> | null>;
     private cancelBooking;
     private lockCapabilityBooking;
+    private loadAvailabilitySchedule;
+    private getAvailabilityScheduleById;
+    private assertScheduleOwnership;
+    private ensureSystemDefaultEvent;
+    private getSystemDefaultEvent;
     private busyIntervals;
+    private fullCapacitySlotStarts;
     private assertCalendarOwnership;
     private bookingByIdempotency;
     private releaseHold;

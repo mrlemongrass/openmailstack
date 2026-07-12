@@ -13,7 +13,7 @@ const {
     schedulerTokenHash,
 } = require('../src/scheduler/phase1.js');
 const { schedulerHostAllowed } = require('../src/scheduler/router.js');
-const { schedulerNotificationMails } = require('../src/scheduler/worker.js');
+const { schedulerNotificationMails, schedulerTransportOptions } = require('../src/scheduler/worker.js');
 
 test('normalizes local-part handles and rejects reserved routes', () => {
     assert.equal(defaultSchedulerHandle('Thang@housevo.us'), 'thang');
@@ -30,7 +30,12 @@ test('normalizes a useful 30-minute event with weekday availability', () => {
     assert.equal(event.intervalMinutes, 30);
     assert.equal(event.capacity, 1);
     assert.deepEqual(event.windows.map((window) => window.weekday), [1, 2, 3, 4, 5]);
+    assert.equal(normalizeSchedulerEventInput({ title: 'Hair Coloring', durationMinutes: 180 }).durationMinutes, 180);
+    const scheduleId = '12345678-1234-1234-1234-123456789abc';
+    assert.equal(normalizeSchedulerEventInput({ title: 'Consultation', durationMinutes: 60, availabilityScheduleId: scheduleId }).availabilityScheduleId, scheduleId);
+    assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad schedule', availabilityScheduleId: 'not-an-id' }), /availability schedule/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad', durationMinutes: 0 }), /durationMinutes/);
+    assert.throws(() => normalizeSchedulerEventInput({ title: 'Too Long', durationMinutes: 1441 }), /durationMinutes/);
 });
 
 test('validates IANA timezones and builds canonical public links', () => {
@@ -78,6 +83,8 @@ test('confirmation mail contains secure capability links and ICS', () => {
         start: '2026-07-20T16:00:00.000Z',
         end: '2026-07-20T16:30:00.000Z',
         timeZone: 'America/Phoenix',
+        notificationFrom: 'thang@housevo.us',
+        notificationName: 'Thang Vo',
         cancelToken: 'cancel-secret',
         rescheduleToken: 'reschedule-secret',
         ical: 'BEGIN:VCALENDAR',
@@ -86,5 +93,16 @@ test('confirmation mail contains secure capability links and ICS', () => {
     assert.match(messages[0].text, /scheduler\/action\/cancel\/cancel-secret/);
     assert.match(messages[0].text, /scheduler\/action\/reschedule\/reschedule-secret/);
     assert.equal(messages[0].ical, 'BEGIN:VCALENDAR');
+    assert.deepEqual(messages[0].from, { name: 'Thang Vo', address: 'thang@housevo.us' });
+    assert.equal(messages[0].replyTo, 'thang@housevo.us');
     assert.equal(schedulerTokenHash('cancel-secret').length, 64);
+});
+
+test('Scheduler SMTP verifies the certificate using the configured mail hostname', () => {
+    const options = schedulerTransportOptions({
+        smtpHost: '127.0.0.1', smtpPort: 25, smtpServerName: 'mail.housevo.us', smtpRejectUnauthorized: true,
+    });
+    assert.equal(options.host, '127.0.0.1');
+    assert.equal(options.tls.servername, 'mail.housevo.us');
+    assert.equal(options.tls.rejectUnauthorized, true);
 });

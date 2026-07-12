@@ -764,3 +764,58 @@ Future entry template:
 - Deployed: Rebuilt and redeployed the frontend/backend. `thang@housevo.us` remains enabled and published at `/scheduler/thang`; the public profile API returns 200 through both `webmail.housevo.us` and `mail.housevo.us`.
 - Verified: Backend 20/20, frontend lint/build, integration suite, shell syntax, diff checks, zero-vulnerability audits, live service/Nginx health, artifact equality, and Playwright desktop/mobile navigation checks passed.
 - Follow-up: Create the first event type and complete a real booking/reschedule/cancel cycle through SMTP/ICS, OMS Calendar, CalDAV, and ActiveSync.
+
+## 2026-07-11 Scheduler First-Run And Booking-Link UX
+
+- Changed: Added a persistent owner-facing booking-site bar with labeled open and copy actions plus success/error clipboard feedback.
+- Changed: Replaced the empty Event Types screen with a three-step setup guide and added an actionable Availability empty state that opens the existing event editor.
+- Changed: Added explicit calendar-conflict guidance, a warning when a published profile has no active event types, and a calm public empty state instead of a blank profile page.
+- Changed: Added Scheduler Phase 1 guard assertions for the public-link actions and all first-run/empty-state affordances.
+- Verified: Frontend lint and production build pass. The Phase 1 guard passes. Playwright at 1440x1000 and 390x844 found no console/page errors or horizontal overflow, and proved both Event Types and Availability open the event editor.
+- Not deployed: No production service, frontend artifact, mailbox setting, event type, booking, or calendar data changed.
+- Follow-up: Deploy the verified frontend when approved, then create the first event type and validate the real booking/SMTP/ICS/Calendar/DAV lifecycle.
+
+## 2026-07-11 Scheduler Custom Duration And First-Run Deployment
+
+- Changed: Replaced the fixed 15/30/45/60-minute event dropdown with Hours and Minutes inputs supporting every integer duration from 5 minutes through 24 hours without coupling duration to the slot interval.
+- Changed: Added client-side invalid-duration protection, human-readable duration summaries, backend 180-minute/upper-bound assertions, Phase 1 UI guards, and the explicit duration contract in `docs/product/scheduler.md`.
+- Verified: Backend 20/20, frontend lint/build, the full integration suite, and desktop/mobile Playwright checks passed. Playwright rejected a zero-length event and submitted Hair Coloring as `durationMinutes: 180` with `intervalMinutes: 30` and zero overflow/errors.
+- Backed up: Copied the pre-deploy static webroot to `/tmp/openmailstack-webroot-before-scheduler-duration` for immediate rollback.
+- Deployed: Rebuilt and deployed only the static frontend with `functions/deploy_webmail_frontend.sh`; no backend service, database, mailbox entitlement, calendar, or booking data changed.
+- Live proof: Deployed `index.html` matches the tested build; both configured profile APIs return 200; live Chromium renders the new public empty state without errors; deployed owner/public chunks contain the custom-duration and onboarding contracts.
+- Follow-up: Create the first intentionally configured event type, then validate booking/reschedule/cancel through SMTP/ICS, OMS Calendar, CalDAV, and ActiveSync.
+
+## 2026-07-11 Scheduler Reusable Availability And Default Booking
+
+- Changed: Added migration `003_scheduler_availability_schedules.sql` with reusable schedules, multiple daily windows, date overrides, override windows, event schedule inheritance, and hidden system-managed fallback event types.
+- Changed: Added authenticated default-availability save/preview APIs and public fallback-event responses. Default availability can be edited without creating an event; publishing it activates a 30-minute root-profile booking flow until the owner creates a custom event type.
+- Changed: Added Week/Month/Day availability views, split shifts, day toggles, date-specific custom hours, all-day and range blackouts, IANA timezone selection, calendar-aware slot diagnostics, and default-schedule publishing.
+- Changed: Reorganized event editing into Setup, Availability, Limits, and Advanced. Events inherit default availability or use custom hours; duration, interval, buffers, notice, capacity, calendars, and active state are independently configurable.
+- Fixed: Replaced undefined `--bg-primary` Scheduler tokens with the real opaque app surface tokens, so modal, sticky footer, details panel, and canvas no longer show distracting background text.
+- Changed: Public booking offers the complete browser IANA timezone list and confirmations include a downloadable ICS fallback.
+- Verified: Backend 20/20, frontend lint/build, Scheduler guard, full integration suite, and migration idempotence passed. A disposable MariaDB lifecycle covered the hidden default event, inherited schedules, a blocked date, booking, reschedule, and cancellation.
+- Deployed: Safety snapshot `/var/backups/openmailstack/20260711_230435_scheduler_availability`; migration `003` and tested backend/frontend are live. Service, Nginx, four new tables, artifact equality, public profile API, visual desktop/mobile checks, and staging smoke pass.
+- Follow-up: The owner should publish the desired live default schedule or create an intentional event type, then complete the SMTP/ICS/Calendar/CalDAV/ActiveSync booking lifecycle.
+
+## 2026-07-11 Scheduler Enable-Booking Persistence Fix
+
+- Fixed: The Availability empty-state `Enable booking` action previously changed only local form state and required a second, easy-to-miss Save click. It now publishes the current schedule immediately through the normal availability API.
+- Diagnosed: The live owner schedule retained six saved windows but `published=0`; the system-managed 30-minute event consequently remained inactive and the public API correctly returned no default event.
+
+## 2026-07-11 Scheduler First Live Booking Reliability Fixes
+
+- Diagnosed: The owner completed a confirmed 30-minute booking. Capacity, hold, native calendar projection, and audit data were correct, but notification delivery retried with `ESOCKET` before reaching Postfix because the worker connected to `127.0.0.1` while verifying the certificate against the IP address.
+- Fixed: Added `OMS_SCHEDULER_SMTP_SERVER_NAME` and strict TLS configuration; the local connection now verifies the `mail.housevo.us` certificate. Transport verification passes and the pending outbox job completed.
+- Verified: Postfix recorded Gmail `250 2.0.0` acceptance for the guest and successful LMTP delivery to the host mailbox.
+- Fixed: Public booking pages refresh slots on focus/visibility and after conflicts; the backend also filters full inventory capacity independently of calendar parsing.
+- Fixed: Scheduler booking reads, cancellations, rescheduling inventory, idempotent responses, and hold release now cast MySQL `DATETIME` values to text and parse them explicitly as UTC, matching the proven slot-hold boundary.
+- Verified: Backend 20/20, frontend lint/build, full integration suite, and disposable MariaDB lifecycle passed. The lifecycle deliberately malformed the projected calendar event and still hid confirmed capacity. Live Chromium confirmed the booked 8:00 AM time is absent and 8:30 AM is the first Discovery Call.
+
+## 2026-07-12 Scheduler Owned Notification Sender
+
+- Changed: Added migration `004_scheduler_notification_identity.sql` and a Scheduler Profile sender selector.
+- Changed: New confirmations, cancellations, and reschedules default to the owner's human identity, such as `Thang Vo <thang@housevo.us>`, with Reply-To set to the primary mailbox.
+- Secured: Sender choices are limited to the primary mailbox and syntactically valid active aliases whose exact routing target includes that mailbox. Spoofed addresses and catch-all routing entries are rejected.
+- Supported: Active aliases on additional hosted domains automatically appear, giving multi-domain users a Scheduler-specific sender without hardcoding a domain.
+- Verified: Backend 20/20, frontend lint/build, static guard, disposable MariaDB cross-domain identity lifecycle, live migration, rendered From/Reply-To preview, modal/mobile regression, service health, and staging smoke pass.
+- Backed up: `/var/backups/openmailstack/20260712_011917_scheduler_identity` contains the pre-migration Scheduler schema/data.

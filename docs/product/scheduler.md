@@ -85,7 +85,7 @@ Machine-readable status is maintained in [`scheduler-capabilities.json`](schedul
 ### 3.1 Individual scheduling
 
 - Event types: unlimited personal event types, stable slugs, draft/published state, clone, archive, reorder, color, description, internal notes, owner, and destination calendar.
-- Duration: fixed and invitee-selectable multiple durations.
+- Duration: fixed durations customizable from 5 minutes through 24 hours with user-friendly hours/minutes controls, plus invitee-selectable multiple durations.
 - Location: in person, phone, custom text, OMS-native video link, Zoom, Google Meet, Microsoft Teams, and invitee choice.
 - Availability: reusable schedules, multiple windows per day, per-event schedule, date overrides, holidays, out of office, timezone, and working-location metadata.
 - Conflict checks: one or more OMS calendars by default and connected external calendars later; transparent/free events do not block.
@@ -293,7 +293,7 @@ Estimates are engineering ranges, not commitments. Full competitor parity is a s
 Implementation status (2026-07-11): `Complete`
 
 - Implemented: pure `calculateAvailability` contract in `webmail-backend/src/scheduler/availability.ts` with weekly windows, date overrides, busy intervals, buffers, minimum notice, IANA timezones, DST gap/overlap handling, and local-midnight boundaries.
-- Implemented: versioned `001_scheduler_phase0.sql` migration defining tenant-scoped slot inventory and expiring/idempotent holds. The migration is not applied automatically or to production.
+- Implemented: versioned `001_scheduler_phase0.sql` migration defining tenant-scoped slot inventory and expiring/idempotent holds. It was later applied by the opt-in Phase 1 installer and is live on the validated host.
 - Implemented: `SchedulerSlotHoldRepository` in `webmail-backend/src/scheduler/slot-holds.ts` using an inventory-row `FOR UPDATE` lock, capacity counters, expiration cleanup, idempotency, commit, and rollback.
 - Implemented: booking/provider contracts in `webmail-backend/src/scheduler/contracts.ts`, outbox/audit contracts in `webmail-backend/src/scheduler/outbox.ts`, and tenant authorization in `webmail-backend/src/scheduler/authorization.ts`.
 - Verified: unit coverage for host/booker timezone projection, DST gap/overlap, overrides, conflicts/buffers, notice, midnight, validation, transaction commit/rollback, capacity rejection, idempotent replay, booking transitions, and tenant authorization.
@@ -323,10 +323,14 @@ Implementation status (2026-07-11): `Deployed; first mailbox enabled; booking wo
 Delivered:
 
 - [x] Scheduler navigation after Notes, responsive app shell, onboarding, profile/handle, event-type CRUD, and reusable availability.
+- [x] Reusable default availability independent of event types, multiple daily windows, week/month/day views, IANA timezone selection, date overrides, date-range blackouts, calendar-aware preview diagnostics, and inheritance by event types.
+- [x] A system-managed 30-minute fallback booking flow when the owner has published default availability but has not created any custom event types.
+- [x] User-friendly event settings grouped into Setup, Availability, Limits, and Advanced; fixed durations support every minute from 5 minutes through 24 hours, with independent start increments, buffers, notice, capacity, conflict calendars, and custom-hours opt-out.
 - [x] Installer opt-in, component detection, deterministic configuration, Admin per-mailbox enable/disable control, audit events, and entitlement-aware navigation.
 - [x] Native OMS calendar conflict checks and destination-calendar selection, including recurring busy events.
 - [x] Public profile/event pages, timezone-aware slot selection, booking form, confirmation, expiring secure cancel, and expiring secure reschedule.
 - [x] OMS email confirmations/cancellations/reschedules with ICS through a leased retrying outbox; native Calendar event projection writes the existing CalDAV/ActiveSync source tables.
+- [x] Scheduler-specific sender identity defaults to the owner's named mailbox and can select only owned active aliases, including aliases on additional hosted domains; Reply-To remains the primary mailbox.
 - [x] Booking list/detail and basic upcoming/past/canceled filters.
 - [x] Lazy-loaded Scheduler management/public bundles and installer/Nginx routes with preferred-host and alias-aware TLS provisioning.
 
@@ -339,7 +343,7 @@ Exit criteria:
 - [x] Disposable lifecycle proves reschedule updates the same calendar UID and cancel removes it, writes a tombstone, and releases capacity.
 - [x] Playwright verified public booking and management layouts at 1440x900 and 390x844 with reachable primary actions, mobile More navigation, and no horizontal overflow.
 
-Live upgrade deployment passed on `mail.housevo.us`: both migrations are recorded, the backend/frontend match the tested build, Nginx serves `/scheduler/` on both `mail.housevo.us` and `webmail.housevo.us`, the certificate covers both names, and the staging smoke suite passes. `thang@housevo.us` is enabled and published as `/scheduler/thang`; both hostname APIs return the profile, and the navigation refreshes immediately after an Admin entitlement change. Release validation still requires a clean supported VM with Scheduler both disabled and enabled, then a real event booking/reschedule/cancel through SMTP, CalDAV, and ActiveSync clients.
+Live upgrade deployment passed on `mail.housevo.us`: migrations `001` through `003` are recorded, the backend/frontend match the tested build, Nginx serves `/scheduler/` on both `mail.housevo.us` and `webmail.housevo.us`, the certificate covers both names, and the staging smoke suite passes. `thang@housevo.us` is enabled and published as `/scheduler/thang` with Discovery Call and Consultation Call event types. One live 30-minute booking confirmed capacity, projected the native calendar event, delivered guest/host notifications through the repaired strict-TLS SMTP worker, and disappeared from fresh/focused public availability. Release validation still requires a clean supported VM with Scheduler both disabled and enabled plus real reschedule/cancel propagation through CalDAV and ActiveSync clients.
 
 ### Phase 2 - Complete personal parity (5-7 weeks)
 

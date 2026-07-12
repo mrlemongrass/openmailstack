@@ -79,6 +79,9 @@ function normalizeSchedulerEventInput(input) {
     const locationType = input.locationType || 'custom';
     if (!['in_person', 'phone', 'custom', 'conference'].includes(locationType))
         throw new Error('Invalid location type');
+    const availabilityScheduleId = input.availabilityScheduleId == null ? null : String(input.availabilityScheduleId).trim();
+    if (availabilityScheduleId !== null && !/^[0-9a-f-]{36}$/i.test(availabilityScheduleId))
+        throw new Error('Invalid availability schedule');
     return {
         title,
         slug: cleanSlug(input.slug || title, 'meeting'),
@@ -93,6 +96,7 @@ function normalizeSchedulerEventInput(input) {
         locationLabel: String(input.locationLabel || '').trim().slice(0, 255),
         destinationCalendarId,
         conflictCalendarIds,
+        availabilityScheduleId,
         active: input.active !== false,
         windows,
     };

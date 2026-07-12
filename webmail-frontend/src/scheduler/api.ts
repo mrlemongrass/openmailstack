@@ -21,6 +21,26 @@ export interface SchedulerEventType {
   conflictCalendarIds: number[];
   active: boolean;
   windows: SchedulerWindow[];
+  availabilityScheduleId: string | null;
+  systemManaged: boolean;
+}
+
+export interface SchedulerAvailabilityOverride {
+  id?: string;
+  date: string;
+  unavailableAllDay: boolean;
+  windows: Array<{ startMinute: number; endMinute: number }>;
+  note?: string;
+}
+
+export interface SchedulerAvailability {
+  id: string;
+  name: string;
+  timeZone: string;
+  isDefault: boolean;
+  published: boolean;
+  windows: SchedulerWindow[];
+  overrides: SchedulerAvailabilityOverride[];
 }
 
 export interface SchedulerEntitlement {
@@ -33,6 +53,7 @@ export interface SchedulerEntitlement {
   welcomeMessage: string;
   timeZone: string;
   defaultCalendarId: number | null;
+  notificationFrom: string;
 }
 
 export interface SchedulerBooking {
@@ -57,7 +78,22 @@ export interface SchedulerState {
   events: SchedulerEventType[];
   bookings: SchedulerBooking[];
   calendars: SchedulerCalendar[];
+  defaultAvailability: SchedulerAvailability;
+  notificationIdentities: Array<{ address: string; name: string }>;
   publicBaseUrl: string;
+}
+
+export async function saveDefaultAvailability(availability: Partial<SchedulerAvailability>): Promise<SchedulerAvailability> {
+  const result = await request<{ availability: SchedulerAvailability }>('/api/scheduler/v1/availability/default', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(availability),
+  });
+  return result.availability;
+}
+
+export async function previewDefaultAvailability(start: Date, end: Date): Promise<{ slots: Array<{ start: string; end: string }>; busyIntervalCount: number; overrideCount: number }> {
+  return request<{ slots: Array<{ start: string; end: string }>; busyIntervalCount: number; overrideCount: number }>(
+    `/api/scheduler/v1/availability/preview?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`,
+  );
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -94,7 +130,7 @@ export async function cancelSchedulerBooking(id: string): Promise<void> {
   await request(`/api/scheduler/v1/bookings/${id}/cancel`, { method: 'POST' });
 }
 
-export async function getPublicProfile(handle: string): Promise<{ profile: SchedulerEntitlement; events: SchedulerEventType[] }> {
+export async function getPublicProfile(handle: string): Promise<{ profile: SchedulerEntitlement; events: SchedulerEventType[]; defaultEvent: SchedulerEventType | null }> {
   return request(`/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}`);
 }
 

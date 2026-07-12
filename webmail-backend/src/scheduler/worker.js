@@ -3,12 +3,24 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.schedulerTransportOptions = schedulerTransportOptions;
 exports.schedulerNotificationMails = schedulerNotificationMails;
 exports.startSchedulerWorker = startSchedulerWorker;
 const crypto_1 = __importDefault(require("crypto"));
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const db_1 = require("../db");
 const config_1 = require("../config");
+function schedulerTransportOptions(config = config_1.schedulerConfig) {
+    return {
+        host: config.smtpHost,
+        port: config.smtpPort,
+        secure: false,
+        tls: {
+            rejectUnauthorized: config.smtpRejectUnauthorized,
+            ...(config.smtpServerName ? { servername: config.smtpServerName } : {}),
+        },
+    };
+}
 const readableDate = (value, timeZone = 'UTC') => new Intl.DateTimeFormat('en-US', {
     timeZone,
     dateStyle: 'full',
@@ -17,6 +29,9 @@ const readableDate = (value, timeZone = 'UTC') => new Intl.DateTimeFormat('en-US
 function schedulerNotificationMails(eventType, payload, baseUrl) {
     const title = payload.title || payload.event?.title || 'Meeting';
     const when = readableDate(payload.start, payload.timeZone || 'UTC');
+    const senderAddress = payload.notificationFrom || payload.hostEmail || config_1.schedulerConfig.notificationFrom;
+    const sender = { name: payload.notificationName || payload.hostEmail || 'OpenMailStack Scheduler', address: senderAddress };
+    const common = { from: sender, replyTo: payload.hostEmail };
     if (eventType === 'booking.confirmed') {
         const cancelUrl = `${baseUrl}/scheduler/action/cancel/${encodeURIComponent(payload.cancelToken || '')}`;
         const rescheduleUrl = `${baseUrl}/scheduler/action/reschedule/${encodeURIComponent(payload.rescheduleToken || '')}`;
@@ -26,17 +41,20 @@ function schedulerNotificationMails(eventType, payload, baseUrl) {
                 subject: `Confirmed: ${title}`,
                 text: `${title} with ${payload.hostEmail} is confirmed for ${when}.\n\nCancel: ${cancelUrl}\nReschedule: ${rescheduleUrl}`,
                 ical: payload.ical,
+                ...common,
             },
             {
                 to: payload.hostEmail,
                 subject: `New booking: ${title}`,
                 text: `${payload.bookerName} (${payload.bookerEmail}) booked ${title} for ${when}.`,
                 ical: payload.ical,
+                ...common,
             },
         ];
     }
     if (eventType === 'booking.cancelled') {
         return [payload.bookerEmail, payload.hostEmail].map((to) => ({
+            ...common,
             to,
             subject: `Cancelled: ${title}`,
             text: `${title}, previously scheduled for ${when}, has been cancelled.`,
@@ -45,6 +63,7 @@ function schedulerNotificationMails(eventType, payload, baseUrl) {
     }
     if (eventType === 'booking.rescheduled') {
         return [payload.bookerEmail, payload.hostEmail].map((to) => ({
+            ...common,
             to,
             subject: `Rescheduled: ${title}`,
             text: `${title} is now scheduled for ${when}.`,
@@ -84,25 +103,24 @@ async function deliverOutbox(row, workerId) {
     try {
         const payload = JSON.parse(row.payload);
         const messages = schedulerNotificationMails(row.event_type, payload, config_1.schedulerConfig.publicBaseUrl);
-        const transporter = nodemailer_1.default.createTransport({
-            host: config_1.schedulerConfig.smtpHost,
-            port: config_1.schedulerConfig.smtpPort,
-            secure: false,
-            tls: { rejectUnauthorized: process.env.NODE_ENV === 'production' },
-        });
+        const transporter = nodemailer_1.default.createTransport(schedulerTransportOptions());
         for (const message of messages) {
             await transporter.sendMail({
-                from: config_1.schedulerConfig.notificationFrom,
+                from: message.from,
+                replyTo: message.replyTo,
                 to: message.to,
                 subject: message.subject,
                 text: message.text,
                 attachments: message.ical ? [{ filename: 'invite.ics', content: message.ical, contentType: 'text/calendar; charset=utf-8' }] : [],
             });
         }
-        await db_1.pool.query("UPDATE scheduler_outbox SET completed_at=UTC_TIMESTAMP(3), payload='{}', lease_owner=NULL, lease_expires_at=NULL WHERE id=? AND lease_owner=?", [row.id, workerId]);
+        await db_1.pool.query("UPDATE scheduler_outbox SET completed_at=UTC_TIMESTAMP(3), payload='{}', last_error_code=NULL, lease_owner=NULL, lease_expires_at=NULL WHERE id=? AND lease_owner=?", [row.id, workerId]);
     }
     catch (error) {
-        const errorCode = String(error?.code || 'delivery_failed').slice(0, 80);
+        const errorCode = [error?.code || 'delivery_failed', error?.command].filter(Boolean).join(':').slice(0, 80);
+        if (process.env.NODE_ENV !== 'test') {
+            console.error('Scheduler notification delivery failed:', { eventType: row.event_type, errorCode, attempt: row.attempts });
+        }
         if (row.attempts >= 8) {
             await db_1.pool.query('UPDATE scheduler_outbox SET dead_lettered_at=UTC_TIMESTAMP(3), last_error_code=?, lease_owner=NULL, lease_expires_at=NULL WHERE id=? AND lease_owner=?', [errorCode, row.id, workerId]);
         }

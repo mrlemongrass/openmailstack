@@ -53,10 +53,12 @@ exports.schedulerRouter.get('/scheduler/v1/status', authenticatedInstalled, auth
 exports.schedulerRouter.get('/scheduler/v1/me', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
     try {
         const entitlement = await store.requireOwner(req.user.username);
-        const [events, bookings, calendars] = await Promise.all([
+        const [events, bookings, calendars, defaultAvailability, notificationIdentities] = await Promise.all([
             store.listEventTypes(req.user.username),
             store.listBookings(req.user.username, String(req.query.filter || 'upcoming')),
             (0, calendar_utils_1.getVisibleCalendars)(req.user.username),
+            store.getDefaultAvailability(req.user.username),
+            store.listNotificationIdentities(req.user.username),
         ]);
         res.json({
             success: true,
@@ -64,8 +66,37 @@ exports.schedulerRouter.get('/scheduler/v1/me', authenticatedInstalled, auth_1.r
             events,
             bookings,
             calendars: calendars.map((calendar) => ({ id: calendar.id, name: calendar.name, color: calendar.color })),
+            defaultAvailability,
+            notificationIdentities,
             publicBaseUrl: config_1.schedulerConfig.publicBaseUrl,
         });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.get('/scheduler/v1/availability/default', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        res.json({ success: true, availability: await store.getDefaultAvailability(req.user.username) });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.put('/scheduler/v1/availability/default', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        res.json({ success: true, availability: await store.saveDefaultAvailability(req.user.username, req.body || {}) });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.get('/scheduler/v1/availability/preview', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        const start = new Date(String(req.query.start || ''));
+        const end = new Date(String(req.query.end || ''));
+        const preview = await store.previewDefaultAvailability(req.user.username, start, end);
+        res.json({ success: true, ...preview });
     }
     catch (error) {
         ownerError(res, error);
@@ -150,7 +181,7 @@ exports.schedulerRouter.get('/public/scheduler/v1/profiles/:handle', publicLimit
         const profile = await store.getPublicProfile(String(req.params.handle));
         if (!profile)
             return publicNotFound(res);
-        res.json({ success: true, profile: profile.entitlement, events: profile.events });
+        res.json({ success: true, profile: profile.entitlement, events: profile.events, defaultEvent: profile.defaultEvent });
     }
     catch {
         publicNotFound(res);

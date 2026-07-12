@@ -4172,3 +4172,248 @@ Make an Admin-enabled Scheduler entitlement appear in the app navigation without
 ### Next recommended task
 
 Create one live event type and complete booking, reschedule, and cancel through SMTP/ICS, OMS Calendar, CalDAV, and ActiveSync.
+
+## 2026-07-11 — Scheduler first-run and booking-link UX
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean, one commit ahead of `origin/main`
+Ending git state: dirty with this focused Scheduler UX change
+
+### Selected task
+
+Make a newly enabled Scheduler understandable and actionable without changing its existing availability, booking, or calendar engine.
+
+### Why this task
+
+The first enabled mailbox had no event types. Its authenticated Availability tab and public profile both rendered mostly blank, while the public booking-site link was buried in Profile. This made implemented event-duration, weekly-hours, calendar-conflict, and public-route behavior appear absent.
+
+### Changes made
+
+- `webmail-frontend/src/scheduler/routes.tsx`
+  - Added persistent **Copy booking link** and **Open booking site** actions.
+  - Added a three-step first-event guide and actionable Availability empty state.
+  - Added calendar-conflict guidance, clipboard feedback, accessible event action labels, and an empty-published-profile warning.
+- `webmail-frontend/src/scheduler/PublicScheduler.tsx`
+  - Replaced the blank zero-event public profile with a calm unavailable state.
+- `webmail-frontend/src/scheduler/scheduler.css`
+  - Added responsive desktop/mobile styling for the booking-site bar, onboarding card, notices, and public empty state.
+- `tests/integration/scheduler_phase1_guard.cjs`
+  - Added regression requirements for all first-run and public-link affordances.
+- `.shared_memory/implementation_state.md`, `.shared_memory/change_log.md`, `docs/engineering/WORKLOG.md`
+  - Recorded the verified repository state without claiming deployment.
+
+### Proof / checks run
+
+- `rtk npm run lint` in `webmail-frontend`: passed with zero findings.
+- `rtk npm run build` in `webmail-frontend`: passed; Scheduler remains lazy-loaded.
+- `rtk node tests/integration/scheduler_phase1_guard.cjs`: passed.
+- Local Playwright preview at 1440x1000 and 390x844: five first-run/public views had zero console or page errors and zero horizontal overflow.
+- Playwright clicked the Event Types and Availability calls to action and confirmed both opened the event editor with weekly availability and all four mocked calendars.
+
+### Acceptance criteria
+
+- [x] The owner can open or copy the public booking site from every Scheduler tab.
+- [x] A zero-event user sees a guided next action on Event Types and Availability.
+- [x] The public profile no longer renders as an unexplained blank page.
+- [x] A published profile with no active event types warns the owner.
+- [x] Calendar busy-time behavior is explained in user-facing language.
+- [x] Desktop and mobile layouts remain free of horizontal overflow.
+
+### Risks / notes
+
+- The change is frontend-only and has not been deployed.
+- No live event type or booking was created, so SMTP/ICS and Calendar/CalDAV/ActiveSync lifecycle validation remains outstanding.
+- Reusable global schedules, multiple daily windows, date overrides, custom durations, and external calendar connections remain later Scheduler milestones.
+
+### Next recommended task
+
+Deploy this verified frontend, then create a 60-minute Consultation event and complete one booking/reschedule/cancel cycle through SMTP/ICS, OMS Calendar, CalDAV, and ActiveSync.
+
+## 2026-07-11 — Scheduler customizable duration and frontend deployment
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: dirty with the verified first-run Scheduler UX from the preceding cycle
+Ending git state: dirty with the combined focused Scheduler UX/duration changes
+
+### Selected task
+
+Remove the office-call-only duration constraint, then deploy the already verified first-run Scheduler frontend.
+
+### Why this task
+
+The backend already accepted fixed event durations from 5 minutes through 24 hours, but the UI exposed only 15, 30, 45, and 60 minutes and silently tied the slot interval to the selected duration. That prevented natural service-business use cases such as a three-hour hair-coloring appointment.
+
+### Changes made
+
+- `webmail-frontend/src/scheduler/routes.tsx`
+  - Replaced the fixed duration dropdown with Hours and Minutes inputs.
+  - Added a human-readable summary and blocked durations below 5 minutes or above 24 hours.
+  - Kept `intervalMinutes` independent, so a three-hour service can still offer starts every 30 minutes.
+- `webmail-frontend/src/scheduler/scheduler.css`
+  - Added compact responsive styling for the two-part duration control.
+- `webmail-backend/test/scheduler-phase1.test.cjs`
+  - Added acceptance of 180 minutes and rejection above the 1,440-minute limit.
+- `tests/integration/scheduler_phase1_guard.cjs`
+  - Added regression checks for Hours, Minutes, and client-side range validation.
+- `docs/product/scheduler.md`
+  - Recorded the fixed-duration product contract as 5 minutes through 24 hours.
+- `.shared_memory/implementation_state.md`, `.shared_memory/risk_register.md`, `.shared_memory/change_log.md`, `docs/engineering/WORKLOG.md`
+  - Recorded the deployed state and remaining real-booking release gate.
+
+### Proof / checks run
+
+- `rtk npm test` in `webmail-backend`: 20/20 test files passed.
+- `rtk npm run lint` and `rtk npm run build` in `webmail-frontend`: passed.
+- `rtk bash ./tests/integration/run.sh`: all guards and local dry-run passed.
+- Playwright desktop/mobile: zero errors and zero horizontal overflow; zero duration disabled Save; three hours displayed as “3 hours.”
+- Playwright intercepted event creation and verified `durationMinutes: 180` with `intervalMinutes: 30`.
+- Pre-deploy webroot copied to `/tmp/openmailstack-webroot-before-scheduler-duration`.
+- `rtk ./functions/deploy_webmail_frontend.sh`: rebuilt and deployed only static frontend assets.
+- Deployed `index.html` matches the tested build; asset permissions are `0644`.
+- Both configured public profile APIs return 200 with the same zero-event profile.
+- Live Chromium loaded `https://webmail.housevo.us/scheduler/thang`, rendered the new public empty state, and reported no console errors.
+
+### Acceptance criteria
+
+- [x] A user can express 30 minutes as 0 hours 30 minutes.
+- [x] A user can express a consultation as 1 hour 0 minutes.
+- [x] A user can express hair coloring as 3 hours 0 minutes.
+- [x] Existing non-preset integer durations remain editable.
+- [x] Zero-length and over-24-hour durations are rejected.
+- [x] Duration changes do not rewrite the start-time interval.
+- [x] The first-run and public empty-state UX is deployed on both configured hostnames.
+
+### Risks / notes
+
+- No live event type was created because its title, location, destination calendar, conflict calendars, and weekly availability should be chosen intentionally rather than guessed.
+- The modal's existing translucent visual treatment remains unchanged.
+- Reusable global schedules, multiple windows per day, date overrides, and external calendar connections remain later milestones.
+
+### Next recommended task
+
+Create one intentionally configured live event type and complete a real booking/reschedule/cancel cycle through SMTP/ICS, OMS Calendar, CalDAV, and ActiveSync.
+
+## 2026-07-11 — Scheduler reusable availability and default booking
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: dirty with deployed first-run/custom-duration Scheduler changes
+Ending git state: dirty with the complete reusable-availability implementation and live deployment
+
+### Selected task
+
+Implement the accepted Scheduler UX sequence: reusable availability independent of event types, a zero-custom-event 30-minute fallback, week/month/day overrides, clearer event settings, calendar-aware diagnostics, and the modal readability fix.
+
+### Acceptance criteria
+
+- [x] Owners can create and publish default availability without creating an event type.
+- [x] Published default availability exposes a system-managed 30-minute root-profile booking flow while no custom event type exists.
+- [x] Week, Month, and Day views support multiple windows, disabled days, date overrides, and all-day/range blackouts.
+- [x] Event types inherit default availability or use custom hours, and support 5-minute-to-24-hour duration plus independent interval, buffers, notice, capacity, calendars, and active state.
+- [x] Busy OMS calendar events remain unavailable, and the owner can preview slot/busy/override diagnostics.
+- [x] Event dialogs and details use an opaque theme surface on desktop and mobile.
+- [x] Migration, backend, frontend, regression, visual, and live deployment checks pass.
+
+### Proof / checks run
+
+- Backend `rtk npm test`: 20/20 test files passed after TypeScript compilation.
+- Frontend lint and production build passed; full static integration suite passed.
+- Disposable MariaDB: migrations `001`-`003` each applied twice; default schedule, hidden event, blocked date, inheritance, booking, reschedule, and cancellation passed.
+- Playwright at 1440x900 and 390x844: modal background computed as `rgb(17, 24, 39)`, mobile horizontal overflow was zero, and the root default booking rendered bookable 30-minute slots.
+- Safety snapshot: `/var/backups/openmailstack/20260711_230435_scheduler_availability`.
+- Live: migrations `001`-`003` recorded, all four availability tables exist, deployed backend/frontend match the tested artifacts, `openmailstack.service` is active, Nginx syntax passes, the public profile API returns 200, and staging smoke passed.
+
+### Risks / notes
+
+- No live availability, event type, booking, calendar event, or email was created by automation. The owner must intentionally publish their schedule before the default booking flow becomes public.
+- A real SMTP/ICS plus Calendar/CalDAV/ActiveSync booking-reschedule-cancel cycle and clean-VM disabled/enabled installs remain release gates.
+
+### Next recommended task
+
+Have the owner publish the desired live default schedule (or create one intentional event type), then validate the complete real-client booking lifecycle.
+
+## 2026-07-11 — Scheduler enable-booking persistence fix
+
+### Cause
+
+The Availability empty-state action labeled `Enable booking` only set `published=true` in local React state. It did not save, so owners reasonably believed booking was enabled while the database schedule and hidden event remained unpublished. The live schedule had six persisted windows but both publication flags were `0`.
+
+### Fix and live recovery
+
+- Changed the action to `Enable booking now`; it immediately submits the updated schedule through the existing authenticated availability API.
+- Added a static regression guard requiring the enable path to call `save(nextDraft)`.
+- Deployed the verified frontend-only fix.
+- Honored the owner's already-stated enablement intent through `SchedulerStore.saveDefaultAvailability`, preserving all six saved windows, activating the system-managed 30-minute event, and writing the normal audit event.
+
+### Proof
+
+- Frontend lint and production build passed; Scheduler Phase 1 guard passed.
+- Live public profile API returns the active `_default` 30-minute event.
+- Live slots API returns available times from the saved schedule.
+- Live Chromium rendered `30-minute meeting`, found bookable slot buttons, and confirmed the old unavailable message was absent.
+
+## 2026-07-11 — Scheduler first live booking reliability fixes
+
+### Reported behavior
+
+- A John Doe test booking for the owner's Gmail address was confirmed, but no Gmail message appeared and the selected time still appeared available in an already-open public page.
+
+### Evidence and causes
+
+- Booking, capacity-one inventory, confirmed hold, audit row, and native calendar projection were correct.
+- The notification outbox retried with `ESOCKET`; Postfix had no queued message. The worker connected to local `127.0.0.1:25` with strict TLS but did not provide the `mail.housevo.us` certificate server name.
+- The server slot API already excluded the booked time through its native calendar projection. The stale display came from a public page retaining its initial 30-day slot payload without focus/visibility refresh.
+- A new capacity regression exposed a separate MySQL `DATETIME` boundary: relying on driver-created JavaScript dates can shift UTC booking values by the host offset.
+
+### Fixes
+
+- Added a configured SMTP TLS server name, retained strict certificate verification, added safe worker error diagnostics, and clear stale error codes on successful completion.
+- Refresh public slots on initial load, focus, visibility changes, and booking conflicts; remove the confirmed slot from local state immediately.
+- Filter full slot inventory independently of calendar parsing, including active holds and confirmed capacity.
+- Use explicit `CAST(... AS CHAR)` plus UTC parsing for Scheduler booking, capability, reschedule, cancellation, idempotency, and hold-release boundaries.
+
+### Proof
+
+- Backend tests: 20/20; frontend lint/build and full integration suite passed.
+- Disposable MariaDB lifecycle passed after deliberately corrupting the calendar projection and proving confirmed capacity still hides the slot; owner booking timestamps remained exact UTC.
+- Deployed Nodemailer STARTTLS verification returned `true` using local Postfix plus `mail.housevo.us` as the server name.
+- The pending outbox job completed. Postfix received Gmail `250 2.0.0` acceptance and delivered the host copy through Dovecot LMTP.
+- Live APIs omit the booked 8:00 AM time from Discovery and Consultation availability. Live Chromium shows 8:30 AM as the first Discovery Call on July 13.
+- Deployed backend matches the tested artifact, `openmailstack.service` is active, and staging smoke passed.
+
+### Remaining validation
+
+- Check Gmail Inbox, Spam, and All Mail for the accepted confirmation and verify its ICS/management links.
+- Use the delivered capability links to complete live reschedule and cancel checks through web, Calendar, CalDAV, and ActiveSync.
+
+## 2026-07-12 — Scheduler owned notification sender
+
+### Selected task
+
+Replace the generic `scheduler@<domain>` notification identity with a human, owner-controlled sender that remains safe across multiple hosted domains.
+
+### Changes
+
+- Added additive migration `004_scheduler_notification_identity.sql`.
+- Defaulted existing and future Scheduler profiles to `Display Name <mailbox address>`; the live default is `Thang Vo <thang@housevo.us>`.
+- Added a Profile selector populated from the primary mailbox and active aliases whose exact recipient routing includes the owner.
+- Rejected arbitrary/spoofed addresses and filtered catch-all routing entries that are not valid email addresses.
+- Stored the selected sender in booking outbox payloads so later delivery uses the identity captured at booking time; cancellation/reschedule use the current owned profile identity.
+- Set Reply-To to the primary host mailbox.
+
+### Deliverability review
+
+- Live MX and `mail.housevo.us` A records align.
+- SPF authorizes the live mail IP, DKIM is published, and DMARC is present with reporting and `p=none`.
+- The prior generic message reached Gmail with `250 2.0.0` but landed in Spam. A human sender improves recognition but does not guarantee Inbox placement; IP/domain reputation, content, engagement, and Gmail classification remain factors.
+
+### Proof
+
+- Backend 20/20, frontend lint/build, and Scheduler guard passed.
+- Disposable MariaDB applied all migrations twice, selected a cross-domain active alias, captured it in the outbox payload, and rejected a spoofed sender plus catch-all route.
+- Safety snapshot: `/var/backups/openmailstack/20260712_011917_scheduler_identity`.
+- Live migration `004` is recorded; the rendered sender is `Thang Vo <thang@housevo.us>` with Reply-To `thang@housevo.us`.
+- Profile UI can select a valid cross-domain alias; desktop/modal/mobile checks remain clean.
+- `openmailstack.service` is active and staging smoke passed.

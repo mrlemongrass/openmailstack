@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
-import { calculateAvailability, type AvailabilitySlot, type BusyInterval } from './availability';
+import { calculateAvailability, type AvailabilityOverride, type AvailabilitySlot, type BusyInterval } from './availability';
 import { SchedulerSlotHoldRepository } from './slot-holds';
 import {
     assertTimeZone,
@@ -26,6 +26,7 @@ export interface SchedulerEntitlement {
     welcomeMessage: string;
     timeZone: string;
     defaultCalendarId: number | null;
+    notificationFrom: string;
 }
 
 export interface SchedulerEventType {
@@ -45,8 +46,41 @@ export interface SchedulerEventType {
     locationLabel: string;
     destinationCalendarId: number | null;
     conflictCalendarIds: number[];
+    availabilityScheduleId: string | null;
+    systemManaged: boolean;
     active: boolean;
     windows: Array<{ weekday: number; startMinute: number; endMinute: number }>;
+}
+
+export interface SchedulerScheduleWindow {
+    weekday: number;
+    startMinute: number;
+    endMinute: number;
+}
+
+export interface SchedulerScheduleOverride {
+    id?: string;
+    date: string;
+    unavailableAllDay: boolean;
+    windows: Array<{ startMinute: number; endMinute: number }>;
+}
+
+export interface SchedulerAvailabilitySchedule {
+    id: string;
+    name: string;
+    timeZone: string;
+    isDefault: boolean;
+    published: boolean;
+    windows: SchedulerScheduleWindow[];
+    overrides: SchedulerScheduleOverride[];
+}
+
+export interface SchedulerAvailabilityInput {
+    name?: string;
+    timeZone?: string;
+    published?: boolean;
+    windows?: SchedulerScheduleWindow[];
+    overrides?: SchedulerScheduleOverride[];
 }
 
 export interface SchedulerBookingInput {
@@ -60,7 +94,7 @@ export interface SchedulerBookingInput {
 }
 
 const mysqlDate = (date: Date): string => date.toISOString().slice(0, 23).replace('T', ' ');
-const utcDate = (value: string | Date): Date => value instanceof Date ? value : new Date(`${String(value).replace(' ', 'T')}Z`);
+const utcDate = (value: string): Date => new Date(`${String(value).replace(' ', 'T')}Z`);
 const booleanValue = (value: unknown): boolean => Number(value) === 1;
 const jsonArray = (value: unknown): number[] => {
     try {
@@ -81,6 +115,7 @@ const entitlementFromRow = (row: any): SchedulerEntitlement => ({
     welcomeMessage: row.welcome_message || '',
     timeZone: row.time_zone || 'UTC',
     defaultCalendarId: row.default_calendar_id == null ? null : Number(row.default_calendar_id),
+    notificationFrom: row.notification_from || row.username,
 });
 
 const eventFromRow = (row: any, windows: SchedulerEventType['windows'] = []): SchedulerEventType => ({
@@ -100,9 +135,59 @@ const eventFromRow = (row: any, windows: SchedulerEventType['windows'] = []): Sc
     locationLabel: row.location_label || '',
     destinationCalendarId: row.destination_calendar_id == null ? null : Number(row.destination_calendar_id),
     conflictCalendarIds: jsonArray(row.conflict_calendar_ids),
+    availabilityScheduleId: row.availability_schedule_id || null,
+    systemManaged: booleanValue(row.system_managed),
     active: booleanValue(row.active),
     windows,
 });
+
+const normalizeWindows = <T extends { startMinute: number; endMinute: number; weekday?: number }>(windows: T[], requireWeekday: boolean): T[] => {
+    const normalized = windows.map((window) => ({
+        ...window,
+        ...(requireWeekday ? { weekday: Number(window.weekday) } : {}),
+        startMinute: Number(window.startMinute),
+        endMinute: Number(window.endMinute),
+    }));
+    for (const window of normalized) {
+        if (requireWeekday && (!Number.isInteger(window.weekday) || Number(window.weekday) < 0 || Number(window.weekday) > 6)) {
+            throw new Error('Availability weekday must be between 0 and 6');
+        }
+        if (!Number.isInteger(window.startMinute) || !Number.isInteger(window.endMinute)
+            || window.startMinute < 0 || window.endMinute > 1440 || window.startMinute >= window.endMinute) {
+            throw new Error('Availability windows must have valid start and end times');
+        }
+    }
+    const groups = new Map<number, T[]>();
+    for (const window of normalized as T[]) {
+        const key = requireWeekday ? Number(window.weekday) : 0;
+        const group = groups.get(key) || [];
+        group.push(window);
+        groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+        group.sort((left, right) => left.startMinute - right.startMinute);
+        for (let index = 1; index < group.length; index += 1) {
+            if (group[index].startMinute < group[index - 1].endMinute) throw new Error('Availability windows cannot overlap');
+        }
+    }
+    return normalized as T[];
+};
+
+const normalizeOverrides = (overrides: SchedulerScheduleOverride[]): SchedulerScheduleOverride[] => {
+    const dates = new Set<string>();
+    return overrides.map((override) => {
+        const date = String(override.date || '');
+        const probe = new Date(`${date}T00:00:00Z`);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(probe.getTime()) || probe.toISOString().slice(0, 10) !== date) {
+            throw new Error('Availability override must use a valid date');
+        }
+        if (dates.has(date)) throw new Error('Only one availability override is allowed per date');
+        dates.add(date);
+        const unavailableAllDay = Boolean(override.unavailableAllDay);
+        const windows = unavailableAllDay ? [] : normalizeWindows(override.windows || [], false);
+        return { id: override.id, date, unavailableAllDay, windows };
+    });
+};
 
 async function loadWindows(db: Queryable, eventIds: string[]): Promise<Map<string, SchedulerEventType['windows']>> {
     const result = new Map<string, SchedulerEventType['windows']>();
@@ -198,19 +283,169 @@ export class SchedulerStore {
         return entitlement;
     }
 
-    async updateProfile(username: string, input: { displayName?: string; welcomeMessage?: string; timeZone?: string; published?: boolean; defaultCalendarId?: number | null }): Promise<SchedulerEntitlement> {
+    async listNotificationIdentities(username: string): Promise<Array<{ address: string; name: string }>> {
+        const entitlement = await this.requireOwner(username);
+        const [mailboxes]: any = await this.pool.query('SELECT name FROM mailbox WHERE username = ? LIMIT 1', [username]);
+        const [aliases]: any = await this.pool.query('SELECT address, goto FROM alias WHERE active = 1 ORDER BY address');
+        const addresses = [username, ...aliases
+            .filter((row: any) => String(row.goto || '').split(',').map((value: string) => value.trim().toLowerCase()).includes(username.toLowerCase()))
+            .map((row: any) => String(row.address).trim().toLowerCase())
+            .filter((address: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address))];
+        return Array.from(new Set(addresses)).map((address) => ({
+            address,
+            name: entitlement.displayName || mailboxes[0]?.name || username.split('@')[0],
+        }));
+    }
+
+    async getDefaultAvailability(username: string): Promise<SchedulerAvailabilitySchedule> {
+        const entitlement = await this.requireOwner(username);
+        const [rows]: any = await this.pool.query(
+            'SELECT * FROM scheduler_availability_schedules WHERE owner_username = ? AND is_default = 1 LIMIT 1',
+            [username]
+        );
+        if (rows.length) return this.loadAvailabilitySchedule(rows[0]);
+
+        const id = crypto.randomUUID();
+        const connection = await this.pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            await connection.query(
+                `INSERT INTO scheduler_availability_schedules
+                    (id, tenant_key, owner_username, name, time_zone, is_default, published)
+                 VALUES (?, ?, ?, 'Working hours', ?, 1, 0)`,
+                [id, entitlement.tenantKey, username, entitlement.timeZone]
+            );
+            for (const weekday of [1, 2, 3, 4, 5]) {
+                await connection.query(
+                    'INSERT INTO scheduler_schedule_windows (schedule_id, weekday, start_minute, end_minute) VALUES (?, ?, 540, 1020)',
+                    [id, weekday]
+                );
+            }
+            await connection.commit();
+        } catch (error: any) {
+            await connection.rollback();
+            if (error?.code !== 'ER_DUP_ENTRY') throw error;
+        } finally {
+            connection.release();
+        }
+        const [created]: any = await this.pool.query(
+            'SELECT * FROM scheduler_availability_schedules WHERE owner_username = ? AND is_default = 1 LIMIT 1',
+            [username]
+        );
+        if (!created.length) throw new Error('Unable to create default availability');
+        return this.loadAvailabilitySchedule(created[0]);
+    }
+
+    async saveDefaultAvailability(username: string, input: SchedulerAvailabilityInput): Promise<SchedulerAvailabilitySchedule> {
+        const entitlement = await this.requireOwner(username);
+        const schedule = await this.getDefaultAvailability(username);
+        const name = String(input.name || schedule.name || 'Working hours').trim().slice(0, 120) || 'Working hours';
+        const timeZone = assertTimeZone(input.timeZone || schedule.timeZone || entitlement.timeZone);
+        const published = input.published ?? schedule.published;
+        const windows = normalizeWindows(input.windows || schedule.windows, true);
+        const overrides = normalizeOverrides(input.overrides || schedule.overrides);
+        const connection = await this.pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [owned]: any = await connection.query(
+                'SELECT id FROM scheduler_availability_schedules WHERE id = ? AND owner_username = ? FOR UPDATE',
+                [schedule.id, username]
+            );
+            if (!owned.length) throw new Error('Availability schedule not found');
+            await connection.query(
+                'UPDATE scheduler_availability_schedules SET name = ?, time_zone = ?, published = ? WHERE id = ?',
+                [name, timeZone, published ? 1 : 0, schedule.id]
+            );
+            await connection.query('DELETE FROM scheduler_schedule_windows WHERE schedule_id = ?', [schedule.id]);
+            for (const window of windows) {
+                await connection.query(
+                    'INSERT INTO scheduler_schedule_windows (schedule_id, weekday, start_minute, end_minute) VALUES (?, ?, ?, ?)',
+                    [schedule.id, window.weekday, window.startMinute, window.endMinute]
+                );
+            }
+            await connection.query('DELETE FROM scheduler_schedule_overrides WHERE schedule_id = ?', [schedule.id]);
+            for (const override of overrides) {
+                const overrideId = crypto.randomUUID();
+                await connection.query(
+                    'INSERT INTO scheduler_schedule_overrides (id, schedule_id, local_date, unavailable_all_day) VALUES (?, ?, ?, ?)',
+                    [overrideId, schedule.id, override.date, override.unavailableAllDay ? 1 : 0]
+                );
+                for (const window of override.windows) {
+                    await connection.query(
+                        'INSERT INTO scheduler_override_windows (override_id, start_minute, end_minute) VALUES (?, ?, ?)',
+                        [overrideId, window.startMinute, window.endMinute]
+                    );
+                }
+            }
+            await this.ensureSystemDefaultEvent(connection, entitlement, schedule.id, published);
+            await this.writeAudit(connection, entitlement.tenantKey, 'user', username, 'availability.default.update', 'availability_schedule', schedule.id, {
+                published,
+                windowCount: windows.length,
+                overrideCount: overrides.length,
+            });
+            await connection.commit();
+        } catch (error: any) {
+            await connection.rollback();
+            if (error?.code === 'ER_DUP_ENTRY') throw new Error('That availability schedule name is already in use');
+            throw error;
+        } finally {
+            connection.release();
+        }
+        return this.getDefaultAvailability(username);
+    }
+
+    async previewDefaultAvailability(username: string, rangeStart: Date, rangeEnd: Date): Promise<{ slots: AvailabilitySlot[]; busyIntervalCount: number; overrideCount: number }> {
+        if (!Number.isFinite(rangeStart.getTime()) || !Number.isFinite(rangeEnd.getTime()) || rangeStart >= rangeEnd) {
+            throw new Error('Invalid availability range');
+        }
+        if (rangeEnd.getTime() - rangeStart.getTime() > 62 * 24 * 60 * 60 * 1000) throw new Error('Availability range cannot exceed 62 days');
+        const schedule = await this.getDefaultAvailability(username);
+        const event = await this.getSystemDefaultEvent(username, false);
+        const busy = await this.busyIntervals(event || {
+            ownerUsername: username,
+            conflictCalendarIds: [],
+        } as SchedulerEventType, rangeStart, rangeEnd);
+        const overrides: AvailabilityOverride[] = schedule.overrides.map((override) => ({
+            date: override.date,
+            windows: override.unavailableAllDay ? [] : override.windows,
+        }));
+        const slots = calculateAvailability({
+            timeZone: schedule.timeZone,
+            rangeStart,
+            rangeEnd,
+            durationMinutes: 30,
+            intervalMinutes: 30,
+            windows: schedule.windows,
+            overrides,
+            busy,
+            minimumNoticeMinutes: 60,
+        });
+        return {
+            slots,
+            busyIntervalCount: busy.length,
+            overrideCount: schedule.overrides.filter((override) => {
+                const date = override.date;
+                return date >= rangeStart.toISOString().slice(0, 10) && date <= rangeEnd.toISOString().slice(0, 10);
+            }).length,
+        };
+    }
+
+    async updateProfile(username: string, input: { displayName?: string; welcomeMessage?: string; timeZone?: string; published?: boolean; defaultCalendarId?: number | null; notificationFrom?: string }): Promise<SchedulerEntitlement> {
         const entitlement = await this.requireOwner(username);
         const displayName = String(input.displayName ?? entitlement.displayName).trim().slice(0, 160);
         const welcomeMessage = String(input.welcomeMessage ?? entitlement.welcomeMessage).trim().slice(0, 4000);
         const timeZone = assertTimeZone(input.timeZone || entitlement.timeZone);
         const published = input.published ?? entitlement.published;
         const defaultCalendarId = input.defaultCalendarId === undefined ? entitlement.defaultCalendarId : input.defaultCalendarId;
+        const notificationFrom = String(input.notificationFrom || entitlement.notificationFrom || username).trim().toLowerCase();
         if (defaultCalendarId !== null) await this.assertCalendarOwnership(username, Number(defaultCalendarId));
+        const identities = await this.listNotificationIdentities(username);
+        if (!identities.some((identity) => identity.address === notificationFrom)) throw new Error('Scheduler sender must be your mailbox or an active alias');
         await this.pool.query(
             `UPDATE scheduler_mailbox_entitlements
-             SET display_name = ?, welcome_message = ?, time_zone = ?, published = ?, default_calendar_id = ?
+             SET display_name = ?, welcome_message = ?, time_zone = ?, published = ?, default_calendar_id = ?, notification_from = ?
              WHERE username = ? AND enabled = 1`,
-            [displayName, welcomeMessage, timeZone, published ? 1 : 0, defaultCalendarId, username]
+            [displayName, welcomeMessage, timeZone, published ? 1 : 0, defaultCalendarId, notificationFrom, username]
         );
         await this.writeAudit(this.pool, entitlement.tenantKey, 'user', username, 'profile.update', 'mailbox', username, { published });
         return (await this.getEntitlement(username))!;
@@ -219,7 +454,7 @@ export class SchedulerStore {
     async listEventTypes(username: string, includeInactive = true): Promise<SchedulerEventType[]> {
         await this.requireOwner(username);
         const [rows]: any = await this.pool.query(
-            `SELECT * FROM scheduler_event_types WHERE owner_username = ? ${includeInactive ? '' : 'AND active = 1'} ORDER BY created_at`,
+            `SELECT * FROM scheduler_event_types WHERE owner_username = ? AND system_managed = 0 ${includeInactive ? '' : 'AND active = 1'} ORDER BY created_at`,
             [username]
         );
         const windows = await loadWindows(this.pool, rows.map((row: any) => row.id));
@@ -229,23 +464,26 @@ export class SchedulerStore {
     async saveEventType(username: string, input: SchedulerEventInput, eventId?: string): Promise<SchedulerEventType> {
         const entitlement = await this.requireOwner(username);
         const normalized = normalizeSchedulerEventInput(input);
+        const defaultSchedule = input.availabilityScheduleId === undefined && !eventId ? await this.getDefaultAvailability(username) : null;
+        const availabilityScheduleId = defaultSchedule?.id || normalized.availabilityScheduleId;
         if (normalized.destinationCalendarId !== null) await this.assertCalendarOwnership(username, normalized.destinationCalendarId);
         for (const calendarId of normalized.conflictCalendarIds) await this.assertCalendarOwnership(username, calendarId);
+        if (availabilityScheduleId !== null) await this.assertScheduleOwnership(username, availabilityScheduleId);
         const id = eventId || crypto.randomUUID();
         const connection = await this.pool.getConnection();
         try {
             await connection.beginTransaction();
             if (eventId) {
-                const [owned]: any = await connection.query('SELECT id FROM scheduler_event_types WHERE id = ? AND owner_username = ? FOR UPDATE', [id, username]);
+                const [owned]: any = await connection.query('SELECT id FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [id, username]);
                 if (!owned.length) throw new Error('Event type not found');
                 await connection.query(
                     `UPDATE scheduler_event_types SET slug=?, title=?, description=?, duration_minutes=?, interval_minutes=?,
                         buffer_before_minutes=?, buffer_after_minutes=?, minimum_notice_minutes=?, capacity=?, location_type=?,
-                        location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, active=? WHERE id=?`,
+                        location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, availability_schedule_id=?, active=? WHERE id=? AND system_managed = 0`,
                     [normalized.slug, normalized.title, normalized.description, normalized.durationMinutes, normalized.intervalMinutes,
                         normalized.bufferBeforeMinutes, normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                         normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
-                        JSON.stringify(normalized.conflictCalendarIds), normalized.active ? 1 : 0, id]
+                        JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, normalized.active ? 1 : 0, id]
                 );
                 await connection.query('DELETE FROM scheduler_availability_windows WHERE event_type_id = ?', [id]);
             } else {
@@ -253,13 +491,13 @@ export class SchedulerStore {
                     `INSERT INTO scheduler_event_types
                         (id, tenant_key, owner_username, slug, title, description, duration_minutes, interval_minutes,
                          buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, capacity, location_type,
-                         location_label, destination_calendar_id, conflict_calendar_ids, active)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                         location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, active)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
                     [id, entitlement.tenantKey, username, normalized.slug, normalized.title, normalized.description,
                         normalized.durationMinutes, normalized.intervalMinutes, normalized.bufferBeforeMinutes,
                         normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                         normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
-                        JSON.stringify(normalized.conflictCalendarIds), normalized.active ? 1 : 0]
+                        JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, normalized.active ? 1 : 0]
                 );
             }
             for (const window of normalized.windows) {
@@ -284,36 +522,40 @@ export class SchedulerStore {
         const entitlement = await this.requireOwner(username);
         const [bookings]: any = await this.pool.query('SELECT COUNT(*) AS total FROM scheduler_bookings WHERE event_type_id = ?', [eventId]);
         if (Number(bookings[0]?.total || 0) > 0) {
-            await this.pool.query('UPDATE scheduler_event_types SET active = 0 WHERE id = ? AND owner_username = ?', [eventId, username]);
+            const [result]: any = await this.pool.query('UPDATE scheduler_event_types SET active = 0 WHERE id = ? AND owner_username = ? AND system_managed = 0', [eventId, username]);
+            if (!result.affectedRows) throw new Error('Event type not found');
         } else {
-            const [result]: any = await this.pool.query('DELETE FROM scheduler_event_types WHERE id = ? AND owner_username = ?', [eventId, username]);
+            const [result]: any = await this.pool.query('DELETE FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0', [eventId, username]);
             if (!result.affectedRows) throw new Error('Event type not found');
         }
         await this.writeAudit(this.pool, entitlement.tenantKey, 'user', username, 'event_type.delete', 'event_type', eventId, {});
     }
 
     async getOwnedEventType(username: string, id: string): Promise<SchedulerEventType | null> {
-        const [rows]: any = await this.pool.query('SELECT * FROM scheduler_event_types WHERE id = ? AND owner_username = ? LIMIT 1', [id, username]);
+        const [rows]: any = await this.pool.query('SELECT * FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 LIMIT 1', [id, username]);
         if (!rows.length) return null;
         const windows = await loadWindows(this.pool, [id]);
         return eventFromRow(rows[0], windows.get(id) || []);
     }
 
-    async getPublicProfile(handle: string): Promise<{ entitlement: SchedulerEntitlement; events: SchedulerEventType[] } | null> {
+    async getPublicProfile(handle: string): Promise<{ entitlement: SchedulerEntitlement; events: SchedulerEventType[]; defaultEvent: SchedulerEventType | null } | null> {
         const [rows]: any = await this.pool.query(
             'SELECT * FROM scheduler_mailbox_entitlements WHERE public_handle = ? AND enabled = 1 AND published = 1 LIMIT 1',
             [handle.toLowerCase()]
         );
         if (!rows.length) return null;
         const entitlement = entitlementFromRow(rows[0]);
-        const events = await this.listEventTypes(entitlement.username, false);
-        return { entitlement, events };
+        const allEvents = await this.listEventTypes(entitlement.username, true);
+        const events = allEvents.filter((event) => event.active);
+        const defaultEvent = allEvents.length === 0 ? await this.getSystemDefaultEvent(entitlement.username, true) : null;
+        return { entitlement, events, defaultEvent };
     }
 
     async getPublicEvent(handle: string, slug: string): Promise<{ entitlement: SchedulerEntitlement; event: SchedulerEventType } | null> {
         const profile = await this.getPublicProfile(handle);
         if (!profile) return null;
-        const event = profile.events.find((candidate) => candidate.slug === slug.toLowerCase());
+        const event = profile.events.find((candidate) => candidate.slug === slug.toLowerCase())
+            || (profile.defaultEvent?.slug === slug ? profile.defaultEvent : null);
         return event ? { entitlement: profile.entitlement, event } : null;
     }
 
@@ -323,18 +565,28 @@ export class SchedulerStore {
         const result = await this.getPublicEvent(handle, slug);
         if (!result) return [];
         const busy = await this.busyIntervals(result.event, rangeStart, rangeEnd);
-        return calculateAvailability({
-            timeZone: result.entitlement.timeZone,
+        const schedule = result.event.availabilityScheduleId
+            ? await this.getAvailabilityScheduleById(result.event.availabilityScheduleId)
+            : null;
+        const overrides: AvailabilityOverride[] | undefined = schedule?.overrides.map((override) => ({
+            date: override.date,
+            windows: override.unavailableAllDay ? [] : override.windows,
+        }));
+        const slots = calculateAvailability({
+            timeZone: schedule?.timeZone || result.entitlement.timeZone,
             rangeStart,
             rangeEnd,
             durationMinutes: result.event.durationMinutes,
             intervalMinutes: result.event.intervalMinutes,
-            windows: result.event.windows,
+            windows: schedule?.windows || result.event.windows,
+            overrides,
             busy,
             bufferBeforeMinutes: result.event.bufferBeforeMinutes,
             bufferAfterMinutes: result.event.bufferAfterMinutes,
             minimumNoticeMinutes: result.event.minimumNoticeMinutes,
         });
+        const fullStarts = await this.fullCapacitySlotStarts(result.event, rangeStart, rangeEnd);
+        return slots.filter((slot) => !fullStarts.has(slot.start.getTime()));
     }
 
     async createBooking(handle: string, slug: string, input: SchedulerBookingInput): Promise<Record<string, unknown>> {
@@ -418,6 +670,7 @@ export class SchedulerStore {
             );
             await this.enqueue(connection, publicEvent.entitlement.tenantKey, bookingId, 'booking.confirmed', `booking:${bookingId}:confirmed`, {
                 bookingId, hostEmail: publicEvent.entitlement.username, bookerEmail, bookerName,
+                notificationFrom: publicEvent.entitlement.notificationFrom, notificationName: publicEvent.entitlement.displayName,
                 title: publicEvent.event.title, start: input.start.toISOString(), end: end.toISOString(),
                 timeZone: bookerTimeZone, cancelToken, rescheduleToken, ical,
             });
@@ -440,8 +693,10 @@ export class SchedulerStore {
         if (filter === 'past') clauses.push("slot_end < UTC_TIMESTAMP(3) AND status <> 'cancelled'");
         if (filter === 'cancelled') clauses.push("status = 'cancelled'");
         const [rows]: any = await this.pool.query(
-            `SELECT id, event_type_id, status, slot_start, slot_end, host_time_zone, booker_time_zone,
-                    booker_name, booker_email, booker_notes, event_snapshot, calendar_id, calendar_event_uid, created_at
+            `SELECT id, event_type_id, status, CAST(slot_start AS CHAR) AS slot_start_utc,
+                    CAST(slot_end AS CHAR) AS slot_end_utc, host_time_zone, booker_time_zone,
+                    booker_name, booker_email, booker_notes, event_snapshot, calendar_id, calendar_event_uid,
+                    UNIX_TIMESTAMP(created_at) * 1000 AS created_at_epoch
              FROM scheduler_bookings WHERE ${clauses.join(' AND ')} ORDER BY slot_start ASC`,
             [username]
         );
@@ -449,8 +704,8 @@ export class SchedulerStore {
             id: row.id,
             eventTypeId: row.event_type_id,
             status: row.status,
-            start: utcDate(row.slot_start),
-            end: utcDate(row.slot_end),
+            start: utcDate(row.slot_start_utc),
+            end: utcDate(row.slot_end_utc),
             hostTimeZone: row.host_time_zone,
             bookerTimeZone: row.booker_time_zone,
             bookerName: row.booker_name,
@@ -459,14 +714,15 @@ export class SchedulerStore {
             event: JSON.parse(row.event_snapshot),
             calendarId: row.calendar_id,
             calendarEventUid: row.calendar_event_uid,
-            createdAt: utcDate(row.created_at),
+            createdAt: new Date(Number(row.created_at_epoch)),
         }));
     }
 
     async getCapabilityBooking(token: string, scope: 'cancel' | 'reschedule'): Promise<Record<string, unknown> | null> {
         const column = scope === 'cancel' ? 'cancel_token_hash' : 'reschedule_token_hash';
         const [rows]: any = await this.pool.query(
-            `SELECT b.id, b.status, b.slot_start, b.slot_end, b.booker_name, b.booker_email, b.event_snapshot,
+            `SELECT b.id, b.status, CAST(b.slot_start AS CHAR) AS slot_start_utc,
+                    CAST(b.slot_end AS CHAR) AS slot_end_utc, b.booker_name, b.booker_email, b.event_snapshot,
                     m.public_handle
              FROM scheduler_bookings b
              JOIN scheduler_mailbox_entitlements m ON m.username = b.host_username
@@ -477,8 +733,8 @@ export class SchedulerStore {
         return {
             id: rows[0].id,
             status: rows[0].status,
-            start: utcDate(rows[0].slot_start),
-            end: utcDate(rows[0].slot_end),
+            start: utcDate(rows[0].slot_start_utc),
+            end: utcDate(rows[0].slot_end_utc),
             bookerName: rows[0].booker_name,
             bookerEmail: rows[0].booker_email,
             event: JSON.parse(rows[0].event_snapshot),
@@ -503,8 +759,9 @@ export class SchedulerStore {
     async rescheduleBookingByToken(token: string, newStart: Date): Promise<Record<string, unknown> | null> {
         if (!Number.isFinite(newStart.getTime())) throw new Error('A valid new start time is required');
         const [rows]: any = await this.pool.query(
-            `SELECT b.*, e.slug, e.duration_minutes, e.capacity, e.title, e.location_label,
-                    m.public_handle, m.time_zone
+            `SELECT b.*, CAST(b.slot_start AS CHAR) AS slot_start_utc,
+                    e.slug, e.duration_minutes, e.capacity, e.title, e.location_label,
+                    m.public_handle, m.time_zone, m.notification_from, m.display_name
              FROM scheduler_bookings b
              JOIN scheduler_event_types e ON e.id = b.event_type_id
              JOIN scheduler_mailbox_entitlements m ON m.username = b.host_username
@@ -549,7 +806,7 @@ export class SchedulerStore {
             await connection.query(
                 `UPDATE scheduler_slot_inventory SET confirmed_seats=GREATEST(confirmed_seats-1,0)
                  WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`,
-                [booking.tenant_key, booking.event_type_id, booking.host_username, booking.slot_start]
+                [booking.tenant_key, booking.event_type_id, booking.host_username, booking.slot_start_utc]
             );
             await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [booking.slot_hold_token]);
             await connection.query(
@@ -566,6 +823,7 @@ export class SchedulerStore {
             );
             await this.enqueue(connection, booking.tenant_key, booking.id, 'booking.rescheduled', `booking:${booking.id}:rescheduled:${newStart.toISOString()}`, {
                 bookingId: booking.id, hostEmail: booking.host_username, bookerEmail: booking.booker_email,
+                notificationFrom: booking.notification_from || booking.host_username, notificationName: booking.display_name,
                 bookerName: booking.booker_name, title: snapshot.title, start: newStart.toISOString(),
                 end: newEnd.toISOString(), timeZone: booking.booker_time_zone, ical,
             });
@@ -586,7 +844,13 @@ export class SchedulerStore {
         const connection = await this.pool.getConnection();
         try {
             await connection.beginTransaction();
-            const [rows]: any = await connection.query('SELECT * FROM scheduler_bookings WHERE id = ? FOR UPDATE', [booking.id]);
+            const [rows]: any = await connection.query(
+                `SELECT b.*, CAST(b.slot_start AS CHAR) AS slot_start_utc, CAST(b.slot_end AS CHAR) AS slot_end_utc,
+                        m.notification_from, m.display_name
+                 FROM scheduler_bookings b JOIN scheduler_mailbox_entitlements m ON m.username = b.host_username
+                 WHERE b.id = ? FOR UPDATE`,
+                [booking.id]
+            );
             const current = rows[0];
             if (!current || current.status === 'cancelled') {
                 await connection.commit();
@@ -604,7 +868,7 @@ export class SchedulerStore {
             await connection.query(
                 `UPDATE scheduler_slot_inventory SET confirmed_seats = GREATEST(confirmed_seats - 1, 0)
                  WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`,
-                [current.tenant_key, current.event_type_id, current.host_username, current.slot_start]
+                [current.tenant_key, current.event_type_id, current.host_username, current.slot_start_utc]
             );
             const snapshot = JSON.parse(current.event_snapshot);
             const cancellationIcal = buildSchedulerCalendarEvent({
@@ -612,8 +876,8 @@ export class SchedulerStore {
                 title: snapshot.title || 'Meeting',
                 description: current.booker_notes || '',
                 location: snapshot.locationLabel || '',
-                start: utcDate(current.slot_start),
-                end: utcDate(current.slot_end),
+                start: utcDate(current.slot_start_utc),
+                end: utcDate(current.slot_end_utc),
                 hostEmail: current.host_username,
                 bookerName: current.booker_name,
                 bookerEmail: current.booker_email,
@@ -622,7 +886,8 @@ export class SchedulerStore {
             });
             await this.enqueue(connection, current.tenant_key, current.id, 'booking.cancelled', `booking:${current.id}:cancelled`, {
                 bookingId: current.id, hostEmail: current.host_username, bookerEmail: current.booker_email,
-                bookerName: current.booker_name, start: utcDate(current.slot_start).toISOString(),
+                notificationFrom: current.notification_from || current.host_username, notificationName: current.display_name,
+                bookerName: current.booker_name, start: utcDate(current.slot_start_utc).toISOString(),
                 timeZone: current.booker_time_zone, event: snapshot, ical: cancellationIcal,
             });
             await this.writeAudit(connection, current.tenant_key, actorType, actorId, 'booking.cancel', 'booking', current.id, {});
@@ -639,6 +904,95 @@ export class SchedulerStore {
         const column = scope === 'cancel' ? 'cancel_token_hash' : 'reschedule_token_hash';
         const [rows]: any = await this.pool.query(`SELECT * FROM scheduler_bookings WHERE ${column} = ? AND action_tokens_expires_at > UTC_TIMESTAMP(3) LIMIT 1`, [schedulerTokenHash(token)]);
         return rows[0] || null;
+    }
+
+    private async loadAvailabilitySchedule(row: any): Promise<SchedulerAvailabilitySchedule> {
+        const [windowRows]: any = await this.pool.query(
+            `SELECT weekday, start_minute, end_minute FROM scheduler_schedule_windows
+             WHERE schedule_id = ? ORDER BY weekday, start_minute`,
+            [row.id]
+        );
+        const [overrideRows]: any = await this.pool.query(
+            `SELECT o.id, o.local_date, o.unavailable_all_day, w.start_minute, w.end_minute
+             FROM scheduler_schedule_overrides o
+             LEFT JOIN scheduler_override_windows w ON w.override_id = o.id
+             WHERE o.schedule_id = ? ORDER BY o.local_date, w.start_minute`,
+            [row.id]
+        );
+        const overrides = new Map<string, SchedulerScheduleOverride>();
+        for (const overrideRow of overrideRows) {
+            const id = String(overrideRow.id);
+            const date = overrideRow.local_date instanceof Date
+                ? `${overrideRow.local_date.getFullYear()}-${String(overrideRow.local_date.getMonth() + 1).padStart(2, '0')}-${String(overrideRow.local_date.getDate()).padStart(2, '0')}`
+                : String(overrideRow.local_date).slice(0, 10);
+            const override = overrides.get(id) || {
+                id,
+                date,
+                unavailableAllDay: booleanValue(overrideRow.unavailable_all_day),
+                windows: [],
+            };
+            if (overrideRow.start_minute != null) {
+                override.windows.push({ startMinute: Number(overrideRow.start_minute), endMinute: Number(overrideRow.end_minute) });
+            }
+            overrides.set(id, override);
+        }
+        return {
+            id: row.id,
+            name: row.name,
+            timeZone: row.time_zone,
+            isDefault: booleanValue(row.is_default),
+            published: booleanValue(row.published),
+            windows: windowRows.map((window: any) => ({
+                weekday: Number(window.weekday),
+                startMinute: Number(window.start_minute),
+                endMinute: Number(window.end_minute),
+            })),
+            overrides: Array.from(overrides.values()),
+        };
+    }
+
+    private async getAvailabilityScheduleById(id: string): Promise<SchedulerAvailabilitySchedule | null> {
+        const [rows]: any = await this.pool.query('SELECT * FROM scheduler_availability_schedules WHERE id = ? LIMIT 1', [id]);
+        return rows.length ? this.loadAvailabilitySchedule(rows[0]) : null;
+    }
+
+    private async assertScheduleOwnership(username: string, id: string): Promise<void> {
+        const [rows]: any = await this.pool.query(
+            'SELECT id FROM scheduler_availability_schedules WHERE id = ? AND owner_username = ? LIMIT 1',
+            [id, username]
+        );
+        if (!rows.length) throw new Error('Availability schedule not found');
+    }
+
+    private async ensureSystemDefaultEvent(db: Queryable, entitlement: SchedulerEntitlement, scheduleId: string, active: boolean): Promise<void> {
+        const [rows]: any = await db.query(
+            'SELECT id FROM scheduler_event_types WHERE owner_username = ? AND system_managed = 1 LIMIT 1',
+            [entitlement.username]
+        );
+        if (rows.length) {
+            await db.query(
+                `UPDATE scheduler_event_types SET duration_minutes = 30, interval_minutes = 30,
+                    availability_schedule_id = ?, destination_calendar_id = ?, active = ? WHERE id = ?`,
+                [scheduleId, entitlement.defaultCalendarId, active ? 1 : 0, rows[0].id]
+            );
+            return;
+        }
+        await db.query(
+            `INSERT INTO scheduler_event_types
+                (id, tenant_key, owner_username, slug, title, description, duration_minutes, interval_minutes,
+                 buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, capacity, location_type,
+                 location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, active)
+             VALUES (?, ?, ?, '_default', '30-minute meeting', '', 30, 30, 0, 0, 60, 1, 'custom', '', ?, '[]', ?, 1, ?)`,
+            [crypto.randomUUID(), entitlement.tenantKey, entitlement.username, entitlement.defaultCalendarId, scheduleId, active ? 1 : 0]
+        );
+    }
+
+    private async getSystemDefaultEvent(username: string, activeOnly: boolean): Promise<SchedulerEventType | null> {
+        const [rows]: any = await this.pool.query(
+            `SELECT * FROM scheduler_event_types WHERE owner_username = ? AND system_managed = 1 ${activeOnly ? 'AND active = 1' : ''} LIMIT 1`,
+            [username]
+        );
+        return rows.length ? eventFromRow(rows[0], []) : null;
     }
 
     private async busyIntervals(event: SchedulerEventType, rangeStart: Date, rangeEnd: Date): Promise<BusyInterval[]> {
@@ -662,6 +1016,23 @@ export class SchedulerStore {
         return busy;
     }
 
+    private async fullCapacitySlotStarts(event: SchedulerEventType, rangeStart: Date, rangeEnd: Date): Promise<Set<number>> {
+        const [rows]: any = await this.pool.query(
+            `SELECT CAST(i.slot_start AS CHAR) AS slot_start_utc, i.capacity, i.confirmed_seats,
+                    COALESCE(SUM(CASE WHEN h.status = 'held' AND h.expires_at > UTC_TIMESTAMP(3) THEN h.seats ELSE 0 END), 0) AS active_held_seats
+             FROM scheduler_slot_inventory i
+             LEFT JOIN scheduler_slot_holds h
+               ON h.tenant_key = i.tenant_key AND h.event_type_key = i.event_type_key
+              AND h.host_username = i.host_username AND h.slot_start = i.slot_start AND h.slot_end = i.slot_end
+             WHERE i.tenant_key = ? AND i.event_type_key = ? AND i.host_username = ?
+               AND i.slot_start >= ? AND i.slot_start < ?
+             GROUP BY i.slot_start, i.capacity, i.confirmed_seats
+             HAVING i.confirmed_seats + active_held_seats >= i.capacity`,
+            [event.tenantKey, event.id, event.ownerUsername, mysqlDate(rangeStart), mysqlDate(rangeEnd)]
+        );
+        return new Set(rows.map((row: any) => utcDate(row.slot_start_utc).getTime()));
+    }
+
     private async assertCalendarOwnership(username: string, calendarId: number): Promise<any> {
         const [rows]: any = await this.pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ? LIMIT 1', [calendarId, username]);
         if (!rows.length) throw new Error('Calendar not found');
@@ -670,24 +1041,27 @@ export class SchedulerStore {
 
     private async bookingByIdempotency(tenantKey: string, key: string): Promise<Record<string, unknown> | null> {
         const [rows]: any = await this.pool.query(
-            'SELECT id, status, slot_start, slot_end FROM scheduler_bookings WHERE tenant_key = ? AND idempotency_key = ? LIMIT 1',
+            'SELECT id, status, CAST(slot_start AS CHAR) AS slot_start_utc, CAST(slot_end AS CHAR) AS slot_end_utc FROM scheduler_bookings WHERE tenant_key = ? AND idempotency_key = ? LIMIT 1',
             [tenantKey, key]
         );
-        return rows.length ? { id: rows[0].id, status: rows[0].status, start: utcDate(rows[0].slot_start), end: utcDate(rows[0].slot_end) } : null;
+        return rows.length ? { id: rows[0].id, status: rows[0].status, start: utcDate(rows[0].slot_start_utc), end: utcDate(rows[0].slot_end_utc) } : null;
     }
 
     private async releaseHold(token: string): Promise<void> {
         const connection = await this.pool.getConnection();
         try {
             await connection.beginTransaction();
-            const [rows]: any = await connection.query('SELECT * FROM scheduler_slot_holds WHERE hold_token = ? FOR UPDATE', [token]);
+            const [rows]: any = await connection.query(
+                'SELECT *, CAST(slot_start AS CHAR) AS slot_start_utc FROM scheduler_slot_holds WHERE hold_token = ? FOR UPDATE',
+                [token]
+            );
             const hold = rows[0];
             if (hold?.status === 'held') {
                 await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=?", [token]);
                 await connection.query(
                     `UPDATE scheduler_slot_inventory SET held_seats=GREATEST(held_seats-?,0)
                      WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`,
-                    [hold.seats, hold.tenant_key, hold.event_type_key, hold.host_username, hold.slot_start]
+                    [hold.seats, hold.tenant_key, hold.event_type_key, hold.host_username, hold.slot_start_utc]
                 );
             }
             await connection.commit();

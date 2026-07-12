@@ -10,9 +10,9 @@
       "source": "https://calendly.com/features/",
       "observedAt": "2026-07-10",
       "status": "implemented",
-      "phase": "phase-0",
-      "test": "webmail-backend/test/scheduler-availability.test.cjs",
-      "release": null
+      "phase": "phase-1",
+      "test": "webmail-backend/test/scheduler-phase1-db.test.cjs",
+      "release": "phase-1"
     },
     {
       "id": "individual.slot-capacity",

@@ -12,6 +12,7 @@ export interface SchedulerEventInput {
     locationLabel?: string;
     destinationCalendarId?: number | null;
     conflictCalendarIds?: number[];
+    availabilityScheduleId?: string | null;
     active?: boolean;
     windows?: Array<{
         weekday: number;

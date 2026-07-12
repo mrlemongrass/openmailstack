@@ -52,6 +52,8 @@ export const schedulerConfig = {
     notificationFrom: optional('OMS_SCHEDULER_NOTIFICATION_FROM', `scheduler@${serverConfig.defaultDomain || 'localhost'}`),
     smtpHost: optional('OMS_SCHEDULER_SMTP_HOST', optional('OMS_SMTP_HOST', '127.0.0.1')),
     smtpPort: parseNumber('OMS_SCHEDULER_SMTP_PORT', 25),
+    smtpServerName: optional('OMS_SCHEDULER_SMTP_SERVER_NAME'),
+    smtpRejectUnauthorized: parseBoolean('OMS_SCHEDULER_SMTP_REJECT_UNAUTHORIZED', true),
 };
 
 if (schedulerConfig.enabled && (!schedulerConfig.publicBaseUrl || schedulerConfig.allowedHosts.length === 0)) {

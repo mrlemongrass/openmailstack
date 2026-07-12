@@ -217,5 +217,64 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(Number(consumptionAudits[0].total), 1);
     await store.cancelBookingByToken(winner.cancelToken);
 
+    const oneOffLink = await store.rotatePrivateLink(username, event.id, null, false, {
+        timeZone: 'America/Phoenix',
+        windows: [{ date: '2026-07-13', startMinute: 660, endMinute: 720 }],
+    });
+    assert.equal(oneOffLink.state.oneOff, true);
+    assert.equal(oneOffLink.state.singleUse, true, 'one-off links must always be single-use');
+    assert.deepEqual(oneOffLink.state.oneOffWindows, [{ date: '2026-07-13', startMinute: 660, endMinute: 720 }]);
+    await pool.query(
+        `INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, 'one-off-busy-test', ?)
+         ON DUPLICATE KEY UPDATE ical_data=VALUES(ical_data)`,
+        [calendarId, 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:one-off-busy-test\r\nDTSTART:20260713T180000Z\r\nDTEND:20260713T183000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n']
+    );
+    const oneOffSlotsWithConflict = await store.listSlots(
+        'phase1', event.slug, new Date('2026-07-13T15:00:00.000Z'), new Date('2026-07-13T20:00:00.000Z'), oneOffLink.token
+    );
+    assert.deepEqual(oneOffSlotsWithConflict.map(slot => slot.start.toISOString()), ['2026-07-13T18:30:00.000Z']);
+    await pool.query("DELETE FROM events WHERE calendar_id=? AND uid='one-off-busy-test'", [calendarId]);
+    const oneOffSlots = await store.listSlots(
+        'phase1', event.slug, new Date('2026-07-13T15:00:00.000Z'), new Date('2026-07-13T20:00:00.000Z'), oneOffLink.token
+    );
+    assert.deepEqual(oneOffSlots.map(slot => slot.start.toISOString()), [
+        '2026-07-13T18:00:00.000Z',
+        '2026-07-13T18:30:00.000Z',
+    ], 'one-off windows must replace the recurring event schedule');
+    await assert.rejects(() => store.createBooking('phase1', event.slug, {
+        eventTypeId: event.id,
+        start: new Date('2026-07-13T17:30:00.000Z'),
+        bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Outside One Off',
+        bookerEmail: 'outside-one-off@example.net',
+        idempotencyKey: 'phase1-one-off-outside-0001',
+        privateAccessToken: oneOffLink.token,
+    }), /no longer available/);
+    assert.equal((await store.getPrivateLinkState(username, event.id)).remainingUses, 1, 'failed one-off booking must preserve the use');
+    const oneOffBookingInput = {
+        eventTypeId: event.id,
+        start: new Date('2026-07-13T18:00:00.000Z'),
+        bookerTimeZone: 'America/Phoenix',
+        bookerName: 'One Off Guest',
+        bookerEmail: 'one-off@example.net',
+        idempotencyKey: 'phase1-one-off-success-0001',
+        privateAccessToken: oneOffLink.token,
+    };
+    const oneOffBooking = await store.createBooking('phase1', event.slug, oneOffBookingInput);
+    assert.equal(oneOffBooking.status, 'confirmed');
+    assert.equal((await store.getPrivateLinkState(username, event.id)).consumed, true);
+    assert.equal(await store.getPublicEvent('phase1', event.slug, oneOffLink.token), null);
+    const oneOffReplay = await store.createBooking('phase1', event.slug, oneOffBookingInput);
+    assert.equal(oneOffReplay.id, oneOffBooking.id);
+    assert.equal(oneOffReplay.idempotentReplay, true);
+    const [storedOneOffLinks] = await pool.query(
+        'SELECT one_off_time_zone, one_off_windows, uses_remaining FROM scheduler_private_links WHERE event_type_id=? AND revoked_at IS NULL',
+        [event.id]
+    );
+    assert.equal(storedOneOffLinks[0].one_off_time_zone, 'America/Phoenix');
+    assert.deepEqual(JSON.parse(storedOneOffLinks[0].one_off_windows), [{ date: '2026-07-13', startMinute: 660, endMinute: 720 }]);
+    assert.equal(storedOneOffLinks[0].uses_remaining, 0);
+    await store.cancelBookingByToken(oneOffBooking.cancelToken);
+
     await pool.end();
 });

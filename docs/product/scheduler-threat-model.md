@@ -66,6 +66,7 @@ The first-party UI must use these same APIs. No UI-only permission rule is autho
 - Private event tokens are 256-bit random values stored only as hashes. Owner rotation serializes on the event row, expiry is bounded, switching away from Private revokes active tokens, and missing/wrong/expired/revoked tokens share generic public failure behavior.
 - Private event links carry the bearer value in a URL fragment so it is absent from HTTP access logs and referrer headers. The public app moves it into tab-only storage, removes it from the address bar, sends it only in `X-Scheduler-Access`, and marks token-authorized API responses `no-store`.
 - Single-use private links consume only when a booking commits. The booking transaction locks the link row, decrements `uses_remaining`, records `consumed_at`, and writes a sanitized audit event; rollback preserves the use. The same booking attempt retains one idempotency key so a lost response can replay after token consumption.
+- One-off private links store only the owner-selected timezone and bounded date/time windows alongside the hashed capability. Creation accepts one to fourteen windows within 62 days that each fit the event duration, forces single-use behavior, and requires Private visibility. Slot and booking authorization replace recurring availability with those windows while still applying native calendar conflicts, notice, buffers, capacity, and transactional consumption.
 - Disabling entitlement unpublishes public resources and denies owner management without deleting historical bookings.
 
 ### Required tests
@@ -76,6 +77,7 @@ The first-party UI must use these same APIs. No UI-only permission rule is autho
 - Capability token mismatch returns generic not-found.
 - Disabled/unpublished/unknown public profiles are indistinguishable.
 - Two simultaneous bookings against the last private-link use produce exactly one confirmed booking, one counter decrement, and one consumption audit; an idempotent replay returns the winner.
+- One-off availability cannot expose recurring slots, cannot bypass busy-calendar or capacity checks, and an out-of-window or rolled-back booking cannot consume the link.
 
 ## 5. Availability And Calendar Privacy
 

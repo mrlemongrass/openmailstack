@@ -4584,3 +4584,56 @@ Ending git state: clean after the focused release commit
 ### Next recommended task
 
 Add one-off private links with owner-selected customized availability, reusing the existing hash-only transport and transactional single-use boundary.
+
+## 2026-07-12 — Scheduler one-off availability links
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `c4a1cb35`
+Ending git state: clean after the focused Phase 2 release commit
+
+### Selected task
+
+Complete the private-links capability with one-off private links whose availability is selected by the owner instead of inherited from the recurring schedule.
+
+### Acceptance criteria
+
+- [x] Owners can select one to fourteen date/time windows in their Scheduler timezone within the next 62 days.
+- [x] Each window must fit the event duration and one-off links always become single-use.
+- [x] One-off windows replace recurring availability while retaining interval, notice, busy-calendar, buffer, and capacity checks.
+- [x] Views, slot reads, out-of-window bookings, and failed transactions do not consume the link; a successful booking does.
+- [x] Existing reusable/single-use links, reschedule capabilities, rotation, expiry, revocation, and hash-only fragment transport remain unchanged.
+- [x] Owner controls work without horizontal overflow on desktop and mobile.
+
+### Changes
+
+- Added additive, idempotent migration `008_scheduler_one_off_availability.sql` with optional timezone and serialized-window columns.
+- Added bounded IANA-timezone/date/window normalization and fail-closed persisted-state parsing.
+- Applied custom windows as date overrides over an empty weekly schedule, preserving the existing availability and transactional booking boundaries.
+- Added owner one-off controls, automatic single-use state, custom-window status reload, and a 62-day public slot horizon.
+- Marked `individual.private-links` implemented in the capability register and updated the product, threat, architecture, roadmap, and project-memory contracts.
+
+### Proof / checks run
+
+- Normal backend suite: 81 passed and two optional database-gated tests skipped.
+- Disposable MariaDB: migrations `001` through `008` applied twice; all 83 tests passed with no skips, including busy-calendar removal, recurring-schedule exclusion, out-of-window rejection, successful consumption, and idempotent replay.
+- Frontend lint and production build passed; the full integration suite and Scheduler documentation/static guards passed.
+- Deployed owner UI passed at 1440x900 and 390x844 with one-off state restored, no page errors, and no horizontal overflow.
+- Live reversible event/link check proved one-off schema/state, custom-slot filtering, and failed-booking preservation; the link was revoked and temporary event removed without creating a real booking or email.
+- Migration `008` is recorded once, both columns exist, the deployed backend matches tested artifacts, `openmailstack.service` is active, Nginx validates, and staging smoke passes.
+- The previously fixed mail-reader refresh race still passes in the deployed browser.
+
+### Deployment and rollback
+
+- Root-only backend, frontend, and Scheduler-table snapshot: `/var/backups/openmailstack/20260712T032110Z_scheduler_one_off`.
+- Applied only additive migration `008`, synchronized the tested backend, restarted only `openmailstack.service`, and deployed the tested frontend.
+
+### Risks and remaining work
+
+- One-off availability is intentionally bounded to 14 windows and 62 days; owners rotate the link to offer a different set.
+- The capability remains a bearer secret until successful booking, owner revocation/rotation, or expiry. URL-fragment and hash-at-rest handling are unchanged.
+- Clean-VM validation remains deferred until the second development Linux server is available; remaining physical-client observation is still pending.
+
+### Next recommended task
+
+Add owner-configurable required/optional booking questions with immutable booking answer snapshots, strict validation, confirmation rendering, and secret-safe audit/log boundaries.

@@ -21,6 +21,26 @@ const jsonArray = (value) => {
         return [];
     }
 };
+const oneOffAvailabilityFromRow = (row) => {
+    if (!row.one_off_time_zone || !row.one_off_windows)
+        return null;
+    try {
+        const windows = JSON.parse(String(row.one_off_windows));
+        if (!Array.isArray(windows))
+            return null;
+        return {
+            timeZone: String(row.one_off_time_zone),
+            windows: windows.map((window) => ({
+                date: String(window.date),
+                startMinute: Number(window.startMinute),
+                endMinute: Number(window.endMinute),
+            })),
+        };
+    }
+    catch {
+        return null;
+    }
+};
 const entitlementFromRow = (row) => ({
     username: row.username,
     tenantKey: row.tenant_key,
@@ -431,47 +451,65 @@ class SchedulerStore {
         const event = await this.getOwnedEventType(username, eventId);
         if (!event)
             throw new Error('Event type not found');
-        const [rows] = await this.pool.query(`SELECT token_hint, max_uses, uses_remaining, consumed_at,
+        const [rows] = await this.pool.query(`SELECT token_hint, max_uses, uses_remaining, consumed_at, one_off_time_zone, one_off_windows,
                     CAST(expires_at AS CHAR) AS expires_at_utc
              FROM scheduler_private_links
              WHERE event_type_id = ? AND revoked_at IS NULL
              ORDER BY created_at DESC LIMIT 1`, [eventId]);
         if (!rows.length)
-            return { active: false, expired: false, consumed: false, singleUse: false, remainingUses: null, tokenHint: null, expiresAt: null };
+            return {
+                active: false, expired: false, consumed: false, singleUse: false, remainingUses: null,
+                oneOff: false, oneOffTimeZone: null, oneOffWindows: [], tokenHint: null, expiresAt: null,
+            };
         const expiresAt = rows[0].expires_at_utc ? utcDate(rows[0].expires_at_utc) : null;
         const expired = Boolean(expiresAt && expiresAt <= new Date());
         const remainingUses = rows[0].uses_remaining === null ? null : Number(rows[0].uses_remaining);
         const consumed = rows[0].max_uses !== null && remainingUses === 0;
+        const oneOffAvailability = oneOffAvailabilityFromRow(rows[0]);
         return {
             active: !expired && !consumed,
             expired,
             consumed,
             singleUse: Number(rows[0].max_uses) === 1,
             remainingUses,
+            oneOff: Boolean(oneOffAvailability),
+            oneOffTimeZone: oneOffAvailability?.timeZone || null,
+            oneOffWindows: oneOffAvailability?.windows || [],
             tokenHint: rows[0].token_hint,
             expiresAt,
         };
     }
-    async rotatePrivateLink(username, eventId, expiry, singleUse = false) {
+    async rotatePrivateLink(username, eventId, expiry, singleUse = false, oneOffInput = null) {
         const entitlement = await this.requireOwner(username);
         const expiresAt = (0, phase1_1.normalizePrivateLinkExpiry)(expiry);
         const token = (0, phase1_1.createSchedulerToken)();
         const tokenHash = (0, phase1_1.schedulerTokenHash)(token);
         const tokenHint = token.slice(-8);
+        let oneOffAvailability = null;
+        let effectiveSingleUse = singleUse;
         const connection = await this.pool.getConnection();
         try {
             await connection.beginTransaction();
-            const [events] = await connection.query('SELECT id FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [eventId, username]);
+            const [events] = await connection.query(`SELECT id, duration_minutes, visibility FROM scheduler_event_types
+                 WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE`, [eventId, username]);
             if (!events.length)
                 throw new Error('Event type not found');
+            oneOffAvailability = (0, phase1_1.normalizeOneOffAvailability)(oneOffInput, Number(events[0].duration_minutes));
+            if (oneOffAvailability && events[0].visibility !== 'private')
+                throw new Error('One-off links require a private event type');
+            effectiveSingleUse = singleUse || Boolean(oneOffAvailability);
             await connection.query('UPDATE scheduler_private_links SET revoked_at = UTC_TIMESTAMP(3) WHERE event_type_id = ? AND revoked_at IS NULL', [eventId]);
             await connection.query(`INSERT INTO scheduler_private_links
-                    (id, tenant_key, event_type_id, token_hash, token_hint, expires_at, max_uses, uses_remaining)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [crypto_1.default.randomUUID(), entitlement.tenantKey, eventId, tokenHash, tokenHint, expiresAt ? mysqlDate(expiresAt) : null,
-                singleUse ? 1 : null, singleUse ? 1 : null]);
+                    (id, tenant_key, event_type_id, token_hash, token_hint, expires_at, max_uses, uses_remaining,
+                     one_off_time_zone, one_off_windows)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [crypto_1.default.randomUUID(), entitlement.tenantKey, eventId, tokenHash, tokenHint, expiresAt ? mysqlDate(expiresAt) : null,
+                effectiveSingleUse ? 1 : null, effectiveSingleUse ? 1 : null,
+                oneOffAvailability?.timeZone || null, oneOffAvailability ? JSON.stringify(oneOffAvailability.windows) : null]);
             await this.writeAudit(connection, entitlement.tenantKey, 'user', username, 'private_link.rotate', 'event_type', eventId, {
                 expiresAt: expiresAt?.toISOString() || null,
-                singleUse,
+                singleUse: effectiveSingleUse,
+                oneOff: Boolean(oneOffAvailability),
+                oneOffWindowCount: oneOffAvailability?.windows.length || 0,
             });
             await connection.commit();
         }
@@ -486,8 +524,11 @@ class SchedulerStore {
                 active: true,
                 expired: false,
                 consumed: false,
-                singleUse,
-                remainingUses: singleUse ? 1 : null,
+                singleUse: effectiveSingleUse,
+                remainingUses: effectiveSingleUse ? 1 : null,
+                oneOff: Boolean(oneOffAvailability),
+                oneOffTimeZone: oneOffAvailability?.timeZone || null,
+                oneOffWindows: oneOffAvailability?.windows || [],
                 tokenHint,
                 expiresAt,
             } };
@@ -516,21 +557,23 @@ class SchedulerStore {
         const candidate = String(token || '').trim();
         if (candidate.length < 32 || candidate.length > 128)
             return null;
-        const [rows] = await this.pool.query(`SELECT id, uses_remaining FROM scheduler_private_links
+        const [rows] = await this.pool.query(`SELECT id, uses_remaining, one_off_time_zone, one_off_windows FROM scheduler_private_links
              WHERE event_type_id = ? AND token_hash = ? AND revoked_at IS NULL
                AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP(3))
                AND (uses_remaining IS NULL OR uses_remaining > 0)
              LIMIT 1`, [eventId, (0, phase1_1.schedulerTokenHash)(candidate)]);
         if (!rows.length)
             return null;
+        const oneOffAvailability = oneOffAvailabilityFromRow(rows[0]);
+        if ((rows[0].one_off_time_zone || rows[0].one_off_windows) && !oneOffAvailability)
+            return null;
         return {
             id: rows[0].id,
             remainingUses: rows[0].uses_remaining === null ? null : Number(rows[0].uses_remaining),
+            oneOffAvailability,
         };
     }
-    async privateLinkAllows(eventId, token) {
-        if (await this.activePrivateLink(eventId, token))
-            return true;
+    async rescheduleCapabilityAllows(eventId, token) {
         const candidate = String(token || '').trim();
         if (candidate.length < 32 || candidate.length > 128)
             return false;
@@ -539,6 +582,10 @@ class SchedulerStore {
                AND action_tokens_expires_at > UTC_TIMESTAMP(3)
              LIMIT 1`, [eventId, (0, phase1_1.schedulerTokenHash)(candidate)]);
         return bookingRows.length > 0;
+    }
+    async privateLinkAllows(eventId, token) {
+        return Boolean(await this.activePrivateLink(eventId, token))
+            || await this.rescheduleCapabilityAllows(eventId, token);
     }
     async getPublicProfile(handle) {
         const [rows] = await this.pool.query('SELECT * FROM scheduler_mailbox_entitlements WHERE public_handle = ? AND enabled = 1 AND published = 1 LIMIT 1', [handle.toLowerCase()]);
@@ -571,21 +618,38 @@ class SchedulerStore {
         const result = await this.getPublicEvent(handle, slug, privateAccessToken);
         if (!result)
             return [];
+        const privateLink = result.event.visibility === 'private'
+            ? await this.activePrivateLink(result.event.id, privateAccessToken)
+            : null;
+        if (result.event.visibility === 'private'
+            && !privateLink
+            && !(await this.rescheduleCapabilityAllows(result.event.id, privateAccessToken)))
+            return [];
         const busy = await this.busyIntervals(result.event, rangeStart, rangeEnd);
         const schedule = result.event.availabilityScheduleId
             ? await this.getAvailabilityScheduleById(result.event.availabilityScheduleId)
             : null;
-        const overrides = schedule?.overrides.map((override) => ({
-            date: override.date,
-            windows: override.unavailableAllDay ? [] : override.windows,
-        }));
+        const oneOffAvailability = privateLink?.oneOffAvailability || null;
+        const oneOffWindows = new Map();
+        for (const window of oneOffAvailability?.windows || []) {
+            oneOffWindows.set(window.date, [
+                ...(oneOffWindows.get(window.date) || []),
+                { startMinute: window.startMinute, endMinute: window.endMinute },
+            ]);
+        }
+        const overrides = oneOffAvailability
+            ? Array.from(oneOffWindows, ([date, windows]) => ({ date, windows }))
+            : schedule?.overrides.map((override) => ({
+                date: override.date,
+                windows: override.unavailableAllDay ? [] : override.windows,
+            }));
         const slots = (0, availability_1.calculateAvailability)({
-            timeZone: schedule?.timeZone || result.entitlement.timeZone,
+            timeZone: oneOffAvailability?.timeZone || schedule?.timeZone || result.entitlement.timeZone,
             rangeStart,
             rangeEnd,
             durationMinutes: result.event.durationMinutes,
             intervalMinutes: result.event.intervalMinutes,
-            windows: schedule?.windows || result.event.windows,
+            windows: oneOffAvailability ? [] : schedule?.windows || result.event.windows,
             overrides,
             busy,
             bufferBeforeMinutes: result.event.bufferBeforeMinutes,

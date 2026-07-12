@@ -6,12 +6,15 @@ import {
     assertTimeZone,
     buildSchedulerCalendarEvent,
     createSchedulerToken,
+    normalizeOneOffAvailability,
     normalizePrivateLinkExpiry,
     defaultSchedulerHandle,
     normalizeSchedulerEventInput,
     normalizeSchedulerHandle,
     schedulerTokenHash,
     type SchedulerEventInput,
+    type SchedulerOneOffAvailability,
+    type SchedulerOneOffWindow,
 } from './phase1';
 import { ensureDefaultCalendar, expandRecurringEvent, getVisibleCalendars, parseIcalEvent } from '../calendar-utils';
 
@@ -102,8 +105,17 @@ export interface SchedulerPrivateLinkState {
     consumed: boolean;
     singleUse: boolean;
     remainingUses: number | null;
+    oneOff: boolean;
+    oneOffTimeZone: string | null;
+    oneOffWindows: SchedulerOneOffWindow[];
     tokenHint: string | null;
     expiresAt: Date | null;
+}
+
+interface SchedulerActivePrivateLink {
+    id: string;
+    remainingUses: number | null;
+    oneOffAvailability: SchedulerOneOffAvailability | null;
 }
 
 const mysqlDate = (date: Date): string => date.toISOString().slice(0, 23).replace('T', ' ');
@@ -115,6 +127,24 @@ const jsonArray = (value: unknown): number[] => {
         return Array.isArray(parsed) ? parsed.map(Number).filter((item) => Number.isInteger(item) && item > 0) : [];
     } catch {
         return [];
+    }
+};
+
+const oneOffAvailabilityFromRow = (row: any): SchedulerOneOffAvailability | null => {
+    if (!row.one_off_time_zone || !row.one_off_windows) return null;
+    try {
+        const windows = JSON.parse(String(row.one_off_windows));
+        if (!Array.isArray(windows)) return null;
+        return {
+            timeZone: String(row.one_off_time_zone),
+            windows: windows.map((window: any) => ({
+                date: String(window.date),
+                startMinute: Number(window.startMinute),
+                endMinute: Number(window.endMinute),
+            })),
+        };
+    } catch {
+        return null;
     }
 };
 
@@ -566,57 +596,74 @@ export class SchedulerStore {
         const event = await this.getOwnedEventType(username, eventId);
         if (!event) throw new Error('Event type not found');
         const [rows]: any = await this.pool.query(
-            `SELECT token_hint, max_uses, uses_remaining, consumed_at,
+            `SELECT token_hint, max_uses, uses_remaining, consumed_at, one_off_time_zone, one_off_windows,
                     CAST(expires_at AS CHAR) AS expires_at_utc
              FROM scheduler_private_links
              WHERE event_type_id = ? AND revoked_at IS NULL
              ORDER BY created_at DESC LIMIT 1`,
             [eventId]
         );
-        if (!rows.length) return { active: false, expired: false, consumed: false, singleUse: false, remainingUses: null, tokenHint: null, expiresAt: null };
+        if (!rows.length) return {
+            active: false, expired: false, consumed: false, singleUse: false, remainingUses: null,
+            oneOff: false, oneOffTimeZone: null, oneOffWindows: [], tokenHint: null, expiresAt: null,
+        };
         const expiresAt = rows[0].expires_at_utc ? utcDate(rows[0].expires_at_utc) : null;
         const expired = Boolean(expiresAt && expiresAt <= new Date());
         const remainingUses = rows[0].uses_remaining === null ? null : Number(rows[0].uses_remaining);
         const consumed = rows[0].max_uses !== null && remainingUses === 0;
+        const oneOffAvailability = oneOffAvailabilityFromRow(rows[0]);
         return {
             active: !expired && !consumed,
             expired,
             consumed,
             singleUse: Number(rows[0].max_uses) === 1,
             remainingUses,
+            oneOff: Boolean(oneOffAvailability),
+            oneOffTimeZone: oneOffAvailability?.timeZone || null,
+            oneOffWindows: oneOffAvailability?.windows || [],
             tokenHint: rows[0].token_hint,
             expiresAt,
         };
     }
 
-    async rotatePrivateLink(username: string, eventId: string, expiry: unknown, singleUse = false): Promise<{ token: string; state: SchedulerPrivateLinkState }> {
+    async rotatePrivateLink(username: string, eventId: string, expiry: unknown, singleUse = false, oneOffInput: unknown = null): Promise<{ token: string; state: SchedulerPrivateLinkState }> {
         const entitlement = await this.requireOwner(username);
         const expiresAt = normalizePrivateLinkExpiry(expiry);
         const token = createSchedulerToken();
         const tokenHash = schedulerTokenHash(token);
         const tokenHint = token.slice(-8);
+        let oneOffAvailability: SchedulerOneOffAvailability | null = null;
+        let effectiveSingleUse = singleUse;
         const connection = await this.pool.getConnection();
         try {
             await connection.beginTransaction();
             const [events]: any = await connection.query(
-                'SELECT id FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE',
+                `SELECT id, duration_minutes, visibility FROM scheduler_event_types
+                 WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE`,
                 [eventId, username]
             );
             if (!events.length) throw new Error('Event type not found');
+            oneOffAvailability = normalizeOneOffAvailability(oneOffInput, Number(events[0].duration_minutes));
+            if (oneOffAvailability && events[0].visibility !== 'private') throw new Error('One-off links require a private event type');
+            effectiveSingleUse = singleUse || Boolean(oneOffAvailability);
             await connection.query(
                 'UPDATE scheduler_private_links SET revoked_at = UTC_TIMESTAMP(3) WHERE event_type_id = ? AND revoked_at IS NULL',
                 [eventId]
             );
             await connection.query(
                 `INSERT INTO scheduler_private_links
-                    (id, tenant_key, event_type_id, token_hash, token_hint, expires_at, max_uses, uses_remaining)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    (id, tenant_key, event_type_id, token_hash, token_hint, expires_at, max_uses, uses_remaining,
+                     one_off_time_zone, one_off_windows)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [crypto.randomUUID(), entitlement.tenantKey, eventId, tokenHash, tokenHint, expiresAt ? mysqlDate(expiresAt) : null,
-                    singleUse ? 1 : null, singleUse ? 1 : null]
+                    effectiveSingleUse ? 1 : null, effectiveSingleUse ? 1 : null,
+                    oneOffAvailability?.timeZone || null, oneOffAvailability ? JSON.stringify(oneOffAvailability.windows) : null]
             );
             await this.writeAudit(connection, entitlement.tenantKey, 'user', username, 'private_link.rotate', 'event_type', eventId, {
                 expiresAt: expiresAt?.toISOString() || null,
-                singleUse,
+                singleUse: effectiveSingleUse,
+                oneOff: Boolean(oneOffAvailability),
+                oneOffWindowCount: oneOffAvailability?.windows.length || 0,
             });
             await connection.commit();
         } catch (error) {
@@ -629,8 +676,11 @@ export class SchedulerStore {
             active: true,
             expired: false,
             consumed: false,
-            singleUse,
-            remainingUses: singleUse ? 1 : null,
+            singleUse: effectiveSingleUse,
+            remainingUses: effectiveSingleUse ? 1 : null,
+            oneOff: Boolean(oneOffAvailability),
+            oneOffTimeZone: oneOffAvailability?.timeZone || null,
+            oneOffWindows: oneOffAvailability?.windows || [],
             tokenHint,
             expiresAt,
         } };
@@ -660,11 +710,11 @@ export class SchedulerStore {
         }
     }
 
-    private async activePrivateLink(eventId: string, token: string): Promise<{ id: string; remainingUses: number | null } | null> {
+    private async activePrivateLink(eventId: string, token: string): Promise<SchedulerActivePrivateLink | null> {
         const candidate = String(token || '').trim();
         if (candidate.length < 32 || candidate.length > 128) return null;
         const [rows]: any = await this.pool.query(
-            `SELECT id, uses_remaining FROM scheduler_private_links
+            `SELECT id, uses_remaining, one_off_time_zone, one_off_windows FROM scheduler_private_links
              WHERE event_type_id = ? AND token_hash = ? AND revoked_at IS NULL
                AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP(3))
                AND (uses_remaining IS NULL OR uses_remaining > 0)
@@ -672,14 +722,16 @@ export class SchedulerStore {
             [eventId, schedulerTokenHash(candidate)]
         );
         if (!rows.length) return null;
+        const oneOffAvailability = oneOffAvailabilityFromRow(rows[0]);
+        if ((rows[0].one_off_time_zone || rows[0].one_off_windows) && !oneOffAvailability) return null;
         return {
             id: rows[0].id,
             remainingUses: rows[0].uses_remaining === null ? null : Number(rows[0].uses_remaining),
+            oneOffAvailability,
         };
     }
 
-    private async privateLinkAllows(eventId: string, token: string): Promise<boolean> {
-        if (await this.activePrivateLink(eventId, token)) return true;
+    private async rescheduleCapabilityAllows(eventId: string, token: string): Promise<boolean> {
         const candidate = String(token || '').trim();
         if (candidate.length < 32 || candidate.length > 128) return false;
         const [bookingRows]: any = await this.pool.query(
@@ -690,6 +742,11 @@ export class SchedulerStore {
             [eventId, schedulerTokenHash(candidate)]
         );
         return bookingRows.length > 0;
+    }
+
+    private async privateLinkAllows(eventId: string, token: string): Promise<boolean> {
+        return Boolean(await this.activePrivateLink(eventId, token))
+            || await this.rescheduleCapabilityAllows(eventId, token);
     }
 
     async getPublicProfile(handle: string): Promise<{ entitlement: SchedulerEntitlement; events: SchedulerEventType[]; defaultEvent: SchedulerEventType | null } | null> {
@@ -721,21 +778,37 @@ export class SchedulerStore {
         if (rangeEnd.getTime() - rangeStart.getTime() > 62 * 24 * 60 * 60 * 1000) throw new Error('Availability range cannot exceed 62 days');
         const result = await this.getPublicEvent(handle, slug, privateAccessToken);
         if (!result) return [];
+        const privateLink = result.event.visibility === 'private'
+            ? await this.activePrivateLink(result.event.id, privateAccessToken)
+            : null;
+        if (result.event.visibility === 'private'
+            && !privateLink
+            && !(await this.rescheduleCapabilityAllows(result.event.id, privateAccessToken))) return [];
         const busy = await this.busyIntervals(result.event, rangeStart, rangeEnd);
         const schedule = result.event.availabilityScheduleId
             ? await this.getAvailabilityScheduleById(result.event.availabilityScheduleId)
             : null;
-        const overrides: AvailabilityOverride[] | undefined = schedule?.overrides.map((override) => ({
-            date: override.date,
-            windows: override.unavailableAllDay ? [] : override.windows,
-        }));
+        const oneOffAvailability = privateLink?.oneOffAvailability || null;
+        const oneOffWindows = new Map<string, Array<{ startMinute: number; endMinute: number }>>();
+        for (const window of oneOffAvailability?.windows || []) {
+            oneOffWindows.set(window.date, [
+                ...(oneOffWindows.get(window.date) || []),
+                { startMinute: window.startMinute, endMinute: window.endMinute },
+            ]);
+        }
+        const overrides: AvailabilityOverride[] | undefined = oneOffAvailability
+            ? Array.from(oneOffWindows, ([date, windows]) => ({ date, windows }))
+            : schedule?.overrides.map((override) => ({
+                date: override.date,
+                windows: override.unavailableAllDay ? [] : override.windows,
+            }));
         const slots = calculateAvailability({
-            timeZone: schedule?.timeZone || result.entitlement.timeZone,
+            timeZone: oneOffAvailability?.timeZone || schedule?.timeZone || result.entitlement.timeZone,
             rangeStart,
             rangeEnd,
             durationMinutes: result.event.durationMinutes,
             intervalMinutes: result.event.intervalMinutes,
-            windows: schedule?.windows || result.event.windows,
+            windows: oneOffAvailability ? [] : schedule?.windows || result.event.windows,
             overrides,
             busy,
             bufferBeforeMinutes: result.event.bufferBeforeMinutes,

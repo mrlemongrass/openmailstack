@@ -1,6 +1,6 @@
 import type { Pool } from 'mysql2/promise';
 import { type AvailabilitySlot } from './availability';
-import { type SchedulerEventInput } from './phase1';
+import { type SchedulerEventInput, type SchedulerOneOffWindow } from './phase1';
 export interface SchedulerEntitlement {
     username: string;
     tenantKey: string;
@@ -86,6 +86,9 @@ export interface SchedulerPrivateLinkState {
     consumed: boolean;
     singleUse: boolean;
     remainingUses: number | null;
+    oneOff: boolean;
+    oneOffTimeZone: string | null;
+    oneOffWindows: SchedulerOneOffWindow[];
     tokenHint: string | null;
     expiresAt: Date | null;
 }
@@ -125,12 +128,13 @@ export declare class SchedulerStore {
     deleteEventType(username: string, eventId: string): Promise<void>;
     getOwnedEventType(username: string, id: string): Promise<SchedulerEventType | null>;
     getPrivateLinkState(username: string, eventId: string): Promise<SchedulerPrivateLinkState>;
-    rotatePrivateLink(username: string, eventId: string, expiry: unknown, singleUse?: boolean): Promise<{
+    rotatePrivateLink(username: string, eventId: string, expiry: unknown, singleUse?: boolean, oneOffInput?: unknown): Promise<{
         token: string;
         state: SchedulerPrivateLinkState;
     }>;
     revokePrivateLink(username: string, eventId: string): Promise<void>;
     private activePrivateLink;
+    private rescheduleCapabilityAllows;
     private privateLinkAllows;
     getPublicProfile(handle: string): Promise<{
         entitlement: SchedulerEntitlement;

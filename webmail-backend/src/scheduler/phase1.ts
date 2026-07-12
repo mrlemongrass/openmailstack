@@ -39,6 +39,17 @@ export interface BookingCalendarEvent {
     cancelled?: boolean;
 }
 
+export interface SchedulerOneOffWindow {
+    date: string;
+    startMinute: number;
+    endMinute: number;
+}
+
+export interface SchedulerOneOffAvailability {
+    timeZone: string;
+    windows: SchedulerOneOffWindow[];
+}
+
 const cleanSlug = (value: string, fallback: string): string => {
     const slug = value
         .trim()
@@ -143,6 +154,54 @@ export function normalizePrivateLinkExpiry(value: unknown, now = new Date()): Da
         throw new Error('Private link expiry cannot be more than 366 days away');
     }
     return expiresAt;
+}
+
+const localDateKey = (value: Date, timeZone: string): string => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).formatToParts(value);
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value || '';
+    return `${part('year')}-${part('month')}-${part('day')}`;
+};
+
+export function normalizeOneOffAvailability(value: unknown, durationMinutes: number, now = new Date()): SchedulerOneOffAvailability | null {
+    if (value == null) return null;
+    if (!Number.isInteger(durationMinutes) || durationMinutes < 5 || durationMinutes > 1440) {
+        throw new Error('A valid event duration is required for one-off availability');
+    }
+    const input = value as Partial<SchedulerOneOffAvailability>;
+    const timeZone = assertTimeZone(String(input.timeZone || ''));
+    if (!Array.isArray(input.windows) || input.windows.length < 1 || input.windows.length > 14) {
+        throw new Error('One-off availability requires between 1 and 14 windows');
+    }
+    const firstDate = localDateKey(now, timeZone);
+    const lastDate = localDateKey(new Date(now.getTime() + 62 * 24 * 60 * 60 * 1000), timeZone);
+    const normalized = input.windows.map((candidate) => {
+        const window = candidate as Partial<SchedulerOneOffWindow>;
+        const date = String(window.date || '').trim();
+        const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+        if (!match) throw new Error('One-off availability dates must use YYYY-MM-DD');
+        const probe = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+        if (probe.toISOString().slice(0, 10) !== date) throw new Error('One-off availability contains an invalid date');
+        if (date < firstDate || date > lastDate) throw new Error('One-off availability must be within the next 62 days');
+        const startMinute = Number(window.startMinute);
+        const endMinute = Number(window.endMinute);
+        if (!Number.isInteger(startMinute) || !Number.isInteger(endMinute)
+            || startMinute < 0 || endMinute > 1440 || startMinute >= endMinute) {
+            throw new Error('One-off availability contains an invalid time window');
+        }
+        if (endMinute - startMinute < durationMinutes) {
+            throw new Error('Each one-off availability window must fit the event duration');
+        }
+        return { date, startMinute, endMinute };
+    });
+    const windows = Array.from(new Map(normalized
+        .sort((left, right) => left.date.localeCompare(right.date) || left.startMinute - right.startMinute || left.endMinute - right.endMinute)
+        .map((window) => [`${window.date}:${window.startMinute}:${window.endMinute}`, window])).values());
+    return { timeZone, windows };
 }
 
 const icalEscape = (value: string): string => value

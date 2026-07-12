@@ -152,7 +152,7 @@ exports.schedulerRouter.get('/scheduler/v1/event-types/:id/private-link', authen
 exports.schedulerRouter.post('/scheduler/v1/event-types/:id/private-link', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
     try {
         const [rotated, entitlement, event] = await Promise.all([
-            store.rotatePrivateLink(req.user.username, req.params.id, req.body?.expiresAt, req.body?.singleUse === true),
+            store.rotatePrivateLink(req.user.username, req.params.id, req.body?.expiresAt, req.body?.singleUse === true, req.body?.oneOffAvailability ?? null),
             store.requireOwner(req.user.username),
             store.getOwnedEventType(req.user.username, req.params.id),
         ]);

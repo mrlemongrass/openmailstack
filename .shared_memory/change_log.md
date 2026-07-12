@@ -849,3 +849,11 @@ Future entry template:
 - Reliability: Public booking retries retain a stable idempotency key; a matching successful booking is returned before consumed-token authorization, while reuse for different booking details is rejected.
 - Verified: Normal backend tests passed 80/82 with the two database-gated tests skipped; disposable MariaDB applied migrations `001`-`007` twice and passed all 82 tests with no skips. Two simultaneous final-use bookings yielded one success, one database booking, one decrement/audit, and a successful replay.
 - Deployed: Safety snapshots `/var/backups/openmailstack/20260712_023355_message_viewer_fix` and `/var/backups/openmailstack/20260712_024448_scheduler_single_use`; migration `007`, tested backend, and tested frontend are live. Desktop/mobile owner UI, live failed-booking preservation, artifact equality, Nginx, service health, and staging smoke pass; temporary live data was removed.
+
+## 2026-07-12 Scheduler One-Off Availability Links
+
+- Changed: Added migration `008_scheduler_one_off_availability.sql`, backend validation/enforcement, and responsive owner controls for one to fourteen customized windows within the next 62 days.
+- Secured: One-off links require Private visibility and force single-use. They replace recurring availability but retain duration, interval, minimum-notice, busy-calendar, buffer, capacity, idempotency, and transaction boundaries. Audits record only the one-off flag and window count.
+- Verified: Normal backend tests passed 81/83 with two optional database tests skipped; disposable MariaDB applied migrations `001`-`008` twice and passed all 83 tests with no skips. Frontend lint/build, full integration, desktop/mobile UI, live custom-slot filtering, failed-booking preservation, the mail-reader browser regression, Nginx, service health, and staging smoke pass.
+- Deployed: Root-only rollback snapshot `/var/backups/openmailstack/20260712T032110Z_scheduler_one_off`; migration `008`, tested backend, and tested frontend are live. Temporary live Scheduler data was removed.
+- Follow-up: Add owner-configurable required/optional booking questions with immutable booking snapshots and secret-safe rendering/logging boundaries.

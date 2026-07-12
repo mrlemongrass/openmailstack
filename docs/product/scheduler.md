@@ -360,7 +360,7 @@ Implementation progress (2026-07-12):
 - [x] Unlisted event types are hidden from the public profile directory while remaining bookable at their exact owner-copyable URL. Existing event types remain listed by default, and owner management labels unlisted events explicitly.
 - [x] Private event links use 256-bit random bearer tokens stored only as SHA-256 hashes. Owners can generate, rotate, expire, and revoke links; tokens travel in URL fragments, move to tab-only storage, leave the address bar, and reach APIs only through a no-store request header.
 - [x] Owners can make a private link single-use. Page views and failed bookings do not consume it; the first successful booking decrements the remaining-use counter inside the booking transaction. Two concurrent final-use attempts yield one booking, and the successful request can be replayed with its original idempotency key after consumption.
-- [ ] One-off customized availability remains to complete the private-links capability.
+- [x] Owners can attach one to fourteen date/time windows in their Scheduler timezone to a one-off private link. Those windows replace recurring availability while retaining duration, interval, notice, conflict, buffer, and capacity checks; one-off links are always consumed only by a successful booking.
 
 Exit criteria:
 

@@ -34,6 +34,15 @@ export interface BookingCalendarEvent {
     sequence: number;
     cancelled?: boolean;
 }
+export interface SchedulerOneOffWindow {
+    date: string;
+    startMinute: number;
+    endMinute: number;
+}
+export interface SchedulerOneOffAvailability {
+    timeZone: string;
+    windows: SchedulerOneOffWindow[];
+}
 export declare function normalizeSchedulerHandle(value: string): string;
 export declare function defaultSchedulerHandle(username: string): string;
 export declare function normalizeSchedulerEventInput(input: SchedulerEventInput): Required<Omit<SchedulerEventInput, 'destinationCalendarId'>> & {
@@ -43,6 +52,7 @@ export declare function assertTimeZone(timeZone: string): string;
 export declare const schedulerTokenHash: (token: string) => string;
 export declare const createSchedulerToken: () => string;
 export declare function normalizePrivateLinkExpiry(value: unknown, now?: Date): Date | null;
+export declare function normalizeOneOffAvailability(value: unknown, durationMinutes: number, now?: Date): SchedulerOneOffAvailability | null;
 export declare function buildSchedulerCalendarEvent(event: BookingCalendarEvent): string;
 export declare function schedulerPublicUrl(baseUrl: string, handle: string, slug?: string): string;
 //# sourceMappingURL=phase1.d.ts.map

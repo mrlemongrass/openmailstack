@@ -32,8 +32,17 @@ export interface SchedulerPrivateLinkState {
   consumed: boolean;
   singleUse: boolean;
   remainingUses: number | null;
+  oneOff: boolean;
+  oneOffTimeZone: string | null;
+  oneOffWindows: SchedulerOneOffWindow[];
   tokenHint: string | null;
   expiresAt: string | null;
+}
+
+export interface SchedulerOneOffWindow {
+  date: string;
+  startMinute: number;
+  endMinute: number;
 }
 
 export interface SchedulerAvailabilityOverride {
@@ -142,9 +151,13 @@ export async function getSchedulerPrivateLink(id: string): Promise<SchedulerPriv
   return result.privateLink;
 }
 
-export async function rotateSchedulerPrivateLink(id: string, expiresAt: string | null, singleUse: boolean): Promise<{ privateLink: SchedulerPrivateLinkState; url: string }> {
+export async function rotateSchedulerPrivateLink(id: string, options: {
+  expiresAt: string | null;
+  singleUse: boolean;
+  oneOffAvailability: { timeZone: string; windows: SchedulerOneOffWindow[] } | null;
+}): Promise<{ privateLink: SchedulerPrivateLinkState; url: string }> {
   return request(`/api/scheduler/v1/event-types/${id}/private-link`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt, singleUse }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options),
   });
 }
 

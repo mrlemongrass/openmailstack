@@ -10,6 +10,7 @@ const {
     defaultSchedulerHandle,
     normalizeSchedulerEventInput,
     normalizeSchedulerHandle,
+    normalizeOneOffAvailability,
     normalizePrivateLinkExpiry,
     schedulerPublicUrl,
     schedulerTokenHash,
@@ -54,6 +55,26 @@ test('private-link tokens are high entropy and expiry is bounded', () => {
     assert.equal(normalizePrivateLinkExpiry('2026-07-13T00:00:00.000Z', now).toISOString(), '2026-07-13T00:00:00.000Z');
     assert.throws(() => normalizePrivateLinkExpiry('2026-07-11T00:00:00.000Z', now), /future/);
     assert.throws(() => normalizePrivateLinkExpiry('2027-08-01T00:00:00.000Z', now), /366 days/);
+});
+
+test('one-off availability is timezone-bound, bounded, and fits the event duration', () => {
+    const now = new Date('2026-07-12T12:00:00.000Z');
+    const availability = normalizeOneOffAvailability({
+        timeZone: 'America/Phoenix',
+        windows: [
+            { date: '2026-07-13', startMinute: 660, endMinute: 750 },
+            { date: '2026-07-13', startMinute: 660, endMinute: 750 },
+        ],
+    }, 60, now);
+    assert.equal(availability.timeZone, 'America/Phoenix');
+    assert.deepEqual(availability.windows, [{ date: '2026-07-13', startMinute: 660, endMinute: 750 }]);
+    assert.throws(() => normalizeOneOffAvailability({
+        timeZone: 'America/Phoenix', windows: [{ date: '2026-07-13', startMinute: 660, endMinute: 700 }],
+    }, 60, now), /fit the event duration/);
+    assert.throws(() => normalizeOneOffAvailability({
+        timeZone: 'America/Phoenix', windows: [{ date: '2026-10-01', startMinute: 660, endMinute: 750 }],
+    }, 60, now), /next 62 days/);
+    assert.throws(() => normalizeOneOffAvailability({ timeZone: 'UTC', windows: [] }, 60, now), /between 1 and 14/);
 });
 
 test('validates IANA timezones and builds canonical public links', () => {

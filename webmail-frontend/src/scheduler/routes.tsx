@@ -14,6 +14,7 @@ import {
   saveSchedulerProfile,
   type SchedulerEntitlement,
   type SchedulerEventType,
+  type SchedulerOneOffWindow,
   type SchedulerPrivateLinkState,
   type SchedulerState,
   type SchedulerWindow,
@@ -35,6 +36,11 @@ const durationLabel = (minutes: number) => {
   const hours = Math.floor(minutes / 60);
   const remainder = minutes % 60;
   return [hours && `${hours} ${hours === 1 ? 'hour' : 'hours'}`, remainder && `${remainder} ${remainder === 1 ? 'minute' : 'minutes'}`].filter(Boolean).join(' ');
+};
+const dateInTimeZone = (value: Date, timeZone: string) => {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
 };
 
 function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }: {
@@ -65,6 +71,14 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
   const [privateLinkUrl, setPrivateLinkUrl] = useState('');
   const [privateLinkExpiry, setPrivateLinkExpiry] = useState('');
   const [privateLinkSingleUse, setPrivateLinkSingleUse] = useState(false);
+  const [privateLinkOneOff, setPrivateLinkOneOff] = useState(false);
+  const [oneOffTimeZone, setOneOffTimeZone] = useState(defaultAvailability.timeZone);
+  const [oneOffDateAnchor] = useState(() => new Date());
+  const [oneOffWindows, setOneOffWindows] = useState<SchedulerOneOffWindow[]>(() => [{
+    date: dateInTimeZone(new Date(Date.now() + 36 * 60 * 60 * 1000), defaultAvailability.timeZone),
+    startMinute: 540,
+    endMinute: 600,
+  }]);
   const [privateLinkBusy, setPrivateLinkBusy] = useState(false);
   const [privateLinkLoading, setPrivateLinkLoading] = useState(Boolean(event?.id));
   const durationMinutes = form.durationMinutes ?? 30;
@@ -81,6 +95,9 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
     void getSchedulerPrivateLink(event.id).then(state => {
       setPrivateLink(state);
       setPrivateLinkSingleUse(state.singleUse);
+      setPrivateLinkOneOff(state.oneOff);
+      if (state.oneOffTimeZone) setOneOffTimeZone(state.oneOffTimeZone);
+      if (state.oneOffWindows.length) setOneOffWindows(state.oneOffWindows);
       if (state.expiresAt) {
         const value = new Date(state.expiresAt);
         const local = new Date(value.getTime() - value.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -106,6 +123,16 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
     setForm({ ...form, windows: (form.windows || []).map(window => window.weekday === weekday ? { ...window, [key]: value } : window) });
   };
 
+  const privateLinkOptions = () => ({
+    expiresAt: privateLinkExpiry ? new Date(privateLinkExpiry).toISOString() : null,
+    singleUse: privateLinkSingleUse || privateLinkOneOff,
+    oneOffAvailability: privateLinkOneOff ? { timeZone: oneOffTimeZone, windows: oneOffWindows } : null,
+  });
+
+  const updateOneOffWindow = (index: number, patch: Partial<SchedulerOneOffWindow>) => {
+    setOneOffWindows(current => current.map((window, windowIndex) => windowIndex === index ? { ...window, ...patch } : window));
+  };
+
   const submit = async (eventSubmit: React.FormEvent) => {
     eventSubmit.preventDefault();
     if (!durationValid) { setError('Duration must be between 5 minutes and 24 hours'); return; }
@@ -116,8 +143,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
         setForm(saved);
         setSection('advanced');
         await onSaved(false);
-        const expiresAt = privateLinkExpiry ? new Date(privateLinkExpiry).toISOString() : null;
-        const result = await rotateSchedulerPrivateLink(saved.id, expiresAt, privateLinkSingleUse);
+        const result = await rotateSchedulerPrivateLink(saved.id, privateLinkOptions());
         setPrivateLink(result.privateLink);
         setPrivateLinkUrl(result.url);
         showToast({ type: 'success', message: 'Private link created. Copy it before closing.' });
@@ -133,8 +159,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
     if (!form.id) return;
     setPrivateLinkBusy(true); setError('');
     try {
-      const expiresAt = privateLinkExpiry ? new Date(privateLinkExpiry).toISOString() : null;
-      const result = await rotateSchedulerPrivateLink(form.id, expiresAt, privateLinkSingleUse);
+      const result = await rotateSchedulerPrivateLink(form.id, privateLinkOptions());
       setPrivateLink(result.privateLink);
       setPrivateLinkUrl(result.url);
       showToast({ type: 'success', message: 'Private link rotated. The previous link no longer works.' });
@@ -152,12 +177,27 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
     setPrivateLinkBusy(true); setError('');
     try {
       await revokeSchedulerPrivateLink(form.id);
-      setPrivateLink({ active: false, expired: false, consumed: false, singleUse: false, remainingUses: null, tokenHint: null, expiresAt: null });
+      setPrivateLink({
+        active: false, expired: false, consumed: false, singleUse: false, remainingUses: null,
+        oneOff: false, oneOffTimeZone: null, oneOffWindows: [], tokenHint: null, expiresAt: null,
+      });
       setPrivateLinkUrl('');
       showToast({ type: 'success', message: 'Private link revoked' });
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to revoke private link'); }
     finally { setPrivateLinkBusy(false); }
   };
+
+  const oneOffMinDate = dateInTimeZone(oneOffDateAnchor, oneOffTimeZone);
+  const oneOffMaxDate = dateInTimeZone(new Date(oneOffDateAnchor.getTime() + 62 * 24 * 60 * 60 * 1000), oneOffTimeZone);
+  const privateLinkStatus = privateLinkLoading
+    ? 'Checking private link status…'
+    : privateLink?.active
+      ? `${privateLink.oneOff ? 'One-off' : privateLink.singleUse ? 'Single-use' : 'Reusable'} link ending ${privateLink.tokenHint}`
+      : privateLink?.consumed
+        ? `The ${privateLink.oneOff ? 'one-off' : 'single-use'} link has already been used.`
+        : privateLink?.expired
+          ? 'The current private link has expired.'
+          : 'No active private link.';
 
   return (
     <div className="scheduler-modal-backdrop" onMouseDown={onClose}>
@@ -192,7 +232,19 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
           <label>Buffer after<input type="number" min={0} max={1440} step={5} value={form.bufferAfterMinutes} onChange={e => setForm({ ...form, bufferAfterMinutes: Number(e.target.value) })} /></label>
           <label>Capacity<input type="number" min={1} max={100} value={form.capacity} onChange={e => setForm({ ...form, capacity: Number(e.target.value) })} /><small>Use more than 1 for group bookings</small></label>
         </div>}
-        {section === 'advanced' && <div className="scheduler-editor-section"><fieldset className="scheduler-calendar-checks"><legend>Check busy time on these calendars</legend>{calendars.map(calendar => <label key={calendar.id}><input type="checkbox" checked={form.conflictCalendarIds?.includes(calendar.id) ?? false} onChange={e => setForm({ ...form, conflictCalendarIds: e.target.checked ? [...(form.conflictCalendarIds || []), calendar.id] : (form.conflictCalendarIds || []).filter(id => id !== calendar.id) })} /><span>{calendar.name}</span></label>)}</fieldset><div className="scheduler-visibility-options"><strong>Booking-page visibility</strong><label><input type="radio" checked={form.visibility === 'public'} onChange={() => setForm({ ...form, visibility: 'public' })} /><span><strong>Listed</strong><small>Show this event on your public booking page.</small></span></label><label><input type="radio" checked={form.visibility === 'unlisted'} onChange={() => setForm({ ...form, visibility: 'unlisted' })} /><span><strong>Unlisted</strong><small>Hide it from your profile. Anyone with its exact link can still book.</small></span></label><label><input type="radio" checked={form.visibility === 'private'} onChange={() => setForm({ ...form, visibility: 'private' })} /><span><strong>Private link</strong><small>Require a random access token that you can rotate, expire, or revoke.</small></span></label></div>{form.visibility === 'private' && <section className="scheduler-private-link"><div><strong>Private access</strong><span>Tokens are shown once and are removed from the guest's address bar after opening.</span></div><label>New link expires (optional)<input type="datetime-local" value={privateLinkExpiry} onChange={e => setPrivateLinkExpiry(e.target.value)} /></label><label className="scheduler-publish"><input type="checkbox" checked={privateLinkSingleUse} onChange={e => setPrivateLinkSingleUse(e.target.checked)} /><span>Single-use link: disable it after the first successful booking.<small>Viewing times or a failed booking will not use the link.</small></span></label>{form.id ? <><p>{privateLinkLoading ? 'Checking private link status…' : privateLink?.active ? `${privateLink.singleUse ? 'Single-use' : 'Reusable'} link ending ${privateLink.tokenHint}` : privateLink?.consumed ? 'The single-use link has already been used.' : privateLink?.expired ? 'The current private link has expired.' : 'No active private link.'}</p>{privateLinkUrl && <div className="scheduler-private-link-reveal"><input aria-label="New private link" readOnly value={privateLinkUrl} /><button type="button" className="btn btn-secondary" onClick={() => void copyPrivateLink()}><Copy size={15} /> Copy</button></div>}<div className="scheduler-private-link-actions"><button type="button" className="btn btn-secondary" disabled={privateLinkBusy || privateLinkLoading} onClick={() => void rotatePrivateLink()}><Link2 size={15} /> {privateLink?.active ? 'Rotate link' : 'Generate link'}</button>{(privateLink?.active || privateLink?.expired || privateLink?.consumed) && <button type="button" className="btn btn-secondary" disabled={privateLinkBusy || privateLinkLoading} onClick={() => void revokePrivateLink()}>Revoke</button>}</div></> : <p>Save this private event to generate its first link. The new link will remain visible here so you can copy it.</p>}</section>}<label className="scheduler-publish scheduler-event-active"><input type="checkbox" checked={form.active !== false} onChange={e => setForm({ ...form, active: e.target.checked })} /><span>Event type is active and bookable</span></label></div>}
+        {section === 'advanced' && <div className="scheduler-editor-section">
+          <fieldset className="scheduler-calendar-checks"><legend>Check busy time on these calendars</legend>{calendars.map(calendar => <label key={calendar.id}><input type="checkbox" checked={form.conflictCalendarIds?.includes(calendar.id) ?? false} onChange={e => setForm({ ...form, conflictCalendarIds: e.target.checked ? [...(form.conflictCalendarIds || []), calendar.id] : (form.conflictCalendarIds || []).filter(id => id !== calendar.id) })} /><span>{calendar.name}</span></label>)}</fieldset>
+          <div className="scheduler-visibility-options"><strong>Booking-page visibility</strong><label><input type="radio" checked={form.visibility === 'public'} onChange={() => setForm({ ...form, visibility: 'public' })} /><span><strong>Listed</strong><small>Show this event on your public booking page.</small></span></label><label><input type="radio" checked={form.visibility === 'unlisted'} onChange={() => setForm({ ...form, visibility: 'unlisted' })} /><span><strong>Unlisted</strong><small>Hide it from your profile. Anyone with its exact link can still book.</small></span></label><label><input type="radio" checked={form.visibility === 'private'} onChange={() => setForm({ ...form, visibility: 'private' })} /><span><strong>Private link</strong><small>Require a random access token that you can rotate, expire, or revoke.</small></span></label></div>
+          {form.visibility === 'private' && <section className="scheduler-private-link">
+            <div><strong>Private access</strong><span>Tokens are shown once and are removed from the guest's address bar after opening.</span></div>
+            <label>New link expires (optional)<input type="datetime-local" value={privateLinkExpiry} onChange={e => setPrivateLinkExpiry(e.target.value)} /></label>
+            <label className="scheduler-publish scheduler-one-off-toggle"><input type="checkbox" checked={privateLinkOneOff} onChange={e => { setPrivateLinkOneOff(e.target.checked); if (e.target.checked) setPrivateLinkSingleUse(true); }} /><span>Offer only selected one-off times<small>These windows replace the recurring schedule for this link.</small></span></label>
+            {privateLinkOneOff && <div className="scheduler-one-off-editor"><div><strong>One-off availability</strong><span>{oneOffTimeZone} · automatically single-use</span></div>{oneOffWindows.map((window, index) => <div className="scheduler-one-off-row" key={`${window.date}-${index}`}><input aria-label={`One-off date ${index + 1}`} type="date" min={oneOffMinDate} max={oneOffMaxDate} value={window.date} onChange={e => updateOneOffWindow(index, { date: e.target.value })} /><input aria-label={`One-off start ${index + 1}`} type="time" value={minutesToTime(window.startMinute)} onChange={e => updateOneOffWindow(index, { startMinute: timeToMinutes(e.target.value) })} /><span>to</span><input aria-label={`One-off end ${index + 1}`} type="time" value={minutesToTime(window.endMinute)} onChange={e => updateOneOffWindow(index, { endMinute: timeToMinutes(e.target.value) })} /><button type="button" className="icon-button danger" aria-label={`Remove one-off window ${index + 1}`} disabled={oneOffWindows.length === 1} onClick={() => setOneOffWindows(current => current.filter((_, windowIndex) => windowIndex !== index))}><Trash2 size={15} /></button></div>)}<button type="button" className="btn btn-secondary" disabled={oneOffWindows.length >= 14} onClick={() => setOneOffWindows(current => [...current, { ...current[current.length - 1] }])}><Plus size={15} /> Add time window</button></div>}
+            <label className="scheduler-publish"><input type="checkbox" checked={privateLinkSingleUse || privateLinkOneOff} disabled={privateLinkOneOff} onChange={e => setPrivateLinkSingleUse(e.target.checked)} /><span>Single-use link: disable it after the first successful booking.<small>Viewing times or a failed booking will not use the link.</small></span></label>
+            {form.id ? <><p>{privateLinkStatus}</p>{privateLinkUrl && <div className="scheduler-private-link-reveal"><input aria-label="New private link" readOnly value={privateLinkUrl} /><button type="button" className="btn btn-secondary" onClick={() => void copyPrivateLink()}><Copy size={15} /> Copy</button></div>}<div className="scheduler-private-link-actions"><button type="button" className="btn btn-secondary" disabled={privateLinkBusy || privateLinkLoading} onClick={() => void rotatePrivateLink()}><Link2 size={15} /> {privateLink?.active ? 'Rotate link' : privateLinkOneOff ? 'Generate one-off link' : 'Generate link'}</button>{(privateLink?.active || privateLink?.expired || privateLink?.consumed) && <button type="button" className="btn btn-secondary" disabled={privateLinkBusy || privateLinkLoading} onClick={() => void revokePrivateLink()}>Revoke</button>}</div></> : <p>Save this private event to generate its first link. The new link will remain visible here so you can copy it.</p>}
+          </section>}
+          <label className="scheduler-publish scheduler-event-active"><input type="checkbox" checked={form.active !== false} onChange={e => setForm({ ...form, active: e.target.checked })} /><span>Event type is active and bookable</span></label>
+        </div>}
         <footer><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={saving || !durationValid}>{saving ? 'Saving...' : 'Save event type'}</button></footer>
       </form>
     </div>

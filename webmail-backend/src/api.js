@@ -1981,7 +1981,7 @@ exports.apiRouter.put('/admin/branding', requireAuth, requireAdmin, async (req, 
     }
     catch (err) {
         console.error('Failed to save admin branding settings:', err);
-        res.status(500).json({ success: false, error: err.message });
+        res.status(err instanceof branding_1.BrandingValidationError ? 400 : 500).json({ success: false, error: err.message });
     }
 });
 exports.apiRouter.get('/admin/settings/:namespace', requireAuth, requireAdmin, async (req, res) => {

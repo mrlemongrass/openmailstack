@@ -5,6 +5,8 @@ import { AppShell } from './shared/layouts/AppShell';
 import { ErrorBoundary } from './shared/components/ErrorBoundary';
 import { Skeleton } from './shared/components/Skeleton';
 import { ToastProvider } from './shared/components/Toast';
+import { BrandingProvider } from './BrandingProvider';
+import { useBranding } from './branding-context';
 import { Mail, Globe, CalendarDays, Users, Copy, Check, ChevronDown } from 'lucide-react';
 const MailRoutes = lazy(() => import('./mail/routes').then(m => ({ default: m.MailRoutes })));
 const CalendarRoutes = lazy(() => import('./calendar/routes').then(m => ({ default: m.CalendarRoutes })));
@@ -132,6 +134,7 @@ function DeviceGuides() {
 }
 
 function SyncView() {
+  const { branding } = useBranding();
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [diagResults, setDiagResults] = useState<Record<string, 'checking' | 'ok' | 'fail'>>({});
@@ -189,7 +192,7 @@ function SyncView() {
           {lastChecked && <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Checked {lastChecked.toLocaleTimeString()}</span>}
         </div>
         <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 24px', fontSize: '0.9rem' }}>
-          Configure your devices to sync mail, calendars, and contacts with OpenMailStack.
+          Configure your devices to sync mail, calendars, and contacts with {branding.appName}.
           Use the server details below in your email client, calendar app, or device settings.
         </p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -241,6 +244,7 @@ function SyncView() {
 
 export default function App() {
   return (
+    <BrandingProvider>
     <ToastProvider>
     <Routes>
       <Route path="scheduler/action/:scope/:token" element={<Suspense fallback={<Skeleton />}><SchedulerActionPage /></Suspense>} />
@@ -261,5 +265,6 @@ export default function App() {
       </Route>
     </Routes>
     </ToastProvider>
+    </BrandingProvider>
   );
 }

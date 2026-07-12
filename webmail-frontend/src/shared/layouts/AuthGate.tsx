@@ -3,11 +3,14 @@ import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { Mail } from 'lucide-react';
 import { Spinner } from '../components/Spinner';
+import { resolveBrandingPresentation, type BrandingSettings } from '../../branding';
+import { useBranding } from '../../branding-context';
 
 export function AuthGate() {
   const { isLoading, isAuthenticated, login } = useAuth();
+  const { branding, isBrandingLoading } = useBranding();
 
-  if (isLoading) {
+  if (isLoading || isBrandingLoading) {
     return (
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -19,17 +22,21 @@ export function AuthGate() {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage login={login} />;
+    return <LoginPage login={login} branding={branding} />;
   }
 
   return <Outlet />;
 }
 
-function LoginPage({ login }: { login: (email: string, password: string) => Promise<boolean> }) {
+export function LoginPage({ login, branding }: {
+  login: (email: string, password: string) => Promise<boolean>;
+  branding: BrandingSettings;
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const presentation = resolveBrandingPresentation(branding);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,21 +56,32 @@ function LoginPage({ login }: { login: (email: string, password: string) => Prom
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       minHeight: '100vh', background: 'var(--bg-main)',
-      backgroundImage: 'radial-gradient(circle at 15% 50%, rgba(59,130,246,0.08) 0%, transparent 50%), radial-gradient(circle at 85% 30%, rgba(139,92,246,0.08) 0%, transparent 50%)',
+      backgroundImage: presentation.loginBackgroundDataUrl
+        ? `linear-gradient(rgba(7, 12, 20, 0.36), rgba(7, 12, 20, 0.72)), url(${presentation.loginBackgroundDataUrl})`
+        : 'radial-gradient(circle at 15% 50%, rgba(59,130,246,0.08) 0%, transparent 50%), radial-gradient(circle at 85% 30%, rgba(139,92,246,0.08) 0%, transparent 50%)',
+      backgroundSize: 'cover', backgroundPosition: 'center',
     }}>
       <div className="glass-panel" style={{ width: 400, padding: 40 }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{
-            width: 48, height: 48, borderRadius: 12,
-            background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-purple))',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 16px',
-          }}>
-            <Mail size={24} color="white" />
-          </div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 600, margin: 0 }}>OpenMailStack</h1>
+          {presentation.loginLogoDataUrl ? (
+            <img
+              src={presentation.loginLogoDataUrl}
+              alt={`${presentation.appName} logo`}
+              style={{ display: 'block', width: 'auto', maxWidth: 220, height: 72, objectFit: 'contain', margin: '0 auto 16px' }}
+            />
+          ) : (
+            <div style={{
+              width: 48, height: 48, borderRadius: 12,
+              background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-purple))',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 16px',
+            }}>
+              <Mail size={24} color="white" />
+            </div>
+          )}
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 600, margin: 0 }}>{presentation.loginTitle}</h1>
           <p style={{ color: 'var(--text-secondary)', marginTop: 8, fontSize: '0.9rem' }}>
-            Sign in to your account
+            {presentation.loginSubtitle}
           </p>
         </div>
 
@@ -80,10 +98,12 @@ function LoginPage({ login }: { login: (email: string, password: string) => Prom
 
           <input type="email" className="glass-input" placeholder="Email address"
             value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus
+            autoComplete="username"
             style={{ width: '100%', marginBottom: 12 }} />
 
           <input type="password" className="glass-input" placeholder="Password"
             value={password} onChange={(e) => setPassword(e.target.value)} required
+            autoComplete="current-password"
             style={{ width: '100%', marginBottom: 24 }} />
 
           <button type="submit" className="btn btn-primary" disabled={submitting}

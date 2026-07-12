@@ -5028,3 +5028,58 @@ The repository passed the complete Phase 2 contract, but production still ran th
 ### Next recommended task
 
 Begin Phase 3 with the durable workflow foundation: versioned workflow definitions, leased jobs, retries/dead letters, and provider-independent OMS email reminders.
+
+## 2026-07-12 — Admin branding persistence and image-handling hardening
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: commit `79844002`, two commits ahead of `origin/main`, plus unrelated untracked `.opencode/`
+Ending git state: focused implementation validated locally; live deployment pending
+
+### Selected task
+
+Make Admin > Branding intuitive about image dimensions and saved-size handling, and ensure the saved House Vo identity drives the actual sign-in and authenticated product surfaces instead of reverting visually to OpenMailStack.
+
+### Root cause
+
+- The live public branding endpoint and database were already returning `HouseVo`, `HouseVo Webmail`, and the saved favicon/login logo.
+- `AuthGate.tsx` and `AppShell.tsx` still rendered literal `OpenMailStack` text and did not consume `/api/branding`.
+- The final client image fallback could remain above the server limit, while backend normalization silently replaced an invalid or oversized submitted image with an empty value.
+
+### Changes made
+
+- Added one app-wide branding provider used by sign-in, authenticated header, browser title/favicon, Sync copy, and the public Scheduler header. Successful values are cached locally, initial loading is bounded to four seconds, and transient failures retry on a timer, focus, and network recovery.
+- Reconciled legacy records where a custom site name was saved alongside the old default login title, so the custom identity wins consistently in the form preview and rendered sign-in page.
+- Reworked Branding uploads as outcome-based cards with supported formats, target uses, automatic crop/contain behavior, original-to-final dimensions, final saved size, responsive desktop/mobile layout, and explicit unsaved state.
+- Extracted testable image geometry and optimization logic. Encodes are attempted sequentially, yield between attempts, and progressively compress/downscale to the existing safe server limits.
+- Added server-side validation that returns a client error instead of reporting success after silently clearing an unpreservable submitted image.
+- Added accessible success, error, upload, and unsaved-state announcements.
+
+### Proof / checks run
+
+- Live read-only `GET /api/branding` returned `HouseVo`, `House Vo Consulting`, `HouseVo Webmail`, and non-empty saved favicon/logo values.
+- Backend suite passed 91 tests with two existing optional database gates skipped; the new regression proves oversized branding images are rejected rather than silently cleared.
+- Frontend lint passed with zero warnings; 13 frontend tests passed, including real `AuthGate` and `AppShell` rendering, legacy-title reconciliation, cached fallback, square crop, wide-logo containment, icon compression, and background downscaling.
+- Frontend production build passed; largest route chunk remained below 500 kB.
+- Playwright rendered the real saved House Vo branding on sign-in and the authenticated header, verified the redesigned Admin panel at 1440×1000 and 390×844, converted a 1440×1000 source into a 512×512 149 KB app icon, and confirmed a save updates the header/title immediately. Admin auth and writes were mocked; production data was not changed.
+- `git diff --check` passed before documentation; the final focused-diff check is required after artifact cleanup.
+
+### Acceptance criteria
+
+- [x] Saved site name and login identity render from the public branding settings across reloads.
+- [x] Last-known branding remains visible through a transient public-branding failure without blocking login indefinitely.
+- [x] Legacy custom-name/default-title records no longer render OpenMailStack on sign-in.
+- [x] Admins can upload non-exact image dimensions and see the automatic crop/contain/compress result before saving.
+- [x] Oversized submitted images cannot be silently erased by a successful save response.
+- [x] Unsaved and saved states are explicit and accessible on desktop and mobile.
+- [x] Regression tests cover the actual login/header consumers and the image-adjustment boundaries.
+
+### Risks / notes
+
+- Raster uploads intentionally exclude SVG, AVIF, and HEIC; the UI now names the supported formats explicitly.
+- GIF uploads are rasterized to a static optimized image by the browser canvas.
+- The implementation and generated backend artifacts are not yet deployed to `/opt/openmailstack-backend` or `/var/www/openmailstack`.
+
+### Next recommended task
+
+Guardedly deploy this focused frontend/backend branding release with a rollback snapshot, confirm live House Vo login/header rendering and persistence, then resume Scheduler Phase 3 workflow foundations.

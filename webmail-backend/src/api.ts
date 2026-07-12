@@ -27,7 +27,7 @@ import {
 } from './search-index';
 import { getUserSettings, isSettingsNamespace, saveUserSettings } from './user-settings';
 import { getAdminSettings, isAdminSettingsNamespace, saveAdminSettings } from './admin-settings';
-import { getBrandingSettings, saveBrandingSettings } from './branding';
+import { BrandingValidationError, getBrandingSettings, saveBrandingSettings } from './branding';
 import { getSearchWorkerStatus, purgeUserSearchIndex } from './search-worker';
 
 export const apiRouter = Router();
@@ -2122,7 +2122,7 @@ apiRouter.put('/admin/branding', requireAuth, requireAdmin, async (req: any, res
         res.json({ success: true, settings });
     } catch (err: any) {
         console.error('Failed to save admin branding settings:', err);
-        res.status(500).json({ success: false, error: err.message });
+        res.status(err instanceof BrandingValidationError ? 400 : 500).json({ success: false, error: err.message });
     }
 });
 

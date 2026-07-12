@@ -1,8 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.brandingDefaults = void 0;
+exports.BrandingValidationError = exports.brandingDefaults = void 0;
 exports.ensureBrandingSchema = ensureBrandingSchema;
 exports.normalizeBrandingSettings = normalizeBrandingSettings;
+exports.validateBrandingSettings = validateBrandingSettings;
 exports.getBrandingSettings = getBrandingSettings;
 exports.saveBrandingSettings = saveBrandingSettings;
 const db_1 = require("./db");
@@ -22,6 +23,19 @@ const imageLimits = {
     loginLogoDataUrl: 512 * 1024,
     loginBackgroundDataUrl: 2 * 1024 * 1024,
 };
+const imageLabels = {
+    appIconDataUrl: 'App icon',
+    faviconDataUrl: 'Browser favicon',
+    loginLogoDataUrl: 'Login logo',
+    loginBackgroundDataUrl: 'Login background',
+};
+class BrandingValidationError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'BrandingValidationError';
+    }
+}
+exports.BrandingValidationError = BrandingValidationError;
 let schemaPromise = null;
 function ensureBrandingSchema() {
     if (!schemaPromise) {
@@ -73,6 +87,16 @@ function normalizeBrandingSettings(value) {
         loginBackgroundDataUrl: imageDataUrl(source.loginBackgroundDataUrl, imageLimits.loginBackgroundDataUrl),
     };
 }
+function validateBrandingSettings(value) {
+    const source = isObject(value) ? value : {};
+    const normalized = normalizeBrandingSettings(source);
+    for (const key of Object.keys(imageLimits)) {
+        if (typeof source[key] === 'string' && source[key].trim() !== '' && normalized[key] === '') {
+            throw new BrandingValidationError(`${imageLabels[key]} could not be saved. Upload a PNG, JPG, WebP, or GIF image and let OpenMailStack optimize it before saving.`);
+        }
+    }
+    return normalized;
+}
 async function getBrandingSettings() {
     await ensureBrandingSchema();
     const [rows] = await db_1.pool.query('SELECT settings_json FROM webmail_branding_settings WHERE id = 1 LIMIT 1');
@@ -85,7 +109,7 @@ async function getBrandingSettings() {
 }
 async function saveBrandingSettings(settings, updatedBy) {
     await ensureBrandingSchema();
-    const normalized = normalizeBrandingSettings(settings);
+    const normalized = validateBrandingSettings(settings);
     await db_1.pool.query(`INSERT INTO webmail_branding_settings (id, settings_json, updated_by)
          VALUES (1, ?, ?)
          ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json), updated_by = VALUES(updated_by), updated_at = NOW()`, [JSON.stringify(normalized), updatedBy]);

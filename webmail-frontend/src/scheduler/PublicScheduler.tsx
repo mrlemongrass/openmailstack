@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, CalendarCheck, CalendarClock, Check, Clock3, Download, Globe2, MapPin } from 'lucide-react';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
+import { useBranding } from '../branding-context';
 import {
   applyBookingAction,
   createPublicBooking,
@@ -49,7 +50,8 @@ const calendarDownload = (profile: SchedulerEntitlement, event: SchedulerEventTy
 };
 
 function PublicHeader() {
-  return <header className="public-scheduler-header"><div><CalendarClock size={21} /><strong>Scheduler</strong></div><span>OpenMailStack</span></header>;
+  const { branding } = useBranding();
+  return <header className="public-scheduler-header"><div><CalendarClock size={21} /><strong>Scheduler</strong></div><span>{branding.appName}</span></header>;
 }
 
 function EventDirectory({ profile, events }: { profile: SchedulerEntitlement; events: SchedulerEventType[] }) {

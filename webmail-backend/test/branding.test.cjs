@@ -5,7 +5,8 @@ process.env.OMS_DB_PASSWORD ||= 'unit-test-password';
 
 const {
   brandingDefaults,
-  normalizeBrandingSettings
+  normalizeBrandingSettings,
+  validateBrandingSettings
 } = require('../src/branding.js');
 
 const tinyPng = 'data:image/png;base64,iVBORw0KGgo=';
@@ -57,4 +58,14 @@ test('normalizeBrandingSettings falls back when required text is blank', () => {
   assert.equal(normalized.appName, brandingDefaults.appName);
   assert.equal(normalized.loginTitle, brandingDefaults.loginTitle);
   assert.equal(normalized.loginSubtitle, brandingDefaults.loginSubtitle);
+});
+
+test('validateBrandingSettings rejects an oversized image instead of silently clearing it', () => {
+  assert.equal(typeof validateBrandingSettings, 'function');
+  const oversizedIcon = `data:image/png;base64,${Buffer.alloc((256 * 1024) + 1).toString('base64')}`;
+
+  assert.throws(
+    () => validateBrandingSettings({ ...brandingDefaults, appIconDataUrl: oversizedIcon }),
+    /App icon could not be saved/i
+  );
 });

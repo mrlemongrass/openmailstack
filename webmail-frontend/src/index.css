@@ -517,6 +517,15 @@ body {
   font-size: 0.9rem;
 }
 
+.settings-pending-banner {
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.1);
+  color: #fde68a;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+}
+
 .app-brand-image {
   object-fit: contain;
   border-radius: 6px;
@@ -637,6 +646,13 @@ body {
 
 .settings-field input {
   width: 100%;
+}
+
+.settings-field small {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .settings-card-grid {
@@ -832,8 +848,16 @@ body {
 
 .branding-upload-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
   gap: 14px;
+}
+
+.branding-section-intro {
+  max-width: 760px;
+  margin: -2px 0 16px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.55;
 }
 
 .branding-upload-card {
@@ -849,6 +873,11 @@ body {
 
 .branding-upload-card.wide {
   grid-column: 1 / -1;
+}
+
+.branding-upload-card > .settings-action-row {
+  grid-column: 2;
+  flex-wrap: wrap;
 }
 
 .branding-upload-preview {
@@ -877,6 +906,14 @@ body {
 .branding-upload-meta strong,
 .branding-upload-meta span {
   display: block;
+}
+
+.branding-upload-meta .branding-upload-ready {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #34d399;
+  font-size: 0.8rem;
 }
 
 .branding-upload-meta span {

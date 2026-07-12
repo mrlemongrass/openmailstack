@@ -1,4 +1,7 @@
 import type { JsonObject } from '../shared/types';
+import type { BrandingSettings } from '../branding';
+
+export { defaultBranding, type BrandingSettings } from '../branding';
 
 export function adminErrorMessage(error: unknown, fallback = 'Request failed'): string {
   return error instanceof Error ? error.message : fallback;
@@ -149,28 +152,6 @@ export async function saveAdminBranding(settings: BrandingSettings): Promise<Bra
   if (!response.ok || !body.success) throw new Error(body.error || 'Failed to save branding');
   return body.settings;
 }
-
-export interface BrandingSettings {
-  appName: string;
-  companyName: string;
-  loginTitle: string;
-  loginSubtitle: string;
-  appIconDataUrl: string;
-  faviconDataUrl: string;
-  loginLogoDataUrl: string;
-  loginBackgroundDataUrl: string;
-}
-
-export const defaultBranding: BrandingSettings = {
-  appName: 'OpenMailStack',
-  companyName: '',
-  loginTitle: 'OpenMailStack',
-  loginSubtitle: 'Sign in to continue',
-  appIconDataUrl: '',
-  faviconDataUrl: '',
-  loginLogoDataUrl: '',
-  loginBackgroundDataUrl: '',
-};
 
 // ─── Domains ─────────────────────────────────────────────────────────────────
 

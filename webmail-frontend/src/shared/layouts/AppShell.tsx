@@ -4,6 +4,8 @@ import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { Settings, ShieldAlert, Activity, Mail, CalendarDays, Users, StickyNote, CalendarClock, MoreHorizontal } from 'lucide-react';
 import { SCHEDULER_ENTITLEMENT_CHANGED } from '../../scheduler/entitlement';
+import { resolveBrandingPresentation } from '../../branding';
+import { useBranding } from '../../branding-context';
 
 function useActiveApp(): string {
   const { pathname } = useLocation();
@@ -20,6 +22,8 @@ function useActiveApp(): string {
 
 export function AppShell() {
   const { user, logout } = useAuth();
+  const { branding } = useBranding();
+  const brandingPresentation = resolveBrandingPresentation(branding);
   const isMobile = useMediaQuery('(max-width: 767px)');
   const activeApp = useActiveApp();
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
@@ -67,11 +71,22 @@ export function AppShell() {
         }}>
           <nav style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
               fontWeight: 700, fontSize: '1.1rem', marginRight: 16,
-              background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-purple))',
-              WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
             }}>
-              OpenMailStack
+              {brandingPresentation.headerLogoDataUrl && (
+                <img
+                  src={brandingPresentation.headerLogoDataUrl}
+                  alt=""
+                  style={{ width: 28, height: 28, borderRadius: 7, objectFit: 'contain' }}
+                />
+              )}
+              <span style={{
+                background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-purple))',
+                WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+              }}>
+                {brandingPresentation.appName}
+              </span>
             </span>
             {navItems.map((item) => (
               <Link key={item.id} to={item.path}

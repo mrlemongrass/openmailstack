@@ -29,6 +29,20 @@ const imageLimits: Record<keyof Pick<BrandingSettings, 'appIconDataUrl' | 'favic
     loginBackgroundDataUrl: 2 * 1024 * 1024,
 };
 
+const imageLabels: Record<keyof typeof imageLimits, string> = {
+    appIconDataUrl: 'App icon',
+    faviconDataUrl: 'Browser favicon',
+    loginLogoDataUrl: 'Login logo',
+    loginBackgroundDataUrl: 'Login background',
+};
+
+export class BrandingValidationError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'BrandingValidationError';
+    }
+}
+
 let schemaPromise: Promise<void> | null = null;
 
 export function ensureBrandingSchema(): Promise<void> {
@@ -90,6 +104,19 @@ export function normalizeBrandingSettings(value: unknown): BrandingSettings {
     };
 }
 
+export function validateBrandingSettings(value: unknown): BrandingSettings {
+    const source = isObject(value) ? value : {};
+    const normalized = normalizeBrandingSettings(source);
+
+    for (const key of Object.keys(imageLimits) as Array<keyof typeof imageLimits>) {
+        if (typeof source[key] === 'string' && source[key].trim() !== '' && normalized[key] === '') {
+            throw new BrandingValidationError(`${imageLabels[key]} could not be saved. Upload a PNG, JPG, WebP, or GIF image and let OpenMailStack optimize it before saving.`);
+        }
+    }
+
+    return normalized;
+}
+
 export async function getBrandingSettings(): Promise<BrandingSettings> {
     await ensureBrandingSchema();
     const [rows]: any = await pool.query(
@@ -107,7 +134,7 @@ export async function getBrandingSettings(): Promise<BrandingSettings> {
 
 export async function saveBrandingSettings(settings: unknown, updatedBy: string): Promise<BrandingSettings> {
     await ensureBrandingSchema();
-    const normalized = normalizeBrandingSettings(settings);
+    const normalized = validateBrandingSettings(settings);
 
     await pool.query(
         `INSERT INTO webmail_branding_settings (id, settings_json, updated_by)

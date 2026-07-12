@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Routes, Route, NavLink, Outlet, Navigate } from 'react-router';
 import {
   LayoutDashboard, Globe, Mail, Forward, GitMerge, Shield,
@@ -28,6 +28,8 @@ import {
   type AdminSettingsNamespace,
   type BrandingSettings,
 } from './adminSettingsApi';
+import { useBranding } from '../branding-context';
+import { resolveBrandingPresentation } from '../branding';
 
 // ─── Sidebar config ──────────────────────────────────────────────────────────
 
@@ -270,35 +272,65 @@ function SettingsLoader() {
 // ─── Branding Loader (wraps BrandingPanel) ───────────────────────────────────
 
 function BrandingLoader() {
+  const { setBranding: applySavedBranding } = useBranding();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
+  const [statusIsError, setStatusIsError] = useState(false);
   const [branding, setBranding] = useState<BrandingSettings>(defaultBranding);
+  const [savedBranding, setSavedBranding] = useState<BrandingSettings>(defaultBranding);
+  const dirty = useMemo(() => Object.keys(defaultBranding).some(key => (
+    branding[key as keyof BrandingSettings] !== savedBranding[key as keyof BrandingSettings]
+  )), [branding, savedBranding]);
 
   useEffect(() => {
     let cancelled = false;
     fetchAdminBranding()
-      .then(b => { if (!cancelled) setBranding(b); })
-      .catch((e: unknown) => { if (!cancelled) setStatus(`Failed to load branding: ${errorMessage(e, 'Failed to load branding')}`); })
+      .then(b => {
+        if (!cancelled) {
+          const reconciled = { ...b, loginTitle: resolveBrandingPresentation(b).loginTitle };
+          setBranding(reconciled);
+          setSavedBranding(reconciled);
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setStatusIsError(true);
+          setStatus(`Failed to load branding: ${errorMessage(e, 'Failed to load branding')}`);
+        }
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
-  const handleChange = useCallback((b: BrandingSettings) => setBranding(b), []);
-  const handleReset = useCallback(() => setBranding(defaultBranding), []);
+  const handleChange = useCallback((b: BrandingSettings) => {
+    setBranding(b);
+    setStatus('');
+    setStatusIsError(false);
+  }, []);
+  const handleReset = useCallback(() => {
+    setBranding(defaultBranding);
+    setStatus('');
+    setStatusIsError(false);
+  }, []);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
     setStatus('');
+    setStatusIsError(false);
     try {
-      await saveAdminBranding(branding);
-      setStatus('Branding saved successfully.');
+      const saved = await saveAdminBranding(branding);
+      setBranding(saved);
+      setSavedBranding(saved);
+      applySavedBranding(saved);
+      setStatus('Branding saved. The sign-in page and app header are now updated.');
     } catch (err: unknown) {
+      setStatusIsError(true);
       setStatus(`Save failed: ${errorMessage(err, 'Failed to save branding')}`);
     } finally {
       setSaving(false);
     }
-  }, [branding]);
+  }, [applySavedBranding, branding]);
 
   if (loading) {
     return (
@@ -316,6 +348,8 @@ function BrandingLoader() {
       branding={branding}
       saving={saving}
       status={status}
+      statusIsError={statusIsError}
+      dirty={dirty}
       onChange={handleChange}
       onReset={handleReset}
       onSave={handleSave}

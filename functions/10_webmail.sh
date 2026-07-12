@@ -174,6 +174,7 @@ deploy_backend() {
     rsync -a --delete \
         --exclude node_modules \
         --exclude .npm \
+        --exclude uploads \
         "${BACKEND_SRC}/" "${BACKEND_DIR}/"
 
     (

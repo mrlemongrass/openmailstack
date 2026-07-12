@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { normalizeSchedulerPublicSettings } from './phase2';
 
 const RESERVED_HANDLES = new Set([
     'action', 'admin', 'api', 'auth', 'calendar', 'carddav', 'contacts', 'mail', 'notes',
@@ -32,6 +33,14 @@ export interface SchedulerEventInput {
     guestDenyList?: string[];
     requireEmailVerification?: boolean;
     maxAdditionalGuests?: number;
+    waitlistEnabled?: boolean;
+    maxRecurrenceOccurrences?: number;
+    publicAccentColor?: string;
+    publicIntro?: string;
+    privacyUrl?: string;
+    termsUrl?: string;
+    locale?: string;
+    lockedTimeZone?: string | null;
     windows?: Array<{ weekday: number; startMinute: number; endMinute: number }>;
     questions?: SchedulerBookingQuestion[];
 }
@@ -286,6 +295,11 @@ export function normalizeSchedulerEventInput(input: SchedulerEventInput): Requir
     if (maxAdditionalGuests >= capacity) {
         throw new Error('maxAdditionalGuests must be less than capacity so every guest has a seat');
     }
+    const maxRecurrenceOccurrences = Number(input.maxRecurrenceOccurrences ?? 1);
+    if (!Number.isInteger(maxRecurrenceOccurrences) || maxRecurrenceOccurrences < 1 || maxRecurrenceOccurrences > 12) {
+        throw new Error('maxRecurrenceOccurrences must be an integer between 1 and 12');
+    }
+    const publicSettings = normalizeSchedulerPublicSettings(input as unknown as Record<string, unknown>);
     return {
         title,
         slug: cleanSlug(input.slug || title, 'meeting'),
@@ -313,6 +327,9 @@ export function normalizeSchedulerEventInput(input: SchedulerEventInput): Requir
         guestDenyList: normalizeSchedulerGuestRules(input.guestDenyList),
         requireEmailVerification: input.requireEmailVerification === true,
         maxAdditionalGuests,
+        waitlistEnabled: input.waitlistEnabled === true,
+        maxRecurrenceOccurrences,
+        ...publicSettings,
         windows,
         questions: normalizeSchedulerQuestions(input.questions),
     };

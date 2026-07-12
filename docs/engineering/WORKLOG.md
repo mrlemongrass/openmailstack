@@ -4850,3 +4850,59 @@ Deliver the next five recommended personal-scheduling slices as one coherent rel
 ### Next recommended task
 
 Add a capacity-aware waitlist that atomically promotes the next eligible party when seats are released, without bypassing verification, attendee, approval, or notification policies.
+
+## 2026-07-12 — Scheduler Phase 2 completion release
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `61c70a7c`
+Ending git state: release committed and pushed after guarded live deployment
+
+### Selected task
+
+Deliver every remaining Phase 2 personal-scheduling slice as one backward-compatible release while continuing guarded live validation and deferring clean-install testing until the second development Linux server is available.
+
+### Acceptance criteria
+
+- [x] Holiday and out-of-office ranges block inherited availability by host-local date.
+- [x] Full capacity can expose a policy-preserving waitlist that automatically promotes the oldest fitting eligible party after capacity release.
+- [x] Weekly series are conflict-checked per occurrence, preserve host-local time across DST, serialize duplicate requests, and do not leave a partial notified series after failure.
+- [x] Meeting polls offer two to ten available choices, enforce event eligibility/verification, collect replaceable votes, and finalize the winning option into a real booking.
+- [x] Owners can book on behalf of guests and mark ended confirmed bookings completed or no-show with an audit trail.
+- [x] Public pages support inline/popup/floating/email-slot distribution, allowlisted prefill, normalized UTM attribution, branding/policy links, locale-aware formatting, and optional timezone lock.
+- [x] Owners can export configuration/booking CSV and import OMS, Calendly, or Cal.com JSON only as inactive unlisted drafts.
+- [x] Existing rows and older owner clients preserve all new policy fields by default or omission.
+
+### Changes
+
+- Added additive idempotent migrations `017` through `023` for availability exclusions, waitlists, booking series, meeting polls/votes, lifecycle/delegation fields, public distribution settings/attribution, and migration-run records.
+- Added active-hold-aware waitlist admission and oldest-fitting promotion after cancel, reject, or reschedule, with joined and promoted booking notifications through the existing outbox.
+- Added advisory-lock serialized recurring requests, complete-series idempotent replay, DST-safe host-local recurrence matching, compensating rollback, and notification batching.
+- Added verified public meeting polls, owner finalization through the trusted book-on-behalf path, past-only completed/no-show transitions, and owner detail for actor, series, and attribution.
+- Added public styling, policy links, locale formats, locked timezone, safe prefill/UTM handling, recurrence/waitlist UX, iframe chrome control, parent confirmation events, and owner share/email-slot tools.
+- Added JSON/CSV export plus guarded OMS/Calendly/Cal.com draft import. CSV cells neutralize spreadsheet formulas.
+- Hardened deployment so persistent backend `uploads/` are excluded from `rsync --delete`; the pre-release snapshot confirmed no upload data existed on this live host before the deployment.
+
+### Proof / checks run
+
+- Normal backend suite passed 88 tests with two explicit database gates skipped. Disposable MariaDB applied migrations `001` through `023` twice and passed all 90 tests with no skips, including waitlist promotion, verified poll finalization, delegated outcomes, attribution/export/import, and concurrent complete-series replay across DST.
+- Frontend lint, production build, and three mail-view regression tests passed.
+- Mocked Playwright at 1440x900 and 390x844 covered exclusions, owner event settings, all Tools cards, two-to-ten poll controls, booking outcomes/detail, public prefill/UTM/recurrence/waitlist, timezone lock, locale formatting, inline embed chrome, verified poll voting, zero page errors, and zero horizontal overflow.
+- Scheduler schema/UI/documentation guards, `git diff --check`, and the full integration/dry-run suite passed.
+- Live migrations `017` through `023` are recorded; six new tables exist; the two existing bookings remained present and pending outbox stayed zero. Tested and deployed file contents match, the public Scheduler and generic poll-not-found boundary render correctly, service/Nginx/MariaDB are healthy, `postqueue` and `ss` complete without netlink errors, and staging smoke passes.
+
+### Deployment and rollback
+
+- Root-only database and deployed-file snapshot: `/var/backups/openmailstack/20260712_064405_scheduler_phase2_complete`.
+- Applied only additive migrations `017` through `023`, synchronized the tested backend/frontend while preserving persistent uploads, normalized webroot permissions, and restarted only `openmailstack.service`.
+
+### Risks and remaining work
+
+- Phase 2 migration accepts common exported JSON shapes but is not a live competitor API connector; imported event types intentionally require owner review before activation.
+- Poll finalization includes only voters for the chosen option and is bounded by event capacity/additional-guest policy. Larger invite-list and notification workflows belong to later workflow/team phases.
+- Booking/export data still needs the planned suite-wide retention, deletion, and administrative compliance controls.
+- Clean-VM validation remains deferred until the second development Linux server is available. Physical CalDAV/ActiveSync observation of Scheduler-created events also remains pending.
+
+### Next recommended task
+
+Begin Phase 3 with durable event-driven workflow automation: reminder/follow-up rules, reconfirmation, observable delivery, and provider-independent email actions before adding paid messaging channels.

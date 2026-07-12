@@ -77,6 +77,14 @@ export function schedulerNotificationMails(eventType: string, payload: Notificat
             ...common,
         }];
     }
+    if (eventType === 'waitlist.joined') {
+        return [{
+            to: payload.bookerEmail,
+            subject: `Waitlist joined: ${title}`,
+            text: `You are on the waitlist for ${title}. If enough seats become available, Scheduler will promote your request and send a booking confirmation automatically.`,
+            ...common,
+        }];
+    }
     const when = readableDate(payload.start, payload.timeZone || 'UTC');
     const attendeeMails = (payload.additionalAttendees || []).map((attendee) => ({
         to: attendee.email,

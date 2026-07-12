@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CalendarClock, CalendarDays, Clock3, Copy, ExternalLink, Link2, Plus, Settings2, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CalendarClock, CalendarDays, Clock3, Copy, ExternalLink, Link2, Plus, Settings2, Trash2, Wrench, X } from 'lucide-react';
 import { EmptyState } from '../shared/components/EmptyState';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { useToast } from '../shared/components/Toast';
@@ -9,6 +9,7 @@ import {
   deleteSchedulerEvent,
   getSchedulerPrivateLink,
   getSchedulerState,
+  markSchedulerBookingOutcome,
   revokeSchedulerPrivateLink,
   rotateSchedulerPrivateLink,
   saveSchedulerEvent,
@@ -23,9 +24,10 @@ import {
   type SchedulerWindow,
 } from './api';
 import { AvailabilityPanel } from './AvailabilityPanel';
+import { SchedulerToolsPanel } from './SchedulerToolsPanel';
 import './scheduler.css';
 
-type SchedulerTab = 'events' | 'bookings' | 'availability' | 'profile';
+type SchedulerTab = 'events' | 'bookings' | 'availability' | 'tools' | 'profile';
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DEFAULT_WINDOWS: SchedulerWindow[] = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMinute: 540, endMinute: 1020 }));
 
@@ -54,7 +56,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
   onSaved: (close?: boolean) => Promise<void> | void;
 }) {
   const { showToast } = useToast();
-  const [section, setSection] = useState<'setup' | 'availability' | 'limits' | 'advanced'>('setup');
+  const [section, setSection] = useState<'setup' | 'availability' | 'limits' | 'public' | 'advanced'>('setup');
   const [form, setForm] = useState<Partial<SchedulerEventType>>({
     title: event?.title || '', slug: event?.slug || '', description: event?.description || '',
     durationMinutes: event?.durationMinutes || 30, intervalMinutes: event?.intervalMinutes || 30,
@@ -75,6 +77,14 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
     guestDenyList: event?.guestDenyList || [],
     requireEmailVerification: event?.requireEmailVerification ?? false,
     maxAdditionalGuests: event?.maxAdditionalGuests ?? 0,
+    waitlistEnabled: event?.waitlistEnabled ?? false,
+    maxRecurrenceOccurrences: event?.maxRecurrenceOccurrences ?? 1,
+    publicAccentColor: event?.publicAccentColor || '#245fc7',
+    publicIntro: event?.publicIntro || '',
+    privacyUrl: event?.privacyUrl || '',
+    termsUrl: event?.termsUrl || '',
+    locale: event?.locale || 'en',
+    lockedTimeZone: event?.lockedTimeZone || null,
     availabilityScheduleId: event ? event.availabilityScheduleId : defaultAvailability.id,
     questions: event?.questions || [],
     id: event?.id,
@@ -236,7 +246,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
       <form className="scheduler-modal" role="dialog" aria-modal="true" aria-labelledby="event-editor-title" onSubmit={submit} onMouseDown={eventMouse => eventMouse.stopPropagation()}>
         <header><div><h2 id="event-editor-title">{form.id ? 'Edit event type' : 'New event type'}</h2><p>Choose the service length, schedule, calendar rules, and booking limits.</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button></header>
         {error && <ErrorBanner error={error} />}
-        <nav className="scheduler-editor-tabs" aria-label="Event type settings">{(['setup', 'availability', 'limits', 'advanced'] as const).map(item => <button type="button" className={section === item ? 'active' : ''} onClick={() => setSection(item)} key={item}>{item[0].toUpperCase() + item.slice(1)}</button>)}</nav>
+        <nav className="scheduler-editor-tabs" aria-label="Event type settings">{(['setup', 'availability', 'limits', 'public', 'advanced'] as const).map(item => <button type="button" className={section === item ? 'active' : ''} onClick={() => setSection(item)} key={item}>{item[0].toUpperCase() + item.slice(1)}</button>)}</nav>
         {section === 'setup' && <div className="scheduler-form-grid">
           <label className="span-2">Title<input autoFocus required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Hair coloring" /></label>
           <label>Booking link<input value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value })} placeholder="hair-coloring" /></label>
@@ -271,10 +281,13 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
           <label className="scheduler-publish"><input type="checkbox" checked={form.requireRescheduleReason === true} onChange={e => setForm({ ...form, requireRescheduleReason: e.target.checked })} /><span>Require a reschedule reason<small>Stored privately with the booking for the owner.</small></span></label>
           <label>Active bookings per guest<input type="number" min={1} max={100} value={form.activeBookingLimit ?? ''} onChange={e => setForm({ ...form, activeBookingLimit: e.target.value === '' ? null : Number(e.target.value) })} placeholder="No limit" /><small>Uses normalized email. Enable verification below for stronger enforcement.</small></label>
           <label>Additional guests<input type="number" min={0} max={Math.min(20, Math.max((form.capacity || 1) - 1, 0))} value={form.maxAdditionalGuests ?? 0} onChange={e => setForm({ ...form, maxAdditionalGuests: Number(e.target.value) })} /><small>Each named guest uses one of the available seats.</small></label>
+          <label className="scheduler-publish"><input type="checkbox" checked={form.waitlistEnabled === true} onChange={e => setForm({ ...form, waitlistEnabled: e.target.checked })} /><span>Enable capacity waitlist<small>Full times remain visible so verified guests can queue for released seats.</small></span></label>
+          <label>Recurring meetings<input type="number" min={1} max={12} value={form.maxRecurrenceOccurrences ?? 1} onChange={e => setForm({ ...form, maxRecurrenceOccurrences: Number(e.target.value) })} /><small>Maximum weekly occurrences a guest can request; 1 disables recurrence.</small></label>
           <label className="scheduler-publish span-2"><input type="checkbox" checked={form.requireEmailVerification === true} onChange={e => setForm({ ...form, requireEmailVerification: e.target.checked })} /><span>Verify guest email before booking<small>Send a 15-minute code before any capacity is reserved.</small></span></label>
           <label className="span-2">Allowed guest emails or domains<textarea rows={3} value={(form.guestAllowList || []).join('\n')} onChange={e => setForm({ ...form, guestAllowList: e.target.value.split('\n') })} placeholder={'person@example.com\n@example.org'} /><small>One exact email or @domain per line. Leave blank to allow everyone not denied.</small></label>
           <label className="span-2">Denied guest emails or domains<textarea rows={3} value={(form.guestDenyList || []).join('\n')} onChange={e => setForm({ ...form, guestDenyList: e.target.value.split('\n') })} placeholder={'blocked@example.com\n@temporary-mail.test'} /><small>Denials take precedence over the allow list.</small></label>
         </div>}
+        {section === 'public' && <div className="scheduler-form-grid scheduler-editor-section"><label>Accent color<input type="color" value={form.publicAccentColor || '#245fc7'} onChange={e => setForm({ ...form, publicAccentColor: e.target.value })} /></label><label>Language<select value={form.locale || 'en'} onChange={e => setForm({ ...form, locale: e.target.value })}>{[['en','English'],['es','Español'],['fr','Français'],['de','Deutsch'],['it','Italiano'],['pt','Português'],['nl','Nederlands'],['ja','日本語'],['ko','한국어'],['zh','中文']].map(([value,label]) => <option value={value} key={value}>{label}</option>)}</select></label><label className="span-2">Booking-page introduction<textarea rows={3} maxLength={500} value={form.publicIntro || ''} onChange={e => setForm({ ...form, publicIntro: e.target.value })} placeholder="A short note guests see before choosing a time." /></label><label>Privacy URL<input type="url" value={form.privacyUrl || ''} onChange={e => setForm({ ...form, privacyUrl: e.target.value })} placeholder="https://example.com/privacy" /></label><label>Terms URL<input type="url" value={form.termsUrl || ''} onChange={e => setForm({ ...form, termsUrl: e.target.value })} placeholder="https://example.com/terms" /></label><label className="span-2">Lock guest time zone<input value={form.lockedTimeZone || ''} onChange={e => setForm({ ...form, lockedTimeZone: e.target.value || null })} placeholder="Leave blank for automatic detection and selection" /><small>Use an IANA name such as America/Phoenix. When set, guests cannot change the booking timezone.</small></label></div>}
         {section === 'advanced' && <div className="scheduler-editor-section">
           <fieldset className="scheduler-calendar-checks"><legend>Check busy time on these calendars</legend>{calendars.map(calendar => <label key={calendar.id}><input type="checkbox" checked={form.conflictCalendarIds?.includes(calendar.id) ?? false} onChange={e => setForm({ ...form, conflictCalendarIds: e.target.checked ? [...(form.conflictCalendarIds || []), calendar.id] : (form.conflictCalendarIds || []).filter(id => id !== calendar.id) })} /><span>{calendar.name}</span></label>)}</fieldset>
           <div className="scheduler-visibility-options"><strong>Booking-page visibility</strong><label><input type="radio" checked={form.visibility === 'public'} onChange={() => setForm({ ...form, visibility: 'public' })} /><span><strong>Listed</strong><small>Show this event on your public booking page.</small></span></label><label><input type="radio" checked={form.visibility === 'unlisted'} onChange={() => setForm({ ...form, visibility: 'unlisted' })} /><span><strong>Unlisted</strong><small>Hide it from your profile. Anyone with its exact link can still book.</small></span></label><label><input type="radio" checked={form.visibility === 'private'} onChange={() => setForm({ ...form, visibility: 'private' })} /><span><strong>Private link</strong><small>Require a random access token that you can rotate, expire, or revoke.</small></span></label></div>
@@ -328,6 +341,7 @@ export function SchedulerRoutes() {
   const [reviewingBookingId, setReviewingBookingId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [currentTime, setCurrentTime] = useState(0);
 
   const load = useCallback(async () => {
     try { setState(await getSchedulerState(filter)); setError(''); }
@@ -338,6 +352,15 @@ export function SchedulerRoutes() {
     const timer = window.setTimeout(() => { void load(); }, 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+  useEffect(() => {
+    const updateCurrentTime = () => setCurrentTime(Date.now());
+    const initialTimer = window.setTimeout(updateCurrentTime, 0);
+    const interval = window.setInterval(updateCurrentTime, 60_000);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   if (loading) return <div className="scheduler-loading">Loading Scheduler...</div>;
   if (!state) return <div className="scheduler-loading"><ErrorBanner error={error || 'Scheduler is unavailable'} /></div>;
@@ -368,6 +391,7 @@ export function SchedulerRoutes() {
     { id: 'events', label: 'Event Types', icon: CalendarClock },
     { id: 'bookings', label: 'Bookings', icon: CalendarDays },
     { id: 'availability', label: 'Availability', icon: Clock3 },
+    { id: 'tools', label: 'Tools', icon: Wrench },
     { id: 'profile', label: 'Profile', icon: Settings2 },
   ];
   return <div className="scheduler-app">
@@ -384,12 +408,13 @@ export function SchedulerRoutes() {
       </>}
       {tab === 'bookings' && <>
         <div className="scheduler-section-title"><div><h1>Bookings</h1><p>Calendar-backed meetings and approval requests</p></div><div className="segmented-control">{['upcoming', 'past', 'cancelled', 'rejected'].map(value => <button className={filter === value ? 'active' : ''} onClick={() => setFilter(value)} key={value}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div></div>
-        {state.bookings.length === 0 ? <EmptyState icon={CalendarDays} title={`No ${filter} bookings`} description="" /> : <div className="scheduler-booking-list">{state.bookings.map(booking => <article key={booking.id}><time>{new Date(booking.start).toLocaleDateString([], { month: 'short', day: 'numeric' })}<strong>{new Date(booking.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong></time><div><h3>{booking.event.title}</h3><p>{booking.bookerName} · {booking.bookerEmail}</p></div><span className={`booking-status ${booking.status}`}>{booking.status}</span><button className="btn btn-secondary" onClick={() => setSelectedBooking(booking)}>View</button>{booking.status === 'requested' && <><button className="btn btn-primary" disabled={reviewingBookingId === booking.id} onClick={() => void reviewBooking(booking.id, 'confirm')}>Approve</button><button className="btn btn-secondary" disabled={reviewingBookingId === booking.id} onClick={() => { if (confirm('Reject this booking request?')) void reviewBooking(booking.id, 'reject'); }}>Reject</button></>}{booking.status === 'confirmed' && <button className="btn btn-secondary" onClick={async () => { if (confirm('Cancel this booking?')) { await cancelSchedulerBooking(booking.id); await load(); } }}>Cancel</button>}</article>)}</div>}
+        {state.bookings.length === 0 ? <EmptyState icon={CalendarDays} title={`No ${filter} bookings`} description="" /> : <div className="scheduler-booking-list">{state.bookings.map(booking => <article key={booking.id}><time>{new Date(booking.start).toLocaleDateString([], { month: 'short', day: 'numeric' })}<strong>{new Date(booking.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong></time><div><h3>{booking.event.title}{booking.seriesId && <span className="scheduler-event-badge">Series {booking.seriesIndex}/{booking.seriesCount}</span>}</h3><p>{booking.bookerName} · {booking.bookerEmail}</p></div><span className={`booking-status ${booking.status}`}>{booking.status.replace('_', ' ')}</span><button className="btn btn-secondary" onClick={() => setSelectedBooking(booking)}>View</button>{booking.status === 'requested' && <><button className="btn btn-primary" disabled={reviewingBookingId === booking.id} onClick={() => void reviewBooking(booking.id, 'confirm')}>Approve</button><button className="btn btn-secondary" disabled={reviewingBookingId === booking.id} onClick={() => { if (confirm('Reject this booking request?')) void reviewBooking(booking.id, 'reject'); }}>Reject</button></>}{booking.status === 'confirmed' && <>{currentTime > 0 && new Date(booking.end).getTime() <= currentTime && <><button className="btn btn-secondary" onClick={async () => { await markSchedulerBookingOutcome(booking.id, 'completed'); await load(); }}>Complete</button><button className="btn btn-secondary" onClick={async () => { if (confirm('Mark this guest as a no-show?')) { await markSchedulerBookingOutcome(booking.id, 'no_show'); await load(); } }}>No-show</button></>}<button className="btn btn-secondary" onClick={async () => { if (confirm('Cancel this booking?')) { await cancelSchedulerBooking(booking.id); await load(); } }}>Cancel</button></>}</article>)}</div>}
       </>}
       {tab === 'availability' && <AvailabilityPanel availability={state.defaultAvailability} onSaved={load} />}
+      {tab === 'tools' && <SchedulerToolsPanel state={state} onChanged={load} />}
       {tab === 'profile' && <ProfilePanel state={state} onSaved={load} />}
     </main>
     {editor !== undefined && <EventEditor event={editor} calendars={state.calendars} defaultAvailability={state.defaultAvailability} onClose={() => setEditor(undefined)} onSaved={async (close = true) => { if (close) setEditor(undefined); await load(); }} />}
-    {selectedBooking && <div className="scheduler-modal-backdrop" onMouseDown={() => setSelectedBooking(null)}><section className="scheduler-booking-detail" onMouseDown={event => event.stopPropagation()}><header><div><h2>{selectedBooking.event.title}</h2><p>{selectedBooking.status}</p></div><button className="icon-button" onClick={() => setSelectedBooking(null)} aria-label="Close"><X size={18} /></button></header><dl><div><dt>Guest</dt><dd>{selectedBooking.bookerName}<span>{selectedBooking.bookerEmail}</span></dd></div><div><dt>When</dt><dd>{new Date(selectedBooking.start).toLocaleString()}<span>{selectedBooking.event.durationMinutes} minutes · {selectedBooking.seats || 1} {(selectedBooking.seats || 1) === 1 ? 'seat' : 'seats'}</span></dd></div><div><dt>Location</dt><dd>{selectedBooking.event.locationLabel || 'Not specified'}</dd></div>{(selectedBooking.attendees || []).map(attendee => <div key={attendee.email}><dt>Additional guest</dt><dd>{attendee.name || attendee.email}{attendee.name && <span>{attendee.email}</span>}</dd></div>)}{selectedBooking.bookerNotes && <div><dt>Notes</dt><dd>{selectedBooking.bookerNotes}</dd></div>}{selectedBooking.cancellationReason && <div><dt>Cancellation reason</dt><dd>{selectedBooking.cancellationReason}</dd></div>}{selectedBooking.rescheduleReason && <div><dt>Reschedule reason</dt><dd>{selectedBooking.rescheduleReason}</dd></div>}{(selectedBooking.bookingAnswers || []).map(answer => <div key={answer.questionId}><dt>{answer.label}</dt><dd>{answer.value}</dd></div>)}</dl></section></div>}
+    {selectedBooking && <div className="scheduler-modal-backdrop" onMouseDown={() => setSelectedBooking(null)}><section className="scheduler-booking-detail" onMouseDown={event => event.stopPropagation()}><header><div><h2>{selectedBooking.event.title}</h2><p>{selectedBooking.status.replace('_', ' ')}</p></div><button className="icon-button" onClick={() => setSelectedBooking(null)} aria-label="Close"><X size={18} /></button></header><dl><div><dt>Guest</dt><dd>{selectedBooking.bookerName}<span>{selectedBooking.bookerEmail}</span></dd></div>{selectedBooking.bookedByUsername && <div><dt>Booked by</dt><dd>{selectedBooking.bookedByUsername}</dd></div>}<div><dt>When</dt><dd>{new Date(selectedBooking.start).toLocaleString()}<span>{selectedBooking.event.durationMinutes} minutes · {selectedBooking.seats || 1} {(selectedBooking.seats || 1) === 1 ? 'seat' : 'seats'}{selectedBooking.seriesId ? ` · occurrence ${selectedBooking.seriesIndex} of ${selectedBooking.seriesCount}` : ''}</span></dd></div><div><dt>Location</dt><dd>{selectedBooking.event.locationLabel || 'Not specified'}</dd></div>{(selectedBooking.attendees || []).map(attendee => <div key={attendee.email}><dt>Additional guest</dt><dd>{attendee.name || attendee.email}{attendee.name && <span>{attendee.email}</span>}</dd></div>)}{Object.entries(selectedBooking.attribution || {}).map(([key, value]) => <div key={key}><dt>{key.replace('utm_', 'UTM ')}</dt><dd>{value}</dd></div>)}{selectedBooking.bookerNotes && <div><dt>Notes</dt><dd>{selectedBooking.bookerNotes}</dd></div>}{selectedBooking.cancellationReason && <div><dt>Cancellation reason</dt><dd>{selectedBooking.cancellationReason}</dd></div>}{selectedBooking.rescheduleReason && <div><dt>Reschedule reason</dt><dd>{selectedBooking.rescheduleReason}</dd></div>}{(selectedBooking.bookingAnswers || []).map(answer => <div key={answer.questionId}><dt>{answer.label}</dt><dd>{answer.value}</dd></div>)}</dl></section></div>}
   </div>;
 }

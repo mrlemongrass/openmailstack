@@ -13,6 +13,7 @@ const NotesRoutes = lazy(() => import('./notes/routes').then(m => ({ default: m.
 const SchedulerRoutes = lazy(() => import('./scheduler/routes').then(m => ({ default: m.SchedulerRoutes })));
 const PublicSchedulerPage = lazy(() => import('./scheduler/PublicScheduler').then(m => ({ default: m.PublicSchedulerPage })));
 const SchedulerActionPage = lazy(() => import('./scheduler/PublicScheduler').then(m => ({ default: m.SchedulerActionPage })));
+const PublicSchedulerPollPage = lazy(() => import('./scheduler/PublicScheduler').then(m => ({ default: m.PublicSchedulerPollPage })));
 const SettingsRoutes = lazy(() => import('./settings/routes').then(m => ({ default: m.SettingsRoutes })));
 const AdminRoutes = lazy(() => import('./admin/routes').then(m => ({ default: m.AdminRoutes })));
 
@@ -243,6 +244,7 @@ export default function App() {
     <ToastProvider>
     <Routes>
       <Route path="scheduler/action/:scope/:token" element={<Suspense fallback={<Skeleton />}><SchedulerActionPage /></Suspense>} />
+      <Route path="scheduler/poll/:token" element={<Suspense fallback={<Skeleton />}><PublicSchedulerPollPage /></Suspense>} />
       <Route path="scheduler/:handle/:slug?" element={<Suspense fallback={<Skeleton />}><PublicSchedulerPage /></Suspense>} />
       <Route element={<AuthGate />}>
         <Route element={<ErrorBoundary><AppShell /></ErrorBoundary>}>

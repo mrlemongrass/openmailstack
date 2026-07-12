@@ -1,4 +1,4 @@
-export declare const SCHEDULER_OUTBOX_EVENT_TYPES: readonly ["booking.requested", "booking.confirmed", "booking.rejected", "booking.cancelled", "booking.rescheduled", "booking.verification", "calendar.project", "conference.create", "message.send", "payment.create", "webhook.deliver"];
+export declare const SCHEDULER_OUTBOX_EVENT_TYPES: readonly ["booking.requested", "booking.confirmed", "booking.rejected", "booking.cancelled", "booking.rescheduled", "booking.verification", "waitlist.joined", "calendar.project", "conference.create", "message.send", "payment.create", "webhook.deliver"];
 export type SchedulerOutboxEventType = typeof SCHEDULER_OUTBOX_EVENT_TYPES[number];
 export interface SchedulerOutboxEnvelope<TPayload = Record<string, unknown>> {
     id: string;

@@ -893,3 +893,13 @@ Future entry template:
 - Verified: Disposable MariaDB applied migrations `001`-`016` twice and passed 89/89 tests with no skips. Frontend lint/build, full integration, desktop/mobile owner/public browser flows, reversible no-mail live validation, artifact equality, mail and Scheduler regressions, `postqueue`/`ss`, service/Nginx health, and staging smoke pass.
 - Deployed: Root-only rollback snapshot `/var/backups/openmailstack/20260712T052145Z_scheduler_booking_integrity`; migrations `012`-`016` and tested backend/frontend artifacts are live. Temporary data was removed and no mail was sent.
 - Follow-up: Add a capacity-aware waitlist with atomic policy-preserving promotion.
+
+## 2026-07-12 Scheduler Phase 2 Completion
+
+- Added migrations `017`-`023` and completed the remaining personal-scheduling scope: holidays/out-of-office, waitlists, recurring series, meeting polls, completed/no-show, book-on-behalf, distribution/embed/prefill/UTM/customization/locale/timezone controls, and guarded portability.
+- Reliability: recurring requests serialize with `GET_LOCK`, replay the complete original series, preserve local time across DST, batch notifications, and compensate failures; waitlists ignore expired holds and promote the oldest party whose seats fit.
+- Security: poll votes inherit event eligibility/verification, only voters for the finalized option become attendees, public prefill/attribution fields are allowlisted and bounded, policy URLs require HTTPS, and exported CSV neutralizes spreadsheet formulas.
+- Deployment safety: backend `uploads/` is now excluded from destructive synchronization. The live pre-deploy backup contained no upload data, and the runtime-created empty directory remains outside artifact equality checks.
+- Verified: normal backend, frontend lint/build/tests, full integration, desktop/mobile Playwright, migration idempotence, and disposable MariaDB 90/90 passed. Live migrations/tables, artifact contents, public routes, `postqueue`, `ss`, services, Nginx, and staging smoke pass.
+- Deployed: `/var/backups/openmailstack/20260712_064405_scheduler_phase2_complete` is the root-only rollback snapshot; migrations `017`-`023` and tested artifacts are live.
+- Next: Phase 3 durable reminders, reconfirmation, follow-ups, and observable provider-independent workflow delivery.

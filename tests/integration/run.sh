@@ -107,6 +107,7 @@ test_modern_webmail_deployment_guards() {
     assert_contains "${webmail_file}" 'location ^~ /api/'
     assert_contains "${webmail_file}" 'location ^~ /carddav'
     assert_contains "${webmail_file}" 'location = /Microsoft-Server-ActiveSync'
+    assert_contains "${webmail_file}" '--exclude uploads'
     assert_contains "${webmail_file}" 'if (\$request_method ~ ^(PROPFIND|OPTIONS)$)'
     assert_contains "${webmail_file}" 'END { if (!inserted) exit 2 }'
     assert_contains "${webmail_file}" 'Generated Nginx config failed validation; restoring previous config'

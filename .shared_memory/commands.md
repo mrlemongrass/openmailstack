@@ -29,6 +29,17 @@ rtk npm --prefix webmail-frontend run lint
 rtk npm --prefix webmail-frontend run build
 ```
 
+Scheduler release checks:
+
+```bash
+rtk node tests/integration/scheduler_phase1_guard.cjs
+rtk node tests/integration/scheduler_docs_guard.cjs
+rtk bash /tmp/oms-scheduler-single-use-db-test.sh
+rtk bash tests/integration/run.sh
+```
+
+When comparing a tested backend to `/opt/openmailstack-backend`, exclude `node_modules`, `.npm`, and persistent `uploads`. Deployment must also exclude `uploads` from `rsync --delete`.
+
 `webmail-frontend run lint` is currently expected to exit 0 with warnings for
 the staged `any` typing cleanup and React compiler-style hook migration.
 

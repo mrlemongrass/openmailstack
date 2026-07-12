@@ -20,6 +20,7 @@ exports.normalizeOneOffAvailability = normalizeOneOffAvailability;
 exports.buildSchedulerCalendarEvent = buildSchedulerCalendarEvent;
 exports.schedulerPublicUrl = schedulerPublicUrl;
 const crypto_1 = __importDefault(require("crypto"));
+const phase2_1 = require("./phase2");
 const RESERVED_HANDLES = new Set([
     'action', 'admin', 'api', 'auth', 'calendar', 'carddav', 'contacts', 'mail', 'notes',
     'public', 'scheduler', 'settings', 'socket.io', 'sync', 'uploads', 'webmail',
@@ -226,6 +227,11 @@ function normalizeSchedulerEventInput(input) {
     if (maxAdditionalGuests >= capacity) {
         throw new Error('maxAdditionalGuests must be less than capacity so every guest has a seat');
     }
+    const maxRecurrenceOccurrences = Number(input.maxRecurrenceOccurrences ?? 1);
+    if (!Number.isInteger(maxRecurrenceOccurrences) || maxRecurrenceOccurrences < 1 || maxRecurrenceOccurrences > 12) {
+        throw new Error('maxRecurrenceOccurrences must be an integer between 1 and 12');
+    }
+    const publicSettings = (0, phase2_1.normalizeSchedulerPublicSettings)(input);
     return {
         title,
         slug: cleanSlug(input.slug || title, 'meeting'),
@@ -253,6 +259,9 @@ function normalizeSchedulerEventInput(input) {
         guestDenyList: normalizeSchedulerGuestRules(input.guestDenyList),
         requireEmailVerification: input.requireEmailVerification === true,
         maxAdditionalGuests,
+        waitlistEnabled: input.waitlistEnabled === true,
+        maxRecurrenceOccurrences,
+        ...publicSettings,
         windows,
         questions: normalizeSchedulerQuestions(input.questions),
     };

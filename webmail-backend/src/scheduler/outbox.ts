@@ -5,6 +5,7 @@ export const SCHEDULER_OUTBOX_EVENT_TYPES = [
     'booking.cancelled',
     'booking.rescheduled',
     'booking.verification',
+    'waitlist.joined',
     'calendar.project',
     'conference.create',
     'message.send',

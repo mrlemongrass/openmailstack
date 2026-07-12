@@ -233,7 +233,7 @@
   .availability-month-grid button span { display: none; }
   .availability-block { grid-template-columns: 1fr; }
 }
-.public-scheduler-page { min-height: 100vh; background: #f7f8fa; color: #18202b; overflow: auto; }
+.public-scheduler-page { min-height: 100vh; background: #f7f8fa; color: #18202b; overflow: auto; --scheduler-accent: #245fc7; }
 .public-scheduler-header { height: 58px; display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(18px, 4vw, 54px); border-bottom: 1px solid #dde2e8; background: #fff; }
 .public-scheduler-header div { display: flex; align-items: center; gap: 9px; }
 .public-scheduler-header span { color: #687385; font-size: .76rem; }
@@ -268,11 +268,12 @@
 .public-slot-days { display: grid; gap: 14px; max-height: 600px; overflow: auto; padding-right: 4px; }
 .public-slot-days h3 { margin: 0 0 6px; font-size: .76rem; color: #5c6878; }
 .public-slot-days > div > div { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.public-slot-days button, .action-slots button { min-height: 38px; border: 1px solid #b9c9e8; border-radius: 5px; background: #fff; color: #245fc7; cursor: pointer; font-weight: 600; }
+.public-slot-days button, .action-slots button { min-height: 38px; border: 1px solid #b9c9e8; border-radius: 5px; background: #fff; color: var(--scheduler-accent); cursor: pointer; font-weight: 600; }
 .public-slot-days button { display: grid; place-content: center; gap: 1px; }
 .public-slot-days button small { font-size: .62rem; font-weight: 500; color: #63738a; }
 .public-slot-days button.selected small { color: #dce8ff; }
-.public-slot-days button.selected, .action-slots button.selected { background: #245fc7; border-color: #245fc7; color: #fff; }
+.public-slot-days button.selected, .action-slots button.selected { background: var(--scheduler-accent); border-color: var(--scheduler-accent); color: #fff; }
+.public-slot-days button.full { border-style: dashed; color: #6a506f; }
 .public-booking-form > p { color: #536174; font-size: .78rem; margin: 6px 0 18px; }
 .public-booking-form label { display: grid; gap: 6px; margin-bottom: 12px; color: #4d5968; font-size: .75rem; font-weight: 600; }
 .public-booking-form input, .public-booking-form select, .public-booking-form textarea { box-sizing: border-box; width: 100%; border: 1px solid #cfd6df; border-radius: 5px; padding: 9px 10px; background: #fff; color: #18202b; font: inherit; letter-spacing: 0; }
@@ -287,6 +288,31 @@
 .public-attendee-row { display: grid; grid-template-columns: .8fr 1.2fr auto; gap: 6px; }
 .public-attendee-row button, .public-add-attendee { border: 0; background: transparent; color: #245fc7; cursor: pointer; font-size: .72rem; font-weight: 600; }
 .public-add-attendee { justify-self: start; padding: 3px 0; }
+.public-event-summary footer { display: flex; gap: 12px; margin-top: 22px; }
+.public-event-summary footer a { color: var(--scheduler-accent); font-size: .75rem; }
+.public-event-intro { padding: 10px 12px; border-left: 3px solid var(--scheduler-accent); background: #f6f8fc; }
+.availability-exclusion-form { display: grid; grid-template-columns: .8fr 1fr 1fr 1.4fr auto; align-items: end; gap: 10px; }
+.availability-exclusion-form label { display: grid; gap: 5px; font-size: .74rem; color: var(--text-secondary); }
+.availability-exclusion-list, .scheduler-tool-list { display: grid; gap: 8px; }
+.availability-exclusion-list article, .scheduler-tool-list article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--border-glass); border-radius: var(--radius-md); }
+.availability-exclusion-list article div, .scheduler-tool-list article div { display: grid; gap: 3px; }
+.availability-exclusion-list article span, .scheduler-tool-list article span { color: var(--text-secondary); font-size: .72rem; }
+.scheduler-tools { display: grid; gap: 16px; }
+.scheduler-tool-card { display: grid; gap: 14px; padding: 18px; border: 1px solid var(--border-glass); border-radius: var(--radius-lg); background: var(--surface-color); }
+.scheduler-tool-card > header { display: flex; justify-content: space-between; gap: 12px; }
+.scheduler-tool-card h2, .scheduler-tool-card p { margin: 0; }
+.scheduler-tool-card header p { margin-top: 4px; color: var(--text-secondary); font-size: .78rem; }
+.scheduler-share-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.scheduler-copy-row, .scheduler-import-row { display: flex; align-items: end; gap: 8px; }
+.scheduler-copy-row input { flex: 1; min-width: 0; }
+.scheduler-import-row label { display: grid; gap: 5px; }
+.scheduler-inline-field { display: flex; align-items: center; gap: 6px; }
+.scheduler-inline-field input { flex: 1; min-width: 0; }
+.scheduler-inline-field button { border: 0; background: transparent; color: var(--danger); cursor: pointer; font-size: .72rem; }
+.public-poll-page { width: min(600px, calc(100% - 32px)); margin: 44px auto; padding: 24px; border: 1px solid #dfe4ea; border-radius: 8px; background: #fff; }
+.public-poll-page form, .public-poll-page fieldset { display: grid; gap: 12px; }
+.public-poll-page label { display: grid; gap: 6px; font-size: .78rem; }
+.public-poll-page fieldset label { grid-template-columns: auto 1fr; align-items: center; }
 .public-muted { color: #687385; font-size: .82rem; }
 .booking-confirmation, .public-not-found, .scheduler-action-page { width: min(560px, calc(100% - 32px)); margin: 0 auto; padding: 74px 0; text-align: center; }
 .confirmation-mark { width: 58px; height: 58px; display: grid; place-items: center; margin: 0 auto 18px; border-radius: 50%; background: #def6e9; color: #177a4d; }
@@ -317,6 +343,8 @@
   .public-slot-days > div > div { grid-template-columns: repeat(2, 1fr); }
   .public-attendee-row { grid-template-columns: 1fr; }
   .public-attendee-row button { justify-self: start; padding: 3px 0; }
+  .availability-exclusion-form { grid-template-columns: 1fr; }
+  .scheduler-copy-row, .scheduler-import-row { align-items: stretch; flex-direction: column; }
   .public-profile { padding-top: 34px; }
   .action-slots { grid-template-columns: 1fr; }
 }

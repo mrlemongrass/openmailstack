@@ -25,6 +25,14 @@ export interface SchedulerEventInput {
     guestDenyList?: string[];
     requireEmailVerification?: boolean;
     maxAdditionalGuests?: number;
+    waitlistEnabled?: boolean;
+    maxRecurrenceOccurrences?: number;
+    publicAccentColor?: string;
+    publicIntro?: string;
+    privacyUrl?: string;
+    termsUrl?: string;
+    locale?: string;
+    lockedTimeZone?: string | null;
     windows?: Array<{
         weekday: number;
         startMinute: number;

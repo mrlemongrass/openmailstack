@@ -51,6 +51,14 @@ export interface SchedulerEventType {
   guestDenyList: string[];
   requireEmailVerification: boolean;
   maxAdditionalGuests: number;
+  waitlistEnabled: boolean;
+  maxRecurrenceOccurrences: number;
+  publicAccentColor: string;
+  publicIntro: string;
+  privacyUrl: string;
+  termsUrl: string;
+  locale: string;
+  lockedTimeZone: string | null;
   questions: SchedulerBookingQuestion[];
 }
 
@@ -89,6 +97,15 @@ export interface SchedulerAvailability {
   published: boolean;
   windows: SchedulerWindow[];
   overrides: SchedulerAvailabilityOverride[];
+  exclusions: SchedulerAvailabilityExclusion[];
+}
+
+export interface SchedulerAvailabilityExclusion {
+  id?: string;
+  kind: 'holiday' | 'out_of_office';
+  startDate: string;
+  endDate: string;
+  label: string;
 }
 
 export interface SchedulerEntitlement {
@@ -117,6 +134,11 @@ export interface SchedulerBooking {
   rescheduleReason: string;
   seats: number;
   attendees: SchedulerAttendee[];
+  bookedByUsername: string | null;
+  attribution: Record<string, string>;
+  seriesId: string | null;
+  seriesIndex: number | null;
+  seriesCount: number | null;
   event: SchedulerEventType;
 }
 
@@ -139,7 +161,17 @@ export interface SchedulerState {
   defaultAvailability: SchedulerAvailability;
   notificationIdentities: Array<{ address: string; name: string }>;
   publicBaseUrl: string;
+  waitlist: SchedulerWaitlistEntry[];
+  polls: SchedulerPoll[];
 }
+
+export interface SchedulerWaitlistEntry {
+  id: string; status: string; booker_name: string; booker_email: string; seats: number;
+  desiredStart: string; title: string; slug: string; promoted_booking_id: string | null;
+}
+
+export interface SchedulerPollOption { id: string; start: string; end?: string; votes: number }
+export interface SchedulerPoll { id: string; title: string; status: string; eventTypeId: string; eventTitle: string; finalizedOptionId: string | null; options: SchedulerPollOption[] }
 
 export async function saveDefaultAvailability(availability: Partial<SchedulerAvailability>): Promise<SchedulerAvailability> {
   const result = await request<{ availability: SchedulerAvailability }>('/api/scheduler/v1/availability/default', {
@@ -221,12 +253,57 @@ export async function getPublicEvent(handle: string, slug: string, accessToken =
   return request(`/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}`, { headers: accessHeaders(accessToken) });
 }
 
-export async function getPublicSlots(handle: string, slug: string, start: Date, end: Date, accessToken = ''): Promise<Array<{ start: string; end: string; remainingSeats: number }>> {
+export async function getPublicSlots(handle: string, slug: string, start: Date, end: Date, accessToken = '', includeFull = false): Promise<Array<{ start: string; end: string; remainingSeats: number }>> {
   const result = await request<{ slots: Array<{ start: string; end: string; remainingSeats: number }> }>(
-    `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/slots?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`,
+    `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/slots?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}${includeFull ? '&includeFull=true' : ''}`,
     { headers: accessHeaders(accessToken) },
   );
   return result.slots;
+}
+
+export async function joinPublicWaitlist(handle: string, slug: string, payload: Record<string, unknown>, accessToken = '', idempotencyKey = crypto.randomUUID()): Promise<void> {
+  await request(`/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/waitlist`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...accessHeaders(accessToken) },
+    body: JSON.stringify({ ...payload, idempotencyKey }),
+  });
+}
+
+export async function bookSchedulerOnBehalf(payload: Record<string, unknown>): Promise<void> {
+  await request('/api/scheduler/v1/bookings/on-behalf', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(payload) });
+}
+
+export async function markSchedulerBookingOutcome(id: string, outcome: 'completed' | 'no_show'): Promise<void> {
+  await request(`/api/scheduler/v1/bookings/${id}/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome }) });
+}
+
+export async function createSchedulerPoll(payload: Record<string, unknown>): Promise<{ poll: SchedulerPoll & { token: string }; url: string }> {
+  return request('/api/scheduler/v1/polls', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+}
+
+export async function finalizeSchedulerPoll(id: string, optionId: string): Promise<void> {
+  await request(`/api/scheduler/v1/polls/${id}/finalize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ optionId }) });
+}
+
+export async function getPublicPoll(token: string): Promise<{ poll: SchedulerPoll & { eventTitle: string; hostName: string; requireEmailVerification: boolean } }> {
+  return request(`/api/public/scheduler/v1/polls/${encodeURIComponent(token)}`);
+}
+
+export async function requestPublicPollVerification(token: string, voterEmail: string): Promise<{ challengeId: string; expiresAt: string }> {
+  const result = await request<{ verification: { challengeId: string; expiresAt: string } }>(`/api/public/scheduler/v1/polls/${encodeURIComponent(token)}/verification`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voterEmail }),
+  });
+  return result.verification;
+}
+
+export async function votePublicPoll(token: string, payload: Record<string, unknown>): Promise<void> {
+  await request(`/api/public/scheduler/v1/polls/${encodeURIComponent(token)}/votes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+}
+
+export async function importSchedulerData(source: 'openmailstack' | 'calendly' | 'calcom', payload: unknown): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  const result = await request<{ result: { imported: number; skipped: number; errors: string[] } }>('/api/scheduler/v1/import', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, payload }),
+  });
+  return result.result;
 }
 
 export async function requestPublicVerification(handle: string, slug: string, bookerEmail: string, accessToken = ''): Promise<{ challengeId: string; expiresAt: string }> {

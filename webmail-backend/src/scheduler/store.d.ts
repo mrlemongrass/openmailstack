@@ -1,6 +1,7 @@
 import type { Pool } from 'mysql2/promise';
 import { type AvailabilitySlot } from './availability';
 import { type SchedulerEventInput, type SchedulerBookingAnswerInput, type SchedulerBookingQuestion, type SchedulerAttendeeInput, type SchedulerOneOffWindow } from './phase1';
+import { type SchedulerAvailabilityExclusion } from './phase2';
 export interface SchedulerEntitlement {
     username: string;
     tenantKey: string;
@@ -44,6 +45,14 @@ export interface SchedulerEventType {
     guestDenyList: string[];
     requireEmailVerification: boolean;
     maxAdditionalGuests: number;
+    waitlistEnabled: boolean;
+    maxRecurrenceOccurrences: number;
+    publicAccentColor: string;
+    publicIntro: string;
+    privacyUrl: string;
+    termsUrl: string;
+    locale: string;
+    lockedTimeZone: string | null;
     windows: Array<{
         weekday: number;
         startMinute: number;
@@ -73,6 +82,7 @@ export interface SchedulerAvailabilitySchedule {
     published: boolean;
     windows: SchedulerScheduleWindow[];
     overrides: SchedulerScheduleOverride[];
+    exclusions: SchedulerAvailabilityExclusion[];
 }
 export interface SchedulerAvailabilityInput {
     name?: string;
@@ -80,6 +90,7 @@ export interface SchedulerAvailabilityInput {
     published?: boolean;
     windows?: SchedulerScheduleWindow[];
     overrides?: SchedulerScheduleOverride[];
+    exclusions?: SchedulerAvailabilityExclusion[];
 }
 export interface SchedulerBookingInput {
     eventTypeId: string;
@@ -93,6 +104,15 @@ export interface SchedulerBookingInput {
     seats?: number;
     verificationChallengeId?: string;
     verificationCode?: string;
+    recurrenceCount?: number;
+    attribution?: Record<string, unknown>;
+    bookedByUsername?: string;
+    waitlistEntryId?: string;
+    seriesId?: string;
+    seriesIndex?: number;
+    seriesCount?: number;
+    suppressNotification?: boolean;
+    verificationBypass?: boolean;
     idempotencyKey: string;
     privateAccessToken?: string;
 }
@@ -161,9 +181,17 @@ export declare class SchedulerStore {
         entitlement: SchedulerEntitlement;
         event: SchedulerEventType;
     } | null>;
-    listSlots(handle: string, slug: string, rangeStart: Date, rangeEnd: Date, privateAccessToken?: string): Promise<AvailabilitySlot[]>;
+    listSlots(handle: string, slug: string, rangeStart: Date, rangeEnd: Date, privateAccessToken?: string, includeFull?: boolean): Promise<AvailabilitySlot[]>;
     requestEmailVerification(handle: string, slug: string, emailValue: unknown, privateAccessToken?: string): Promise<Record<string, unknown>>;
     createBooking(handle: string, slug: string, input: SchedulerBookingInput): Promise<Record<string, unknown>>;
+    createRecurringBooking(handle: string, slug: string, input: SchedulerBookingInput): Promise<Record<string, unknown>>;
+    joinWaitlist(handle: string, slug: string, input: SchedulerBookingInput): Promise<Record<string, unknown>>;
+    listWaitlist(username: string): Promise<any[]>;
+    promoteWaitlist(eventTypeId: string, start: Date): Promise<Record<string, unknown> | null>;
+    bookOnBehalf(username: string, eventTypeId: string, input: Omit<SchedulerBookingInput, 'eventTypeId'>): Promise<Record<string, unknown>>;
+    markBookingOutcome(username: string, bookingId: string, outcome: 'completed' | 'no_show'): Promise<void>;
+    private queueExistingBookingNotifications;
+    private rollbackCreatedBooking;
     listBookings(username: string, filter?: string): Promise<Array<Record<string, unknown>>>;
     getCapabilityBooking(token: string, scope: 'cancel' | 'reschedule'): Promise<Record<string, unknown> | null>;
     cancelBookingByToken(token: string, reason?: unknown): Promise<Record<string, unknown> | null>;

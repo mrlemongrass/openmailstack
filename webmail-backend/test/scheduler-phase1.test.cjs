@@ -23,6 +23,14 @@ const {
 } = require('../src/scheduler/phase1.js');
 const { schedulerHostAllowed } = require('../src/scheduler/router.js');
 const { schedulerNotificationMails, schedulerTransportOptions } = require('../src/scheduler/worker.js');
+const {
+    exclusionDateKeys,
+    normalizeImportSource,
+    normalizeRecurrenceCount,
+    normalizeSchedulerAttribution,
+    normalizeSchedulerExclusions,
+    normalizeSchedulerPublicSettings,
+} = require('../src/scheduler/phase2.js');
 
 test('normalizes local-part handles and rejects reserved routes', () => {
     assert.equal(defaultSchedulerHandle('Thang@housevo.us'), 'thang');
@@ -119,6 +127,36 @@ test('booking action policies enforce immutable cutoffs and bounded reasons', ()
     assert.throws(() => normalizeSchedulerActionReason('', 'cancel', true), /cancellation reason is required/);
     assert.throws(() => normalizeSchedulerActionReason({ text: 'not a string' }, 'cancel', false), /reason must be text/);
     assert.throws(() => normalizeSchedulerActionReason('x'.repeat(1001), 'reschedule', false), /1000 characters/);
+});
+
+test('normalizes Phase 2 exclusions, public settings, attribution, recurrence, and import sources', () => {
+    const exclusions = normalizeSchedulerExclusions([
+        { kind: 'holiday', startDate: '2026-12-24', endDate: '2026-12-25', label: 'Winter holiday' },
+        { kind: 'out_of_office', startDate: '2027-01-02', endDate: '2027-01-03', label: 'Away' },
+    ]);
+    assert.equal(exclusions.length, 2);
+    assert.deepEqual([...exclusionDateKeys(exclusions, new Date('2026-12-24T00:00:00Z'), new Date('2026-12-26T00:00:00Z'))], ['2026-12-24', '2026-12-25']);
+    assert.deepEqual(
+        [...exclusionDateKeys(exclusions, new Date('2026-12-24T18:00:00Z'), new Date('2026-12-25T18:00:00Z'))],
+        ['2026-12-24', '2026-12-25'],
+        'UTC range edges must not omit host-local exclusion dates'
+    );
+    assert.throws(() => normalizeSchedulerExclusions([{ kind: 'holiday', startDate: '2026-12-25', endDate: '2026-12-24' }]), /dates are invalid/);
+    const settings = normalizeSchedulerPublicSettings({
+        publicAccentColor: '#AABBCC', publicIntro: '  Welcome  ', privacyUrl: 'https://example.test/privacy',
+        termsUrl: '', locale: 'fr', lockedTimeZone: 'Europe/Paris',
+    });
+    assert.equal(settings.publicAccentColor, '#aabbcc');
+    assert.equal(settings.locale, 'fr');
+    assert.equal(settings.lockedTimeZone, 'Europe/Paris');
+    assert.throws(() => normalizeSchedulerPublicSettings({ privacyUrl: 'javascript:alert(1)' }), /HTTPS/);
+    assert.deepEqual(normalizeSchedulerAttribution({ utm_source: ' newsletter ', arbitrary: 'drop', utm_campaign: 'x'.repeat(300) }), {
+        utm_source: 'newsletter', utm_campaign: 'x'.repeat(255),
+    });
+    assert.equal(normalizeRecurrenceCount(4, 6), 4);
+    assert.throws(() => normalizeRecurrenceCount(7, 6), /between 1 and 6/);
+    assert.equal(normalizeImportSource('calcom'), 'calcom');
+    assert.throws(() => normalizeImportSource('unknown'), /Import source/);
 });
 
 test('normalizes booking questions and snapshots validated answers', () => {

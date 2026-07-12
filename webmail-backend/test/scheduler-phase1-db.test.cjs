@@ -6,6 +6,7 @@ process.env.OMS_DB_PASSWORD = process.env.OMS_DB_PASSWORD || 'test-only';
 test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: process.env.OMS_SCHEDULER_PHASE1_DB_TEST !== '1' }, async () => {
     const { pool } = require('../src/db.js');
     const { SchedulerStore } = require('../src/scheduler/store.js');
+    const { SchedulerPhase2Store } = require('../src/scheduler/phase2-store.js');
     await pool.query(`CREATE TABLE IF NOT EXISTS mailbox (
         username VARCHAR(255) PRIMARY KEY, name VARCHAR(255), local_part VARCHAR(255), domain VARCHAR(255), active TINYINT(1)
     ) ENGINE=InnoDB`);
@@ -650,6 +651,196 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const losingSeatSlots = await store.listSlots('phase1', seatsEvent.slug, new Date(seatRescheduleLoser.getTime() - 1), new Date(seatRescheduleLoser.getTime() + 31 * 60 * 1000));
     assert.equal(losingSeatSlots.find(slot => slot.start.getTime() === seatRescheduleLoser.getTime()).remainingSeats, 3);
     await store.cancelBookingByToken(seatBookingOne.cancelToken);
+
+    const phase2Availability = await store.saveDefaultAvailability(username, {
+        ...(await store.getDefaultAvailability(username)),
+        exclusions: [
+            { kind: 'holiday', startDate: '2026-09-01', endDate: '2026-09-01', label: 'Company holiday' },
+            { kind: 'out_of_office', startDate: '2026-09-02', endDate: '2026-09-03', label: 'Conference' },
+        ],
+    });
+    assert.deepEqual(phase2Availability.exclusions.map(item => item.kind), ['holiday', 'out_of_office']);
+    const exclusionEvent = await store.saveEventType(username, {
+        title: 'Exclusion Test', slug: 'exclusion-test', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+    });
+    const exclusionSlots = await store.listSlots(
+        'phase1', exclusionEvent.slug, new Date('2026-09-01T16:00:00.000Z'), new Date('2026-09-01T18:00:00.000Z')
+    );
+    assert.equal(exclusionSlots.length, 0, 'holidays must block inherited availability');
+
+    const phase2Event = await store.saveEventType(username, {
+        title: 'Phase 2 Complete', slug: 'phase-2-complete', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId], capacity: 2,
+        waitlistEnabled: true, maxRecurrenceOccurrences: 4, publicAccentColor: '#aa3377',
+        publicIntro: 'A localized public booking page', privacyUrl: 'https://example.test/privacy',
+        termsUrl: 'https://example.test/terms', locale: 'fr', lockedTimeZone: 'America/Phoenix',
+    });
+    assert.equal(phase2Event.waitlistEnabled, true);
+    assert.equal(phase2Event.maxRecurrenceOccurrences, 4);
+    assert.equal(phase2Event.publicAccentColor, '#aa3377');
+    assert.equal(phase2Event.locale, 'fr');
+    assert.equal(phase2Event.lockedTimeZone, 'America/Phoenix');
+    const phase2Legacy = await store.saveEventType(username, {
+        ...phase2Event, title: 'Phase 2 Complete Updated', waitlistEnabled: undefined,
+        maxRecurrenceOccurrences: undefined, publicAccentColor: undefined, publicIntro: undefined,
+        privacyUrl: undefined, termsUrl: undefined, locale: undefined, lockedTimeZone: undefined,
+    }, phase2Event.id);
+    assert.equal(phase2Legacy.waitlistEnabled, true, 'older clients must preserve waitlist policy');
+    assert.equal(phase2Legacy.maxRecurrenceOccurrences, 4, 'older clients must preserve recurrence policy');
+    assert.equal(phase2Legacy.publicAccentColor, '#aa3377', 'older clients must preserve public customization');
+    assert.equal(phase2Legacy.lockedTimeZone, 'America/Phoenix', 'older clients must preserve timezone locks');
+    await assert.rejects(() => store.createBooking('phase1', phase2Event.slug, {
+        eventTypeId: phase2Event.id, start: new Date('2026-08-07T16:00:00.000Z'), bookerTimeZone: 'Europe/Paris',
+        bookerName: 'Wrong Zone', bookerEmail: 'wrong-zone@example.net', idempotencyKey: 'phase2-locked-zone-wrong-0001',
+    }), /requires the America\/Phoenix time zone/);
+    const attributedBooking = await store.createBooking('phase1', phase2Event.slug, {
+        eventTypeId: phase2Event.id, start: new Date('2026-08-07T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        bookerName: '=Campaign Guest', bookerEmail: 'campaign@example.net', idempotencyKey: 'phase2-attribution-0001',
+        attribution: { utm_source: 'newsletter', utm_campaign: 'phase-two', ignored: 'drop-me' },
+    });
+    const attributedOwnerBooking = (await store.listBookings(username, 'upcoming')).find(item => item.id === attributedBooking.id);
+    assert.deepEqual(attributedOwnerBooking.attribution, { utm_source: 'newsletter', utm_campaign: 'phase-two' });
+
+    const waitlistEvent = await store.saveEventType(username, {
+        title: 'Waitlist Test', slug: 'waitlist-test', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        capacity: 1, waitlistEnabled: true,
+    });
+    const waitlistStart = new Date('2026-08-04T16:00:00.000Z');
+    const capacityBooking = await store.createBooking('phase1', waitlistEvent.slug, {
+        eventTypeId: waitlistEvent.id, start: waitlistStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Capacity Guest', bookerEmail: 'capacity@example.net', idempotencyKey: 'phase2-waitlist-capacity-0001',
+    });
+    const fullWaitlistSlots = await store.listSlots(
+        'phase1', waitlistEvent.slug, new Date(waitlistStart.getTime() - 1), new Date(waitlistStart.getTime() + 31 * 60 * 1000), '', true
+    );
+    assert.equal(fullWaitlistSlots.find(slot => slot.start.getTime() === waitlistStart.getTime()).remainingSeats, 0);
+    const waitlistEntry = await store.joinWaitlist('phase1', waitlistEvent.slug, {
+        eventTypeId: waitlistEvent.id, start: waitlistStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Waiting Guest', bookerEmail: 'waiting@example.net', idempotencyKey: 'phase2-waitlist-entry-0001',
+    });
+    assert.equal(waitlistEntry.status, 'pending');
+    assert.equal((await store.joinWaitlist('phase1', waitlistEvent.slug, {
+        eventTypeId: waitlistEvent.id, start: waitlistStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Waiting Guest', bookerEmail: 'waiting@example.net', idempotencyKey: 'phase2-waitlist-entry-0001',
+    })).idempotentReplay, true);
+    await assert.rejects(() => store.joinWaitlist('phase1', waitlistEvent.slug, {
+        eventTypeId: waitlistEvent.id, start: waitlistStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Another Guest', bookerEmail: 'another@example.net', idempotencyKey: 'phase2-waitlist-entry-0001',
+    }), /already used for another waitlist request/);
+    await store.cancelBookingByToken(capacityBooking.cancelToken);
+    const promotedEntry = (await store.listWaitlist(username)).find(item => item.id === waitlistEntry.id);
+    assert.equal(promotedEntry.status, 'promoted', 'cancellation must promote the oldest fitting waitlist party');
+    assert.ok(promotedEntry.promoted_booking_id);
+    const [waitlistOutbox] = await pool.query("SELECT COUNT(*) AS total FROM scheduler_outbox WHERE aggregate_id=? AND event_type='waitlist.joined'", [waitlistEntry.id]);
+    assert.equal(Number(waitlistOutbox[0].total), 1);
+
+    const phase2Store = new SchedulerPhase2Store(pool, store);
+    const pollEvent = await store.saveEventType(username, {
+        title: 'Verified Poll', slug: 'verified-poll', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        capacity: 3, maxAdditionalGuests: 2, requireEmailVerification: true,
+    });
+    const poll = await phase2Store.createPoll(username, {
+        eventTypeId: pollEvent.id, title: 'Choose our meeting',
+        starts: ['2026-08-05T16:00:00.000Z', '2026-08-05T16:30:00.000Z'],
+    });
+    const publicPoll = await phase2Store.getPublicPoll(poll.token);
+    assert.equal(publicPoll.requireEmailVerification, true);
+    assert.equal(publicPoll.options.length, 2);
+    const pollChallenge = await phase2Store.requestPollVerification(poll.token, 'voter@example.net');
+    const [pollVerificationJobs] = await pool.query(
+        "SELECT payload FROM scheduler_outbox WHERE aggregate_id=? AND event_type='booking.verification'", [pollChallenge.challengeId]
+    );
+    const pollVerificationCode = JSON.parse(pollVerificationJobs[0].payload).verificationCode;
+    await assert.rejects(() => phase2Store.votePoll(poll.token, {
+        voterName: 'Verified Voter', voterEmail: 'voter@example.net', optionIds: [publicPoll.options[0].id],
+        verificationChallengeId: pollChallenge.challengeId, verificationCode: 'WRONG-CODE',
+    }), /valid email verification code/);
+    const [pollAttemptRows] = await pool.query('SELECT attempts FROM scheduler_email_verifications WHERE id=?', [pollChallenge.challengeId]);
+    assert.equal(Number(pollAttemptRows[0].attempts), 1, 'invalid poll verification codes must consume an attempt');
+    await phase2Store.votePoll(poll.token, {
+        voterName: 'Verified Voter', voterEmail: 'voter@example.net', optionIds: [publicPoll.options[0].id],
+        verificationChallengeId: pollChallenge.challengeId, verificationCode: pollVerificationCode,
+    });
+    const finalizedPollBooking = await phase2Store.finalizePoll(username, poll.id, publicPoll.options[0].id);
+    assert.equal(finalizedPollBooking.status, 'confirmed');
+    const finalizedPoll = (await phase2Store.listPolls(username)).find(item => item.id === poll.id);
+    assert.equal(finalizedPoll.status, 'finalized');
+    assert.equal(finalizedPoll.options.find(item => item.id === publicPoll.options[0].id).votes, 1);
+    const finalizedOwnerBooking = (await store.listBookings(username, 'upcoming')).find(item => item.id === finalizedPollBooking.id);
+    assert.equal(finalizedOwnerBooking.bookedByUsername, username, 'poll finalization must use the trusted owner booking path');
+    await assert.rejects(() => store.markBookingOutcome(username, finalizedPollBooking.id, 'no_show'), /only after it ends/);
+    await pool.query("UPDATE scheduler_bookings SET slot_end='2020-01-01 00:00:00.000' WHERE id=?", [finalizedPollBooking.id]);
+    await store.markBookingOutcome(username, finalizedPollBooking.id, 'no_show');
+    const [outcomeRows] = await pool.query('SELECT status,no_show_at FROM scheduler_bookings WHERE id=?', [finalizedPollBooking.id]);
+    assert.equal(outcomeRows[0].status, 'no_show');
+    assert.ok(outcomeRows[0].no_show_at);
+
+    const delegatedBooking = await store.bookOnBehalf(username, phase2Event.id, {
+        start: new Date('2026-08-06T16:00:00.000Z'), bookerTimeZone: 'UTC',
+        bookerName: 'Delegated Guest', bookerEmail: 'delegated@example.net', idempotencyKey: 'phase2-delegated-0001',
+    });
+    const delegatedOwnerBooking = (await store.listBookings(username, 'upcoming')).find(item => item.id === delegatedBooking.id);
+    assert.equal(delegatedOwnerBooking.bookedByUsername, username);
+    assert.equal(delegatedOwnerBooking.bookerTimeZone, 'America/Phoenix', 'timezone-locked events must also constrain delegated bookings');
+
+    const exported = await phase2Store.exportOwnerData(username);
+    assert.equal(exported.schema, 'openmailstack.scheduler');
+    assert.equal(exported.events.some(item => item.id === phase2Event.id), true);
+    const bookingCsv = await phase2Store.exportBookingsCsv(username);
+    assert.match(bookingCsv, /newsletter/);
+    assert.match(bookingCsv, /phase-two/);
+    assert.match(bookingCsv, /"'=Campaign Guest"/, 'CSV exports must neutralize spreadsheet formulas');
+    const importResult = await phase2Store.importOwnerData(username, 'calendly', {
+        event_types: [{ name: 'Imported Calendly Intro', slug: 'imported-calendly-intro', duration: 45, description: 'Review before publishing' }],
+    });
+    assert.deepEqual({ source: importResult.source, imported: importResult.imported, skipped: importResult.skipped }, {
+        source: 'calendly', imported: 1, skipped: 0,
+    });
+    const importedEvent = (await store.listEventTypes(username)).find(item => item.slug === 'imported-calendly-intro');
+    assert.equal(importedEvent.active, false, 'migrated event types must remain drafts');
+    assert.equal(importedEvent.visibility, 'unlisted', 'migrated event types must not publish automatically');
+
+    await store.updateProfile(username, { timeZone: 'America/New_York' });
+    await store.saveDefaultAvailability(username, {
+        ...(await store.getDefaultAvailability(username)), timeZone: 'America/New_York', exclusions: [],
+    });
+    const recurringEvent = await store.saveEventType(username, {
+        title: 'DST Series', slug: 'dst-series', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        maxRecurrenceOccurrences: 3,
+    });
+    const recurring = await store.createRecurringBooking('phase1', recurringEvent.slug, {
+        eventTypeId: recurringEvent.id, start: new Date('2026-10-26T13:00:00.000Z'), bookerTimeZone: 'America/New_York',
+        bookerName: 'Recurring Guest', bookerEmail: 'recurring@example.net', idempotencyKey: 'phase2-recurring-dst-0001',
+        recurrenceCount: 3,
+    });
+    assert.equal(recurring.recurrenceCount, 3);
+    assert.deepEqual(recurring.bookings.map(item => item.start.toISOString()), [
+        '2026-10-26T13:00:00.000Z', '2026-11-02T14:00:00.000Z', '2026-11-09T14:00:00.000Z',
+    ], 'weekly series must preserve the host-local time across DST');
+    const recurringReplayInput = {
+        eventTypeId: recurringEvent.id, start: new Date('2026-10-26T13:00:00.000Z'), bookerTimeZone: 'America/New_York',
+        bookerName: 'Recurring Guest', bookerEmail: 'recurring@example.net', idempotencyKey: 'phase2-recurring-dst-0001',
+        recurrenceCount: 3,
+    };
+    const recurringReplays = await Promise.all([
+        store.createRecurringBooking('phase1', recurringEvent.slug, recurringReplayInput),
+        store.createRecurringBooking('phase1', recurringEvent.slug, recurringReplayInput),
+    ]);
+    assert.equal(recurringReplays.every(item => item.idempotentReplay === true && item.seriesId === recurring.seriesId), true);
+    assert.equal(recurringReplays.every(item => item.bookings.length === 3), true, 'series retries must return the complete original series');
+    const [seriesRows] = await pool.query(
+        'SELECT series_index,series_count FROM scheduler_bookings WHERE series_id=? ORDER BY series_index', [recurring.seriesId]
+    );
+    assert.deepEqual(seriesRows.map(row => [Number(row.series_index), Number(row.series_count)]), [[1, 3], [2, 3], [3, 3]]);
+    const [seriesOutbox] = await pool.query(
+        "SELECT COUNT(*) AS total FROM scheduler_outbox WHERE aggregate_id IN (SELECT id FROM scheduler_bookings WHERE series_id=?) AND event_type='booking.confirmed'",
+        [recurring.seriesId]
+    );
+    assert.equal(Number(seriesOutbox[0].total), 3, 'a completed series must enqueue one notification per occurrence');
 
     await pool.end();
 });

@@ -75,10 +75,10 @@
       "name": "Meeting polls and recurring bookings",
       "source": "https://help.calendly.com/hc/en-us/articles/360022356594-Home-page-overview",
       "observedAt": "2026-07-10",
-      "status": "planned",
+      "status": "implemented",
       "phase": "phase-2",
-      "test": null,
-      "release": null
+      "test": "webmail-backend/test/scheduler-phase1-db.test.cjs",
+      "release": "phase-2-complete-2026-07-12"
     },
     {
       "id": "public.profile-pages",
@@ -119,10 +119,10 @@
       "name": "Inline, popup, floating, and email-slot embeds",
       "source": "https://cal.com/help/embedding/adding-embed",
       "observedAt": "2026-07-10",
-      "status": "planned",
+      "status": "implemented",
       "phase": "phase-2",
-      "test": null,
-      "release": null
+      "test": "tests/integration/scheduler_phase1_guard.cjs",
+      "release": "phase-2-complete-2026-07-12"
     },
     {
       "id": "team.authorization",

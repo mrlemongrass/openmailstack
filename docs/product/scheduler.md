@@ -1,6 +1,6 @@
 # OMS Scheduler Product And Engineering Roadmap
 
-Status: `Phase 2 In Progress - Unlisted Links Deployed, Physical Client Validation Pending`
+Status: `Phase 2 In Progress - Private Token Links Deployed, Physical Client Validation Pending`
 
 Research date: 2026-07-10
 
@@ -358,7 +358,8 @@ Deliver:
 Implementation progress (2026-07-12):
 
 - [x] Unlisted event types are hidden from the public profile directory while remaining bookable at their exact owner-copyable URL. Existing event types remain listed by default, and owner management labels unlisted events explicitly.
-- [ ] Secret-token, single-use, expiring, and one-off customized links remain to complete the private-links capability.
+- [x] Private event links use 256-bit random bearer tokens stored only as SHA-256 hashes. Owners can generate, rotate, expire, and revoke links; tokens travel in URL fragments, move to tab-only storage, leave the address bar, and reach APIs only through a no-store request header.
+- [ ] Transactional single-use consumption and one-off customized availability remain to complete the private-links capability.
 
 Exit criteria:
 

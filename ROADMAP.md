@@ -149,7 +149,7 @@ The contacts and notes apps have been extracted into their own directories with 
 - ✅ Publish enabled users at `/scheduler/<local-part>` without the mail domain, with admin-assigned alternate handles for reserved/invalid names or cross-domain collisions.
 - ✅ Serve the same Scheduler path on every configured OMS webmail hostname; use a configured preferred base URL for generated links and provision configured aliases into Nginx and TLS SANs.
 - ✅ Deliver native individual event types, availability, public booking, secure reschedule/cancel, OMS Calendar projection, and OMS email notifications.
-- 🟡 Reach personal parity with advanced limits, overrides, private/single-use links, seats, recurring bookings, meeting polls, embeds, and migration/import. Phase 2 has started with deployed unlisted event types that stay off the public directory while remaining bookable by exact link; secret-token, expiring, and single-use links remain.
+- 🟡 Reach personal parity with advanced limits, overrides, private/single-use links, seats, recurring bookings, meeting polls, embeds, and migration/import. Phase 2 now includes deployed unlisted events plus hash-only private tokens with rotation, optional expiry, revocation, fragment-to-header browser handling, and generic failure responses. Transactional single-use links and one-off availability remain.
 - ❌ Add durable workflows, reminders, provider-backed SMS/WhatsApp/voice, and observable background delivery.
 - ❌ Add teams, collective/group/round-robin/managed events, delegated scheduling, routing forms, attributes, fairness, and explainable assignment.
 - ❌ Add payments, external calendars/conferencing, CRM/automation adapters, analytics, public APIs, OAuth, webhooks, CLI, embeds, and MCP/agent support.

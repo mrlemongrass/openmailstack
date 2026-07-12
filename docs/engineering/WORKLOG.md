@@ -4473,3 +4473,57 @@ Ending git state: clean after the focused Phase 2 release commit
 ### Next recommended task
 
 Add cryptographically random private-link tokens with rotation and expiry, then layer transactional single-use consumption on the same table.
+
+## 2026-07-12 — Scheduler private token links
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `888eef60`
+Ending git state: clean after the focused Phase 2 release commit
+
+### Selected task
+
+Implement the next bounded private-links slice: cryptographically random bearer tokens with owner rotation, optional expiry, revocation, and safe browser transport. Keep transactional single-use consumption for the next cycle.
+
+### Acceptance criteria
+
+- [x] Private is distinct from Listed and Unlisted visibility.
+- [x] Private event, slot, and booking APIs require a valid active token and use generic failures otherwise.
+- [x] Tokens contain 256 random bits, persist only as SHA-256 hashes, and are returned only once.
+- [x] Owners can generate, rotate, expire, and revoke a private link.
+- [x] Rotation invalidates the previous token and serializes on the event row.
+- [x] Switching away from Private revokes active tokens so they cannot revive later.
+- [x] URL fragments keep bearer values out of HTTP/referrer logs; the browser moves the token to tab-only storage, removes the fragment, and uses a no-store request header.
+- [x] Existing booking reschedule links can still load private-event slots.
+- [x] Listed and Unlisted behavior remains unchanged.
+
+### Changes
+
+- Added additive migration `006_scheduler_private_links.sql` and expanded visibility to `public`, `unlisted`, or `private`.
+- Added hash-only private-link state, rotation, expiry, revocation, event-row locking, sanitized audits, and owner APIs.
+- Added `X-Scheduler-Access` authorization to public event, slot, and booking routes with `Cache-Control: no-store`.
+- Added fragment consumption, session-storage handoff, address-bar cleanup, and header propagation in the public app.
+- Added owner Private visibility controls, expiry input, one-time link reveal/copy, active/expired status, rotation, and revocation on desktop and mobile.
+- Preserved booking reschedule behavior by accepting the booking-bound reschedule capability for private-event slot reads.
+
+### Proof
+
+- Backend `npm test`: 80 passed; two optional database tests skipped in the normal run.
+- Disposable MariaDB: migrations `001` through `006` each applied twice; full lifecycle plus private hash/access/rotation/expiry/revocation/downgrade/reschedule assertions passed with no skipped tests. Temporary database and grant were removed.
+- Frontend lint and production build passed; largest route chunk remains below 500 kB.
+- Owner UI Playwright at 1440x900 and 390x844: Private controls and active-link state rendered with no page errors, opaque modal surface, or horizontal overflow.
+- Safety snapshot: `/var/backups/openmailstack/20260712_021623_scheduler_private_tokens`.
+- Live migration `006` is recorded; deployed backend and frontend match the tested artifacts.
+- Live temporary private event: absent from directory; missing/wrong tokens returned generic 404s; valid token returned no-store data; database contained only a 64-character hash.
+- Live mobile Chrome: fragment link rendered the event, moved the token into tab-only storage, removed it from the address bar, and had no horizontal overflow.
+- Live rotation invalidated the previous token; a two-second expiry became unavailable; explicit revocation and visibility downgrade invalidated their tokens. Temporary events were removed.
+
+### Risks and remaining work
+
+- Session storage is intentionally tab-scoped. Opening the original fragment link in another tab works; copying the cleaned address bar after load does not include the secret.
+- Private links are multi-use until revoked or expired. Transactional single-use consumption is not represented as complete.
+- Clean-VM and physical client validation remain deferred/pending as previously documented.
+
+### Next recommended task
+
+Add transactional single-use private links with an atomic remaining-use counter, idempotent booking replay, and concurrency proof that two simultaneous final-use bookings yield one success.

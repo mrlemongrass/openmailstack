@@ -99,6 +99,21 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         bookerEmail: 'ada@example.net', idempotencyKey: 'phase1-lifecycle-0001',
     });
     assert.equal(booking.status, 'confirmed');
+
+    const privateEvent = await store.saveEventType(username, { ...event, visibility: 'private' }, event.id);
+    assert.equal(privateEvent.visibility, 'private');
+    assert.equal(await store.getPublicEvent('phase1', event.slug), null);
+    assert.equal((await store.getPublicProfile('phase1')).events.some(item => item.id === event.id), false);
+    const firstPrivateLink = await store.rotatePrivateLink(username, event.id, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString());
+    assert.equal((await store.getPublicEvent('phase1', event.slug, firstPrivateLink.token)).event.id, event.id);
+    assert.equal(await store.getPublicEvent('phase1', event.slug, 'incorrect-private-token-value-that-is-long-enough'), null);
+    const [storedPrivateLink] = await pool.query('SELECT token_hash, token_hint FROM scheduler_private_links WHERE event_type_id=? AND revoked_at IS NULL', [event.id]);
+    assert.equal(storedPrivateLink[0].token_hash.length, 64);
+    assert.notEqual(storedPrivateLink[0].token_hash, firstPrivateLink.token);
+    assert.equal(storedPrivateLink[0].token_hint, firstPrivateLink.token.slice(-8));
+    const rotatedPrivateLink = await store.rotatePrivateLink(username, event.id, null);
+    assert.equal(await store.getPublicEvent('phase1', event.slug, firstPrivateLink.token), null);
+    assert.equal((await store.getPublicEvent('phase1', event.slug, rotatedPrivateLink.token)).event.id, event.id);
     const [confirmationOutbox] = await pool.query("SELECT payload FROM scheduler_outbox WHERE aggregate_id=? AND event_type='booking.confirmed'", [booking.id]);
     const confirmationPayload = JSON.parse(confirmationOutbox[0].payload);
     assert.equal(confirmationPayload.notificationFrom, 'appointments@second.test');
@@ -115,10 +130,30 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     await pool.query('UPDATE events SET ical_data=? WHERE calendar_id=? AND uid=?', [calendarProjection[0].ical_data, calendarId, `scheduler-${booking.id}@openmailstack`]);
 
     const rescheduledStart = new Date('2026-07-13T16:30:00.000Z');
+    const rescheduleSlots = await store.listSlots('phase1', event.slug, new Date(rescheduledStart.getTime() - 1), new Date(rescheduledStart.getTime() + 31 * 60 * 1000), booking.rescheduleToken);
+    assert.equal(rescheduleSlots.some(slot => slot.start.getTime() === rescheduledStart.getTime()), true, 'reschedule capability must access private-event slots');
     const rescheduled = await store.rescheduleBookingByToken(booking.rescheduleToken, rescheduledStart);
     assert.equal(rescheduled.start.toISOString(), rescheduledStart.toISOString());
     const [rescheduledEvent] = await pool.query('SELECT ical_data FROM events WHERE calendar_id=?', [calendarId]);
     assert.match(rescheduledEvent[0].ical_data, /DTSTART:20260713T163000Z/);
+
+    await pool.query("UPDATE scheduler_private_links SET expires_at='2026-07-01 00:00:00.000' WHERE event_type_id=? AND revoked_at IS NULL", [event.id]);
+    assert.equal(await store.getPublicEvent('phase1', event.slug, rotatedPrivateLink.token), null);
+    assert.equal((await store.getPrivateLinkState(username, event.id)).expired, true);
+    const finalPrivateLink = await store.rotatePrivateLink(username, event.id, null);
+    assert.equal((await store.getPublicEvent('phase1', event.slug, finalPrivateLink.token)).event.id, event.id);
+    const relistedEvent = await store.saveEventType(username, { ...privateEvent, visibility: 'public' }, event.id);
+    assert.equal(relistedEvent.visibility, 'public');
+    assert.equal((await store.getPrivateLinkState(username, event.id)).active, false);
+    assert.equal(await store.getPublicEvent('phase1', event.slug, finalPrivateLink.token).then(result => result?.event.id), event.id);
+    const privateAgain = await store.saveEventType(username, { ...relistedEvent, visibility: 'private' }, event.id);
+    assert.equal(privateAgain.visibility, 'private');
+    assert.equal(await store.getPublicEvent('phase1', event.slug, finalPrivateLink.token), null, 'relisting must prevent an old private token from reviving later');
+    const revocablePrivateLink = await store.rotatePrivateLink(username, event.id, null);
+    assert.equal((await store.getPublicEvent('phase1', event.slug, revocablePrivateLink.token)).event.id, event.id);
+    await store.revokePrivateLink(username, event.id);
+    assert.equal(await store.getPublicEvent('phase1', event.slug, revocablePrivateLink.token), null);
+    assert.equal((await store.getPrivateLinkState(username, event.id)).active, false);
 
     await store.cancelBookingByToken(booking.cancelToken);
     const [cancelled] = await pool.query('SELECT status FROM scheduler_bookings WHERE id=?', [booking.id]);

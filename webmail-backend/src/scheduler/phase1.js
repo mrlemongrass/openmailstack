@@ -8,6 +8,7 @@ exports.normalizeSchedulerHandle = normalizeSchedulerHandle;
 exports.defaultSchedulerHandle = defaultSchedulerHandle;
 exports.normalizeSchedulerEventInput = normalizeSchedulerEventInput;
 exports.assertTimeZone = assertTimeZone;
+exports.normalizePrivateLinkExpiry = normalizePrivateLinkExpiry;
 exports.buildSchedulerCalendarEvent = buildSchedulerCalendarEvent;
 exports.schedulerPublicUrl = schedulerPublicUrl;
 const crypto_1 = __importDefault(require("crypto"));
@@ -83,7 +84,7 @@ function normalizeSchedulerEventInput(input) {
     if (availabilityScheduleId !== null && !/^[0-9a-f-]{36}$/i.test(availabilityScheduleId))
         throw new Error('Invalid availability schedule');
     const visibility = input.visibility || 'public';
-    if (!['public', 'unlisted'].includes(visibility))
+    if (!['public', 'unlisted', 'private'].includes(visibility))
         throw new Error('Invalid event visibility');
     return {
         title,
@@ -116,6 +117,17 @@ const schedulerTokenHash = (token) => crypto_1.default.createHash('sha256').upda
 exports.schedulerTokenHash = schedulerTokenHash;
 const createSchedulerToken = () => crypto_1.default.randomBytes(32).toString('base64url');
 exports.createSchedulerToken = createSchedulerToken;
+function normalizePrivateLinkExpiry(value, now = new Date()) {
+    if (value == null || String(value).trim() === '')
+        return null;
+    const expiresAt = new Date(String(value));
+    if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= now)
+        throw new Error('Private link expiry must be in the future');
+    if (expiresAt.getTime() > now.getTime() + 366 * 24 * 60 * 60 * 1000) {
+        throw new Error('Private link expiry cannot be more than 366 days away');
+    }
+    return expiresAt;
+}
 const icalEscape = (value) => value
     .replace(/\\/g, '\\\\')
     .replace(/\n/g, '\\n')

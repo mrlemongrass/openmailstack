@@ -5,6 +5,7 @@ import { schedulerConfig } from '../config';
 import { getVisibleCalendars } from '../calendar-utils';
 import { rateLimit } from '../security';
 import { SchedulerStore } from './store';
+import { schedulerPublicUrl } from './phase1';
 
 export const schedulerRouter = Router();
 const store = new SchedulerStore(pool);
@@ -32,6 +33,7 @@ const publicBoundary = (req: Request, res: Response, next: () => void) => {
 };
 
 const publicNotFound = (res: Response) => res.status(404).json({ success: false, error: 'Not found' });
+const privateAccessToken = (req: Request): string => String(req.headers['x-scheduler-access'] || '').trim().slice(0, 128);
 const ownerError = (res: Response, error: unknown) => {
     const message = error instanceof Error ? error.message : 'Scheduler request failed';
     const status = /not enabled/i.test(message) ? 403 : /not found/i.test(message) ? 404 : 400;
@@ -142,6 +144,39 @@ schedulerRouter.delete('/scheduler/v1/event-types/:id', authenticatedInstalled, 
     }
 });
 
+schedulerRouter.get('/scheduler/v1/event-types/:id/private-link', authenticatedInstalled, requireSession, async (req: any, res) => {
+    try {
+        const privateLink = await store.getPrivateLinkState(req.user.username, req.params.id);
+        res.set('Cache-Control', 'no-store').json({ success: true, privateLink });
+    } catch (error) {
+        ownerError(res, error);
+    }
+});
+
+schedulerRouter.post('/scheduler/v1/event-types/:id/private-link', authenticatedInstalled, requireSession, async (req: any, res) => {
+    try {
+        const [rotated, entitlement, event] = await Promise.all([
+            store.rotatePrivateLink(req.user.username, req.params.id, req.body?.expiresAt),
+            store.requireOwner(req.user.username),
+            store.getOwnedEventType(req.user.username, req.params.id),
+        ]);
+        if (!event) return ownerError(res, new Error('Event type not found'));
+        const url = `${schedulerPublicUrl(schedulerConfig.publicBaseUrl, entitlement.handle, event.slug)}#access=${encodeURIComponent(rotated.token)}`;
+        res.set('Cache-Control', 'no-store').status(201).json({ success: true, privateLink: rotated.state, url });
+    } catch (error) {
+        ownerError(res, error);
+    }
+});
+
+schedulerRouter.delete('/scheduler/v1/event-types/:id/private-link', authenticatedInstalled, requireSession, async (req: any, res) => {
+    try {
+        await store.revokePrivateLink(req.user.username, req.params.id);
+        res.set('Cache-Control', 'no-store').json({ success: true });
+    } catch (error) {
+        ownerError(res, error);
+    }
+});
+
 schedulerRouter.get('/scheduler/v1/bookings', authenticatedInstalled, requireSession, async (req: any, res) => {
     try {
         const bookings = await store.listBookings(req.user.username, String(req.query.filter || 'upcoming'));
@@ -193,8 +228,10 @@ schedulerRouter.get('/public/scheduler/v1/profiles/:handle', publicLimiter, publ
 
 schedulerRouter.get('/public/scheduler/v1/profiles/:handle/events/:slug', publicLimiter, publicBoundary, async (req, res) => {
     try {
-        const result = await store.getPublicEvent(String(req.params.handle), String(req.params.slug));
+        const accessToken = privateAccessToken(req);
+        const result = await store.getPublicEvent(String(req.params.handle), String(req.params.slug), accessToken);
         if (!result) return publicNotFound(res);
+        if (accessToken) res.set('Cache-Control', 'no-store');
         res.json({ success: true, profile: result.entitlement, event: result.event });
     } catch {
         publicNotFound(res);
@@ -205,7 +242,9 @@ schedulerRouter.get('/public/scheduler/v1/profiles/:handle/events/:slug/slots', 
     try {
         const start = new Date(String(req.query.start || ''));
         const end = new Date(String(req.query.end || ''));
-        const slots = await store.listSlots(String(req.params.handle), String(req.params.slug), start, end);
+        const accessToken = privateAccessToken(req);
+        const slots = await store.listSlots(String(req.params.handle), String(req.params.slug), start, end, accessToken);
+        if (accessToken) res.set('Cache-Control', 'no-store');
         res.json({ success: true, slots });
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Invalid availability request';
@@ -226,6 +265,7 @@ schedulerRouter.post('/public/scheduler/v1/profiles/:handle/events/:slug/booking
             bookerEmail: String(req.body?.bookerEmail || ''),
             bookerNotes: String(req.body?.bookerNotes || ''),
             idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || ''),
+            privateAccessToken: privateAccessToken(req),
         });
         res.status(result.idempotentReplay ? 200 : 201).json({ success: true, booking: result });
     } catch (error) {

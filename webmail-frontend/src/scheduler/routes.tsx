@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CalendarClock, CalendarDays, Clock3, Copy, ExternalLink, Plus, Settings2, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CalendarClock, CalendarDays, Clock3, Copy, ExternalLink, Link2, Plus, Settings2, Trash2, X } from 'lucide-react';
 import { EmptyState } from '../shared/components/EmptyState';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { useToast } from '../shared/components/Toast';
 import {
   cancelSchedulerBooking,
   deleteSchedulerEvent,
+  getSchedulerPrivateLink,
   getSchedulerState,
+  revokeSchedulerPrivateLink,
+  rotateSchedulerPrivateLink,
   saveSchedulerEvent,
   saveSchedulerProfile,
   type SchedulerEntitlement,
   type SchedulerEventType,
+  type SchedulerPrivateLinkState,
   type SchedulerState,
   type SchedulerWindow,
 } from './api';
@@ -38,8 +42,9 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
   calendars: SchedulerState['calendars'];
   defaultAvailability: SchedulerState['defaultAvailability'];
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (close?: boolean) => Promise<void> | void;
 }) {
+  const { showToast } = useToast();
   const [section, setSection] = useState<'setup' | 'availability' | 'limits' | 'advanced'>('setup');
   const [form, setForm] = useState<Partial<SchedulerEventType>>({
     title: event?.title || '', slug: event?.slug || '', description: event?.description || '',
@@ -56,6 +61,11 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [privateLink, setPrivateLink] = useState<SchedulerPrivateLinkState | null>(null);
+  const [privateLinkUrl, setPrivateLinkUrl] = useState('');
+  const [privateLinkExpiry, setPrivateLinkExpiry] = useState('');
+  const [privateLinkBusy, setPrivateLinkBusy] = useState(false);
+  const [privateLinkLoading, setPrivateLinkLoading] = useState(Boolean(event?.id));
   const durationMinutes = form.durationMinutes ?? 30;
   const durationHours = Math.floor(durationMinutes / 60);
   const durationMinutePart = durationMinutes % 60;
@@ -65,6 +75,17 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
     document.addEventListener('keydown', closeOnEscape);
     return () => document.removeEventListener('keydown', closeOnEscape);
   }, [onClose]);
+  useEffect(() => {
+    if (!event?.id) return;
+    void getSchedulerPrivateLink(event.id).then(state => {
+      setPrivateLink(state);
+      if (state.expiresAt) {
+        const value = new Date(state.expiresAt);
+        const local = new Date(value.getTime() - value.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        setPrivateLinkExpiry(local);
+      }
+    }).catch(err => setError(err instanceof Error ? err.message : 'Unable to load private link status')).finally(() => setPrivateLinkLoading(false));
+  }, [event?.id]);
 
   const updateDuration = (hours: number, minutes: number) => {
     const safeHours = Math.max(0, Math.min(24, Number.isFinite(hours) ? Math.trunc(hours) : 0));
@@ -87,9 +108,53 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
     eventSubmit.preventDefault();
     if (!durationValid) { setError('Duration must be between 5 minutes and 24 hours'); return; }
     setSaving(true); setError('');
-    try { await saveSchedulerEvent(form); onSaved(); }
+    try {
+      const saved = await saveSchedulerEvent(form);
+      if (!form.id && saved.visibility === 'private') {
+        setForm(saved);
+        setSection('advanced');
+        await onSaved(false);
+        const expiresAt = privateLinkExpiry ? new Date(privateLinkExpiry).toISOString() : null;
+        const result = await rotateSchedulerPrivateLink(saved.id, expiresAt);
+        setPrivateLink(result.privateLink);
+        setPrivateLinkUrl(result.url);
+        showToast({ type: 'success', message: 'Private link created. Copy it before closing.' });
+      } else {
+        await onSaved();
+      }
+    }
     catch (err) { setError(err instanceof Error ? err.message : 'Unable to save event type'); }
     finally { setSaving(false); }
+  };
+
+  const rotatePrivateLink = async () => {
+    if (!form.id) return;
+    setPrivateLinkBusy(true); setError('');
+    try {
+      const expiresAt = privateLinkExpiry ? new Date(privateLinkExpiry).toISOString() : null;
+      const result = await rotateSchedulerPrivateLink(form.id, expiresAt);
+      setPrivateLink(result.privateLink);
+      setPrivateLinkUrl(result.url);
+      showToast({ type: 'success', message: 'Private link rotated. The previous link no longer works.' });
+    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to rotate private link'); }
+    finally { setPrivateLinkBusy(false); }
+  };
+
+  const copyPrivateLink = async () => {
+    try { await navigator.clipboard.writeText(privateLinkUrl); showToast({ type: 'success', message: 'Private link copied' }); }
+    catch { showToast({ type: 'error', message: 'Unable to copy the private link' }); }
+  };
+
+  const revokePrivateLink = async () => {
+    if (!form.id || !confirm('Revoke this private link? Anyone using it will lose access immediately.')) return;
+    setPrivateLinkBusy(true); setError('');
+    try {
+      await revokeSchedulerPrivateLink(form.id);
+      setPrivateLink({ active: false, expired: false, tokenHint: null, expiresAt: null });
+      setPrivateLinkUrl('');
+      showToast({ type: 'success', message: 'Private link revoked' });
+    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to revoke private link'); }
+    finally { setPrivateLinkBusy(false); }
   };
 
   return (
@@ -125,7 +190,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
           <label>Buffer after<input type="number" min={0} max={1440} step={5} value={form.bufferAfterMinutes} onChange={e => setForm({ ...form, bufferAfterMinutes: Number(e.target.value) })} /></label>
           <label>Capacity<input type="number" min={1} max={100} value={form.capacity} onChange={e => setForm({ ...form, capacity: Number(e.target.value) })} /><small>Use more than 1 for group bookings</small></label>
         </div>}
-        {section === 'advanced' && <div className="scheduler-editor-section"><fieldset className="scheduler-calendar-checks"><legend>Check busy time on these calendars</legend>{calendars.map(calendar => <label key={calendar.id}><input type="checkbox" checked={form.conflictCalendarIds?.includes(calendar.id) ?? false} onChange={e => setForm({ ...form, conflictCalendarIds: e.target.checked ? [...(form.conflictCalendarIds || []), calendar.id] : (form.conflictCalendarIds || []).filter(id => id !== calendar.id) })} /><span>{calendar.name}</span></label>)}</fieldset><div className="scheduler-visibility-options"><strong>Booking-page visibility</strong><label><input type="radio" checked={form.visibility !== 'unlisted'} onChange={() => setForm({ ...form, visibility: 'public' })} /><span><strong>Listed</strong><small>Show this event on your public booking page.</small></span></label><label><input type="radio" checked={form.visibility === 'unlisted'} onChange={() => setForm({ ...form, visibility: 'unlisted' })} /><span><strong>Unlisted</strong><small>Hide it from your profile. Anyone with its exact link can still book.</small></span></label></div><label className="scheduler-publish scheduler-event-active"><input type="checkbox" checked={form.active !== false} onChange={e => setForm({ ...form, active: e.target.checked })} /><span>Event type is active and bookable</span></label></div>}
+        {section === 'advanced' && <div className="scheduler-editor-section"><fieldset className="scheduler-calendar-checks"><legend>Check busy time on these calendars</legend>{calendars.map(calendar => <label key={calendar.id}><input type="checkbox" checked={form.conflictCalendarIds?.includes(calendar.id) ?? false} onChange={e => setForm({ ...form, conflictCalendarIds: e.target.checked ? [...(form.conflictCalendarIds || []), calendar.id] : (form.conflictCalendarIds || []).filter(id => id !== calendar.id) })} /><span>{calendar.name}</span></label>)}</fieldset><div className="scheduler-visibility-options"><strong>Booking-page visibility</strong><label><input type="radio" checked={form.visibility === 'public'} onChange={() => setForm({ ...form, visibility: 'public' })} /><span><strong>Listed</strong><small>Show this event on your public booking page.</small></span></label><label><input type="radio" checked={form.visibility === 'unlisted'} onChange={() => setForm({ ...form, visibility: 'unlisted' })} /><span><strong>Unlisted</strong><small>Hide it from your profile. Anyone with its exact link can still book.</small></span></label><label><input type="radio" checked={form.visibility === 'private'} onChange={() => setForm({ ...form, visibility: 'private' })} /><span><strong>Private link</strong><small>Require a random access token that you can rotate, expire, or revoke.</small></span></label></div>{form.visibility === 'private' && <section className="scheduler-private-link"><div><strong>Private access</strong><span>Tokens are shown once and are removed from the guest's address bar after opening.</span></div><label>New link expires (optional)<input type="datetime-local" value={privateLinkExpiry} onChange={e => setPrivateLinkExpiry(e.target.value)} /></label>{form.id ? <><p>{privateLinkLoading ? 'Checking private link status…' : privateLink?.active ? `Active link ending ${privateLink.tokenHint}` : privateLink?.expired ? 'The current private link has expired.' : 'No active private link.'}</p>{privateLinkUrl && <div className="scheduler-private-link-reveal"><input aria-label="New private link" readOnly value={privateLinkUrl} /><button type="button" className="btn btn-secondary" onClick={() => void copyPrivateLink()}><Copy size={15} /> Copy</button></div>}<div className="scheduler-private-link-actions"><button type="button" className="btn btn-secondary" disabled={privateLinkBusy || privateLinkLoading} onClick={() => void rotatePrivateLink()}><Link2 size={15} /> {privateLink?.active ? 'Rotate link' : 'Generate link'}</button>{(privateLink?.active || privateLink?.expired) && <button type="button" className="btn btn-secondary" disabled={privateLinkBusy || privateLinkLoading} onClick={() => void revokePrivateLink()}>Revoke</button>}</div></> : <p>Save this private event to generate its first link. The new link will remain visible here so you can copy it.</p>}</section>}<label className="scheduler-publish scheduler-event-active"><input type="checkbox" checked={form.active !== false} onChange={e => setForm({ ...form, active: e.target.checked })} /><span>Event type is active and bookable</span></label></div>}
         <footer><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={saving || !durationValid}>{saving ? 'Saving...' : 'Save event type'}</button></footer>
       </form>
     </div>
@@ -203,8 +268,8 @@ export function SchedulerRoutes() {
       {tab === 'events' && <>
         <div className="scheduler-section-title"><div><h1>Event Types</h1><p>{state.events.length} booking {state.events.length === 1 ? 'link' : 'links'}</p></div><button className="btn btn-primary" onClick={() => setEditor(null)}><Plus size={16} /> New event</button></div>
         {state.events.length === 0 ? <section className="scheduler-first-run"><div><span className="scheduler-eyebrow">Get started</span><h2>Create your first booking type</h2><p>Set the meeting length, choose which calendars block busy time, and publish a link guests can book without emailing back and forth.</p><button className="btn btn-primary" type="button" onClick={() => setEditor(null)}><Plus size={16} /> Create first event</button></div><ol><li><span>1</span><div><strong>Create an event type</strong><p>For example, a 30-minute discovery call or 60-minute consultation.</p></div></li><li><span>2</span><div><strong>Set availability and calendars</strong><p>Choose working hours, the destination calendar, and calendars to check for conflicts.</p></div></li><li><span>3</span><div><strong>Preview and share</strong><p>Open your booking site above, then copy the public link wherever you need it.</p></div></li></ol></section> : <div className="scheduler-event-list">{state.events.map(event => <article key={event.id}>
-          <div className="scheduler-event-accent" /><div className="scheduler-event-copy"><div><h3>{event.title}{event.visibility === 'unlisted' && <span className="scheduler-event-badge">Unlisted</span>}</h3><p>{event.durationMinutes} min · {event.locationLabel || 'Location set when booking'}</p></div><code>/{state.entitlement.handle}/{event.slug}</code></div>
-          <div className="scheduler-row-actions"><button className="icon-button" title="Copy public link" aria-label={`Copy ${event.title} booking link`} onClick={() => void copyLink(`${publicUrl}/${event.slug}`, `${event.title} link`)}><Copy size={16} /></button><button className="icon-button" title="Edit" aria-label={`Edit ${event.title}`} onClick={() => setEditor(event)}><Settings2 size={16} /></button><button className="icon-button danger" title="Delete" aria-label={`Delete ${event.title}`} onClick={async () => { if (confirm(`Delete ${event.title}?`)) { await deleteSchedulerEvent(event.id); await load(); } }}><Trash2 size={16} /></button></div>
+          <div className="scheduler-event-accent" /><div className="scheduler-event-copy"><div><h3>{event.title}{event.visibility !== 'public' && <span className="scheduler-event-badge">{event.visibility === 'private' ? 'Private' : 'Unlisted'}</span>}</h3><p>{event.durationMinutes} min · {event.locationLabel || 'Location set when booking'}</p></div><code>/{state.entitlement.handle}/{event.slug}</code></div>
+          <div className="scheduler-row-actions">{event.visibility === 'private' ? <button className="icon-button" title="Manage private link" aria-label={`Manage ${event.title} private link`} onClick={() => setEditor(event)}><Link2 size={16} /></button> : <button className="icon-button" title="Copy public link" aria-label={`Copy ${event.title} booking link`} onClick={() => void copyLink(`${publicUrl}/${event.slug}`, `${event.title} link`)}><Copy size={16} /></button>}<button className="icon-button" title="Edit" aria-label={`Edit ${event.title}`} onClick={() => setEditor(event)}><Settings2 size={16} /></button><button className="icon-button danger" title="Delete" aria-label={`Delete ${event.title}`} onClick={async () => { if (confirm(`Delete ${event.title}?`)) { await deleteSchedulerEvent(event.id); await load(); } }}><Trash2 size={16} /></button></div>
         </article>)}</div>}
       </>}
       {tab === 'bookings' && <>
@@ -214,7 +279,7 @@ export function SchedulerRoutes() {
       {tab === 'availability' && <AvailabilityPanel availability={state.defaultAvailability} onSaved={load} />}
       {tab === 'profile' && <ProfilePanel state={state} onSaved={load} />}
     </main>
-    {editor !== undefined && <EventEditor event={editor} calendars={state.calendars} defaultAvailability={state.defaultAvailability} onClose={() => setEditor(undefined)} onSaved={async () => { setEditor(undefined); await load(); }} />}
+    {editor !== undefined && <EventEditor event={editor} calendars={state.calendars} defaultAvailability={state.defaultAvailability} onClose={() => setEditor(undefined)} onSaved={async (close = true) => { if (close) setEditor(undefined); await load(); }} />}
     {selectedBooking && <div className="scheduler-modal-backdrop" onMouseDown={() => setSelectedBooking(null)}><section className="scheduler-booking-detail" onMouseDown={event => event.stopPropagation()}><header><div><h2>{selectedBooking.event.title}</h2><p>{selectedBooking.status}</p></div><button className="icon-button" onClick={() => setSelectedBooking(null)} aria-label="Close"><X size={18} /></button></header><dl><div><dt>Guest</dt><dd>{selectedBooking.bookerName}<span>{selectedBooking.bookerEmail}</span></dd></div><div><dt>When</dt><dd>{new Date(selectedBooking.start).toLocaleString()}<span>{selectedBooking.event.durationMinutes} minutes</span></dd></div><div><dt>Location</dt><dd>{selectedBooking.event.locationLabel || 'Not specified'}</dd></div>{selectedBooking.bookerNotes && <div><dt>Notes</dt><dd>{selectedBooking.bookerNotes}</dd></div>}</dl></section></div>}
   </div>;
 }

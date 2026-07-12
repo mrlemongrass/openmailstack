@@ -52,7 +52,7 @@ const eventFromRow = (row, windows = []) => ({
     conflictCalendarIds: jsonArray(row.conflict_calendar_ids),
     availabilityScheduleId: row.availability_schedule_id || null,
     systemManaged: booleanValue(row.system_managed),
-    visibility: row.visibility === 'unlisted' ? 'unlisted' : 'public',
+    visibility: row.visibility === 'private' ? 'private' : row.visibility === 'unlisted' ? 'unlisted' : 'public',
     active: booleanValue(row.active),
     windows,
 });
@@ -363,7 +363,7 @@ class SchedulerStore {
                 if (!owned.length)
                     throw new Error('Event type not found');
                 const visibility = input.visibility === undefined
-                    ? (owned[0].visibility === 'unlisted' ? 'unlisted' : 'public')
+                    ? (owned[0].visibility === 'private' ? 'private' : owned[0].visibility === 'unlisted' ? 'unlisted' : 'public')
                     : normalized.visibility;
                 await connection.query(`UPDATE scheduler_event_types SET slug=?, title=?, description=?, duration_minutes=?, interval_minutes=?,
                         buffer_before_minutes=?, buffer_after_minutes=?, minimum_notice_minutes=?, capacity=?, location_type=?,
@@ -371,6 +371,9 @@ class SchedulerStore {
                     normalized.bufferBeforeMinutes, normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                     normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
                     JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, visibility, normalized.active ? 1 : 0, id]);
+                if (visibility !== 'private') {
+                    await connection.query('UPDATE scheduler_private_links SET revoked_at = UTC_TIMESTAMP(3) WHERE event_type_id = ? AND revoked_at IS NULL', [id]);
+                }
                 await connection.query('DELETE FROM scheduler_availability_windows WHERE event_type_id = ?', [id]);
             }
             else {
@@ -423,6 +426,87 @@ class SchedulerStore {
         const windows = await loadWindows(this.pool, [id]);
         return eventFromRow(rows[0], windows.get(id) || []);
     }
+    async getPrivateLinkState(username, eventId) {
+        await this.requireOwner(username);
+        const event = await this.getOwnedEventType(username, eventId);
+        if (!event)
+            throw new Error('Event type not found');
+        const [rows] = await this.pool.query(`SELECT token_hint, CAST(expires_at AS CHAR) AS expires_at_utc
+             FROM scheduler_private_links
+             WHERE event_type_id = ? AND revoked_at IS NULL
+             ORDER BY created_at DESC LIMIT 1`, [eventId]);
+        if (!rows.length)
+            return { active: false, expired: false, tokenHint: null, expiresAt: null };
+        const expiresAt = rows[0].expires_at_utc ? utcDate(rows[0].expires_at_utc) : null;
+        const expired = Boolean(expiresAt && expiresAt <= new Date());
+        return { active: !expired, expired, tokenHint: rows[0].token_hint, expiresAt };
+    }
+    async rotatePrivateLink(username, eventId, expiry) {
+        const entitlement = await this.requireOwner(username);
+        const expiresAt = (0, phase1_1.normalizePrivateLinkExpiry)(expiry);
+        const token = (0, phase1_1.createSchedulerToken)();
+        const tokenHash = (0, phase1_1.schedulerTokenHash)(token);
+        const tokenHint = token.slice(-8);
+        const connection = await this.pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [events] = await connection.query('SELECT id FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [eventId, username]);
+            if (!events.length)
+                throw new Error('Event type not found');
+            await connection.query('UPDATE scheduler_private_links SET revoked_at = UTC_TIMESTAMP(3) WHERE event_type_id = ? AND revoked_at IS NULL', [eventId]);
+            await connection.query(`INSERT INTO scheduler_private_links
+                    (id, tenant_key, event_type_id, token_hash, token_hint, expires_at)
+                 VALUES (?, ?, ?, ?, ?, ?)`, [crypto_1.default.randomUUID(), entitlement.tenantKey, eventId, tokenHash, tokenHint, expiresAt ? mysqlDate(expiresAt) : null]);
+            await this.writeAudit(connection, entitlement.tenantKey, 'user', username, 'private_link.rotate', 'event_type', eventId, {
+                expiresAt: expiresAt?.toISOString() || null,
+            });
+            await connection.commit();
+        }
+        catch (error) {
+            await connection.rollback();
+            throw error;
+        }
+        finally {
+            connection.release();
+        }
+        return { token, state: { active: true, expired: false, tokenHint, expiresAt } };
+    }
+    async revokePrivateLink(username, eventId) {
+        const entitlement = await this.requireOwner(username);
+        const connection = await this.pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [events] = await connection.query('SELECT id FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [eventId, username]);
+            if (!events.length)
+                throw new Error('Event type not found');
+            await connection.query('UPDATE scheduler_private_links SET revoked_at = UTC_TIMESTAMP(3) WHERE event_type_id = ? AND revoked_at IS NULL', [eventId]);
+            await this.writeAudit(connection, entitlement.tenantKey, 'user', username, 'private_link.revoke', 'event_type', eventId, {});
+            await connection.commit();
+        }
+        catch (error) {
+            await connection.rollback();
+            throw error;
+        }
+        finally {
+            connection.release();
+        }
+    }
+    async privateLinkAllows(eventId, token) {
+        const candidate = String(token || '').trim();
+        if (candidate.length < 32 || candidate.length > 128)
+            return false;
+        const [rows] = await this.pool.query(`SELECT id FROM scheduler_private_links
+             WHERE event_type_id = ? AND token_hash = ? AND revoked_at IS NULL
+               AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP(3))
+             LIMIT 1`, [eventId, (0, phase1_1.schedulerTokenHash)(candidate)]);
+        if (rows.length > 0)
+            return true;
+        const [bookingRows] = await this.pool.query(`SELECT id FROM scheduler_bookings
+             WHERE event_type_id = ? AND reschedule_token_hash = ? AND status = 'confirmed'
+               AND action_tokens_expires_at > UTC_TIMESTAMP(3)
+             LIMIT 1`, [eventId, (0, phase1_1.schedulerTokenHash)(candidate)]);
+        return bookingRows.length > 0;
+    }
     async getPublicProfile(handle) {
         const [rows] = await this.pool.query('SELECT * FROM scheduler_mailbox_entitlements WHERE public_handle = ? AND enabled = 1 AND published = 1 LIMIT 1', [handle.toLowerCase()]);
         if (!rows.length)
@@ -433,21 +517,25 @@ class SchedulerStore {
         const defaultEvent = allEvents.length === 0 ? await this.getSystemDefaultEvent(entitlement.username, true) : null;
         return { entitlement, events, defaultEvent };
     }
-    async getPublicEvent(handle, slug) {
+    async getPublicEvent(handle, slug, privateAccessToken = '') {
         const profile = await this.getPublicProfile(handle);
         if (!profile)
             return null;
         const directEvents = await this.listEventTypes(profile.entitlement.username, true);
         const event = directEvents.find((candidate) => candidate.active && candidate.slug === slug.toLowerCase())
             || (profile.defaultEvent?.slug === slug ? profile.defaultEvent : null);
-        return event ? { entitlement: profile.entitlement, event } : null;
+        if (!event)
+            return null;
+        if (event.visibility === 'private' && !(await this.privateLinkAllows(event.id, privateAccessToken)))
+            return null;
+        return { entitlement: profile.entitlement, event };
     }
-    async listSlots(handle, slug, rangeStart, rangeEnd) {
+    async listSlots(handle, slug, rangeStart, rangeEnd, privateAccessToken = '') {
         if (!Number.isFinite(rangeStart.getTime()) || !Number.isFinite(rangeEnd.getTime()) || rangeStart >= rangeEnd)
             throw new Error('Invalid availability range');
         if (rangeEnd.getTime() - rangeStart.getTime() > 62 * 24 * 60 * 60 * 1000)
             throw new Error('Availability range cannot exceed 62 days');
-        const result = await this.getPublicEvent(handle, slug);
+        const result = await this.getPublicEvent(handle, slug, privateAccessToken);
         if (!result)
             return [];
         const busy = await this.busyIntervals(result.event, rangeStart, rangeEnd);
@@ -475,7 +563,7 @@ class SchedulerStore {
         return slots.filter((slot) => !fullStarts.has(slot.start.getTime()));
     }
     async createBooking(handle, slug, input) {
-        const publicEvent = await this.getPublicEvent(handle, slug);
+        const publicEvent = await this.getPublicEvent(handle, slug, input.privateAccessToken);
         if (!publicEvent || publicEvent.event.id !== input.eventTypeId)
             throw new Error('Event type not found');
         const bookerName = String(input.bookerName || '').trim().slice(0, 160);
@@ -489,7 +577,7 @@ class SchedulerStore {
         if (idempotencyKey.length < 8)
             throw new Error('An idempotency key is required');
         const end = new Date(input.start.getTime() + publicEvent.event.durationMinutes * 60 * 1000);
-        const slots = await this.listSlots(handle, slug, new Date(input.start.getTime() - 1), new Date(end.getTime() + 1));
+        const slots = await this.listSlots(handle, slug, new Date(input.start.getTime() - 1), new Date(end.getTime() + 1), input.privateAccessToken);
         if (!slots.some((slot) => slot.start.getTime() === input.start.getTime()))
             throw new Error('The selected time is no longer available');
         const existing = await this.bookingByIdempotency(publicEvent.entitlement.tenantKey, idempotencyKey);
@@ -647,7 +735,7 @@ class SchedulerStore {
         if (!booking)
             return null;
         const newEnd = new Date(newStart.getTime() + Number(booking.duration_minutes) * 60 * 1000);
-        const slots = await this.listSlots(booking.public_handle, booking.slug, new Date(newStart.getTime() - 1), new Date(newEnd.getTime() + 1));
+        const slots = await this.listSlots(booking.public_handle, booking.slug, new Date(newStart.getTime() - 1), new Date(newEnd.getTime() + 1), token);
         if (!slots.some((slot) => slot.start.getTime() === newStart.getTime()))
             throw new Error('The selected time is no longer available');
         const hold = await this.holds.acquire({

@@ -23,7 +23,14 @@ export interface SchedulerEventType {
   windows: SchedulerWindow[];
   availabilityScheduleId: string | null;
   systemManaged: boolean;
-  visibility: 'public' | 'unlisted';
+  visibility: 'public' | 'unlisted' | 'private';
+}
+
+export interface SchedulerPrivateLinkState {
+  active: boolean;
+  expired: boolean;
+  tokenHint: string | null;
+  expiresAt: string | null;
 }
 
 export interface SchedulerAvailabilityOverride {
@@ -127,6 +134,21 @@ export async function deleteSchedulerEvent(id: string): Promise<void> {
   await request(`/api/scheduler/v1/event-types/${id}`, { method: 'DELETE' });
 }
 
+export async function getSchedulerPrivateLink(id: string): Promise<SchedulerPrivateLinkState> {
+  const result = await request<{ privateLink: SchedulerPrivateLinkState }>(`/api/scheduler/v1/event-types/${id}/private-link`);
+  return result.privateLink;
+}
+
+export async function rotateSchedulerPrivateLink(id: string, expiresAt: string | null): Promise<{ privateLink: SchedulerPrivateLinkState; url: string }> {
+  return request(`/api/scheduler/v1/event-types/${id}/private-link`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt }),
+  });
+}
+
+export async function revokeSchedulerPrivateLink(id: string): Promise<void> {
+  await request(`/api/scheduler/v1/event-types/${id}/private-link`, { method: 'DELETE' });
+}
+
 export async function cancelSchedulerBooking(id: string): Promise<void> {
   await request(`/api/scheduler/v1/bookings/${id}/cancel`, { method: 'POST' });
 }
@@ -135,22 +157,25 @@ export async function getPublicProfile(handle: string): Promise<{ profile: Sched
   return request(`/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}`);
 }
 
-export async function getPublicEvent(handle: string, slug: string): Promise<{ profile: SchedulerEntitlement; event: SchedulerEventType }> {
-  return request(`/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}`);
+const accessHeaders = (accessToken = ''): HeadersInit => accessToken ? { 'X-Scheduler-Access': accessToken } : {};
+
+export async function getPublicEvent(handle: string, slug: string, accessToken = ''): Promise<{ profile: SchedulerEntitlement; event: SchedulerEventType }> {
+  return request(`/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}`, { headers: accessHeaders(accessToken) });
 }
 
-export async function getPublicSlots(handle: string, slug: string, start: Date, end: Date): Promise<Array<{ start: string; end: string }>> {
+export async function getPublicSlots(handle: string, slug: string, start: Date, end: Date, accessToken = ''): Promise<Array<{ start: string; end: string }>> {
   const result = await request<{ slots: Array<{ start: string; end: string }> }>(
     `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/slots?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`,
+    { headers: accessHeaders(accessToken) },
   );
   return result.slots;
 }
 
-export async function createPublicBooking(handle: string, slug: string, payload: Record<string, unknown>): Promise<{ id: string; status: string; start: string; end: string }> {
+export async function createPublicBooking(handle: string, slug: string, payload: Record<string, unknown>, accessToken = ''): Promise<{ id: string; status: string; start: string; end: string }> {
   const idempotencyKey = crypto.randomUUID();
   const result = await request<{ booking: { id: string; status: string; start: string; end: string } }>(
     `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/bookings`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ ...payload, idempotencyKey }) },
+    { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...accessHeaders(accessToken) }, body: JSON.stringify({ ...payload, idempotencyKey }) },
   );
   return result.booking;
 }

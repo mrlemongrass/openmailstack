@@ -63,6 +63,8 @@ The first-party UI must use these same APIs. No UI-only permission rule is autho
 - Current Admin implementation remains superadmin-only until domain-scoped endpoints are implemented and tested.
 - Public handles are normalized and globally unique; reserved names and cross-domain collisions block enablement.
 - Capability tokens are high-entropy, stored only as hashes, booking-bound, scope-bound, expiring, revocable, and rotated on attendee email or ownership changes.
+- Private event tokens are 256-bit random values stored only as hashes. Owner rotation serializes on the event row, expiry is bounded, switching away from Private revokes active tokens, and missing/wrong/expired/revoked tokens share generic public failure behavior.
+- Private event links carry the bearer value in a URL fragment so it is absent from HTTP access logs and referrer headers. The public app moves it into tab-only storage, removes it from the address bar, sends it only in `X-Scheduler-Access`, and marks token-authorized API responses `no-store`.
 - Disabling entitlement unpublishes public resources and denies owner management without deleting historical bookings.
 
 ### Required tests
@@ -199,4 +201,3 @@ Before Phase 1 routes are mounted:
 - Security review confirms no live migration or public exposure occurred during Phase 0.
 
 Before payments, OAuth, outbound webhooks, or routing are enabled, their controls above require provider-specific contract and adversarial tests.
-

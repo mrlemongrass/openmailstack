@@ -6,9 +6,11 @@ process.env.OMS_DB_PASSWORD = process.env.OMS_DB_PASSWORD || 'test-only';
 const {
     assertTimeZone,
     buildSchedulerCalendarEvent,
+    createSchedulerToken,
     defaultSchedulerHandle,
     normalizeSchedulerEventInput,
     normalizeSchedulerHandle,
+    normalizePrivateLinkExpiry,
     schedulerPublicUrl,
     schedulerTokenHash,
 } = require('../src/scheduler/phase1.js');
@@ -35,10 +37,23 @@ test('normalizes a useful 30-minute event with weekday availability', () => {
     const scheduleId = '12345678-1234-1234-1234-123456789abc';
     assert.equal(normalizeSchedulerEventInput({ title: 'Consultation', durationMinutes: 60, availabilityScheduleId: scheduleId }).availabilityScheduleId, scheduleId);
     assert.equal(normalizeSchedulerEventInput({ title: 'Private consult', visibility: 'unlisted' }).visibility, 'unlisted');
+    assert.equal(normalizeSchedulerEventInput({ title: 'Token consult', visibility: 'private' }).visibility, 'private');
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad visibility', visibility: 'secret' }), /event visibility/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad schedule', availabilityScheduleId: 'not-an-id' }), /availability schedule/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad', durationMinutes: 0 }), /durationMinutes/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Too Long', durationMinutes: 1441 }), /durationMinutes/);
+});
+
+test('private-link tokens are high entropy and expiry is bounded', () => {
+    const first = createSchedulerToken();
+    const second = createSchedulerToken();
+    assert.equal(Buffer.from(first, 'base64url').length, 32);
+    assert.notEqual(first, second);
+    const now = new Date('2026-07-12T00:00:00.000Z');
+    assert.equal(normalizePrivateLinkExpiry(null, now), null);
+    assert.equal(normalizePrivateLinkExpiry('2026-07-13T00:00:00.000Z', now).toISOString(), '2026-07-13T00:00:00.000Z');
+    assert.throws(() => normalizePrivateLinkExpiry('2026-07-11T00:00:00.000Z', now), /future/);
+    assert.throws(() => normalizePrivateLinkExpiry('2027-08-01T00:00:00.000Z', now), /366 days/);
 });
 
 test('validates IANA timezones and builds canonical public links', () => {

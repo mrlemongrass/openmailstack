@@ -20,7 +20,7 @@ export interface SchedulerEventInput {
     destinationCalendarId?: number | null;
     conflictCalendarIds?: number[];
     availabilityScheduleId?: string | null;
-    visibility?: 'public' | 'unlisted';
+    visibility?: 'public' | 'unlisted' | 'private';
     active?: boolean;
     windows?: Array<{ weekday: number; startMinute: number; endMinute: number }>;
 }
@@ -103,7 +103,7 @@ export function normalizeSchedulerEventInput(input: SchedulerEventInput): Requir
     const availabilityScheduleId = input.availabilityScheduleId == null ? null : String(input.availabilityScheduleId).trim();
     if (availabilityScheduleId !== null && !/^[0-9a-f-]{36}$/i.test(availabilityScheduleId)) throw new Error('Invalid availability schedule');
     const visibility = input.visibility || 'public';
-    if (!['public', 'unlisted'].includes(visibility)) throw new Error('Invalid event visibility');
+    if (!['public', 'unlisted', 'private'].includes(visibility)) throw new Error('Invalid event visibility');
     return {
         title,
         slug: cleanSlug(input.slug || title, 'meeting'),
@@ -134,6 +134,16 @@ export function assertTimeZone(timeZone: string): string {
 
 export const schedulerTokenHash = (token: string): string => crypto.createHash('sha256').update(token).digest('hex');
 export const createSchedulerToken = (): string => crypto.randomBytes(32).toString('base64url');
+
+export function normalizePrivateLinkExpiry(value: unknown, now = new Date()): Date | null {
+    if (value == null || String(value).trim() === '') return null;
+    const expiresAt = new Date(String(value));
+    if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= now) throw new Error('Private link expiry must be in the future');
+    if (expiresAt.getTime() > now.getTime() + 366 * 24 * 60 * 60 * 1000) {
+        throw new Error('Private link expiry cannot be more than 366 days away');
+    }
+    return expiresAt;
+}
 
 const icalEscape = (value: string): string => value
     .replace(/\\/g, '\\\\')

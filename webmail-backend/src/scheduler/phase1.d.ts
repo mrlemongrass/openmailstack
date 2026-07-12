@@ -13,7 +13,7 @@ export interface SchedulerEventInput {
     destinationCalendarId?: number | null;
     conflictCalendarIds?: number[];
     availabilityScheduleId?: string | null;
-    visibility?: 'public' | 'unlisted';
+    visibility?: 'public' | 'unlisted' | 'private';
     active?: boolean;
     windows?: Array<{
         weekday: number;
@@ -42,6 +42,7 @@ export declare function normalizeSchedulerEventInput(input: SchedulerEventInput)
 export declare function assertTimeZone(timeZone: string): string;
 export declare const schedulerTokenHash: (token: string) => string;
 export declare const createSchedulerToken: () => string;
+export declare function normalizePrivateLinkExpiry(value: unknown, now?: Date): Date | null;
 export declare function buildSchedulerCalendarEvent(event: BookingCalendarEvent): string;
 export declare function schedulerPublicUrl(baseUrl: string, handle: string, slug?: string): string;
 //# sourceMappingURL=phase1.d.ts.map

@@ -24,6 +24,16 @@ const timeZones = (() => {
 })();
 const dateLabel = (value: string, timeZone: string) => new Intl.DateTimeFormat([], { timeZone, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(value));
 const timeLabel = (value: string, timeZone: string) => new Intl.DateTimeFormat([], { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(value));
+const consumePrivateAccessToken = (handle: string, slug: string) => {
+  const storageKey = `oms-scheduler-private:${handle}:${slug}`;
+  const fragmentToken = new URLSearchParams(window.location.hash.slice(1)).get('access') || '';
+  if (fragmentToken) {
+    sessionStorage.setItem(storageKey, fragmentToken);
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
+    return fragmentToken;
+  }
+  return sessionStorage.getItem(storageKey) || '';
+};
 const calendarDownload = (profile: SchedulerEntitlement, event: SchedulerEventType, slot: Slot) => {
   const compact = (value: string) => new Date(value).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
   const escape = (value: string) => value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/[,;]/g, character => `\\${character}`);
@@ -42,7 +52,7 @@ function EventDirectory({ profile, events }: { profile: SchedulerEntitlement; ev
   </main></div>;
 }
 
-function BookingEvent({ profile, event, rootDefault = false }: { profile: SchedulerEntitlement; event: SchedulerEventType; rootDefault?: boolean }) {
+function BookingEvent({ profile, event, rootDefault = false, accessToken = '' }: { profile: SchedulerEntitlement; event: SchedulerEventType; rootDefault?: boolean; accessToken?: string }) {
   const [timeZone, setTimeZone] = useState(browserTimeZone());
   const [slots, setSlots] = useState<Slot[]>([]);
   const [selected, setSelected] = useState<Slot | null>(null);
@@ -56,13 +66,13 @@ function BookingEvent({ profile, event, rootDefault = false }: { profile: Schedu
     const end = new Date(start.getTime() + 30 * 24 * 60 * 60 * 1000);
     setLoading(true);
     try {
-      const available = await getPublicSlots(profile.handle, event.slug, start, end);
+      const available = await getPublicSlots(profile.handle, event.slug, start, end, accessToken);
       setSlots(available);
       setSelected(current => current && available.some(slot => slot.start === current.start) ? current : null);
       setError('');
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load times'); }
     finally { setLoading(false); }
-  }, [event.slug, profile.handle]);
+  }, [accessToken, event.slug, profile.handle]);
   useEffect(() => {
     const initialLoad = window.setTimeout(() => { void loadSlots(); }, 0);
     const refreshVisibleSlots = () => { if (document.visibilityState === 'visible') void loadSlots(); };
@@ -83,7 +93,7 @@ function BookingEvent({ profile, event, rootDefault = false }: { profile: Schedu
     submitEvent.preventDefault(); if (!selected) return;
     setSubmitting(true); setError('');
     try {
-      await createPublicBooking(profile.handle, event.slug, { eventTypeId: event.id, start: selected.start, bookerTimeZone: timeZone, ...form });
+      await createPublicBooking(profile.handle, event.slug, { eventTypeId: event.id, start: selected.start, bookerTimeZone: timeZone, ...form }, accessToken);
       setSlots(current => current.filter(slot => slot.start !== selected.start));
       setConfirmed(selected);
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to book this time'); await loadSlots(); }
@@ -101,15 +111,16 @@ function BookingEvent({ profile, event, rootDefault = false }: { profile: Schedu
 
 export function PublicSchedulerPage() {
   const { handle = '', slug } = useParams();
-  const [data, setData] = useState<{ profile: SchedulerEntitlement; events?: SchedulerEventType[]; event?: SchedulerEventType; defaultEvent?: SchedulerEventType | null } | null>(null);
+  const [data, setData] = useState<{ profile: SchedulerEntitlement; events?: SchedulerEventType[]; event?: SchedulerEventType; defaultEvent?: SchedulerEventType | null; accessToken?: string } | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    const load = slug ? getPublicEvent(handle, slug) : getPublicProfile(handle);
-    load.then(setData).catch(err => setError(err instanceof Error ? err.message : 'This scheduling page is unavailable'));
+    const token = slug ? consumePrivateAccessToken(handle, slug) : '';
+    const load = slug ? getPublicEvent(handle, slug, token) : getPublicProfile(handle);
+    load.then(result => setData({ ...result, accessToken: token })).catch(err => setError(err instanceof Error ? err.message : 'This scheduling page is unavailable'));
   }, [handle, slug]);
   if (error) return <div className="public-scheduler-page"><PublicHeader /><main className="public-not-found"><CalendarClock size={32} /><h1>Scheduling page unavailable</h1><p>The link may be incorrect or no longer published.</p></main></div>;
   if (!data) return <div className="public-scheduler-page"><PublicHeader /><main className="public-not-found">Loading...</main></div>;
-  if (data.event) return <BookingEvent profile={data.profile} event={data.event} />;
+  if (data.event) return <BookingEvent profile={data.profile} event={data.event} accessToken={data.accessToken} />;
   if (data.defaultEvent && (data.events?.length || 0) === 0) return <BookingEvent profile={data.profile} event={data.defaultEvent} rootDefault />;
   return <EventDirectory profile={data.profile} events={data.events || []} />;
 }
@@ -129,7 +140,7 @@ export function SchedulerActionPage() {
       setData({ booking });
       if (scope === 'reschedule') {
         const start = new Date(); const end = new Date(start.getTime() + 30 * 24 * 60 * 60 * 1000);
-        void getPublicSlots(booking.handle, booking.event.slug, start, end).then(setSlots);
+        void getPublicSlots(booking.handle, booking.event.slug, start, end, token).then(setSlots);
       }
     }).catch(err => setError(err instanceof Error ? err.message : 'This management link is unavailable'));
   }, [scope, token]);

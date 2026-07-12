@@ -829,3 +829,13 @@ Future entry template:
 - Verified: Backend tests, frontend lint/build, static/full integration guards, and a disposable MariaDB lifecycle passed. A temporary live unlisted event stayed out of the public directory, remained reachable by exact URL, and was removed after the check.
 - Deployed: Safety snapshot `/var/backups/openmailstack/20260712_015316_scheduler_unlisted`; migration `005`, tested backend, and tested frontend are live. Service health, Nginx, existing public events, artifact equality, staging smoke, and recent logs pass.
 - Decision: Defer clean-VM testing until a second development Linux server is available. Continue guarded live testing; macOS, Android/DAVx5, and Thunderbird rows remain pending until the named clients are operated.
+
+## 2026-07-12 Scheduler Private Token Links
+
+- Changed: Added migration `006_scheduler_private_links.sql`, `private` event visibility, owner generate/rotate/expire/revoke APIs, hash-only token persistence, and generic private-event authorization across event, slot, and booking routes.
+- Secured: Tokens contain 256 random bits, are returned once in URL fragments, move to session storage, are removed from the address bar, and use `X-Scheduler-Access` with no-store responses. Audits and project memory never store token values.
+- Secured: Rotation serializes on the event row and revokes previous links. Switching from Private to Listed/Unlisted revokes active links so they cannot revive after a later visibility change.
+- Compatibility: Booking reschedule capability tokens can authorize private-event slot reads, preserving management links after an event becomes private.
+- Verified: Backend 80/82 with two optional DB tests skipped in the normal run; disposable MariaDB applied migrations `001`-`006` twice and passed private access, hash storage, wrong-token, rotation, expiry, revocation, downgrade, and reschedule tests with no skips.
+- Verified live: A temporary private event stayed out of discovery; missing/wrong tokens returned generic 404s; a valid fragment link rendered in mobile Chrome, left the address bar, retained tab access without overflow, and rotation/expiry/revocation/downgrade checks passed. The test event was removed.
+- Deployed: Safety snapshot `/var/backups/openmailstack/20260712_021623_scheduler_private_tokens`; migration `006`, tested backend, and tested frontend are live.

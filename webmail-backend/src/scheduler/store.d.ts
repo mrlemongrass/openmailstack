@@ -32,7 +32,7 @@ export interface SchedulerEventType {
     conflictCalendarIds: number[];
     availabilityScheduleId: string | null;
     systemManaged: boolean;
-    visibility: 'public' | 'unlisted';
+    visibility: 'public' | 'unlisted' | 'private';
     active: boolean;
     windows: Array<{
         weekday: number;
@@ -78,6 +78,13 @@ export interface SchedulerBookingInput {
     bookerEmail: string;
     bookerNotes?: string;
     idempotencyKey: string;
+    privateAccessToken?: string;
+}
+export interface SchedulerPrivateLinkState {
+    active: boolean;
+    expired: boolean;
+    tokenHint: string | null;
+    expiresAt: Date | null;
 }
 export declare class SchedulerStore {
     private readonly pool;
@@ -114,16 +121,23 @@ export declare class SchedulerStore {
     saveEventType(username: string, input: SchedulerEventInput, eventId?: string): Promise<SchedulerEventType>;
     deleteEventType(username: string, eventId: string): Promise<void>;
     getOwnedEventType(username: string, id: string): Promise<SchedulerEventType | null>;
+    getPrivateLinkState(username: string, eventId: string): Promise<SchedulerPrivateLinkState>;
+    rotatePrivateLink(username: string, eventId: string, expiry: unknown): Promise<{
+        token: string;
+        state: SchedulerPrivateLinkState;
+    }>;
+    revokePrivateLink(username: string, eventId: string): Promise<void>;
+    private privateLinkAllows;
     getPublicProfile(handle: string): Promise<{
         entitlement: SchedulerEntitlement;
         events: SchedulerEventType[];
         defaultEvent: SchedulerEventType | null;
     } | null>;
-    getPublicEvent(handle: string, slug: string): Promise<{
+    getPublicEvent(handle: string, slug: string, privateAccessToken?: string): Promise<{
         entitlement: SchedulerEntitlement;
         event: SchedulerEventType;
     } | null>;
-    listSlots(handle: string, slug: string, rangeStart: Date, rangeEnd: Date): Promise<AvailabilitySlot[]>;
+    listSlots(handle: string, slug: string, rangeStart: Date, rangeEnd: Date, privateAccessToken?: string): Promise<AvailabilitySlot[]>;
     createBooking(handle: string, slug: string, input: SchedulerBookingInput): Promise<Record<string, unknown>>;
     listBookings(username: string, filter?: string): Promise<Array<Record<string, unknown>>>;
     getCapabilityBooking(token: string, scope: 'cancel' | 'reschedule'): Promise<Record<string, unknown> | null>;

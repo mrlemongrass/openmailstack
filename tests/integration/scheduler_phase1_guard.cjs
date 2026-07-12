@@ -30,6 +30,8 @@ for (const table of ['scheduler_availability_schedules', 'scheduler_schedule_win
 if (!availabilityMigration.includes('system_managed')) throw new Error('Availability migration must distinguish the hidden default booking type');
 requireText('webmail-backend/migrations/004_scheduler_notification_identity.sql', /notification_from/, 'Scheduler notification identity migration is missing');
 requireText('webmail-backend/migrations/005_scheduler_event_visibility.sql', /visibility ENUM\('public', 'unlisted'\)/, 'Scheduler event visibility migration is missing');
+requireText('webmail-backend/migrations/006_scheduler_private_links.sql', /scheduler_private_links/, 'Scheduler private-link migration is missing');
+requireText('webmail-backend/migrations/006_scheduler_private_links.sql', /UNIQUE KEY uniq_scheduler_private_token \(token_hash\)/, 'Private-link token hashes must be unique');
 requireText('webmail-backend/src/index.ts', /app\.use\('\/api'.*schedulerRouter/, 'Backend must mount Scheduler APIs');
 requireText('webmail-backend/src/scheduler/router.ts', /\/public\/scheduler\/v1/, 'Public Scheduler API boundary is missing');
 requireText('webmail-backend/src/scheduler/router.ts', /\/admin\/scheduler\/v1/, 'Admin Scheduler API boundary is missing');
@@ -58,6 +60,11 @@ requireText('webmail-frontend/src/scheduler/routes.tsx', /Start-time increments/
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Anyone with its exact link can still book/, 'Unlisted event guidance is missing');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /scheduler-event-badge[^\n]+Unlisted/, 'Unlisted event status is missing from owner management');
 requireText('webmail-backend/src/scheduler/store.ts', /event\.active && event\.visibility === 'public'/, 'Unlisted events must not leak through the public profile directory');
+requireText('webmail-frontend/src/scheduler/routes.tsx', /Require a random access token that you can rotate, expire, or revoke/, 'Private-link owner controls are missing');
+requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /sessionStorage\.setItem[\s\S]*history\.replaceState/, 'Private tokens must leave the address bar after being stored for the tab');
+requireText('webmail-frontend/src/scheduler/api.ts', /X-Scheduler-Access/, 'Private tokens must use the dedicated request header');
+requireText('webmail-backend/src/scheduler/store.ts', /token_hash = \?[\s\S]*revoked_at IS NULL[\s\S]*expires_at > UTC_TIMESTAMP/, 'Private-link access must enforce hash, revocation, and expiry');
+requireText('webmail-backend/src/scheduler/router.ts', /Cache-Control', 'no-store'/, 'Private-link responses must disable caching');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Scheduler email sender/, 'Scheduler profile must expose the owned notification sender');
 requireText('webmail-backend/src/scheduler/store.ts', /Scheduler sender must be your mailbox or an active alias/, 'Scheduler notification sender must reject spoofed addresses');
 requireText('webmail-frontend/src/scheduler/scheduler.css', /scheduler-modal[^}]+background: var\(--surface-color\)/s, 'Scheduler modal must use an opaque surface token');

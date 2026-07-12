@@ -1028,9 +1028,9 @@ Agents should verify:
 
 ### 8.8 OMS Scheduler
 
-Status: `Partial - Phase 2 Repository Complete; Hardening Deployment Pending`
+Status: `Partial - Phase 2 Complete And Deployed`
 
-Last verified: 2026-07-12 in the repository; the preceding Phase 2 release is deployed on `mail.housevo.us`, while the current waitlist/poll hardening remains pending live synchronization.
+Last verified: 2026-07-12 in the repository and on `mail.housevo.us`; Scheduler hardening commit `60864417` is deployed.
 
 Phase 0 and Phase 1 are implemented behind `ENABLE_OMS_SCHEDULER`. Ordered migrations create tenant-scoped slot inventory/holds, mailbox entitlements, event types, availability windows, bookings, a leased outbox, and sanitized audit events. Disabled installations do not apply these migrations. Only the existing modern superadmin boundary can enable a mailbox and assign its globally unique public handle.
 
@@ -1042,7 +1042,7 @@ Phase 2 personal scheduling extends through migrations `017`-`023`: host-local h
 
 The React app lazy-loads authenticated Scheduler management and unauthenticated `/scheduler/<handle>` pages. Entitled users see Scheduler immediately after Notes. Mobile navigation keeps Mail, Calendar, Contacts, Notes, and Scheduler primary and moves Settings, Sync, and Admin into More.
 
-Evidence: `webmail-backend/src/scheduler/`, versioned migrations `001` through `023`, `functions/12_scheduler.sh`, `webmail-frontend/src/scheduler/`, backend tests, static integration guards, disposable MariaDB lifecycle/concurrency tests, and the live 2026-07-12 deployment. Live Nginx serves Scheduler on both configured hostnames; real booking/private-link lifecycles and the staging smoke suite pass. The repository hardening applies all migrations twice and passes 90/90 backend tests with policy-change waitlist promotion, poll audit, outcomes/delegation, recurrence, and portability coverage, but those hardening artifacts are not yet deployed. Remaining validation is the guarded backend synchronization, physical CalDAV/ActiveSync observation, and clean-VM work after a second development Linux server is available.
+Evidence: `webmail-backend/src/scheduler/`, versioned migrations `001` through `023`, `functions/12_scheduler.sh`, `webmail-frontend/src/scheduler/`, backend tests, static integration guards, disposable MariaDB lifecycle/concurrency tests, and the live 2026-07-12 deployment. Live Nginx serves Scheduler on both configured hostnames; real booking/private-link lifecycles and the staging smoke suite pass. The hardening run applies all migrations twice and passes 90/90 backend tests with policy-change waitlist promotion, poll audit, outcomes/delegation, recurrence, and portability coverage. The three changed runtime modules are byte-for-byte equal between commit `60864417` and `/opt/openmailstack-backend`, with rollback snapshot `/var/backups/openmailstack/20260712T142629Z_scheduler_phase2_hardening_60864417`. Remaining validation is physical CalDAV/ActiveSync observation and clean-VM work after a second development Linux server is available.
 
 ---
 

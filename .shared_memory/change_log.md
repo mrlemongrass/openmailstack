@@ -910,4 +910,5 @@ Future entry template:
 - Fixed: Meeting-poll creation supplies the required `scheduler_audit_events.occurred_at` value.
 - Fixed: The completed/no-show database fixture moves both booking timestamps into the past and preserves `slot_end > slot_start`.
 - Verified: A disposable MariaDB applied migrations `001`-`023` twice and passed all 90 backend tests with no skips. Frontend lint/tests/build, full integration and Scheduler guards, `git diff --check`, and read-only staging smoke pass.
-- Status: Repository Phase 2 is complete. Guarded deployment of the hardening artifacts is required before Phase 3 starts.
+- Deployed: Commit `60864417` runtime modules are live and byte-for-byte equal under `/opt/openmailstack-backend`; services, both Scheduler host aliases, queue probes, logs, and staging smoke pass. Rollback snapshot: `/var/backups/openmailstack/20260712T142629Z_scheduler_phase2_hardening_60864417`.
+- Status: Phase 2 is complete and live; Phase 3 may start.

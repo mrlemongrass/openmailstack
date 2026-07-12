@@ -1,6 +1,6 @@
 # OMS Scheduler Product And Engineering Roadmap
 
-Status: `Phase 2 Repository Complete - Live Hardening Deployment Pending; Phase 3 Starts After Deployment`
+Status: `Phase 2 Complete And Live - Ready For Phase 3; Physical Client And Clean-VM Release Gates Pending`
 
 Research date: 2026-07-10
 
@@ -343,7 +343,7 @@ Exit criteria:
 - [x] Disposable lifecycle proves reschedule updates the same calendar UID and cancel removes it, writes a tombstone, and releases capacity.
 - [x] Playwright verified public booking and management layouts at 1440x900 and 390x844 with reachable primary actions, mobile More navigation, and no horizontal overflow.
 
-The Phase 2 live upgrade passed on `mail.housevo.us`: migrations `001` through `023` are recorded, Nginx serves `/scheduler/` on both configured hostnames, and the staging smoke suite passes. A live create/reschedule/cancel cycle completed all three owned-sender notification jobs, received three Google SMTP acceptances and three local LMTP deliveries, preserved the Calendar UID on reschedule, deleted the projection on cancel, wrote a tombstone, released capacity, and restored the public slot. Private links, booking integrity, holidays/out-of-office, waitlists, recurring bookings, meeting polls, outcomes/delegation, public distribution, and portability are deployed. The repository now also contains validated waitlist/poll hardening that has not yet been synchronized to the live backend, so production does not yet match the current tested artifact. Physical macOS/Android/Thunderbird and CalDAV/ActiveSync observation remains pending. Clean-VM validation is intentionally deferred until a second development Linux server is available.
+The Phase 2 live upgrade and hardening deployment passed on `mail.housevo.us`: migrations `001` through `023` are recorded, the changed Scheduler runtime modules match the tested `60864417` artifacts, Nginx serves `/scheduler/` on both configured hostnames, and the staging smoke suite passes. A live create/reschedule/cancel cycle completed all three owned-sender notification jobs, received three Google SMTP acceptances and three local LMTP deliveries, preserved the Calendar UID on reschedule, deleted the projection on cancel, wrote a tombstone, released capacity, and restored the public slot. Private links, booking integrity, holidays/out-of-office, policy-preserving waitlists, recurring bookings, meeting polls, outcomes/delegation, public distribution, and portability are deployed. Physical macOS/Android/Thunderbird and CalDAV/ActiveSync observation remains pending. Clean-VM validation is intentionally deferred until a second development Linux server is available.
 
 ### Phase 2 - Complete personal parity (5-7 weeks)
 

@@ -4969,3 +4969,62 @@ Automatic waitlist promotion is an explicit Phase 2 acceptance behavior. The nor
 ### Next recommended task
 
 Guardedly deploy the tested backend hardening commit, verify artifact equality and staging health, then begin Phase 3 durable workflows.
+
+## 2026-07-12 — Scheduler Phase 2 hardening deployment
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: commit `60864417`, one commit ahead of `origin/main`, plus unrelated untracked `.opencode/`
+Ending git state: deployment record committed; unrelated untracked `.opencode/` preserved
+
+### Selected task
+
+Deploy the approved, database-validated Scheduler Phase 2 hardening runtime to the live backend and prove production matches the tested artifacts.
+
+### Why this task
+
+The repository passed the complete Phase 2 contract, but production still ran the preceding artifacts. Phase 3 should not begin while the validated waitlist and poll fixes are absent from the live service.
+
+### Changes made
+
+- `/opt/openmailstack-backend/src/scheduler/`
+  - Synchronized only `phase1.js`, `phase1.js.map`, `phase2-store.js`, `phase2-store.js.map`, `store.js`, and `store.js.map` from commit `60864417`.
+  - Left dependencies, frontend files, database state, and persistent `uploads/` untouched.
+- `openmailstack.service`
+  - Restarted once after the bounded runtime sync.
+- Canonical roadmap, architecture, worklog, and project memory
+  - Updated Phase 2 from deployment-pending to complete and live.
+
+### Proof / checks run
+
+- Root-only rollback snapshot
+  - `/var/backups/openmailstack/20260712T142629Z_scheduler_phase2_hardening_60864417/deployed-backend-files.tar.gz`
+- Runtime SHA-256 comparison
+  - Repository and deployed `phase1.js`, `phase2-store.js`, and `store.js` hashes match exactly.
+- `rtk bash /tmp/oms-scheduler-phase2-live-verify.sh`
+  - Migrations `017`-`023` recorded, six Phase 2 tables present, two existing bookings preserved, pending outbox zero, services active, Nginx valid, auth boundary `401`, public Scheduler `200`, and queue/socket probes passed.
+- `rtk bash tests/integration/staging_smoke.sh ./config.conf`
+  - All services, listeners, configuration, TLS, web endpoints, and DKIM checks passed.
+- Public host aliases
+  - `https://mail.housevo.us/scheduler/thang` and `https://webmail.housevo.us/scheduler/thang` returned `200`.
+- Post-restart journal
+  - No warning-or-higher `openmailstack.service` entries after deployment; systemd reports zero restarts.
+
+### Acceptance criteria
+
+- [x] Root-only rollback artifact exists before live mutation.
+- [x] Only the six approved Scheduler runtime artifacts changed.
+- [x] Persistent uploads, dependencies, frontend, migrations, and production records were not changed.
+- [x] Deployed runtime matches the tested commit byte-for-byte.
+- [x] Service restart, logs, routes, queues, and full staging smoke pass.
+- [x] Phase 2 documentation and project memory reflect live state.
+
+### Risks / notes
+
+- Physical CalDAV/ActiveSync observation remains pending.
+- Clean-VM enable/disable installation remains intentionally deferred until the second development Linux server is available.
+- The Postfix configuration check still prints the existing deprecation warning for `smtpd_use_tls`; it does not fail validation.
+
+### Next recommended task
+
+Begin Phase 3 with the durable workflow foundation: versioned workflow definitions, leased jobs, retries/dead letters, and provider-independent OMS email reminders.

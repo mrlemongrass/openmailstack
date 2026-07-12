@@ -4742,3 +4742,56 @@ Add optional per-event host confirmation as the next bounded Scheduler Phase 2 s
 ### Next recommended task
 
 Add owner-configurable cancellation/reschedule cutoffs and reason collection, snapshot the policy on bookings, and enforce it server-side for guest capability actions.
+
+## 2026-07-12 — Scheduler cancellation and reschedule policies
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `0eeca094`
+Ending git state: clean after the focused Phase 2 release commit
+
+### Selected task
+
+Add owner-configurable cancellation/reschedule cutoffs and private guest reason collection as the next bounded Scheduler Phase 2 slice.
+
+### Acceptance criteria
+
+- [x] Existing event types remain unrestricted unless an owner configures a cutoff.
+- [x] Independent cutoffs accept zero through 525,600 minutes; zero permits the action until meeting start.
+- [x] Every booking retains the action policy active when it was created, even after later event edits.
+- [x] Guest capability reads expose a clear allowed/closed state, and mutations recheck the cutoff under the booking lock.
+- [x] Cancellation/reschedule reasons are optional unless required, strict text, and limited to 1,000 characters.
+- [x] Reasons are owner-visible but excluded from logs, audits, outbox payloads, email, public reads, and Calendar data.
+- [x] Authenticated owner cancellation remains an explicit cutoff override.
+- [x] Desktop/mobile UI covers configured, required, optional, loading, empty-slot, closed, error, success, and hostile-text states.
+
+### Changes
+
+- Added additive, idempotent migration `011_scheduler_booking_action_policies.sql` with four event policy fields and two booking reason fields.
+- Added normalized cutoff/reason helpers, legacy-update preservation, immutable snapshot enforcement, locked mutation rechecks, owner reason detail, and HTTP 400/409 policy errors.
+- Added owner Limits controls and a responsive guest action page with required/optional reasons, alternative-time loading/empty states, and closed-window recovery guidance.
+
+### Proof / checks run
+
+- Normal backend suite: 84 passed and two optional database-gated tests skipped.
+- Disposable MariaDB: migrations `001` through `011` applied twice; all 86 backend tests passed with no skips, including legacy preservation, immutable policy snapshots, required/oversized/non-text reasons, redaction, closed-window non-mutation, and owner override.
+- Frontend lint and production build, full integration/static guards, memory hygiene, and `git diff --check` passed.
+- Playwright covered policy controls and private owner reason detail at 1440x900 and 390x844, required cancel/reschedule reasons, inert hostile text, successful payloads, alternative slots, closed windows, and zero page errors/overflow.
+- Live migration `011` is recorded with all six columns. A reversible capability check proved allowed/closed public policy state, 400 required-reason responses, 409 closed-window responses, unchanged booking state, zero outbox/audit writes, and complete temporary-data cleanup without sending mail.
+- Deployed Scheduler/browser checks, prior booking-question/host-confirmation and mail-reader regressions, artifact equality, `openmailstack.service`, Nginx validation, and full staging smoke passed.
+
+### Deployment and rollback
+
+- Root-only backend, frontend, Scheduler-table, and service-unit snapshot: `/var/backups/openmailstack/20260712T044542Z_scheduler_action_policies`.
+- Applied only additive migration `011`, synchronized the tested backend, normalized deployment permissions, restarted only `openmailstack.service`, and deployed the tested frontend.
+
+### Risks and remaining work
+
+- Missing cutoffs intentionally preserve historical unrestricted capability behavior, including after meeting start. Owners who need a hard start boundary should configure zero.
+- Reasons are retained with their booking record; dedicated retention/export/deletion policy remains later Scheduler work.
+- An active-booking cap keyed only by guest email will not be a strong anti-abuse boundary until email verification is implemented; document and present it as workflow protection.
+- Clean-VM validation remains deferred until the second development Linux server is available; remaining physical-client observation is still pending.
+
+### Next recommended task
+
+Add per-event active booking limits keyed by normalized guest email, enforce them transactionally, and offer the existing secure reschedule path instead of creating another active booking.

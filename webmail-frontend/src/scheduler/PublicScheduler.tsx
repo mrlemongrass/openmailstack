@@ -11,6 +11,7 @@ import {
   getPublicSlots,
   type SchedulerEntitlement,
   type SchedulerEventType,
+  type SchedulerBookingActionPolicy,
 } from './api';
 import './scheduler.css';
 
@@ -139,30 +140,41 @@ export function PublicSchedulerPage() {
 export function SchedulerActionPage() {
   const { scope: rawScope, token = '' } = useParams();
   const scope = rawScope === 'reschedule' ? 'reschedule' : 'cancel';
-  const [data, setData] = useState<{ booking: ActionBooking } | null>(null);
+  const [data, setData] = useState<{ booking: ActionBooking; policy: SchedulerBookingActionPolicy } | null>(null);
   const [slots, setSlots] = useState<Slot[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
   const [selected, setSelected] = useState<Slot | null>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [reason, setReason] = useState('');
   const timeZone = browserTimeZone();
   useEffect(() => {
     getBookingAction(scope, token).then(result => {
       const booking = result.booking as unknown as ActionBooking;
-      setData({ booking });
-      if (scope === 'reschedule') {
+      setData({ booking, policy: result.policy });
+      if (scope === 'reschedule' && result.policy.allowed) {
         const start = new Date(); const end = new Date(start.getTime() + 30 * 24 * 60 * 60 * 1000);
-        void getPublicSlots(booking.handle, booking.event.slug, start, end, token).then(setSlots);
+        setSlotsLoading(true);
+        void getPublicSlots(booking.handle, booking.event.slug, start, end, token)
+          .then(setSlots)
+          .catch(err => setError(err instanceof Error ? err.message : 'Unable to load alternative times'))
+          .finally(() => setSlotsLoading(false));
       }
     }).catch(err => setError(err instanceof Error ? err.message : 'This management link is unavailable'));
   }, [scope, token]);
   const apply = async () => {
+    if (data?.policy.reasonRequired && !reason.trim()) { setError(`A ${scope === 'cancel' ? 'cancellation' : 'reschedule'} reason is required`); return; }
+    setError('');
     setStatus(scope === 'cancel' ? 'Cancelling...' : 'Rescheduling...');
-    try { await applyBookingAction(scope, token, selected?.start); setStatus(scope === 'cancel' ? 'Booking cancelled' : 'Booking rescheduled'); }
+    try { await applyBookingAction(scope, token, selected?.start, reason); setStatus(scope === 'cancel' ? 'Booking cancelled' : 'Booking rescheduled'); }
     catch (err) { setError(err instanceof Error ? err.message : 'Unable to update booking'); setStatus(''); }
   };
   return <div className="public-scheduler-page"><PublicHeader /><main className="scheduler-action-page">
-    {error ? <ErrorBanner error={error} /> : !data ? <p>Loading...</p> : <><CalendarCheck size={30} /><h1>{scope === 'cancel' ? 'Cancel booking' : 'Choose a new time'}</h1><p>{data.booking.event.title}</p>
-      {scope === 'reschedule' && <div className="action-slots">{slots.slice(0, 24).map(slot => <button className={selected?.start === slot.start ? 'selected' : ''} onClick={() => setSelected(slot)} key={slot.start}>{dateLabel(slot.start, timeZone)} · {timeLabel(slot.start, timeZone)}</button>)}</div>}
-      <button className={`btn ${scope === 'cancel' ? 'btn-danger' : 'btn-primary'}`} disabled={Boolean(status) || (scope === 'reschedule' && !selected)} onClick={apply}>{status || (scope === 'cancel' ? 'Cancel booking' : 'Confirm new time')}</button></>}
+    {!data ? (error ? <ErrorBanner error={error} /> : <p>Loading...</p>) : <><CalendarCheck size={30} /><h1>{scope === 'cancel' ? 'Cancel booking' : 'Choose a new time'}</h1><p>{data.booking.event.title}</p>
+      {!data.policy.allowed && <div className="scheduler-action-closed"><strong>This change window has closed.</strong><span>The host no longer allows guests to {scope} this booking.</span></div>}
+      {error && <ErrorBanner error={error} />}
+      {scope === 'reschedule' && data.policy.allowed && (slotsLoading ? <p className="public-muted">Loading available times...</p> : slots.length === 0 ? <p className="public-muted">No alternative times are currently available.</p> : <div className="action-slots">{slots.slice(0, 24).map(slot => <button className={selected?.start === slot.start ? 'selected' : ''} onClick={() => setSelected(slot)} key={slot.start}>{dateLabel(slot.start, timeZone)} · {timeLabel(slot.start, timeZone)}</button>)}</div>)}
+      {data.policy.allowed && <label className="scheduler-action-reason">Reason {data.policy.reasonRequired ? <span>Required</span> : <small>Optional</small>}<textarea maxLength={1000} required={data.policy.reasonRequired} rows={4} value={reason} onChange={event => { setReason(event.target.value); if (error) setError(''); }} placeholder={`Tell the host why you need to ${scope}`} /></label>}
+      {data.policy.allowed && <button className={`btn ${scope === 'cancel' ? 'btn-danger' : 'btn-primary'}`} disabled={Boolean(status) || (scope === 'reschedule' && !selected)} onClick={apply}>{status || (scope === 'cancel' ? 'Cancel booking' : 'Confirm new time')}</button>}</>}
   </main></div>;
 }

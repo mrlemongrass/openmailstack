@@ -9,6 +9,8 @@ exports.defaultSchedulerHandle = defaultSchedulerHandle;
 exports.normalizeSchedulerQuestions = normalizeSchedulerQuestions;
 exports.normalizeSchedulerBookingAnswers = normalizeSchedulerBookingAnswers;
 exports.normalizeSchedulerEventInput = normalizeSchedulerEventInput;
+exports.schedulerBookingActionPolicy = schedulerBookingActionPolicy;
+exports.normalizeSchedulerActionReason = normalizeSchedulerActionReason;
 exports.assertTimeZone = assertTimeZone;
 exports.normalizePrivateLinkExpiry = normalizePrivateLinkExpiry;
 exports.normalizeOneOffAvailability = normalizeOneOffAvailability;
@@ -147,6 +149,15 @@ function normalizeSchedulerEventInput(input) {
     const visibility = input.visibility || 'public';
     if (!['public', 'unlisted', 'private'].includes(visibility))
         throw new Error('Invalid event visibility');
+    const actionCutoff = (name, value) => {
+        if (value == null || value === '')
+            return null;
+        const minutes = Number(value);
+        if (!Number.isInteger(minutes) || minutes < 0 || minutes > 525600) {
+            throw new Error(`${name} must be an integer between 0 and 525600`);
+        }
+        return minutes;
+    };
     return {
         title,
         slug: cleanSlug(input.slug || title, 'meeting'),
@@ -165,9 +176,40 @@ function normalizeSchedulerEventInput(input) {
         visibility,
         active: input.active !== false,
         requiresConfirmation: input.requiresConfirmation === true,
+        cancellationCutoffMinutes: actionCutoff('cancellationCutoffMinutes', input.cancellationCutoffMinutes),
+        rescheduleCutoffMinutes: actionCutoff('rescheduleCutoffMinutes', input.rescheduleCutoffMinutes),
+        requireCancellationReason: input.requireCancellationReason === true,
+        requireRescheduleReason: input.requireRescheduleReason === true,
         windows,
         questions: normalizeSchedulerQuestions(input.questions),
     };
+}
+function schedulerBookingActionPolicy(event, scope, start, now = new Date()) {
+    const rawCutoff = scope === 'cancel' ? event.cancellationCutoffMinutes : event.rescheduleCutoffMinutes;
+    const cutoffMinutes = Number.isInteger(rawCutoff) && Number(rawCutoff) >= 0 && Number(rawCutoff) <= 525600
+        ? Number(rawCutoff)
+        : null;
+    const reasonRequired = scope === 'cancel'
+        ? event.requireCancellationReason === true
+        : event.requireRescheduleReason === true;
+    const closesAt = cutoffMinutes === null ? null : new Date(start.getTime() - cutoffMinutes * 60 * 1000);
+    return {
+        allowed: closesAt === null || now.getTime() <= closesAt.getTime(),
+        cutoffMinutes,
+        reasonRequired,
+        closesAt,
+    };
+}
+function normalizeSchedulerActionReason(value, scope, required) {
+    const label = scope === 'cancel' ? 'cancellation' : 'reschedule';
+    if (value != null && typeof value !== 'string')
+        throw new Error(`${label[0].toUpperCase()}${label.slice(1)} reason must be text`);
+    const reason = String(value || '').replace(/\r\n/g, '\n').trim();
+    if (required && !reason)
+        throw new Error(`A ${label} reason is required`);
+    if (reason.length > 1000)
+        throw new Error(`${label[0].toUpperCase()}${label.slice(1)} reason must be 1000 characters or fewer`);
+    return reason;
 }
 function assertTimeZone(timeZone) {
     const normalized = String(timeZone || '').trim();

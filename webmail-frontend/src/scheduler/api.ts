@@ -42,6 +42,10 @@ export interface SchedulerEventType {
   systemManaged: boolean;
   visibility: 'public' | 'unlisted' | 'private';
   requiresConfirmation: boolean;
+  cancellationCutoffMinutes: number | null;
+  rescheduleCutoffMinutes: number | null;
+  requireCancellationReason: boolean;
+  requireRescheduleReason: boolean;
   questions: SchedulerBookingQuestion[];
 }
 
@@ -104,6 +108,8 @@ export interface SchedulerBooking {
   bookerEmail: string;
   bookerNotes: string;
   bookingAnswers: SchedulerBookingAnswer[];
+  cancellationReason: string;
+  rescheduleReason: string;
   event: SchedulerEventType;
 }
 
@@ -219,12 +225,19 @@ export async function createPublicBooking(handle: string, slug: string, payload:
   return result.booking;
 }
 
-export async function getBookingAction(scope: 'cancel' | 'reschedule', token: string): Promise<{ booking: SchedulerBooking; scope: string }> {
+export interface SchedulerBookingActionPolicy {
+  allowed: boolean;
+  cutoffMinutes: number | null;
+  reasonRequired: boolean;
+  closesAt: string | null;
+}
+
+export async function getBookingAction(scope: 'cancel' | 'reschedule', token: string): Promise<{ booking: SchedulerBooking; scope: string; policy: SchedulerBookingActionPolicy }> {
   return request(`/api/public/scheduler/v1/actions/${scope}/${encodeURIComponent(token)}`);
 }
 
-export async function applyBookingAction(scope: 'cancel' | 'reschedule', token: string, start?: string): Promise<void> {
+export async function applyBookingAction(scope: 'cancel' | 'reschedule', token: string, start?: string, reason = ''): Promise<void> {
   await request(`/api/public/scheduler/v1/actions/${scope}/${encodeURIComponent(token)}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(start ? { start } : {}),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(start ? { start } : {}), reason }),
   });
 }

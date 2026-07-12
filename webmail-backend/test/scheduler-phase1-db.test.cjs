@@ -237,6 +237,94 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal((await store.decideBooking(username, raceRequest.id, raceDecision)).idempotentReplay, true);
     if (raceDecision === 'confirmed') await store.cancelOwnedBooking(username, raceRequest.id);
 
+    const policyEvent = await store.saveEventType(username, {
+        title: 'Action Policy Test', slug: 'action-policy-test', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        cancellationCutoffMinutes: 60, rescheduleCutoffMinutes: 120,
+        requireCancellationReason: true, requireRescheduleReason: true,
+    });
+    assert.equal(policyEvent.cancellationCutoffMinutes, 60);
+    assert.equal(policyEvent.rescheduleCutoffMinutes, 120);
+    assert.equal(policyEvent.requireCancellationReason, true);
+    assert.equal(policyEvent.requireRescheduleReason, true);
+    const policyEventAfterLegacyUpdate = await store.saveEventType(username, {
+        ...policyEvent, title: 'Action Policy Legacy Update', cancellationCutoffMinutes: undefined,
+        rescheduleCutoffMinutes: undefined, requireCancellationReason: undefined, requireRescheduleReason: undefined,
+    }, policyEvent.id);
+    assert.equal(policyEventAfterLegacyUpdate.cancellationCutoffMinutes, 60, 'older clients must preserve cancellation policy');
+    assert.equal(policyEventAfterLegacyUpdate.rescheduleCutoffMinutes, 120, 'older clients must preserve reschedule policy');
+    assert.equal(policyEventAfterLegacyUpdate.requireCancellationReason, true);
+    assert.equal(policyEventAfterLegacyUpdate.requireRescheduleReason, true);
+
+    const policyCancelStart = new Date('2026-07-20T16:00:00.000Z');
+    const policyCancelBooking = await store.createBooking('phase1', policyEvent.slug, {
+        eventTypeId: policyEvent.id, start: policyCancelStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Policy Cancel Guest', bookerEmail: 'policy-cancel@example.net', idempotencyKey: 'phase1-policy-cancel-0001',
+    });
+    const policyRescheduleStart = new Date('2026-07-20T16:30:00.000Z');
+    const policyRescheduleBooking = await store.createBooking('phase1', policyEvent.slug, {
+        eventTypeId: policyEvent.id, start: policyRescheduleStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Policy Reschedule Guest', bookerEmail: 'policy-reschedule@example.net', idempotencyKey: 'phase1-policy-reschedule-0001',
+    });
+    const tightenedPolicyEvent = await store.saveEventType(username, {
+        ...policyEventAfterLegacyUpdate, cancellationCutoffMinutes: 525600, rescheduleCutoffMinutes: 525600,
+        requireCancellationReason: false, requireRescheduleReason: false,
+    }, policyEvent.id);
+    assert.equal(tightenedPolicyEvent.cancellationCutoffMinutes, 525600);
+    const cancelCapability = await store.getCapabilityBooking(policyCancelBooking.cancelToken, 'cancel');
+    assert.equal(cancelCapability.policy.allowed, true);
+    assert.equal(cancelCapability.policy.cutoffMinutes, 60, 'booking must retain its original cancellation policy');
+    assert.equal(cancelCapability.policy.reasonRequired, true);
+    await assert.rejects(() => store.cancelBookingByToken(policyCancelBooking.cancelToken), /cancellation reason is required/);
+    await assert.rejects(() => store.cancelBookingByToken(policyCancelBooking.cancelToken, 'x'.repeat(1001)), /1000 characters/);
+    const cancellationReason = '<script>Plans changed</script>';
+    await store.cancelBookingByToken(policyCancelBooking.cancelToken, cancellationReason);
+    const [storedCancellationReason] = await pool.query('SELECT cancellation_reason FROM scheduler_bookings WHERE id=?', [policyCancelBooking.id]);
+    assert.equal(storedCancellationReason[0].cancellation_reason, cancellationReason);
+    const cancelledOwnerBooking = (await store.listBookings(username, 'cancelled')).find(item => item.id === policyCancelBooking.id);
+    assert.equal(cancelledOwnerBooking.cancellationReason, cancellationReason);
+
+    const rescheduleCapability = await store.getCapabilityBooking(policyRescheduleBooking.rescheduleToken, 'reschedule');
+    assert.equal(rescheduleCapability.policy.allowed, true);
+    assert.equal(rescheduleCapability.policy.cutoffMinutes, 120, 'booking must retain its original reschedule policy');
+    assert.equal(rescheduleCapability.policy.reasonRequired, true);
+    const policyRescheduledStart = new Date('2026-07-20T17:00:00.000Z');
+    await assert.rejects(() => store.rescheduleBookingByToken(policyRescheduleBooking.rescheduleToken, policyRescheduledStart), /reschedule reason is required/);
+    const rescheduleReason = 'Need more preparation time';
+    await store.rescheduleBookingByToken(policyRescheduleBooking.rescheduleToken, policyRescheduledStart, rescheduleReason);
+    const [storedRescheduleReason] = await pool.query('SELECT reschedule_reason FROM scheduler_bookings WHERE id=?', [policyRescheduleBooking.id]);
+    assert.equal(storedRescheduleReason[0].reschedule_reason, rescheduleReason);
+    const rescheduledOwnerBooking = (await store.listBookings(username, 'upcoming')).find(item => item.id === policyRescheduleBooking.id);
+    assert.equal(rescheduledOwnerBooking.rescheduleReason, rescheduleReason);
+    const [reasonOutboxLeaks] = await pool.query('SELECT COUNT(*) AS total FROM scheduler_outbox WHERE payload LIKE ? OR payload LIKE ?', [`%${cancellationReason}%`, `%${rescheduleReason}%`]);
+    assert.equal(Number(reasonOutboxLeaks[0].total), 0, 'action reasons must not enter outbox payloads');
+    const [reasonAuditLeaks] = await pool.query('SELECT COUNT(*) AS total FROM scheduler_audit_events WHERE metadata LIKE ? OR metadata LIKE ?', [`%${cancellationReason}%`, `%${rescheduleReason}%`]);
+    assert.equal(Number(reasonAuditLeaks[0].total), 0, 'action reasons must not enter audit metadata');
+    await store.cancelOwnedBooking(username, policyRescheduleBooking.id);
+
+    const closedCancelStart = new Date('2026-07-21T16:00:00.000Z');
+    const closedCancelBooking = await store.createBooking('phase1', tightenedPolicyEvent.slug, {
+        eventTypeId: tightenedPolicyEvent.id, start: closedCancelStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Closed Cancel Guest', bookerEmail: 'closed-cancel@example.net', idempotencyKey: 'phase1-closed-cancel-0001',
+    });
+    assert.equal((await store.getCapabilityBooking(closedCancelBooking.cancelToken, 'cancel')).policy.allowed, false);
+    await assert.rejects(() => store.cancelBookingByToken(closedCancelBooking.cancelToken), /Cancellation window has closed/);
+    const [closedCancelStatus] = await pool.query('SELECT status FROM scheduler_bookings WHERE id=?', [closedCancelBooking.id]);
+    assert.equal(closedCancelStatus[0].status, 'confirmed', 'closed cancellation must not mutate the booking');
+    await store.cancelOwnedBooking(username, closedCancelBooking.id);
+
+    const closedRescheduleStart = new Date('2026-07-21T16:30:00.000Z');
+    const closedRescheduleBooking = await store.createBooking('phase1', tightenedPolicyEvent.slug, {
+        eventTypeId: tightenedPolicyEvent.id, start: closedRescheduleStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Closed Reschedule Guest', bookerEmail: 'closed-reschedule@example.net', idempotencyKey: 'phase1-closed-reschedule-0001',
+    });
+    assert.equal((await store.getCapabilityBooking(closedRescheduleBooking.rescheduleToken, 'reschedule')).policy.allowed, false);
+    await assert.rejects(() => store.rescheduleBookingByToken(closedRescheduleBooking.rescheduleToken, new Date('2026-07-21T17:00:00.000Z')), /Reschedule window has closed/);
+    const [closedRescheduleStatus] = await pool.query('SELECT status, CAST(slot_start AS CHAR) AS slot_start_utc FROM scheduler_bookings WHERE id=?', [closedRescheduleBooking.id]);
+    assert.equal(closedRescheduleStatus[0].status, 'confirmed');
+    assert.equal(closedRescheduleStatus[0].slot_start_utc, '2026-07-21 16:30:00.000');
+    await store.cancelOwnedBooking(username, closedRescheduleBooking.id);
+
     const privateEvent = await store.saveEventType(username, { ...event, visibility: 'private' }, event.id);
     assert.equal(privateEvent.visibility, 'private');
     assert.equal(await store.getPublicEvent('phase1', event.slug), null);

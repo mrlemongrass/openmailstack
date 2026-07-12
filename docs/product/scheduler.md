@@ -1,6 +1,6 @@
 # OMS Scheduler Product And Engineering Roadmap
 
-Status: `Phase 2 In Progress - Private Links, Booking Questions, And Host Confirmation Deployed; Physical Client Validation Pending`
+Status: `Phase 2 In Progress - Private Links And Core Booking Policies Deployed; Physical Client Validation Pending`
 
 Research date: 2026-07-10
 
@@ -343,7 +343,7 @@ Exit criteria:
 - [x] Disposable lifecycle proves reschedule updates the same calendar UID and cancel removes it, writes a tombstone, and releases capacity.
 - [x] Playwright verified public booking and management layouts at 1440x900 and 390x844 with reachable primary actions, mobile More navigation, and no horizontal overflow.
 
-Live upgrade deployment passed on `mail.housevo.us`: migrations `001` through `010` are recorded, the backend/frontend match the tested build, Nginx serves `/scheduler/` on both configured hostnames, and the staging smoke suite passes. A live create/reschedule/cancel cycle completed all three owned-sender notification jobs, received three Google SMTP acceptances and three local LMTP deliveries, preserved the Calendar UID on reschedule, deleted the projection on cancel, wrote a tombstone, released capacity, and restored the public slot. Phase 2 private links, booking questions, and optional host confirmation are also deployed and guarded by disposable-database lifecycle/concurrency coverage plus reversible no-mail live checks. Physical macOS/Android/Thunderbird and CalDAV/ActiveSync observation remains pending. Clean-VM validation is intentionally deferred until a second development Linux server is available.
+Live upgrade deployment passed on `mail.housevo.us`: migrations `001` through `011` are recorded, the backend/frontend match the tested build, Nginx serves `/scheduler/` on both configured hostnames, and the staging smoke suite passes. A live create/reschedule/cancel cycle completed all three owned-sender notification jobs, received three Google SMTP acceptances and three local LMTP deliveries, preserved the Calendar UID on reschedule, deleted the projection on cancel, wrote a tombstone, released capacity, and restored the public slot. Phase 2 private links, booking questions, optional host confirmation, and guest action policies are also deployed and guarded by disposable-database lifecycle/concurrency coverage plus reversible no-mail live checks. Physical macOS/Android/Thunderbird and CalDAV/ActiveSync observation remains pending. Clean-VM validation is intentionally deferred until a second development Linux server is available.
 
 ### Phase 2 - Complete personal parity (5-7 weeks)
 
@@ -363,6 +363,7 @@ Implementation progress (2026-07-12):
 - [x] Owners can attach one to fourteen date/time windows in their Scheduler timezone to a one-off private link. Those windows replace recurring availability while retaining duration, interval, notice, conflict, buffer, and capacity checks; one-off links are always consumed only by a successful booking.
 - [x] Owners can configure up to ten required or optional short-answer, long-answer, and dropdown questions. The public form validates answers server-side, confirmed bookings retain immutable question labels and answers, older owner clients cannot erase definitions by omission, and answers stay out of audits, logs, outbox payloads, and Calendar projections.
 - [x] Owners can require confirmation per event type. A guest request reserves capacity without creating a Calendar projection; exactly one owner approve/reject decision either creates the stable Calendar event and confirmation notifications or releases capacity and sends a rejection. Repeated matching decisions are idempotent, opposing or late terminal decisions fail, and instant-confirmation event types retain their prior behavior.
+- [x] Owners can configure independent cancellation and reschedule cutoffs from zero through 525,600 minutes, or leave either unrestricted for backward compatibility. Existing bookings retain the policy snapshot active when booked; guest capability actions recheck the cutoff under the booking lock, can require a bounded reason, and expose a clear closed-window state. Reasons are owner-visible but excluded from logs, audit metadata, outbox payloads, email, capability reads, and Calendar projections.
 
 Exit criteria:
 

@@ -10,10 +10,12 @@ const {
     defaultSchedulerHandle,
     normalizeSchedulerEventInput,
     normalizeSchedulerBookingAnswers,
+    normalizeSchedulerActionReason,
     normalizeSchedulerHandle,
     normalizeOneOffAvailability,
     normalizePrivateLinkExpiry,
     schedulerPublicUrl,
+    schedulerBookingActionPolicy,
     schedulerTokenHash,
 } = require('../src/scheduler/phase1.js');
 const { schedulerHostAllowed } = require('../src/scheduler/router.js');
@@ -35,6 +37,10 @@ test('normalizes a useful 30-minute event with weekday availability', () => {
     assert.equal(event.capacity, 1);
     assert.equal(event.visibility, 'public');
     assert.equal(event.requiresConfirmation, false);
+    assert.equal(event.cancellationCutoffMinutes, null);
+    assert.equal(event.rescheduleCutoffMinutes, null);
+    assert.equal(event.requireCancellationReason, false);
+    assert.equal(event.requireRescheduleReason, false);
     assert.deepEqual(event.windows.map((window) => window.weekday), [1, 2, 3, 4, 5]);
     assert.equal(normalizeSchedulerEventInput({ title: 'Hair Coloring', durationMinutes: 180 }).durationMinutes, 180);
     const scheduleId = '12345678-1234-1234-1234-123456789abc';
@@ -42,10 +48,40 @@ test('normalizes a useful 30-minute event with weekday availability', () => {
     assert.equal(normalizeSchedulerEventInput({ title: 'Private consult', visibility: 'unlisted' }).visibility, 'unlisted');
     assert.equal(normalizeSchedulerEventInput({ title: 'Token consult', visibility: 'private' }).visibility, 'private');
     assert.equal(normalizeSchedulerEventInput({ title: 'Approval consult', requiresConfirmation: true }).requiresConfirmation, true);
+    const policyEvent = normalizeSchedulerEventInput({
+        title: 'Policy consult', cancellationCutoffMinutes: 60, rescheduleCutoffMinutes: 120,
+        requireCancellationReason: true, requireRescheduleReason: true,
+    });
+    assert.equal(policyEvent.cancellationCutoffMinutes, 60);
+    assert.equal(policyEvent.rescheduleCutoffMinutes, 120);
+    assert.equal(policyEvent.requireCancellationReason, true);
+    assert.equal(policyEvent.requireRescheduleReason, true);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad visibility', visibility: 'secret' }), /event visibility/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad schedule', availabilityScheduleId: 'not-an-id' }), /availability schedule/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad', durationMinutes: 0 }), /durationMinutes/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Too Long', durationMinutes: 1441 }), /durationMinutes/);
+    assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad cutoff', cancellationCutoffMinutes: -1 }), /cancellationCutoffMinutes/);
+    assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad cutoff', rescheduleCutoffMinutes: 525601 }), /rescheduleCutoffMinutes/);
+});
+
+test('booking action policies enforce immutable cutoffs and bounded reasons', () => {
+    const start = new Date('2026-07-20T16:00:00.000Z');
+    const event = {
+        cancellationCutoffMinutes: 60,
+        rescheduleCutoffMinutes: null,
+        requireCancellationReason: true,
+        requireRescheduleReason: false,
+    };
+    const beforeDeadline = schedulerBookingActionPolicy(event, 'cancel', start, new Date('2026-07-20T14:59:59.999Z'));
+    assert.equal(beforeDeadline.allowed, true);
+    assert.equal(beforeDeadline.reasonRequired, true);
+    assert.equal(beforeDeadline.closesAt.toISOString(), '2026-07-20T15:00:00.000Z');
+    assert.equal(schedulerBookingActionPolicy(event, 'cancel', start, new Date('2026-07-20T15:00:00.001Z')).allowed, false);
+    assert.equal(schedulerBookingActionPolicy(event, 'reschedule', start, new Date('2027-01-01T00:00:00.000Z')).allowed, true);
+    assert.equal(normalizeSchedulerActionReason('  Plans changed  ', 'cancel', true), 'Plans changed');
+    assert.throws(() => normalizeSchedulerActionReason('', 'cancel', true), /cancellation reason is required/);
+    assert.throws(() => normalizeSchedulerActionReason({ text: 'not a string' }, 'cancel', false), /reason must be text/);
+    assert.throws(() => normalizeSchedulerActionReason('x'.repeat(1001), 'reschedule', false), /1000 characters/);
 });
 
 test('normalizes booking questions and snapshots validated answers', () => {

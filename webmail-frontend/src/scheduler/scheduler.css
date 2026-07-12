@@ -287,6 +287,11 @@
 .confirmation-download { display: inline-flex; align-items: center; gap: 7px; }
 .confirmation-email { font-size: .8rem; }
 .scheduler-action-page .btn { margin-top: 20px; }
+.scheduler-action-closed { display: grid; gap: 5px; margin: 24px 0; padding: 16px; border: 1px solid #f0c7c7; border-radius: 6px; background: #fff4f4; color: #8b2929; }
+.scheduler-action-closed span { font-size: .8rem; }
+.scheduler-action-reason { display: grid; gap: 7px; margin-top: 20px; text-align: left; color: #4d5968; font-size: .78rem; font-weight: 600; }
+.scheduler-action-reason > span, .scheduler-action-reason > small { justify-self: start; color: #687385; font-size: .68rem; font-weight: 500; }
+.scheduler-action-reason textarea { box-sizing: border-box; width: 100%; resize: vertical; border: 1px solid #cfd6df; border-radius: 5px; padding: 10px; background: #fff; color: #18202b; font: inherit; }
 .action-slots { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; max-height: 420px; overflow: auto; margin: 24px 0; }
 .action-slots button { min-height: 46px; padding: 5px; }
 @media (max-width: 980px) {

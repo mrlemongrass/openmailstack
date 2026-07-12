@@ -35,6 +35,10 @@ export interface SchedulerEventType {
     visibility: 'public' | 'unlisted' | 'private';
     active: boolean;
     requiresConfirmation: boolean;
+    cancellationCutoffMinutes: number | null;
+    rescheduleCutoffMinutes: number | null;
+    requireCancellationReason: boolean;
+    requireRescheduleReason: boolean;
     windows: Array<{
         weekday: number;
         startMinute: number;
@@ -152,10 +156,10 @@ export declare class SchedulerStore {
     createBooking(handle: string, slug: string, input: SchedulerBookingInput): Promise<Record<string, unknown>>;
     listBookings(username: string, filter?: string): Promise<Array<Record<string, unknown>>>;
     getCapabilityBooking(token: string, scope: 'cancel' | 'reschedule'): Promise<Record<string, unknown> | null>;
-    cancelBookingByToken(token: string): Promise<Record<string, unknown> | null>;
+    cancelBookingByToken(token: string, reason?: unknown): Promise<Record<string, unknown> | null>;
     cancelOwnedBooking(username: string, bookingId: string): Promise<void>;
     decideBooking(username: string, bookingId: string, decision: 'confirmed' | 'rejected'): Promise<Record<string, unknown>>;
-    rescheduleBookingByToken(token: string, newStart: Date): Promise<Record<string, unknown> | null>;
+    rescheduleBookingByToken(token: string, newStart: Date, reason?: unknown): Promise<Record<string, unknown> | null>;
     private cancelBooking;
     private lockCapabilityBooking;
     private loadAvailabilitySchedule;

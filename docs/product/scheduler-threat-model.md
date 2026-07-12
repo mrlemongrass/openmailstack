@@ -96,10 +96,12 @@ The first-party UI must use these same APIs. No UI-only permission rule is autho
 - Booking is the workflow source of truth; VEVENT is an idempotent projection with stable booking/event IDs and sequence.
 - Transactional capacity holds are authoritative; cached availability is advisory.
 - Events that require host confirmation commit a `requested` booking and convert its hold into reserved capacity without creating a VEVENT. Owner approval/rejection locks the booking row: approval rotates guest action tokens, creates the projection, advances the calendar sync token, and enqueues confirmation once; rejection expires the request token, releases capacity, and enqueues rejection once. Matching retries are idempotent and an approve/reject race can produce only one terminal decision.
+- Cancellation and reschedule cutoffs come from the immutable event snapshot stored with the booking. Public capability reads expose only the applicable policy state; each mutation rechecks the deadline under the booking row lock before changing capacity or Calendar state. An authenticated owner may still cancel as an explicit override.
 - Reconciliation records drift without logging private calendar bodies.
 - DST gap, overlap, midnight, notice, buffer, and concurrent-capacity tests remain release gates.
 
 Required tests include requested-capacity exclusion, no pre-approval Calendar projection, token rotation, rejection release, requested cancellation without a phantom tombstone, repeated-decision idempotency, and simultaneous approve/reject serialization.
+Booking-action policy tests also cover absent-policy compatibility, exact cutoff boundaries, legacy owner updates, immutable snapshots after event edits, required/oversized/non-text reasons, closed-window non-mutation, and owner override.
 
 ## 6. Public Abuse, Spam, And Enumeration
 
@@ -118,6 +120,7 @@ Required tests include requested-capacity exclusion, no pre-approval Calendar pr
 - Short hold TTL, per-origin hold limits, cleanup on every locked acquisition, and background expiration.
 - Strict field sizes/types, allowlisted redirect schemes/hosts, output encoding, HTML sanitization, and safe template interpolation.
 - Do not place free-text answers in logs, metrics labels, routing traces, webhook errors, or audit metadata.
+- Cancellation and reschedule reasons are bounded to 1,000 characters, stored only on the booking for authenticated owner display, rendered as inert text, and excluded from outbox payloads, email, iCalendar, public capability responses, and audit metadata.
 - Booking-question definitions are owner-controlled and bounded to ten fields. Short, long, and dropdown answers are revalidated against the current public event immediately before booking; confirmed rows store the validated answer plus the immutable question label/type alongside the immutable event snapshot. React renders submitted text without raw HTML, and answers are excluded from the outbox, iCalendar projection, capability responses, and audit metadata.
 - Notification and webhook fan-out quotas with loop detection.
 

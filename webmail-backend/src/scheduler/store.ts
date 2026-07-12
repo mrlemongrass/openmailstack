@@ -7,6 +7,7 @@ import {
     buildSchedulerCalendarEvent,
     createSchedulerToken,
     normalizeSchedulerBookingAnswers,
+    normalizeSchedulerActionReason,
     normalizeOneOffAvailability,
     normalizePrivateLinkExpiry,
     defaultSchedulerHandle,
@@ -14,6 +15,7 @@ import {
     normalizeSchedulerQuestions,
     normalizeSchedulerHandle,
     schedulerTokenHash,
+    schedulerBookingActionPolicy,
     type SchedulerEventInput,
     type SchedulerBookingAnswer,
     type SchedulerBookingAnswerInput,
@@ -60,6 +62,10 @@ export interface SchedulerEventType {
     visibility: 'public' | 'unlisted' | 'private';
     active: boolean;
     requiresConfirmation: boolean;
+    cancellationCutoffMinutes: number | null;
+    rescheduleCutoffMinutes: number | null;
+    requireCancellationReason: boolean;
+    requireRescheduleReason: boolean;
     windows: Array<{ weekday: number; startMinute: number; endMinute: number }>;
     questions: SchedulerBookingQuestion[];
 }
@@ -209,6 +215,10 @@ const eventFromRow = (row: any, windows: SchedulerEventType['windows'] = []): Sc
     visibility: row.visibility === 'private' ? 'private' : row.visibility === 'unlisted' ? 'unlisted' : 'public',
     active: booleanValue(row.active),
     requiresConfirmation: booleanValue(row.requires_confirmation),
+    cancellationCutoffMinutes: row.cancellation_cutoff_minutes == null ? null : Number(row.cancellation_cutoff_minutes),
+    rescheduleCutoffMinutes: row.reschedule_cutoff_minutes == null ? null : Number(row.reschedule_cutoff_minutes),
+    requireCancellationReason: booleanValue(row.require_cancellation_reason),
+    requireRescheduleReason: booleanValue(row.require_reschedule_reason),
     windows,
     questions: bookingQuestionsFromRow(row),
 });
@@ -546,7 +556,9 @@ export class SchedulerStore {
         try {
             await connection.beginTransaction();
             if (eventId) {
-                const [owned]: any = await connection.query('SELECT id, visibility, booking_questions, requires_confirmation FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [id, username]);
+                const [owned]: any = await connection.query(`SELECT id, visibility, booking_questions, requires_confirmation,
+                    cancellation_cutoff_minutes, reschedule_cutoff_minutes, require_cancellation_reason, require_reschedule_reason
+                    FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE`, [id, username]);
                 if (!owned.length) throw new Error('Event type not found');
                 const visibility = input.visibility === undefined
                     ? (owned[0].visibility === 'private' ? 'private' : owned[0].visibility === 'unlisted' ? 'unlisted' : 'public')
@@ -557,15 +569,30 @@ export class SchedulerStore {
                 const requiresConfirmation = input.requiresConfirmation === undefined
                     ? booleanValue(owned[0].requires_confirmation)
                     : normalized.requiresConfirmation;
+                const cancellationCutoffMinutes = input.cancellationCutoffMinutes === undefined
+                    ? (owned[0].cancellation_cutoff_minutes == null ? null : Number(owned[0].cancellation_cutoff_minutes))
+                    : normalized.cancellationCutoffMinutes;
+                const rescheduleCutoffMinutes = input.rescheduleCutoffMinutes === undefined
+                    ? (owned[0].reschedule_cutoff_minutes == null ? null : Number(owned[0].reschedule_cutoff_minutes))
+                    : normalized.rescheduleCutoffMinutes;
+                const requireCancellationReason = input.requireCancellationReason === undefined
+                    ? booleanValue(owned[0].require_cancellation_reason)
+                    : normalized.requireCancellationReason;
+                const requireRescheduleReason = input.requireRescheduleReason === undefined
+                    ? booleanValue(owned[0].require_reschedule_reason)
+                    : normalized.requireRescheduleReason;
                 await connection.query(
                     `UPDATE scheduler_event_types SET slug=?, title=?, description=?, duration_minutes=?, interval_minutes=?,
                         buffer_before_minutes=?, buffer_after_minutes=?, minimum_notice_minutes=?, capacity=?, location_type=?,
-                        location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, availability_schedule_id=?, visibility=?, active=?, booking_questions=?, requires_confirmation=? WHERE id=? AND system_managed = 0`,
+                        location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, availability_schedule_id=?, visibility=?, active=?,
+                        booking_questions=?, requires_confirmation=?, cancellation_cutoff_minutes=?, reschedule_cutoff_minutes=?,
+                        require_cancellation_reason=?, require_reschedule_reason=? WHERE id=? AND system_managed = 0`,
                     [normalized.slug, normalized.title, normalized.description, normalized.durationMinutes, normalized.intervalMinutes,
                         normalized.bufferBeforeMinutes, normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                         normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
                         JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, visibility, normalized.active ? 1 : 0,
-                        bookingQuestions, requiresConfirmation ? 1 : 0, id]
+                        bookingQuestions, requiresConfirmation ? 1 : 0, cancellationCutoffMinutes, rescheduleCutoffMinutes,
+                        requireCancellationReason ? 1 : 0, requireRescheduleReason ? 1 : 0, id]
                 );
                 if (visibility !== 'private') {
                     await connection.query(
@@ -579,14 +606,18 @@ export class SchedulerStore {
                     `INSERT INTO scheduler_event_types
                         (id, tenant_key, owner_username, slug, title, description, duration_minutes, interval_minutes,
                          buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, capacity, location_type,
-                         location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, visibility, active, booking_questions, requires_confirmation)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+                         location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, visibility, active,
+                         booking_questions, requires_confirmation, cancellation_cutoff_minutes, reschedule_cutoff_minutes,
+                         require_cancellation_reason, require_reschedule_reason)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [id, entitlement.tenantKey, username, normalized.slug, normalized.title, normalized.description,
                         normalized.durationMinutes, normalized.intervalMinutes, normalized.bufferBeforeMinutes,
                         normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                         normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
                         JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, normalized.visibility,
-                        normalized.active ? 1 : 0, JSON.stringify(normalized.questions), normalized.requiresConfirmation ? 1 : 0]
+                        normalized.active ? 1 : 0, JSON.stringify(normalized.questions), normalized.requiresConfirmation ? 1 : 0,
+                        normalized.cancellationCutoffMinutes, normalized.rescheduleCutoffMinutes,
+                        normalized.requireCancellationReason ? 1 : 0, normalized.requireRescheduleReason ? 1 : 0]
                 );
             }
             for (const window of normalized.windows) {
@@ -1009,7 +1040,7 @@ export class SchedulerStore {
             `SELECT id, event_type_id, status, CAST(slot_start AS CHAR) AS slot_start_utc,
                     CAST(slot_end AS CHAR) AS slot_end_utc, host_time_zone, booker_time_zone,
                     booker_name, booker_email, booker_notes, booking_answers, event_snapshot, calendar_id, calendar_event_uid,
-                    UNIX_TIMESTAMP(created_at) * 1000 AS created_at_epoch
+                    cancellation_reason, reschedule_reason, UNIX_TIMESTAMP(created_at) * 1000 AS created_at_epoch
              FROM scheduler_bookings WHERE ${clauses.join(' AND ')} ORDER BY slot_start ASC`,
             [username]
         );
@@ -1025,6 +1056,8 @@ export class SchedulerStore {
             bookerEmail: row.booker_email,
             bookerNotes: row.booker_notes || '',
             bookingAnswers: bookingAnswersFromRow(row.booking_answers),
+            cancellationReason: row.cancellation_reason || '',
+            rescheduleReason: row.reschedule_reason || '',
             event: JSON.parse(row.event_snapshot),
             calendarId: row.calendar_id,
             calendarEventUid: row.calendar_event_uid,
@@ -1044,6 +1077,11 @@ export class SchedulerStore {
             [schedulerTokenHash(token)]
         );
         if (!rows.length) return null;
+        const event = JSON.parse(rows[0].event_snapshot);
+        const policy = schedulerBookingActionPolicy(event, scope, utcDate(rows[0].slot_start_utc));
+        const statusAllowsAction = scope === 'cancel'
+            ? ['requested', 'confirmed'].includes(rows[0].status)
+            : rows[0].status === 'confirmed';
         return {
             id: rows[0].id,
             status: rows[0].status,
@@ -1051,15 +1089,20 @@ export class SchedulerStore {
             end: utcDate(rows[0].slot_end_utc),
             bookerName: rows[0].booker_name,
             bookerEmail: rows[0].booker_email,
-            event: JSON.parse(rows[0].event_snapshot),
+            event,
             handle: rows[0].public_handle,
+            policy: {
+                ...policy,
+                allowed: policy.allowed && statusAllowsAction,
+                closesAt: policy.closesAt?.toISOString() || null,
+            },
         };
     }
 
-    async cancelBookingByToken(token: string): Promise<Record<string, unknown> | null> {
+    async cancelBookingByToken(token: string, reason?: unknown): Promise<Record<string, unknown> | null> {
         const booking = await this.lockCapabilityBooking(token, 'cancel');
         if (!booking) return null;
-        await this.cancelBooking(booking, 'capability', booking.booker_email);
+        await this.cancelBooking(booking, 'capability', booking.booker_email, reason);
         return { id: booking.id, status: 'cancelled' };
     }
 
@@ -1155,7 +1198,7 @@ export class SchedulerStore {
         }
     }
 
-    async rescheduleBookingByToken(token: string, newStart: Date): Promise<Record<string, unknown> | null> {
+    async rescheduleBookingByToken(token: string, newStart: Date, reason?: unknown): Promise<Record<string, unknown> | null> {
         if (!Number.isFinite(newStart.getTime())) throw new Error('A valid new start time is required');
         const [rows]: any = await this.pool.query(
             `SELECT b.*, CAST(b.slot_start AS CHAR) AS slot_start_utc,
@@ -1171,6 +1214,10 @@ export class SchedulerStore {
         );
         const booking = rows[0];
         if (!booking) return null;
+        const snapshot = JSON.parse(booking.event_snapshot);
+        const initialPolicy = schedulerBookingActionPolicy(snapshot, 'reschedule', utcDate(booking.slot_start_utc));
+        if (!initialPolicy.allowed) throw new Error('Reschedule window has closed');
+        const normalizedReason = normalizeSchedulerActionReason(reason, 'reschedule', initialPolicy.reasonRequired);
         const newEnd = new Date(newStart.getTime() + Number(booking.duration_minutes) * 60 * 1000);
         const slots = await this.listSlots(booking.public_handle, booking.slug, new Date(newStart.getTime() - 1), new Date(newEnd.getTime() + 1), token);
         if (!slots.some((slot) => slot.start.getTime() === newStart.getTime())) throw new Error('The selected time is no longer available');
@@ -1184,7 +1231,6 @@ export class SchedulerStore {
             ttlSeconds: 300,
             idempotencyKey: `reschedule:${booking.id}:${newStart.toISOString()}`,
         });
-        const snapshot = JSON.parse(booking.event_snapshot);
         const ical = buildSchedulerCalendarEvent({
             uid: booking.calendar_event_uid,
             title: snapshot.title || booking.title,
@@ -1200,8 +1246,11 @@ export class SchedulerStore {
         const connection = await this.pool.getConnection();
         try {
             await connection.beginTransaction();
-            const [lockedRows]: any = await connection.query("SELECT status FROM scheduler_bookings WHERE id=? FOR UPDATE", [booking.id]);
+            const [lockedRows]: any = await connection.query("SELECT status, CAST(slot_start AS CHAR) AS slot_start_utc, event_snapshot FROM scheduler_bookings WHERE id=? FOR UPDATE", [booking.id]);
             if (!lockedRows.length || lockedRows[0].status !== 'confirmed') throw new Error('Booking cannot be rescheduled');
+            const lockedPolicy = schedulerBookingActionPolicy(JSON.parse(lockedRows[0].event_snapshot), 'reschedule', utcDate(lockedRows[0].slot_start_utc));
+            if (!lockedPolicy.allowed) throw new Error('Reschedule window has closed');
+            normalizeSchedulerActionReason(normalizedReason, 'reschedule', lockedPolicy.reasonRequired);
             await connection.query(
                 `UPDATE scheduler_slot_inventory SET confirmed_seats=GREATEST(confirmed_seats-1,0)
                  WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`,
@@ -1209,8 +1258,8 @@ export class SchedulerStore {
             );
             await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [booking.slot_hold_token]);
             await connection.query(
-                'UPDATE scheduler_bookings SET slot_start=?, slot_end=?, slot_hold_token=?, action_tokens_expires_at=?, cancelled_at=NULL WHERE id=?',
-                [mysqlDate(newStart), mysqlDate(newEnd), hold.token, mysqlDate(new Date(newEnd.getTime() + 30 * 24 * 60 * 60 * 1000)), booking.id]
+                'UPDATE scheduler_bookings SET slot_start=?, slot_end=?, slot_hold_token=?, action_tokens_expires_at=?, cancelled_at=NULL, reschedule_reason=? WHERE id=?',
+                [mysqlDate(newStart), mysqlDate(newEnd), hold.token, mysqlDate(new Date(newEnd.getTime() + 30 * 24 * 60 * 60 * 1000)), normalizedReason || null, booking.id]
             );
             await connection.query('UPDATE events SET ical_data=? WHERE calendar_id=? AND uid=?', [ical, booking.calendar_id, booking.calendar_event_uid]);
             await connection.query('UPDATE calendars SET sync_token=sync_token+1 WHERE id=?', [booking.calendar_id]);
@@ -1238,7 +1287,7 @@ export class SchedulerStore {
         return { id: booking.id, status: 'confirmed', start: newStart, end: newEnd };
     }
 
-    private async cancelBooking(booking: any, actorType: 'user' | 'capability', actorId: string): Promise<void> {
+    private async cancelBooking(booking: any, actorType: 'user' | 'capability', actorId: string, reason?: unknown): Promise<void> {
         if (booking.status === 'cancelled') return;
         const connection = await this.pool.getConnection();
         try {
@@ -1256,8 +1305,14 @@ export class SchedulerStore {
                 return;
             }
             if (!['requested', 'confirmed'].includes(current.status)) throw new Error('Booking can no longer be cancelled');
+            const snapshot = JSON.parse(current.event_snapshot);
+            const cancellationPolicy = schedulerBookingActionPolicy(snapshot, 'cancel', utcDate(current.slot_start_utc));
+            if (actorType === 'capability' && !cancellationPolicy.allowed) throw new Error('Cancellation window has closed');
+            const normalizedReason = actorType === 'capability'
+                ? normalizeSchedulerActionReason(reason, 'cancel', cancellationPolicy.reasonRequired)
+                : '';
             const wasConfirmed = current.status === 'confirmed';
-            await connection.query("UPDATE scheduler_bookings SET status='cancelled', cancelled_at=UTC_TIMESTAMP(3) WHERE id=?", [current.id]);
+            await connection.query("UPDATE scheduler_bookings SET status='cancelled', cancelled_at=UTC_TIMESTAMP(3), cancellation_reason=? WHERE id=?", [normalizedReason || null, current.id]);
             if (current.slot_hold_token) {
                 await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [current.slot_hold_token]);
             }
@@ -1271,7 +1326,6 @@ export class SchedulerStore {
                  WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`,
                 [current.tenant_key, current.event_type_id, current.host_username, current.slot_start_utc]
             );
-            const snapshot = JSON.parse(current.event_snapshot);
             const cancellationIcal = wasConfirmed ? buildSchedulerCalendarEvent({
                 uid: current.calendar_event_uid,
                 title: snapshot.title || 'Meeting',

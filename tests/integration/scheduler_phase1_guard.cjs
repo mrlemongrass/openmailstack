@@ -40,6 +40,8 @@ requireText('webmail-backend/migrations/009_scheduler_booking_questions.sql', /b
 requireText('webmail-backend/migrations/009_scheduler_booking_questions.sql', /booking_answers/, 'Booking-question migration is missing immutable answers');
 requireText('webmail-backend/migrations/010_scheduler_host_confirmation.sql', /requires_confirmation/, 'Host-confirmation migration is missing its event policy');
 requireText('webmail-backend/migrations/010_scheduler_host_confirmation.sql', /confirmed_at[\s\S]*rejected_at/, 'Host-confirmation migration is missing decision timestamps');
+requireText('webmail-backend/migrations/011_scheduler_booking_action_policies.sql', /cancellation_cutoff_minutes[\s\S]*reschedule_cutoff_minutes/, 'Booking-action policy migration is missing cutoffs');
+requireText('webmail-backend/migrations/011_scheduler_booking_action_policies.sql', /cancellation_reason[\s\S]*reschedule_reason/, 'Booking-action policy migration is missing collected reasons');
 requireText('webmail-backend/src/index.ts', /app\.use\('\/api'.*schedulerRouter/, 'Backend must mount Scheduler APIs');
 requireText('webmail-backend/src/scheduler/router.ts', /\/public\/scheduler\/v1/, 'Public Scheduler API boundary is missing');
 requireText('webmail-backend/src/scheduler/router.ts', /\/admin\/scheduler\/v1/, 'Admin Scheduler API boundary is missing');
@@ -77,12 +79,17 @@ requireText('webmail-backend/src/scheduler/store.ts', /oneOffAvailability[\s\S]*
 requireText('webmail-backend/src/scheduler/router.ts', /Cache-Control', 'no-store'/, 'Private-link responses must disable caching');
 requireText('webmail-backend/src/scheduler/router.ts', /bookingAnswers: req\.body\?\.bookingAnswers/, 'Public booking routes must pass custom answers to server validation');
 requireText('webmail-backend/src/scheduler/router.ts', /bookings\/:id\/confirm[\s\S]*decideBooking[\s\S]*bookings\/:id\/reject/, 'Owner approval routes are missing');
+requireText('webmail-backend/src/scheduler/router.ts', /cancelBookingByToken[^\n]+req\.body\?\.reason/, 'Cancellation reason must reach server enforcement');
+requireText('webmail-backend/src/scheduler/router.ts', /rescheduleBookingByToken[^\n]+req\.body\?\.reason/, 'Reschedule reason must reach server enforcement');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Single-use link: disable it after the first successful booking/, 'Owner UI must explain single-use consumption');
 requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /bookingAttemptKeyRef[\s\S]*createPublicBooking/, 'Public booking retries must keep a stable idempotency key');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Offer only selected one-off times/, 'Owner UI must expose one-off availability');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Ask up to 10 required or optional questions/, 'Owner UI must expose booking questions');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Require host approval/, 'Owner UI must expose host confirmation');
+requireText('webmail-frontend/src/scheduler/routes.tsx', /Cancellation cutoff[\s\S]*Reschedule cutoff/, 'Owner UI must expose booking action cutoffs');
+requireText('webmail-frontend/src/scheduler/routes.tsx', /Cancellation reason[\s\S]*Reschedule reason/, 'Owner booking detail must expose collected reasons');
 requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /Request sent[\s\S]*reviews your request/, 'Public UI must distinguish requested bookings from confirmed bookings');
+requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /change window has closed[\s\S]*scheduler-action-reason/, 'Public action UI must explain closed windows and collect reasons');
 requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /bookingAnswers.*questionId/s, 'Public booking must submit custom answers');
 requireText('webmail-backend/src/scheduler/store.ts', /normalizeSchedulerBookingAnswers/, 'Booking creation must validate custom answers server-side');
 requireText('packaging/systemd/openmailstack.service', /RestrictAddressFamilies=.*AF_NETLINK/, 'Backend health probes require AF_NETLINK for postqueue and ss');

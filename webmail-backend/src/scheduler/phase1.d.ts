@@ -16,6 +16,10 @@ export interface SchedulerEventInput {
     visibility?: 'public' | 'unlisted' | 'private';
     active?: boolean;
     requiresConfirmation?: boolean;
+    cancellationCutoffMinutes?: number | null;
+    rescheduleCutoffMinutes?: number | null;
+    requireCancellationReason?: boolean;
+    requireRescheduleReason?: boolean;
     windows?: Array<{
         weekday: number;
         startMinute: number;
@@ -61,6 +65,13 @@ export interface SchedulerOneOffAvailability {
     timeZone: string;
     windows: SchedulerOneOffWindow[];
 }
+export type SchedulerBookingActionScope = 'cancel' | 'reschedule';
+export interface SchedulerBookingActionPolicy {
+    allowed: boolean;
+    cutoffMinutes: number | null;
+    reasonRequired: boolean;
+    closesAt: Date | null;
+}
 export declare function normalizeSchedulerHandle(value: string): string;
 export declare function defaultSchedulerHandle(username: string): string;
 export declare function normalizeSchedulerQuestions(value: unknown): SchedulerBookingQuestion[];
@@ -68,6 +79,8 @@ export declare function normalizeSchedulerBookingAnswers(questions: SchedulerBoo
 export declare function normalizeSchedulerEventInput(input: SchedulerEventInput): Required<Omit<SchedulerEventInput, 'destinationCalendarId'>> & {
     destinationCalendarId: number | null;
 };
+export declare function schedulerBookingActionPolicy(event: Partial<SchedulerEventInput>, scope: SchedulerBookingActionScope, start: Date, now?: Date): SchedulerBookingActionPolicy;
+export declare function normalizeSchedulerActionReason(value: unknown, scope: SchedulerBookingActionScope, required: boolean): string;
 export declare function assertTimeZone(timeZone: string): string;
 export declare const schedulerTokenHash: (token: string) => string;
 export declare const createSchedulerToken: () => string;

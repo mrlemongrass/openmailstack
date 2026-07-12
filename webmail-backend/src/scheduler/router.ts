@@ -308,9 +308,10 @@ schedulerRouter.get('/public/scheduler/v1/actions/:scope/:token', publicLimiter,
     try {
         const scope = req.params.scope === 'cancel' ? 'cancel' : req.params.scope === 'reschedule' ? 'reschedule' : null;
         if (!scope) return publicNotFound(res);
-        const booking = await store.getCapabilityBooking(String(req.params.token), scope);
-        if (!booking) return publicNotFound(res);
-        res.json({ success: true, booking, scope });
+        const result = await store.getCapabilityBooking(String(req.params.token), scope);
+        if (!result) return publicNotFound(res);
+        const { policy, ...booking } = result;
+        res.json({ success: true, booking, scope, policy });
     } catch {
         res.status(500).json({ success: false, error: 'Unable to load booking' });
     }
@@ -318,19 +319,21 @@ schedulerRouter.get('/public/scheduler/v1/actions/:scope/:token', publicLimiter,
 
 schedulerRouter.post('/public/scheduler/v1/actions/cancel/:token', bookingLimiter, publicBoundary, async (req, res) => {
     try {
-        const booking = await store.cancelBookingByToken(String(req.params.token));
+        const booking = await store.cancelBookingByToken(String(req.params.token), req.body?.reason);
         if (!booking) return publicNotFound(res);
         res.json({ success: true, booking });
     } catch (error) {
         const message = error instanceof Error ? error.message : '';
         if (/not found/i.test(message)) return publicNotFound(res);
+        if (/reason is required|reason must be/i.test(message)) return res.status(400).json({ success: false, error: message });
+        if (/window has closed/i.test(message)) return res.status(409).json({ success: false, error: message });
         res.status(500).json({ success: false, error: 'Unable to cancel booking' });
     }
 });
 
 schedulerRouter.post('/public/scheduler/v1/actions/reschedule/:token', bookingLimiter, publicBoundary, async (req, res) => {
     try {
-        const booking = await store.rescheduleBookingByToken(String(req.params.token), new Date(req.body?.start));
+        const booking = await store.rescheduleBookingByToken(String(req.params.token), new Date(req.body?.start), req.body?.reason);
         if (!booking) return publicNotFound(res);
         res.json({ success: true, booking });
     } catch (error) {
@@ -338,7 +341,8 @@ schedulerRouter.post('/public/scheduler/v1/actions/reschedule/:token', bookingLi
         if (/no longer available|enough capacity|slot definition/i.test(message)) {
             return res.status(409).json({ success: false, error: 'The selected time is no longer available' });
         }
-        if (/valid new start/i.test(message)) return res.status(400).json({ success: false, error: message });
+        if (/valid new start|reason is required|reason must be/i.test(message)) return res.status(400).json({ success: false, error: message });
+        if (/window has closed/i.test(message)) return res.status(409).json({ success: false, error: message });
         res.status(500).json({ success: false, error: 'Unable to reschedule booking' });
     }
 });

@@ -875,3 +875,12 @@ Future entry template:
 - Verified: Normal backend tests passed 83/85 with two optional database gates skipped; disposable MariaDB applied migrations `001`-`010` twice and passed 85/85. Frontend lint/build, full integration, owner/public desktop-mobile browser checks, mail-reader regression, reversible no-mail live validation, artifact equality, service/Nginx health, and staging smoke pass.
 - Deployed: Root-only rollback snapshot `/var/backups/openmailstack/20260712T042421Z_scheduler_host_confirmation`; migration `010` and tested backend/frontend artifacts are live. Temporary Scheduler data was removed.
 - Follow-up: Add owner-configurable cancellation/reschedule cutoffs and reason collection with policy snapshots and server-side capability enforcement.
+
+## 2026-07-12 Scheduler Cancellation And Reschedule Policies
+
+- Changed: Added migration `011_scheduler_booking_action_policies.sql`, nullable cancellation/reschedule cutoffs, independent reason requirements, private reason storage, owner controls/detail, and guest action states.
+- Secured: Policies come from the immutable booking snapshot and are rechecked under the booking lock. Reasons must be strings of at most 1,000 characters and stay out of logs, audits, outbox payloads, email, public capability responses, and Calendar projections.
+- Compatibility: Missing cutoffs preserve existing unrestricted links, zero permits changes until meeting start, legacy owner updates preserve policy fields, and authenticated owner cancellation remains an explicit override.
+- Verified: Normal backend tests passed 84/86 with two database gates skipped; disposable MariaDB applied migrations `001`-`011` twice and passed 86/86. Frontend lint/build, full integration, desktop/mobile policy/reason/closed-state browser checks, reversible no-mail live validation, prior Scheduler/mail regressions, artifact equality, service/Nginx health, and staging smoke pass.
+- Deployed: Root-only rollback snapshot `/var/backups/openmailstack/20260712T044542Z_scheduler_action_policies`; migration `011` and tested backend/frontend artifacts are live. Temporary live data was removed.
+- Follow-up: Add per-event active booking limits keyed by normalized guest email, with transactional enforcement and a safe reschedule-existing-booking offer.

@@ -129,9 +129,16 @@ export class SchedulerSlotHoldRepository {
         );
         if (existingRows.length > 0) {
             const existing = mapHold(existingRows[0]);
-            return existing.status === 'held' && existing.expiresAt.getTime() <= now.getTime()
-                ? { ...existing, status: 'expired' }
-                : existing;
+            if (existing.status === 'released') {
+                await connection.query(
+                    'DELETE FROM scheduler_slot_holds WHERE hold_token = ? AND status = ?',
+                    [existing.token, 'released']
+                );
+            } else {
+                return existing.status === 'held' && existing.expiresAt.getTime() <= now.getTime()
+                    ? { ...existing, status: 'expired' }
+                    : existing;
+            }
         }
 
         await connection.query(

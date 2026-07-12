@@ -42,6 +42,12 @@ requireText('webmail-backend/migrations/010_scheduler_host_confirmation.sql', /r
 requireText('webmail-backend/migrations/010_scheduler_host_confirmation.sql', /confirmed_at[\s\S]*rejected_at/, 'Host-confirmation migration is missing decision timestamps');
 requireText('webmail-backend/migrations/011_scheduler_booking_action_policies.sql', /cancellation_cutoff_minutes[\s\S]*reschedule_cutoff_minutes/, 'Booking-action policy migration is missing cutoffs');
 requireText('webmail-backend/migrations/011_scheduler_booking_action_policies.sql', /cancellation_reason[\s\S]*reschedule_reason/, 'Booking-action policy migration is missing collected reasons');
+requireText('webmail-backend/migrations/012_scheduler_active_booking_limits.sql', /active_booking_limit/, 'Active-booking limit migration is missing its event policy');
+requireText('webmail-backend/migrations/012_scheduler_active_booking_limits.sql', /scheduler_booker_locks/, 'Active-booking limit migration is missing its serialized booker lock');
+requireText('webmail-backend/migrations/013_scheduler_guest_email_rules.sql', /guest_allow_list[\s\S]*guest_deny_list/, 'Guest email-rule migration is missing');
+requireText('webmail-backend/migrations/014_scheduler_email_verification.sql', /scheduler_email_verifications[\s\S]*code_hash/, 'Email-verification migration is missing');
+requireText('webmail-backend/migrations/015_scheduler_additional_attendees.sql', /max_additional_guests[\s\S]*attendees/, 'Additional-attendee migration is missing');
+requireText('webmail-backend/migrations/016_scheduler_booking_seats.sql', /ADD COLUMN IF NOT EXISTS seats/, 'Booking-seat migration is missing');
 requireText('webmail-backend/src/index.ts', /app\.use\('\/api'.*schedulerRouter/, 'Backend must mount Scheduler APIs');
 requireText('webmail-backend/src/scheduler/router.ts', /\/public\/scheduler\/v1/, 'Public Scheduler API boundary is missing');
 requireText('webmail-backend/src/scheduler/router.ts', /\/admin\/scheduler\/v1/, 'Admin Scheduler API boundary is missing');
@@ -91,6 +97,13 @@ requireText('webmail-frontend/src/scheduler/routes.tsx', /Cancellation reason[\s
 requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /Request sent[\s\S]*reviews your request/, 'Public UI must distinguish requested bookings from confirmed bookings');
 requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /change window has closed[\s\S]*scheduler-action-reason/, 'Public action UI must explain closed windows and collect reasons');
 requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /bookingAnswers.*questionId/s, 'Public booking must submit custom answers');
+requireText('webmail-frontend/src/scheduler/routes.tsx', /Active bookings per guest[\s\S]*Allowed guest emails or domains[\s\S]*Denied guest emails or domains/, 'Owner booking-integrity controls are missing');
+requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /Send verification code/, 'Public verification controls are missing');
+requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /Additional guests/, 'Public additional-attendee controls are missing');
+requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /remainingSeats/, 'Public remaining-seat controls are missing');
+requireText('webmail-backend/src/scheduler/store.ts', /scheduler_booker_locks[\s\S]*maximum active bookings/, 'Active booking limits must serialize by event and email');
+requireText('webmail-backend/src/scheduler/store.ts', /scheduler_email_verifications[\s\S]*used_at=UTC_TIMESTAMP/, 'Verification challenges must be transactionally consumed');
+requireText('webmail-backend/src/scheduler/store.ts', /Seats must include the booker and every additional guest/, 'Named attendees must consume booking seats');
 requireText('webmail-backend/src/scheduler/store.ts', /normalizeSchedulerBookingAnswers/, 'Booking creation must validate custom answers server-side');
 requireText('packaging/systemd/openmailstack.service', /RestrictAddressFamilies=.*AF_NETLINK/, 'Backend health probes require AF_NETLINK for postqueue and ss');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Scheduler email sender/, 'Scheduler profile must expose the owned notification sender');
@@ -98,7 +111,7 @@ requireText('webmail-backend/src/scheduler/store.ts', /Scheduler sender must be 
 requireText('webmail-frontend/src/scheduler/scheduler.css', /scheduler-modal[^}]+background: var\(--surface-color\)/s, 'Scheduler modal must use an opaque surface token');
 requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /data\.defaultEvent/, 'Public Scheduler must support the hidden default event');
 requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /visibilitychange[\s\S]*loadSlots/, 'Public Scheduler must refresh stale slots when the page becomes visible');
-requireText('webmail-backend/src/scheduler/store.ts', /fullCapacitySlotStarts/, 'Public slots must independently exclude full database capacity');
+requireText('webmail-backend/src/scheduler/store.ts', /remainingCapacityByStart/, 'Public slots must expose database-backed remaining capacity');
 requireText('functions/10_webmail.sh', /OMS_SCHEDULER_SMTP_SERVER_NAME/, 'Scheduler SMTP must render the certificate server name');
 requireText('webmail-frontend/src/scheduler/PublicScheduler.tsx', /No meetings available right now/, 'Public Scheduler empty state is missing');
 

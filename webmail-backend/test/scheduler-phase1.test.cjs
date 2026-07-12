@@ -10,7 +10,10 @@ const {
     defaultSchedulerHandle,
     normalizeSchedulerEventInput,
     normalizeSchedulerBookingAnswers,
+    normalizeSchedulerAttendees,
     normalizeSchedulerActionReason,
+    normalizeSchedulerGuestRules,
+    assertSchedulerGuestEligible,
     normalizeSchedulerHandle,
     normalizeOneOffAvailability,
     normalizePrivateLinkExpiry,
@@ -41,6 +44,11 @@ test('normalizes a useful 30-minute event with weekday availability', () => {
     assert.equal(event.rescheduleCutoffMinutes, null);
     assert.equal(event.requireCancellationReason, false);
     assert.equal(event.requireRescheduleReason, false);
+    assert.equal(event.activeBookingLimit, null);
+    assert.deepEqual(event.guestAllowList, []);
+    assert.deepEqual(event.guestDenyList, []);
+    assert.equal(event.requireEmailVerification, false);
+    assert.equal(event.maxAdditionalGuests, 0);
     assert.deepEqual(event.windows.map((window) => window.weekday), [1, 2, 3, 4, 5]);
     assert.equal(normalizeSchedulerEventInput({ title: 'Hair Coloring', durationMinutes: 180 }).durationMinutes, 180);
     const scheduleId = '12345678-1234-1234-1234-123456789abc';
@@ -62,6 +70,35 @@ test('normalizes a useful 30-minute event with weekday availability', () => {
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Too Long', durationMinutes: 1441 }), /durationMinutes/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad cutoff', cancellationCutoffMinutes: -1 }), /cancellationCutoffMinutes/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad cutoff', rescheduleCutoffMinutes: 525601 }), /rescheduleCutoffMinutes/);
+});
+
+test('normalizes booking-integrity policies and guest eligibility', () => {
+    const event = normalizeSchedulerEventInput({
+        title: 'Controlled booking', capacity: 3, activeBookingLimit: 2,
+        guestAllowList: [' VIP@Example.net ', '@partners.example', 'vip@example.net'],
+        guestDenyList: ['blocked@example.net', '@risky.example'],
+        requireEmailVerification: true, maxAdditionalGuests: 2,
+    });
+    assert.equal(event.activeBookingLimit, 2);
+    assert.deepEqual(event.guestAllowList, ['vip@example.net', '@partners.example']);
+    assert.deepEqual(event.guestDenyList, ['blocked@example.net', '@risky.example']);
+    assert.equal(event.requireEmailVerification, true);
+    assert.equal(event.maxAdditionalGuests, 2);
+    assert.deepEqual(normalizeSchedulerGuestRules(['@EXAMPLE.NET', '@example.net']), ['@example.net']);
+    assert.doesNotThrow(() => assertSchedulerGuestEligible('person@partners.example', event.guestAllowList, event.guestDenyList));
+    assert.throws(() => assertSchedulerGuestEligible('blocked@example.net', event.guestAllowList, event.guestDenyList), /not eligible/);
+    assert.throws(() => assertSchedulerGuestEligible('person@outside.example', event.guestAllowList, event.guestDenyList), /not eligible/);
+    assert.deepEqual(normalizeSchedulerAttendees([
+        { name: ' Grace ', email: 'GRACE@PARTNERS.EXAMPLE' },
+        { name: '', email: 'linus@partners.example' },
+    ], 'owner@example.net', 2), [
+        { name: 'Grace', email: 'grace@partners.example' },
+        { name: '', email: 'linus@partners.example' },
+    ]);
+    assert.throws(() => normalizeSchedulerAttendees([{ email: 'owner@example.net' }], 'owner@example.net', 2), /different from the booker/);
+    assert.throws(() => normalizeSchedulerAttendees([{ email: 'a@example.net' }, { email: 'A@example.net' }], 'owner@example.net', 2), /unique/);
+    assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad limit', activeBookingLimit: 0 }), /activeBookingLimit/);
+    assert.throws(() => normalizeSchedulerEventInput({ title: 'Too many guests', maxAdditionalGuests: 21 }), /maxAdditionalGuests/);
 });
 
 test('booking action policies enforce immutable cutoffs and bounded reasons', () => {
@@ -227,6 +264,31 @@ test('request and rejection mail explain the approval lifecycle without calendar
     assert.equal(rejected.length, 1);
     assert.match(rejected[0].subject, /declined/);
     assert.equal(rejected[0].ical, undefined);
+});
+
+test('verification codes and additional attendees receive bounded workflow mail', () => {
+    const verification = schedulerNotificationMails('booking.verification', {
+        hostEmail: 'thang@housevo.us', bookerEmail: 'ada@example.net', bookerName: 'Ada',
+        title: 'Verified Call', notificationFrom: 'thang@housevo.us', notificationName: 'Thang Vo',
+        verificationCode: 'ABC1234567',
+    }, 'https://webmail.housevo.us');
+    assert.equal(verification.length, 1);
+    assert.equal(verification[0].to, 'ada@example.net');
+    assert.match(verification[0].text, /ABC1234567/);
+    assert.match(verification[0].text, /15 minutes/);
+
+    const confirmed = schedulerNotificationMails('booking.confirmed', {
+        bookingId: 'booking-guests', hostEmail: 'thang@housevo.us', bookerEmail: 'ada@example.net',
+        bookerName: 'Ada', title: 'Group Call', start: '2026-07-22T16:00:00.000Z',
+        end: '2026-07-22T16:30:00.000Z', timeZone: 'America/Phoenix', seats: 3,
+        notificationFrom: 'thang@housevo.us', notificationName: 'Thang Vo',
+        cancelToken: 'cancel-secret', rescheduleToken: 'reschedule-secret', ical: 'BEGIN:VCALENDAR',
+        additionalAttendees: [{ name: 'Grace', email: 'grace@example.net' }, { name: '', email: 'linus@example.net' }],
+    }, 'https://webmail.housevo.us');
+    assert.equal(confirmed.length, 4);
+    assert.deepEqual(confirmed.slice(2).map(message => message.to), ['grace@example.net', 'linus@example.net']);
+    assert.doesNotMatch(confirmed[2].text, /cancel-secret|reschedule-secret/);
+    assert.match(confirmed[1].text, /for 3 seats/);
 });
 
 test('Scheduler SMTP verifies the certificate using the configured mail hostname', () => {

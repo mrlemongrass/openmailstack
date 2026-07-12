@@ -9,13 +9,15 @@ import {
   getPublicEvent,
   getPublicProfile,
   getPublicSlots,
+  requestPublicVerification,
+  type SchedulerAttendee,
   type SchedulerEntitlement,
   type SchedulerEventType,
   type SchedulerBookingActionPolicy,
 } from './api';
 import './scheduler.css';
 
-interface Slot { start: string; end: string }
+interface Slot { start: string; end: string; remainingSeats: number }
 interface ActionBooking { event: SchedulerEventType; handle: string; status: string; start: string; end: string }
 
 const browserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -58,11 +60,14 @@ function BookingEvent({ profile, event, rootDefault = false, accessToken = '' }:
   const [slots, setSlots] = useState<Slot[]>([]);
   const [selected, setSelected] = useState<Slot | null>(null);
   const [form, setForm] = useState({ bookerName: '', bookerEmail: '', bookerNotes: '' });
+  const [seats, setSeats] = useState(1);
+  const [attendees, setAttendees] = useState<SchedulerAttendee[]>([]);
+  const [verification, setVerification] = useState({ challengeId: '', code: '', sentTo: '', sending: false, message: '' });
   const [bookingAnswers, setBookingAnswers] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [confirmation, setConfirmation] = useState<{ slot: Slot; status: string } | null>(null);
+  const [confirmation, setConfirmation] = useState<{ slot: Slot; status: string; seats: number; attendees: SchedulerAttendee[] } | null>(null);
   const bookingAttemptKeyRef = useRef(crypto.randomUUID());
   const loadSlots = useCallback(async () => {
     const start = new Date();
@@ -92,6 +97,20 @@ function BookingEvent({ profile, event, rootDefault = false, accessToken = '' }:
     slots.forEach(slot => { const key = dateLabel(slot.start, timeZone); groups.set(key, [...(groups.get(key) || []), slot]); });
     return Array.from(groups.entries()).slice(0, 14);
   }, [slots, timeZone]);
+  const minimumSeats = attendees.length + 1;
+  const attendeeLimit = selected ? Math.min(event.maxAdditionalGuests, Math.max(selected.remainingSeats - 1, 0)) : 0;
+  const sendVerification = async () => {
+    if (!form.bookerEmail.trim()) { setError('Enter your email before requesting a verification code'); return; }
+    setError('');
+    setVerification(current => ({ ...current, sending: true, message: '' }));
+    try {
+      const challenge = await requestPublicVerification(profile.handle, event.slug, form.bookerEmail, accessToken);
+      setVerification({ challengeId: challenge.challengeId, code: '', sentTo: form.bookerEmail.trim().toLowerCase(), sending: false, message: 'Code sent. It expires in 15 minutes.' });
+    } catch (err) {
+      setVerification(current => ({ ...current, sending: false }));
+      setError(err instanceof Error ? err.message : 'Unable to send verification code');
+    }
+  };
   const submit = async (submitEvent: React.FormEvent) => {
     submitEvent.preventDefault(); if (!selected) return;
     setSubmitting(true); setError('');
@@ -101,23 +120,27 @@ function BookingEvent({ profile, event, rootDefault = false, accessToken = '' }:
         start: selected.start,
         bookerTimeZone: timeZone,
         ...form,
+        seats,
+        attendees,
+        verificationChallengeId: verification.challengeId,
+        verificationCode: verification.code,
         bookingAnswers: (event.questions || []).map(question => ({ questionId: question.id, value: bookingAnswers[question.id] || '' })),
       }, accessToken, bookingAttemptKeyRef.current);
-      setSlots(current => current.filter(slot => slot.start !== selected.start));
-      setConfirmation({ slot: selected, status: booking.status });
+      setSlots(current => current.flatMap(slot => slot.start !== selected.start ? [slot] : slot.remainingSeats > seats ? [{ ...slot, remainingSeats: slot.remainingSeats - seats }] : []));
+      setConfirmation({ slot: selected, status: booking.status, seats, attendees });
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to book this time'); await loadSlots(); }
     finally { setSubmitting(false); }
   };
   if (confirmation) {
     const requested = confirmation.status === 'requested';
-    return <div className="public-scheduler-page"><PublicHeader /><main className="booking-confirmation"><div className="confirmation-mark"><Check size={28} /></div><h1>{requested ? 'Request sent' : "You're booked"}</h1><p>{event.title} with {profile.displayName || profile.username}</p><dl><div><dt>Date</dt><dd>{dateLabel(confirmation.slot.start, timeZone)}</dd></div><div><dt>Time</dt><dd>{timeLabel(confirmation.slot.start, timeZone)} · {event.durationMinutes} min</dd></div><div><dt>Time zone</dt><dd>{timeZone}</dd></div>{(event.questions || []).filter(question => bookingAnswers[question.id]).map(question => <div key={question.id}><dt>{question.label}</dt><dd>{bookingAnswers[question.id]}</dd></div>)}</dl>{!requested && <a className="btn btn-secondary confirmation-download" href={calendarDownload(profile, event, confirmation.slot)} download={`${event.slug || 'booking'}.ics`}><Download size={16} /> Download calendar file</a>}<p className="confirmation-email">{requested ? `The time is reserved while ${profile.displayName || profile.username} reviews your request. We will email you with the decision.` : `A calendar invitation and management links are on their way to ${form.bookerEmail}.`}</p></main></div>;
+    return <div className="public-scheduler-page"><PublicHeader /><main className="booking-confirmation"><div className="confirmation-mark"><Check size={28} /></div><h1>{requested ? 'Request sent' : "You're booked"}</h1><p>{event.title} with {profile.displayName || profile.username}</p><dl><div><dt>Date</dt><dd>{dateLabel(confirmation.slot.start, timeZone)}</dd></div><div><dt>Time</dt><dd>{timeLabel(confirmation.slot.start, timeZone)} · {event.durationMinutes} min</dd></div><div><dt>Time zone</dt><dd>{timeZone}</dd></div>{event.capacity > 1 && <div><dt>Seats</dt><dd>{confirmation.seats}</dd></div>}{confirmation.attendees.map(attendee => <div key={attendee.email}><dt>Guest</dt><dd>{attendee.name || attendee.email}{attendee.name && ` · ${attendee.email}`}</dd></div>)}{(event.questions || []).filter(question => bookingAnswers[question.id]).map(question => <div key={question.id}><dt>{question.label}</dt><dd>{bookingAnswers[question.id]}</dd></div>)}</dl>{!requested && <a className="btn btn-secondary confirmation-download" href={calendarDownload(profile, event, confirmation.slot)} download={`${event.slug || 'booking'}.ics`}><Download size={16} /> Download calendar file</a>}<p className="confirmation-email">{requested ? `The time is reserved while ${profile.displayName || profile.username} reviews your request. We will email you with the decision.` : `A calendar invitation and management links are on their way to ${form.bookerEmail}.`}</p></main></div>;
   }
   return <div className="public-scheduler-page"><PublicHeader /><main className="public-booking-layout">
     <section className="public-event-summary">{!rootDefault && <Link to={`/scheduler/${profile.handle}`}><ArrowLeft size={16} /> {profile.displayName || profile.handle}</Link>}<h1>{event.title}</h1>{event.description && <p>{event.description}</p>}<ul><li><Clock3 size={16} /> {event.durationMinutes} minutes</li>{event.locationLabel && <li><MapPin size={16} /> {event.locationLabel}</li>}<li><Globe2 size={16} /> {timeZone}</li></ul></section>
     <section className="public-slot-picker"><div className="public-picker-heading"><h2>Select a time</h2><label><Globe2 size={15} /><select aria-label="Booking time zone" value={timeZone} onChange={e => setTimeZone(e.target.value)}>{!timeZones.includes(timeZone) && <option value={timeZone}>{timeZone}</option>}{timeZones.map(zone => <option value={zone} key={zone}>{zone.replaceAll('_', ' ')}</option>)}</select></label></div>
-      {error && <ErrorBanner error={error} />}{loading ? <p className="public-muted">Loading available times...</p> : grouped.length === 0 ? <p className="public-muted">No available times in the next 62 days.</p> : <div className="public-slot-days">{grouped.map(([day, daySlots]) => <div key={day}><h3>{day}</h3><div>{daySlots.map(slot => <button className={selected?.start === slot.start ? 'selected' : ''} onClick={() => { if (selected?.start !== slot.start) bookingAttemptKeyRef.current = crypto.randomUUID(); setSelected(slot); }} key={slot.start}>{timeLabel(slot.start, timeZone)}</button>)}</div></div>)}</div>}
+      {error && <ErrorBanner error={error} />}{loading ? <p className="public-muted">Loading available times...</p> : grouped.length === 0 ? <p className="public-muted">No available times in the next 62 days.</p> : <div className="public-slot-days">{grouped.map(([day, daySlots]) => <div key={day}><h3>{day}</h3><div>{daySlots.map(slot => <button className={selected?.start === slot.start ? 'selected' : ''} onClick={() => { if (selected?.start !== slot.start) { bookingAttemptKeyRef.current = crypto.randomUUID(); setSeats(1); setAttendees([]); } setSelected(slot); }} key={slot.start}><span>{timeLabel(slot.start, timeZone)}</span>{event.capacity > 1 && <small>{slot.remainingSeats} {slot.remainingSeats === 1 ? 'seat' : 'seats'} left</small>}</button>)}</div></div>)}</div>}
     </section>
-    {selected && <form className="public-booking-form" onSubmit={submit}><h2>Your details</h2><p>{dateLabel(selected.start, timeZone)} at {timeLabel(selected.start, timeZone)}</p><label>Name<input required autoComplete="name" value={form.bookerName} onChange={e => setForm({ ...form, bookerName: e.target.value })} /></label><label>Email<input required type="email" autoComplete="email" value={form.bookerEmail} onChange={e => setForm({ ...form, bookerEmail: e.target.value })} /></label>{(event.questions || []).map(question => <label key={question.id}>{question.label}{question.required && <span className="public-required">Required</span>}{question.type === 'long_text' ? <textarea required={question.required} maxLength={2000} rows={3} value={bookingAnswers[question.id] || ''} onChange={e => setBookingAnswers({ ...bookingAnswers, [question.id]: e.target.value })} /> : question.type === 'select' ? <select required={question.required} value={bookingAnswers[question.id] || ''} onChange={e => setBookingAnswers({ ...bookingAnswers, [question.id]: e.target.value })}><option value="">Choose an option</option>{question.options.map(option => <option value={option} key={option}>{option}</option>)}</select> : <input required={question.required} maxLength={255} value={bookingAnswers[question.id] || ''} onChange={e => setBookingAnswers({ ...bookingAnswers, [question.id]: e.target.value })} />}</label>)}<label>Notes<textarea rows={3} maxLength={4000} value={form.bookerNotes} onChange={e => setForm({ ...form, bookerNotes: e.target.value })} /></label><button className="btn btn-primary" disabled={submitting}>{submitting ? (event.requiresConfirmation ? 'Sending request...' : 'Booking...') : (event.requiresConfirmation ? 'Request booking' : 'Confirm booking')}</button></form>}
+    {selected && <form className="public-booking-form" onSubmit={submit}><h2>Your details</h2><p>{dateLabel(selected.start, timeZone)} at {timeLabel(selected.start, timeZone)}</p><label>Name<input required autoComplete="name" value={form.bookerName} onChange={e => setForm({ ...form, bookerName: e.target.value })} /></label><label>Email<input required type="email" autoComplete="email" value={form.bookerEmail} onChange={e => { setForm({ ...form, bookerEmail: e.target.value }); setVerification({ challengeId: '', code: '', sentTo: '', sending: false, message: '' }); }} /></label>{event.requireEmailVerification && <div className="public-verification"><button type="button" className="btn btn-secondary" disabled={verification.sending || !form.bookerEmail.trim()} onClick={() => void sendVerification()}>{verification.sending ? 'Sending...' : verification.challengeId ? 'Send a new code' : 'Send verification code'}</button>{verification.challengeId && <label>Verification code<input required autoComplete="one-time-code" inputMode="text" maxLength={10} value={verification.code} onChange={e => setVerification({ ...verification, code: e.target.value })} /></label>}{verification.message && <small>{verification.message}</small>}</div>}{event.capacity > 1 && <label>Seats<select value={Math.max(seats, minimumSeats)} onChange={e => setSeats(Number(e.target.value))}>{Array.from({ length: selected.remainingSeats - minimumSeats + 1 }, (_, index) => index + minimumSeats).map(count => <option key={count} value={count}>{count}</option>)}</select></label>}{event.maxAdditionalGuests > 0 && <fieldset className="public-attendees"><legend>Additional guests <small>Optional · up to {attendeeLimit} for this time</small></legend>{attendees.map((attendee, index) => <div className="public-attendee-row" key={index}><input aria-label={`Additional guest ${index + 1} name`} placeholder="Name" maxLength={160} value={attendee.name} onChange={e => setAttendees(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: e.target.value } : item))} /><input aria-label={`Additional guest ${index + 1} email`} required type="email" placeholder="Email" value={attendee.email} onChange={e => setAttendees(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, email: e.target.value } : item))} /><button type="button" onClick={() => setAttendees(current => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove additional guest ${index + 1}`}>Remove</button></div>)}{attendees.length < attendeeLimit && <button type="button" className="public-add-attendee" onClick={() => { const nextCount = attendees.length + 2; setAttendees(current => [...current, { name: '', email: '' }]); setSeats(current => Math.max(current, nextCount)); }}>Add guest</button>}</fieldset>}{(event.questions || []).map(question => <label key={question.id}>{question.label}{question.required && <span className="public-required">Required</span>}{question.type === 'long_text' ? <textarea required={question.required} maxLength={2000} rows={3} value={bookingAnswers[question.id] || ''} onChange={e => setBookingAnswers({ ...bookingAnswers, [question.id]: e.target.value })} /> : question.type === 'select' ? <select required={question.required} value={bookingAnswers[question.id] || ''} onChange={e => setBookingAnswers({ ...bookingAnswers, [question.id]: e.target.value })}><option value="">Choose an option</option>{question.options.map(option => <option value={option} key={option}>{option}</option>)}</select> : <input required={question.required} maxLength={255} value={bookingAnswers[question.id] || ''} onChange={e => setBookingAnswers({ ...bookingAnswers, [question.id]: e.target.value })} />}</label>)}<label>Notes<textarea rows={3} maxLength={4000} value={form.bookerNotes} onChange={e => setForm({ ...form, bookerNotes: e.target.value })} /></label><button className="btn btn-primary" disabled={submitting || (event.requireEmailVerification && (!verification.challengeId || !verification.code.trim() || verification.sentTo !== form.bookerEmail.trim().toLowerCase()))}>{submitting ? (event.requiresConfirmation ? 'Sending request...' : 'Booking...') : (event.requiresConfirmation ? 'Request booking' : 'Confirm booking')}</button></form>}
   </main></div>;
 }
 

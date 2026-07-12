@@ -39,6 +39,24 @@ const bookingAnswersFromRow = (value) => {
         return [];
     }
 };
+const attendeesFromRow = (value) => {
+    try {
+        const parsed = JSON.parse(String(value || '[]'));
+        return Array.isArray(parsed) ? parsed : [];
+    }
+    catch {
+        return [];
+    }
+};
+const guestRulesFromRow = (value) => {
+    try {
+        const parsed = JSON.parse(String(value || '[]'));
+        return Array.isArray(parsed) ? parsed.map(String) : [];
+    }
+    catch {
+        return [];
+    }
+};
 const oneOffAvailabilityFromRow = (row) => {
     if (!row.one_off_time_zone || !row.one_off_windows)
         return null;
@@ -97,6 +115,11 @@ const eventFromRow = (row, windows = []) => ({
     rescheduleCutoffMinutes: row.reschedule_cutoff_minutes == null ? null : Number(row.reschedule_cutoff_minutes),
     requireCancellationReason: booleanValue(row.require_cancellation_reason),
     requireRescheduleReason: booleanValue(row.require_reschedule_reason),
+    activeBookingLimit: row.active_booking_limit == null ? null : Number(row.active_booking_limit),
+    guestAllowList: guestRulesFromRow(row.guest_allow_list),
+    guestDenyList: guestRulesFromRow(row.guest_deny_list),
+    requireEmailVerification: booleanValue(row.require_email_verification),
+    maxAdditionalGuests: Number(row.max_additional_guests || 0),
     windows,
     questions: bookingQuestionsFromRow(row),
 });
@@ -404,7 +427,8 @@ class SchedulerStore {
             await connection.beginTransaction();
             if (eventId) {
                 const [owned] = await connection.query(`SELECT id, visibility, booking_questions, requires_confirmation,
-                    cancellation_cutoff_minutes, reschedule_cutoff_minutes, require_cancellation_reason, require_reschedule_reason
+                    cancellation_cutoff_minutes, reschedule_cutoff_minutes, require_cancellation_reason, require_reschedule_reason,
+                    active_booking_limit, guest_allow_list, guest_deny_list, require_email_verification, max_additional_guests
                     FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE`, [id, username]);
                 if (!owned.length)
                     throw new Error('Event type not found');
@@ -429,16 +453,33 @@ class SchedulerStore {
                 const requireRescheduleReason = input.requireRescheduleReason === undefined
                     ? booleanValue(owned[0].require_reschedule_reason)
                     : normalized.requireRescheduleReason;
+                const activeBookingLimit = input.activeBookingLimit === undefined
+                    ? (owned[0].active_booking_limit == null ? null : Number(owned[0].active_booking_limit))
+                    : normalized.activeBookingLimit;
+                const guestAllowList = input.guestAllowList === undefined
+                    ? String(owned[0].guest_allow_list || '[]')
+                    : JSON.stringify(normalized.guestAllowList);
+                const guestDenyList = input.guestDenyList === undefined
+                    ? String(owned[0].guest_deny_list || '[]')
+                    : JSON.stringify(normalized.guestDenyList);
+                const requireEmailVerification = input.requireEmailVerification === undefined
+                    ? booleanValue(owned[0].require_email_verification)
+                    : normalized.requireEmailVerification;
+                const maxAdditionalGuests = input.maxAdditionalGuests === undefined
+                    ? Number(owned[0].max_additional_guests || 0)
+                    : normalized.maxAdditionalGuests;
                 await connection.query(`UPDATE scheduler_event_types SET slug=?, title=?, description=?, duration_minutes=?, interval_minutes=?,
                         buffer_before_minutes=?, buffer_after_minutes=?, minimum_notice_minutes=?, capacity=?, location_type=?,
                         location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, availability_schedule_id=?, visibility=?, active=?,
                         booking_questions=?, requires_confirmation=?, cancellation_cutoff_minutes=?, reschedule_cutoff_minutes=?,
-                        require_cancellation_reason=?, require_reschedule_reason=? WHERE id=? AND system_managed = 0`, [normalized.slug, normalized.title, normalized.description, normalized.durationMinutes, normalized.intervalMinutes,
+                        require_cancellation_reason=?, require_reschedule_reason=?, active_booking_limit=?, guest_allow_list=?, guest_deny_list=?,
+                        require_email_verification=?, max_additional_guests=? WHERE id=? AND system_managed = 0`, [normalized.slug, normalized.title, normalized.description, normalized.durationMinutes, normalized.intervalMinutes,
                     normalized.bufferBeforeMinutes, normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                     normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
                     JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, visibility, normalized.active ? 1 : 0,
                     bookingQuestions, requiresConfirmation ? 1 : 0, cancellationCutoffMinutes, rescheduleCutoffMinutes,
-                    requireCancellationReason ? 1 : 0, requireRescheduleReason ? 1 : 0, id]);
+                    requireCancellationReason ? 1 : 0, requireRescheduleReason ? 1 : 0, activeBookingLimit,
+                    guestAllowList, guestDenyList, requireEmailVerification ? 1 : 0, maxAdditionalGuests, id]);
                 if (visibility !== 'private') {
                     await connection.query('UPDATE scheduler_private_links SET revoked_at = UTC_TIMESTAMP(3) WHERE event_type_id = ? AND revoked_at IS NULL', [id]);
                 }
@@ -450,15 +491,18 @@ class SchedulerStore {
                          buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, capacity, location_type,
                          location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, visibility, active,
                          booking_questions, requires_confirmation, cancellation_cutoff_minutes, reschedule_cutoff_minutes,
-                         require_cancellation_reason, require_reschedule_reason)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`, [id, entitlement.tenantKey, username, normalized.slug, normalized.title, normalized.description,
+                         require_cancellation_reason, require_reschedule_reason, active_booking_limit, guest_allow_list, guest_deny_list,
+                         require_email_verification, max_additional_guests)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [id, entitlement.tenantKey, username, normalized.slug, normalized.title, normalized.description,
                     normalized.durationMinutes, normalized.intervalMinutes, normalized.bufferBeforeMinutes,
                     normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                     normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
                     JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, normalized.visibility,
                     normalized.active ? 1 : 0, JSON.stringify(normalized.questions), normalized.requiresConfirmation ? 1 : 0,
                     normalized.cancellationCutoffMinutes, normalized.rescheduleCutoffMinutes,
-                    normalized.requireCancellationReason ? 1 : 0, normalized.requireRescheduleReason ? 1 : 0]);
+                    normalized.requireCancellationReason ? 1 : 0, normalized.requireRescheduleReason ? 1 : 0,
+                    normalized.activeBookingLimit, JSON.stringify(normalized.guestAllowList), JSON.stringify(normalized.guestDenyList),
+                    normalized.requireEmailVerification ? 1 : 0, normalized.maxAdditionalGuests]);
             }
             for (const window of normalized.windows) {
                 await connection.query('INSERT INTO scheduler_availability_windows (event_type_id, weekday, start_minute, end_minute) VALUES (?, ?, ?, ?)', [id, window.weekday, window.startMinute, window.endMinute]);
@@ -709,8 +753,49 @@ class SchedulerStore {
             bufferAfterMinutes: result.event.bufferAfterMinutes,
             minimumNoticeMinutes: result.event.minimumNoticeMinutes,
         });
-        const fullStarts = await this.fullCapacitySlotStarts(result.event, rangeStart, rangeEnd);
-        return slots.filter((slot) => !fullStarts.has(slot.start.getTime()));
+        const remainingByStart = await this.remainingCapacityByStart(result.event, rangeStart, rangeEnd);
+        return slots.map((slot) => ({
+            ...slot,
+            remainingSeats: remainingByStart.get(slot.start.getTime()) ?? result.event.capacity,
+        })).filter((slot) => slot.remainingSeats > 0);
+    }
+    async requestEmailVerification(handle, slug, emailValue, privateAccessToken = '') {
+        const bookerEmail = String(emailValue || '').trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(bookerEmail))
+            throw new Error('A valid email address is required');
+        const publicEvent = await this.getPublicEvent(handle, slug, privateAccessToken);
+        if (!publicEvent)
+            throw new Error('Event type not found');
+        (0, phase1_1.assertSchedulerGuestEligible)(bookerEmail, publicEvent.event.guestAllowList, publicEvent.event.guestDenyList);
+        if (!publicEvent.event.requireEmailVerification)
+            throw new Error('Email verification is not required for this event');
+        const challengeId = crypto_1.default.randomUUID();
+        const code = crypto_1.default.randomBytes(8).toString('base64url').slice(0, 10);
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+        const connection = await this.pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            await connection.query(`DELETE FROM scheduler_email_verifications
+                 WHERE event_type_id=? AND booker_email=? AND (expires_at <= UTC_TIMESTAMP(3) OR used_at IS NOT NULL)`, [publicEvent.event.id, bookerEmail]);
+            await connection.query(`INSERT INTO scheduler_email_verifications
+                    (id, tenant_key, event_type_id, booker_email, code_hash, expires_at)
+                 VALUES (?, ?, ?, ?, ?, ?)`, [challengeId, publicEvent.entitlement.tenantKey, publicEvent.event.id, bookerEmail,
+                (0, phase1_1.schedulerTokenHash)(`${challengeId}:${code}`), mysqlDate(expiresAt)]);
+            await this.enqueue(connection, publicEvent.entitlement.tenantKey, challengeId, 'booking.verification', `verification:${challengeId}`, {
+                bookingId: challengeId, hostEmail: publicEvent.entitlement.username, bookerEmail, bookerName: bookerEmail,
+                notificationFrom: publicEvent.entitlement.notificationFrom, notificationName: publicEvent.entitlement.displayName,
+                title: publicEvent.event.title, verificationCode: code, start: new Date().toISOString(),
+            });
+            await connection.commit();
+        }
+        catch (error) {
+            await connection.rollback();
+            throw error;
+        }
+        finally {
+            connection.release();
+        }
+        return { challengeId, expiresAt };
     }
     async createBooking(handle, slug, input) {
         const bookerName = String(input.bookerName || '').trim().slice(0, 160);
@@ -738,7 +823,33 @@ class SchedulerStore {
         const publicEvent = await this.getPublicEvent(handle, slug, input.privateAccessToken);
         if (!publicEvent || publicEvent.event.id !== input.eventTypeId)
             throw new Error('Event type not found');
+        (0, phase1_1.assertSchedulerGuestEligible)(bookerEmail, publicEvent.event.guestAllowList, publicEvent.event.guestDenyList);
         const bookingAnswers = (0, phase1_1.normalizeSchedulerBookingAnswers)(publicEvent.event.questions, input.bookingAnswers);
+        const attendees = (0, phase1_1.normalizeSchedulerAttendees)(input.attendees, bookerEmail, publicEvent.event.maxAdditionalGuests);
+        for (const attendee of attendees) {
+            (0, phase1_1.assertSchedulerGuestEligible)(attendee.email, publicEvent.event.guestAllowList, publicEvent.event.guestDenyList);
+        }
+        const seats = Number(input.seats ?? 1);
+        if (!Number.isInteger(seats) || seats < 1 || seats > publicEvent.event.capacity) {
+            throw new Error(`Seats must be an integer between 1 and ${publicEvent.event.capacity}`);
+        }
+        if (seats < attendees.length + 1) {
+            throw new Error('Seats must include the booker and every additional guest');
+        }
+        let verification = null;
+        if (publicEvent.event.requireEmailVerification) {
+            const challengeId = String(input.verificationChallengeId || '');
+            const code = String(input.verificationCode || '');
+            const [verificationRows] = await this.pool.query(`SELECT * FROM scheduler_email_verifications
+                 WHERE id=? AND event_type_id=? AND booker_email=? AND used_at IS NULL
+                   AND expires_at > UTC_TIMESTAMP(3) AND attempts < 5 LIMIT 1`, [challengeId, publicEvent.event.id, bookerEmail]);
+            verification = verificationRows[0];
+            if (!verification || (0, phase1_1.schedulerTokenHash)(`${challengeId}:${code}`) !== verification.code_hash) {
+                if (verification)
+                    await this.pool.query('UPDATE scheduler_email_verifications SET attempts=attempts+1 WHERE id=?', [challengeId]);
+                throw new Error('A valid email verification code is required');
+            }
+        }
         const privateLink = publicEvent.event.visibility === 'private'
             ? await this.activePrivateLink(publicEvent.event.id, input.privateAccessToken || '')
             : null;
@@ -755,6 +866,7 @@ class SchedulerStore {
             slotStart: input.start,
             slotEnd: end,
             capacity: publicEvent.event.capacity,
+            seats,
             ttlSeconds: 300,
             idempotencyKey: `booking:${idempotencyKey}`,
         });
@@ -777,6 +889,7 @@ class SchedulerStore {
             hostEmail: publicEvent.entitlement.username,
             bookerName,
             bookerEmail,
+            additionalAttendees: attendees,
             sequence: 0,
         }) : null;
         const connection = await this.pool.getConnection();
@@ -785,6 +898,27 @@ class SchedulerStore {
             const [lockedHolds] = await connection.query("SELECT status FROM scheduler_slot_holds WHERE hold_token = ? AND tenant_key = ? AND expires_at > ? FOR UPDATE", [hold.token, publicEvent.entitlement.tenantKey, mysqlDate(new Date())]);
             if (!lockedHolds.length || lockedHolds[0].status !== 'held')
                 throw new Error('The selected time is no longer available');
+            if (publicEvent.event.activeBookingLimit !== null) {
+                await connection.query(`INSERT INTO scheduler_booker_locks (event_type_id, booker_email) VALUES (?, ?)
+                     ON DUPLICATE KEY UPDATE updated_at=updated_at`, [publicEvent.event.id, bookerEmail]);
+                await connection.query('SELECT event_type_id FROM scheduler_booker_locks WHERE event_type_id=? AND booker_email=? FOR UPDATE', [publicEvent.event.id, bookerEmail]);
+                const [activeRows] = await connection.query(`SELECT COUNT(*) AS total FROM scheduler_bookings
+                     WHERE event_type_id=? AND booker_email=? AND status IN ('requested','confirmed')
+                       AND slot_end > UTC_TIMESTAMP(3)`, [publicEvent.event.id, bookerEmail]);
+                if (Number(activeRows[0]?.total || 0) >= publicEvent.event.activeBookingLimit) {
+                    throw new Error('You already have the maximum active bookings for this event. Use the secure link in your booking email to manage or reschedule the existing booking.');
+                }
+            }
+            if (verification) {
+                const [verificationRows] = await connection.query(`SELECT code_hash FROM scheduler_email_verifications
+                     WHERE id=? AND event_type_id=? AND booker_email=? AND used_at IS NULL
+                       AND expires_at > UTC_TIMESTAMP(3) AND attempts < 5 FOR UPDATE`, [verification.id, publicEvent.event.id, bookerEmail]);
+                if (!verificationRows.length
+                    || (0, phase1_1.schedulerTokenHash)(`${verification.id}:${String(input.verificationCode || '')}`) !== verificationRows[0].code_hash) {
+                    throw new Error('A valid email verification code is required');
+                }
+                await connection.query('UPDATE scheduler_email_verifications SET used_at=UTC_TIMESTAMP(3) WHERE id=?', [verification.id]);
+            }
             if (privateLink) {
                 const [privateLinks] = await connection.query(`SELECT id, uses_remaining FROM scheduler_private_links
                      WHERE id = ? AND event_type_id = ? AND revoked_at IS NULL
@@ -803,12 +937,12 @@ class SchedulerStore {
                 }
             }
             await connection.query(`INSERT INTO scheduler_bookings
-                    (id, tenant_key, event_type_id, host_username, status, slot_start, slot_end, host_time_zone,
-                     booker_time_zone, booker_name, booker_email, booker_notes, booking_answers, event_snapshot, cancel_token_hash,
+                    (id, tenant_key, event_type_id, host_username, status, seats, slot_start, slot_end, host_time_zone,
+                     booker_time_zone, booker_name, booker_email, booker_notes, booking_answers, attendees, event_snapshot, cancel_token_hash,
                      reschedule_token_hash, action_tokens_expires_at, slot_hold_token, calendar_id, calendar_event_uid, idempotency_key, confirmed_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [bookingId, publicEvent.entitlement.tenantKey, publicEvent.event.id, publicEvent.entitlement.username,
-                bookingStatus, mysqlDate(input.start), mysqlDate(end), publicEvent.entitlement.timeZone, bookerTimeZone, bookerName,
-                bookerEmail, String(input.bookerNotes || '').trim().slice(0, 4000), JSON.stringify(bookingAnswers), eventSnapshot,
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [bookingId, publicEvent.entitlement.tenantKey, publicEvent.event.id, publicEvent.entitlement.username,
+                bookingStatus, seats, mysqlDate(input.start), mysqlDate(end), publicEvent.entitlement.timeZone, bookerTimeZone, bookerName,
+                bookerEmail, String(input.bookerNotes || '').trim().slice(0, 4000), JSON.stringify(bookingAnswers), JSON.stringify(attendees), eventSnapshot,
                 (0, phase1_1.schedulerTokenHash)(cancelToken), (0, phase1_1.schedulerTokenHash)(rescheduleToken), mysqlDate(new Date(end.getTime() + 30 * 24 * 60 * 60 * 1000)),
                 hold.token, calendar.id, calendarUid, idempotencyKey, bookingStatus === 'confirmed' ? mysqlDate(new Date()) : null]);
             if (ical) {
@@ -825,6 +959,7 @@ class SchedulerStore {
                 notificationFrom: publicEvent.entitlement.notificationFrom, notificationName: publicEvent.entitlement.displayName,
                 title: publicEvent.event.title, start: input.start.toISOString(), end: end.toISOString(),
                 timeZone: bookerTimeZone, cancelToken,
+                additionalAttendees: attendees, seats,
                 ...(bookingStatus === 'confirmed' ? { rescheduleToken, ical } : {}),
             });
             await this.writeAudit(connection, publicEvent.entitlement.tenantKey, 'anonymous', bookerEmail, 'booking.create', 'booking', bookingId, {
@@ -841,7 +976,7 @@ class SchedulerStore {
         finally {
             connection.release();
         }
-        return { id: bookingId, status: bookingStatus, start: input.start, end, cancelToken, rescheduleToken };
+        return { id: bookingId, status: bookingStatus, start: input.start, end, cancelToken, rescheduleToken, seats };
     }
     async listBookings(username, filter = 'upcoming') {
         await this.requireOwner(username);
@@ -854,15 +989,16 @@ class SchedulerStore {
             clauses.push("status = 'cancelled'");
         if (filter === 'rejected')
             clauses.push("status = 'rejected'");
-        const [rows] = await this.pool.query(`SELECT id, event_type_id, status, CAST(slot_start AS CHAR) AS slot_start_utc,
+        const [rows] = await this.pool.query(`SELECT id, event_type_id, status, seats, CAST(slot_start AS CHAR) AS slot_start_utc,
                     CAST(slot_end AS CHAR) AS slot_end_utc, host_time_zone, booker_time_zone,
-                    booker_name, booker_email, booker_notes, booking_answers, event_snapshot, calendar_id, calendar_event_uid,
+                    booker_name, booker_email, booker_notes, booking_answers, attendees, event_snapshot, calendar_id, calendar_event_uid,
                     cancellation_reason, reschedule_reason, UNIX_TIMESTAMP(created_at) * 1000 AS created_at_epoch
              FROM scheduler_bookings WHERE ${clauses.join(' AND ')} ORDER BY slot_start ASC`, [username]);
         return rows.map((row) => ({
             id: row.id,
             eventTypeId: row.event_type_id,
             status: row.status,
+            seats: Number(row.seats || 1),
             start: utcDate(row.slot_start_utc),
             end: utcDate(row.slot_end_utc),
             hostTimeZone: row.host_time_zone,
@@ -871,6 +1007,7 @@ class SchedulerStore {
             bookerEmail: row.booker_email,
             bookerNotes: row.booker_notes || '',
             bookingAnswers: bookingAnswersFromRow(row.booking_answers),
+            attendees: attendeesFromRow(row.attendees),
             cancellationReason: row.cancellation_reason || '',
             rescheduleReason: row.reschedule_reason || '',
             event: JSON.parse(row.event_snapshot),
@@ -959,6 +1096,7 @@ class SchedulerStore {
                     hostEmail: booking.host_username,
                     bookerName: booking.booker_name,
                     bookerEmail: booking.booker_email,
+                    additionalAttendees: attendeesFromRow(booking.attendees),
                     sequence: 0,
                 });
                 await connection.query(`UPDATE scheduler_bookings
@@ -974,13 +1112,14 @@ class SchedulerStore {
                     notificationFrom: booking.notification_from || booking.host_username, notificationName: booking.display_name,
                     bookerName: booking.booker_name, title: snapshot.title, start: start.toISOString(), end: end.toISOString(),
                     timeZone: booking.booker_time_zone, cancelToken: nextCancelToken, rescheduleToken: nextRescheduleToken, ical,
+                    additionalAttendees: attendeesFromRow(booking.attendees), seats: Number(booking.seats || 1),
                 });
             }
             else {
                 await connection.query("UPDATE scheduler_bookings SET status='rejected', rejected_at=UTC_TIMESTAMP(3), action_tokens_expires_at=UTC_TIMESTAMP(3) WHERE id=?", [booking.id]);
                 await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [booking.slot_hold_token]);
-                await connection.query(`UPDATE scheduler_slot_inventory SET confirmed_seats=GREATEST(confirmed_seats-1,0)
-                     WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [booking.tenant_key, booking.event_type_id, booking.host_username, booking.slot_start_utc]);
+                await connection.query(`UPDATE scheduler_slot_inventory SET confirmed_seats=GREATEST(confirmed_seats-?,0)
+                     WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [Number(booking.seats || 1), booking.tenant_key, booking.event_type_id, booking.host_username, booking.slot_start_utc]);
                 await this.enqueue(connection, booking.tenant_key, booking.id, 'booking.rejected', `booking:${booking.id}:rejected`, {
                     bookingId: booking.id, hostEmail: booking.host_username, bookerEmail: booking.booker_email,
                     notificationFrom: booking.notification_from || booking.host_username, notificationName: booking.display_name,
@@ -1022,8 +1161,10 @@ class SchedulerStore {
         const normalizedReason = (0, phase1_1.normalizeSchedulerActionReason)(reason, 'reschedule', initialPolicy.reasonRequired);
         const newEnd = new Date(newStart.getTime() + Number(booking.duration_minutes) * 60 * 1000);
         const slots = await this.listSlots(booking.public_handle, booking.slug, new Date(newStart.getTime() - 1), new Date(newEnd.getTime() + 1), token);
-        if (!slots.some((slot) => slot.start.getTime() === newStart.getTime()))
+        if (!slots.some((slot) => slot.start.getTime() === newStart.getTime()
+            && Number(slot.remainingSeats ?? booking.capacity) >= Number(booking.seats || 1))) {
             throw new Error('The selected time is no longer available');
+        }
         const hold = await this.holds.acquire({
             tenantKey: booking.tenant_key,
             eventTypeKey: booking.event_type_id,
@@ -1031,6 +1172,7 @@ class SchedulerStore {
             slotStart: newStart,
             slotEnd: newEnd,
             capacity: Number(booking.capacity),
+            seats: Number(booking.seats || 1),
             ttlSeconds: 300,
             idempotencyKey: `reschedule:${booking.id}:${newStart.toISOString()}`,
         });
@@ -1044,6 +1186,7 @@ class SchedulerStore {
             hostEmail: booking.host_username,
             bookerName: booking.booker_name,
             bookerEmail: booking.booker_email,
+            additionalAttendees: attendeesFromRow(booking.attendees),
             sequence: 1,
         });
         const connection = await this.pool.getConnection();
@@ -1052,12 +1195,15 @@ class SchedulerStore {
             const [lockedRows] = await connection.query("SELECT status, CAST(slot_start AS CHAR) AS slot_start_utc, event_snapshot FROM scheduler_bookings WHERE id=? FOR UPDATE", [booking.id]);
             if (!lockedRows.length || lockedRows[0].status !== 'confirmed')
                 throw new Error('Booking cannot be rescheduled');
+            if (utcDate(lockedRows[0].slot_start_utc).getTime() !== utcDate(booking.slot_start_utc).getTime()) {
+                throw new Error('Booking cannot be rescheduled because it changed during this request');
+            }
             const lockedPolicy = (0, phase1_1.schedulerBookingActionPolicy)(JSON.parse(lockedRows[0].event_snapshot), 'reschedule', utcDate(lockedRows[0].slot_start_utc));
             if (!lockedPolicy.allowed)
                 throw new Error('Reschedule window has closed');
             (0, phase1_1.normalizeSchedulerActionReason)(normalizedReason, 'reschedule', lockedPolicy.reasonRequired);
-            await connection.query(`UPDATE scheduler_slot_inventory SET confirmed_seats=GREATEST(confirmed_seats-1,0)
-                 WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [booking.tenant_key, booking.event_type_id, booking.host_username, booking.slot_start_utc]);
+            await connection.query(`UPDATE scheduler_slot_inventory SET confirmed_seats=GREATEST(confirmed_seats-?,0)
+                 WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [Number(booking.seats || 1), booking.tenant_key, booking.event_type_id, booking.host_username, booking.slot_start_utc]);
             await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [booking.slot_hold_token]);
             await connection.query('UPDATE scheduler_bookings SET slot_start=?, slot_end=?, slot_hold_token=?, action_tokens_expires_at=?, cancelled_at=NULL, reschedule_reason=? WHERE id=?', [mysqlDate(newStart), mysqlDate(newEnd), hold.token, mysqlDate(new Date(newEnd.getTime() + 30 * 24 * 60 * 60 * 1000)), normalizedReason || null, booking.id]);
             await connection.query('UPDATE events SET ical_data=? WHERE calendar_id=? AND uid=?', [ical, booking.calendar_id, booking.calendar_event_uid]);
@@ -1070,6 +1216,7 @@ class SchedulerStore {
                 notificationFrom: booking.notification_from || booking.host_username, notificationName: booking.display_name,
                 bookerName: booking.booker_name, title: snapshot.title, start: newStart.toISOString(),
                 end: newEnd.toISOString(), timeZone: booking.booker_time_zone, ical,
+                additionalAttendees: attendeesFromRow(booking.attendees), seats: Number(booking.seats || 1),
             });
             await this.writeAudit(connection, booking.tenant_key, 'capability', booking.booker_email, 'booking.reschedule', 'booking', booking.id, { newStart: newStart.toISOString() });
             await connection.commit();
@@ -1118,8 +1265,8 @@ class SchedulerStore {
                 await connection.query('DELETE FROM events WHERE calendar_id = ? AND uid = ?', [current.calendar_id, current.calendar_event_uid]);
                 await connection.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [current.calendar_id]);
             }
-            await connection.query(`UPDATE scheduler_slot_inventory SET confirmed_seats = GREATEST(confirmed_seats - 1, 0)
-                 WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [current.tenant_key, current.event_type_id, current.host_username, current.slot_start_utc]);
+            await connection.query(`UPDATE scheduler_slot_inventory SET confirmed_seats = GREATEST(confirmed_seats - ?, 0)
+                 WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [Number(current.seats || 1), current.tenant_key, current.event_type_id, current.host_username, current.slot_start_utc]);
             const cancellationIcal = wasConfirmed ? (0, phase1_1.buildSchedulerCalendarEvent)({
                 uid: current.calendar_event_uid,
                 title: snapshot.title || 'Meeting',
@@ -1130,6 +1277,7 @@ class SchedulerStore {
                 hostEmail: current.host_username,
                 bookerName: current.booker_name,
                 bookerEmail: current.booker_email,
+                additionalAttendees: attendeesFromRow(current.attendees),
                 sequence: 1,
                 cancelled: true,
             }) : undefined;
@@ -1138,6 +1286,7 @@ class SchedulerStore {
                 notificationFrom: current.notification_from || current.host_username, notificationName: current.display_name,
                 bookerName: current.booker_name, start: utcDate(current.slot_start_utc).toISOString(),
                 timeZone: current.booker_time_zone, event: snapshot, ical: cancellationIcal,
+                additionalAttendees: wasConfirmed ? attendeesFromRow(current.attendees) : [], seats: Number(current.seats || 1),
             });
             await this.writeAudit(connection, current.tenant_key, actorType, actorId, 'booking.cancel', 'booking', current.id, {});
             await connection.commit();
@@ -1226,9 +1375,16 @@ class SchedulerStore {
         if (!calendarIds.length)
             return [];
         const placeholders = calendarIds.map(() => '?').join(',');
-        const [rows] = await this.pool.query(`SELECT uid, ical_data FROM events WHERE calendar_id IN (${placeholders})`, calendarIds);
+        const [rows] = await this.pool.query(`SELECT e.uid, e.ical_data, b.event_type_id AS scheduler_event_type_id
+             FROM events e
+             LEFT JOIN scheduler_bookings b
+               ON b.calendar_id = e.calendar_id AND b.calendar_event_uid = e.uid
+              AND b.status = 'confirmed'
+             WHERE e.calendar_id IN (${placeholders})`, calendarIds);
         const busy = [];
         for (const row of rows) {
+            if (row.scheduler_event_type_id === event.id)
+                continue;
             try {
                 const parsed = (0, calendar_utils_1.parseIcalEvent)(row.uid, row.ical_data);
                 if (parsed.busyStatus === 'free')
@@ -1244,7 +1400,7 @@ class SchedulerStore {
         }
         return busy;
     }
-    async fullCapacitySlotStarts(event, rangeStart, rangeEnd) {
+    async remainingCapacityByStart(event, rangeStart, rangeEnd) {
         const [rows] = await this.pool.query(`SELECT CAST(i.slot_start AS CHAR) AS slot_start_utc, i.capacity, i.confirmed_seats,
                     COALESCE(SUM(CASE WHEN h.status = 'held' AND h.expires_at > UTC_TIMESTAMP(3) THEN h.seats ELSE 0 END), 0) AS active_held_seats
              FROM scheduler_slot_inventory i
@@ -1253,9 +1409,11 @@ class SchedulerStore {
               AND h.host_username = i.host_username AND h.slot_start = i.slot_start AND h.slot_end = i.slot_end
              WHERE i.tenant_key = ? AND i.event_type_key = ? AND i.host_username = ?
                AND i.slot_start >= ? AND i.slot_start < ?
-             GROUP BY i.slot_start, i.capacity, i.confirmed_seats
-             HAVING i.confirmed_seats + active_held_seats >= i.capacity`, [event.tenantKey, event.id, event.ownerUsername, mysqlDate(rangeStart), mysqlDate(rangeEnd)]);
-        return new Set(rows.map((row) => utcDate(row.slot_start_utc).getTime()));
+             GROUP BY i.slot_start, i.capacity, i.confirmed_seats`, [event.tenantKey, event.id, event.ownerUsername, mysqlDate(rangeStart), mysqlDate(rangeEnd)]);
+        return new Map(rows.map((row) => [
+            utcDate(row.slot_start_utc).getTime(),
+            Math.max(Number(row.capacity) - Number(row.confirmed_seats) - Number(row.active_held_seats), 0),
+        ]));
     }
     async assertCalendarOwnership(username, calendarId) {
         const [rows] = await this.pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ? LIMIT 1', [calendarId, username]);

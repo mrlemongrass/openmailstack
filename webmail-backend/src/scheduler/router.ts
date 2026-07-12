@@ -237,12 +237,18 @@ schedulerRouter.put('/admin/scheduler/v1/mailboxes/:username', authenticatedInst
 
 const publicLimiter = rateLimit(60 * 1000, 120);
 const bookingLimiter = rateLimit(15 * 60 * 1000, 20);
+const publicEventView = (event: any) => ({ ...event, guestAllowList: [], guestDenyList: [] });
 
 schedulerRouter.get('/public/scheduler/v1/profiles/:handle', publicLimiter, publicBoundary, async (req, res) => {
     try {
         const profile = await store.getPublicProfile(String(req.params.handle));
         if (!profile) return publicNotFound(res);
-        res.json({ success: true, profile: profile.entitlement, events: profile.events, defaultEvent: profile.defaultEvent });
+        res.json({
+            success: true,
+            profile: profile.entitlement,
+            events: profile.events.map(publicEventView),
+            defaultEvent: profile.defaultEvent ? publicEventView(profile.defaultEvent) : null,
+        });
     } catch {
         publicNotFound(res);
     }
@@ -254,7 +260,7 @@ schedulerRouter.get('/public/scheduler/v1/profiles/:handle/events/:slug', public
         const result = await store.getPublicEvent(String(req.params.handle), String(req.params.slug), accessToken);
         if (!result) return publicNotFound(res);
         if (accessToken) res.set('Cache-Control', 'no-store');
-        res.json({ success: true, profile: result.entitlement, event: result.event });
+        res.json({ success: true, profile: result.entitlement, event: publicEventView(result.event) });
     } catch {
         publicNotFound(res);
     }
@@ -287,6 +293,10 @@ schedulerRouter.post('/public/scheduler/v1/profiles/:handle/events/:slug/booking
             bookerEmail: String(req.body?.bookerEmail || ''),
             bookerNotes: String(req.body?.bookerNotes || ''),
             bookingAnswers: req.body?.bookingAnswers,
+            attendees: req.body?.attendees,
+            seats: req.body?.seats,
+            verificationChallengeId: req.body?.verificationChallengeId,
+            verificationCode: req.body?.verificationCode,
             idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || ''),
             privateAccessToken: privateAccessToken(req),
         });
@@ -297,10 +307,27 @@ schedulerRouter.post('/public/scheduler/v1/profiles/:handle/events/:slug/booking
         if (/no longer available|enough capacity|slot definition/i.test(message)) {
             return res.status(409).json({ success: false, error: 'The selected time is no longer available' });
         }
-        if (/name is required|valid email|time zone|idempotency key|required|booking answers|invalid selection|too long|valid new start|already used for another booking/i.test(message)) {
+        if (/name is required|valid email|time zone|idempotency key|required|booking answers|invalid selection|too long|valid new start|already used for another booking|not eligible|additional guest|seats must/i.test(message)) {
             return res.status(400).json({ success: false, error: message });
         }
+        if (/maximum active bookings/i.test(message)) {
+            return res.status(409).json({ success: false, code: 'active_booking_limit', error: message });
+        }
         res.status(500).json({ success: false, error: 'Unable to create booking' });
+    }
+});
+
+schedulerRouter.post('/public/scheduler/v1/profiles/:handle/events/:slug/verification', bookingLimiter, publicBoundary, async (req, res) => {
+    try {
+        const verification = await store.requestEmailVerification(
+            String(req.params.handle), String(req.params.slug), req.body?.bookerEmail, privateAccessToken(req)
+        );
+        res.status(202).json({ success: true, verification });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (/not found/i.test(message)) return publicNotFound(res);
+        if (/valid email|not eligible|not required/i.test(message)) return res.status(400).json({ success: false, error: message });
+        res.status(500).json({ success: false, error: 'Unable to send verification code' });
     }
 });
 

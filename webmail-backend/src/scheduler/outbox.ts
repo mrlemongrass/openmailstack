@@ -4,6 +4,7 @@ export const SCHEDULER_OUTBOX_EVENT_TYPES = [
     'booking.rejected',
     'booking.cancelled',
     'booking.rescheduled',
+    'booking.verification',
     'calendar.project',
     'conference.create',
     'message.send',
@@ -58,4 +59,3 @@ export interface SchedulerAuditEvent {
 export interface SchedulerAuditSink {
     write(event: SchedulerAuditEvent): Promise<void>;
 }
-

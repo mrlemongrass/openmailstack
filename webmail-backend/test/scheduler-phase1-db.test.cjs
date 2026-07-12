@@ -501,5 +501,155 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(storedOneOffLinks[0].uses_remaining, 0);
     await store.cancelBookingByToken(oneOffBooking.cancelToken);
 
+    const limitedEvent = await store.saveEventType(username, {
+        title: 'Limited Booking', slug: 'limited-booking', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        activeBookingLimit: 1,
+    });
+    const limitedLegacy = await store.saveEventType(username, {
+        ...limitedEvent, title: 'Limited Booking Updated', activeBookingLimit: undefined,
+    }, limitedEvent.id);
+    assert.equal(limitedLegacy.activeBookingLimit, 1, 'older clients must preserve active booking limits');
+    const limitedInputs = [
+        {
+            eventTypeId: limitedEvent.id, start: new Date('2026-07-22T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+            bookerName: 'Limited Guest', bookerEmail: 'limited@example.net', idempotencyKey: 'phase2-active-limit-0001',
+        },
+        {
+            eventTypeId: limitedEvent.id, start: new Date('2026-07-22T16:30:00.000Z'), bookerTimeZone: 'America/Phoenix',
+            bookerName: 'Limited Guest', bookerEmail: 'limited@example.net', idempotencyKey: 'phase2-active-limit-0002',
+        },
+    ];
+    const limitedRace = await Promise.allSettled(limitedInputs.map(input => store.createBooking('phase1', limitedEvent.slug, input)));
+    const limitedWinners = limitedRace.map((result, index) => ({ result, index })).filter(item => item.result.status === 'fulfilled');
+    assert.equal(limitedWinners.length, 1, 'the per-email mutex must serialize simultaneous active-limit checks');
+    assert.match(limitedRace.find(result => result.status === 'rejected').reason.message, /maximum active bookings.*manage or reschedule/);
+    const limitedWinner = limitedWinners[0].result.value;
+    const limitedReplay = await store.createBooking('phase1', limitedEvent.slug, limitedInputs[limitedWinners[0].index]);
+    assert.equal(limitedReplay.id, limitedWinner.id);
+    assert.equal(limitedReplay.idempotentReplay, true);
+    await store.cancelBookingByToken(limitedWinner.cancelToken);
+    const limitedLoserIndex = limitedWinners[0].index === 0 ? 1 : 0;
+    const limitedSlotsAfterCancel = await store.listSlots(
+        'phase1', limitedEvent.slug, new Date('2026-07-22T15:59:59.999Z'), new Date('2026-07-22T17:00:00.001Z')
+    );
+    assert.equal(
+        limitedSlotsAfterCancel.some(slot => slot.start.getTime() === limitedInputs[limitedLoserIndex].start.getTime()),
+        true,
+        'cancelling the winner must restore the losing slot after the active-limit race'
+    );
+    const limitedAfterCancel = await store.createBooking('phase1', limitedEvent.slug, limitedInputs[limitedLoserIndex]);
+    assert.equal(limitedAfterCancel.status, 'confirmed', 'cancellation must release the active-booking allowance');
+    await store.cancelBookingByToken(limitedAfterCancel.cancelToken);
+
+    const guestEvent = await store.saveEventType(username, {
+        title: 'Guest Rules', slug: 'guest-rules', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        capacity: 3, maxAdditionalGuests: 2,
+        guestAllowList: ['vip@outside.example', '@allowed.example'],
+        guestDenyList: ['blocked@allowed.example', '@denied.example'],
+    });
+    assert.deepEqual(guestEvent.guestAllowList, ['vip@outside.example', '@allowed.example']);
+    await assert.rejects(() => store.createBooking('phase1', guestEvent.slug, {
+        eventTypeId: guestEvent.id, start: new Date('2026-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Outside Guest', bookerEmail: 'outside@example.net', idempotencyKey: 'phase2-guest-outside-0001',
+    }), /not eligible/);
+    await assert.rejects(() => store.createBooking('phase1', guestEvent.slug, {
+        eventTypeId: guestEvent.id, start: new Date('2026-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Allowed Guest', bookerEmail: 'owner@allowed.example', seats: 2,
+        attendees: [{ name: 'Blocked', email: 'blocked@allowed.example' }], idempotencyKey: 'phase2-guest-denied-0001',
+    }), /not eligible/);
+    await assert.rejects(() => store.createBooking('phase1', guestEvent.slug, {
+        eventTypeId: guestEvent.id, start: new Date('2026-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Allowed Guest', bookerEmail: 'owner@allowed.example', seats: 1,
+        attendees: [{ name: 'Grace', email: 'grace@allowed.example' }], idempotencyKey: 'phase2-guest-seat-mismatch-0001',
+    }), /Seats must include/);
+    const guestBooking = await store.createBooking('phase1', guestEvent.slug, {
+        eventTypeId: guestEvent.id, start: new Date('2026-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Allowed Guest', bookerEmail: 'vip@outside.example', seats: 3,
+        attendees: [{ name: 'Grace', email: 'grace@allowed.example' }, { name: '', email: 'linus@allowed.example' }],
+        idempotencyKey: 'phase2-guest-success-0001',
+    });
+    const guestOwnerBooking = (await store.listBookings(username, 'upcoming')).find(item => item.id === guestBooking.id);
+    assert.equal(guestOwnerBooking.seats, 3);
+    assert.deepEqual(guestOwnerBooking.attendees.map(item => item.email), ['grace@allowed.example', 'linus@allowed.example']);
+    const [guestProjection] = await pool.query('SELECT ical_data FROM events WHERE uid=?', [`scheduler-${guestBooking.id}@openmailstack`]);
+    assert.match(guestProjection[0].ical_data, /ATTENDEE;CN=Grace:mailto:grace@allowed\.example/);
+    assert.match(guestProjection[0].ical_data, /ATTENDEE;CN=linus@allowed\.example:mailto:linus@allowed\.example/);
+    const [guestOutbox] = await pool.query("SELECT payload FROM scheduler_outbox WHERE aggregate_id=? AND event_type='booking.confirmed'", [guestBooking.id]);
+    const guestPayload = JSON.parse(guestOutbox[0].payload);
+    assert.equal(guestPayload.seats, 3);
+    assert.equal(guestPayload.additionalAttendees.length, 2);
+    await store.cancelBookingByToken(guestBooking.cancelToken);
+
+    const verificationEvent = await store.saveEventType(username, {
+        title: 'Verified Booking', slug: 'verified-booking', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        requireEmailVerification: true,
+    });
+    const challenge = await store.requestEmailVerification('phase1', verificationEvent.slug, 'verified@example.net');
+    const [verificationJobs] = await pool.query("SELECT payload FROM scheduler_outbox WHERE aggregate_id=? AND event_type='booking.verification'", [challenge.challengeId]);
+    const verificationCode = JSON.parse(verificationJobs[0].payload).verificationCode;
+    const verificationInput = {
+        eventTypeId: verificationEvent.id, start: new Date('2026-07-24T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Verified Guest', bookerEmail: 'verified@example.net', idempotencyKey: 'phase2-verification-0001',
+        verificationChallengeId: challenge.challengeId, verificationCode,
+    };
+    await assert.rejects(() => store.createBooking('phase1', verificationEvent.slug, {
+        ...verificationInput, verificationCode: 'WRONG-CODE', idempotencyKey: 'phase2-verification-wrong-0001',
+    }), /valid email verification code/);
+    const [attemptRows] = await pool.query('SELECT attempts, used_at FROM scheduler_email_verifications WHERE id=?', [challenge.challengeId]);
+    assert.equal(Number(attemptRows[0].attempts), 1);
+    assert.equal(attemptRows[0].used_at, null);
+    const verifiedBooking = await store.createBooking('phase1', verificationEvent.slug, verificationInput);
+    const [usedVerification] = await pool.query('SELECT used_at FROM scheduler_email_verifications WHERE id=?', [challenge.challengeId]);
+    assert.ok(usedVerification[0].used_at);
+    const verifiedReplay = await store.createBooking('phase1', verificationEvent.slug, verificationInput);
+    assert.equal(verifiedReplay.id, verifiedBooking.id);
+    assert.equal(verifiedReplay.idempotentReplay, true);
+    await assert.rejects(() => store.createBooking('phase1', verificationEvent.slug, {
+        ...verificationInput, start: new Date('2026-07-24T16:30:00.000Z'), idempotencyKey: 'phase2-verification-reuse-0001',
+    }), /valid email verification code/);
+    await store.cancelBookingByToken(verifiedBooking.cancelToken);
+
+    const seatsEvent = await store.saveEventType(username, {
+        title: 'Seat Capacity', slug: 'seat-capacity', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId], capacity: 3,
+    });
+    const seatStart = new Date('2026-07-27T16:00:00.000Z');
+    const seatBookingTwo = await store.createBooking('phase1', seatsEvent.slug, {
+        eventTypeId: seatsEvent.id, start: seatStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Two Seats', bookerEmail: 'two-seats@example.net', seats: 2, idempotencyKey: 'phase2-seats-two-0001',
+    });
+    const afterTwoSeats = await store.listSlots('phase1', seatsEvent.slug, new Date(seatStart.getTime() - 1), new Date(seatStart.getTime() + 31 * 60 * 1000));
+    assert.equal(afterTwoSeats.find(slot => slot.start.getTime() === seatStart.getTime()).remainingSeats, 1);
+    await assert.rejects(() => store.createBooking('phase1', seatsEvent.slug, {
+        eventTypeId: seatsEvent.id, start: seatStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Too Many Seats', bookerEmail: 'too-many@example.net', seats: 2, idempotencyKey: 'phase2-seats-overflow-0001',
+    }), /capacity|no longer available/i);
+    const seatBookingOne = await store.createBooking('phase1', seatsEvent.slug, {
+        eventTypeId: seatsEvent.id, start: seatStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'One Seat', bookerEmail: 'one-seat@example.net', seats: 1, idempotencyKey: 'phase2-seats-one-0001',
+    });
+    const fullSeatSlots = await store.listSlots('phase1', seatsEvent.slug, new Date(seatStart.getTime() - 1), new Date(seatStart.getTime() + 31 * 60 * 1000));
+    assert.equal(fullSeatSlots.some(slot => slot.start.getTime() === seatStart.getTime()), false);
+    await store.cancelBookingByToken(seatBookingTwo.cancelToken);
+    const restoredSeatSlots = await store.listSlots('phase1', seatsEvent.slug, new Date(seatStart.getTime() - 1), new Date(seatStart.getTime() + 31 * 60 * 1000));
+    assert.equal(restoredSeatSlots.find(slot => slot.start.getTime() === seatStart.getTime()).remainingSeats, 2);
+    const seatRescheduleStarts = [new Date('2026-07-27T16:30:00.000Z'), new Date('2026-07-27T17:00:00.000Z')];
+    const seatRescheduleRace = await Promise.allSettled(
+        seatRescheduleStarts.map(candidate => store.rescheduleBookingByToken(seatBookingOne.rescheduleToken, candidate))
+    );
+    assert.equal(seatRescheduleRace.filter(result => result.status === 'fulfilled').length, 1, 'concurrent reschedules must produce one destination');
+    const seatRescheduleWinner = seatRescheduleRace.find(result => result.status === 'fulfilled').value.start;
+    const seatRescheduleLoser = seatRescheduleStarts.find(candidate => candidate.getTime() !== seatRescheduleWinner.getTime());
+    const oldSeatSlots = await store.listSlots('phase1', seatsEvent.slug, new Date(seatStart.getTime() - 1), new Date(seatStart.getTime() + 31 * 60 * 1000));
+    assert.equal(oldSeatSlots.find(slot => slot.start.getTime() === seatStart.getTime()).remainingSeats, 3);
+    const newSeatSlots = await store.listSlots('phase1', seatsEvent.slug, new Date(seatRescheduleWinner.getTime() - 1), new Date(seatRescheduleWinner.getTime() + 31 * 60 * 1000));
+    assert.equal(newSeatSlots.find(slot => slot.start.getTime() === seatRescheduleWinner.getTime()).remainingSeats, 2);
+    const losingSeatSlots = await store.listSlots('phase1', seatsEvent.slug, new Date(seatRescheduleLoser.getTime() - 1), new Date(seatRescheduleLoser.getTime() + 31 * 60 * 1000));
+    assert.equal(losingSeatSlots.find(slot => slot.start.getTime() === seatRescheduleLoser.getTime()).remainingSeats, 3);
+    await store.cancelBookingByToken(seatBookingOne.cancelToken);
+
     await pool.end();
 });

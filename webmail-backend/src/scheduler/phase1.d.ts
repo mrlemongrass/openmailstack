@@ -20,6 +20,11 @@ export interface SchedulerEventInput {
     rescheduleCutoffMinutes?: number | null;
     requireCancellationReason?: boolean;
     requireRescheduleReason?: boolean;
+    activeBookingLimit?: number | null;
+    guestAllowList?: string[];
+    guestDenyList?: string[];
+    requireEmailVerification?: boolean;
+    maxAdditionalGuests?: number;
     windows?: Array<{
         weekday: number;
         startMinute: number;
@@ -43,6 +48,14 @@ export interface SchedulerBookingAnswer extends SchedulerBookingAnswerInput {
     label: string;
     type: SchedulerBookingQuestionType;
 }
+export interface SchedulerAttendeeInput {
+    name?: string;
+    email: string;
+}
+export interface SchedulerAttendee {
+    name: string;
+    email: string;
+}
 export interface BookingCalendarEvent {
     uid: string;
     title: string;
@@ -53,6 +66,7 @@ export interface BookingCalendarEvent {
     hostEmail: string;
     bookerName: string;
     bookerEmail: string;
+    additionalAttendees?: SchedulerAttendee[];
     sequence: number;
     cancelled?: boolean;
 }
@@ -76,6 +90,9 @@ export declare function normalizeSchedulerHandle(value: string): string;
 export declare function defaultSchedulerHandle(username: string): string;
 export declare function normalizeSchedulerQuestions(value: unknown): SchedulerBookingQuestion[];
 export declare function normalizeSchedulerBookingAnswers(questions: SchedulerBookingQuestion[], value: unknown): SchedulerBookingAnswer[];
+export declare function normalizeSchedulerGuestRules(value: unknown): string[];
+export declare function assertSchedulerGuestEligible(email: string, allowList: string[], denyList: string[]): void;
+export declare function normalizeSchedulerAttendees(value: unknown, bookerEmail: string, maximum: number): SchedulerAttendee[];
 export declare function normalizeSchedulerEventInput(input: SchedulerEventInput): Required<Omit<SchedulerEventInput, 'destinationCalendarId'>> & {
     destinationCalendarId: number | null;
 };

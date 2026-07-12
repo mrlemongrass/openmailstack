@@ -27,6 +27,11 @@ export interface SchedulerEventInput {
     rescheduleCutoffMinutes?: number | null;
     requireCancellationReason?: boolean;
     requireRescheduleReason?: boolean;
+    activeBookingLimit?: number | null;
+    guestAllowList?: string[];
+    guestDenyList?: string[];
+    requireEmailVerification?: boolean;
+    maxAdditionalGuests?: number;
     windows?: Array<{ weekday: number; startMinute: number; endMinute: number }>;
     questions?: SchedulerBookingQuestion[];
 }
@@ -51,6 +56,16 @@ export interface SchedulerBookingAnswer extends SchedulerBookingAnswerInput {
     type: SchedulerBookingQuestionType;
 }
 
+export interface SchedulerAttendeeInput {
+    name?: string;
+    email: string;
+}
+
+export interface SchedulerAttendee {
+    name: string;
+    email: string;
+}
+
 export interface BookingCalendarEvent {
     uid: string;
     title: string;
@@ -61,6 +76,7 @@ export interface BookingCalendarEvent {
     hostEmail: string;
     bookerName: string;
     bookerEmail: string;
+    additionalAttendees?: SchedulerAttendee[];
     sequence: number;
     cancelled?: boolean;
 }
@@ -159,6 +175,53 @@ export function normalizeSchedulerBookingAnswers(questions: SchedulerBookingQues
     });
 }
 
+const validEmail = (value: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+const validDomain = (value: string): boolean => /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(value);
+
+export function normalizeSchedulerGuestRules(value: unknown): string[] {
+    if (value == null) return [];
+    if (!Array.isArray(value) || value.length > 100) throw new Error('Guest email rules support up to 100 entries');
+    const normalized = value.map((candidate) => String(candidate || '').trim().toLowerCase()).filter(Boolean).map((entry) => {
+        if (entry.startsWith('@')) {
+            const domain = entry.slice(1);
+            if (!validDomain(domain)) throw new Error('Guest domain rules must use @example.com');
+            return `@${domain}`;
+        }
+        if (!validEmail(entry) || entry.length > 255) throw new Error('Guest email rules must use a full email or @domain');
+        return entry;
+    });
+    return Array.from(new Set(normalized));
+}
+
+const guestRuleMatches = (email: string, rule: string): boolean => rule.startsWith('@')
+    ? email.endsWith(rule) && email.length > rule.length
+    : email === rule;
+
+export function assertSchedulerGuestEligible(email: string, allowList: string[], denyList: string[]): void {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (denyList.some((rule) => guestRuleMatches(normalized, rule))
+        || (allowList.length > 0 && !allowList.some((rule) => guestRuleMatches(normalized, rule)))) {
+        throw new Error('This email address is not eligible for this event');
+    }
+}
+
+export function normalizeSchedulerAttendees(value: unknown, bookerEmail: string, maximum: number): SchedulerAttendee[] {
+    if (value == null) return [];
+    if (!Array.isArray(value) || value.length > maximum) throw new Error(`This event allows up to ${maximum} additional guests`);
+    const normalizedBookerEmail = bookerEmail.toLowerCase();
+    const seen = new Set<string>();
+    return value.map((candidate) => {
+        const input = candidate as Partial<SchedulerAttendeeInput>;
+        const email = String(input.email || '').trim().toLowerCase();
+        const name = String(input.name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 160);
+        if (!validEmail(email) || email.length > 255) throw new Error('Each additional guest needs a valid email address');
+        if (email === normalizedBookerEmail) throw new Error('Additional guest email addresses must be different from the booker');
+        if (seen.has(email)) throw new Error('Additional guest email addresses must be unique');
+        seen.add(email);
+        return { name, email };
+    });
+}
+
 export function normalizeSchedulerEventInput(input: SchedulerEventInput): Required<Omit<SchedulerEventInput, 'destinationCalendarId'>> & { destinationCalendarId: number | null } {
     const title = String(input.title || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 160);
     if (!title) throw new Error('Event title is required');
@@ -209,6 +272,20 @@ export function normalizeSchedulerEventInput(input: SchedulerEventInput): Requir
         }
         return minutes;
     };
+    const rawActiveBookingLimit = input.activeBookingLimit as unknown;
+    const activeBookingLimit = rawActiveBookingLimit == null || rawActiveBookingLimit === ''
+        ? null
+        : Number(rawActiveBookingLimit);
+    if (activeBookingLimit !== null && (!Number.isInteger(activeBookingLimit) || activeBookingLimit < 1 || activeBookingLimit > 100)) {
+        throw new Error('activeBookingLimit must be an integer between 1 and 100');
+    }
+    const maxAdditionalGuests = Number(input.maxAdditionalGuests ?? 0);
+    if (!Number.isInteger(maxAdditionalGuests) || maxAdditionalGuests < 0 || maxAdditionalGuests > 20) {
+        throw new Error('maxAdditionalGuests must be an integer between 0 and 20');
+    }
+    if (maxAdditionalGuests >= capacity) {
+        throw new Error('maxAdditionalGuests must be less than capacity so every guest has a seat');
+    }
     return {
         title,
         slug: cleanSlug(input.slug || title, 'meeting'),
@@ -231,6 +308,11 @@ export function normalizeSchedulerEventInput(input: SchedulerEventInput): Requir
         rescheduleCutoffMinutes: actionCutoff('rescheduleCutoffMinutes', input.rescheduleCutoffMinutes),
         requireCancellationReason: input.requireCancellationReason === true,
         requireRescheduleReason: input.requireRescheduleReason === true,
+        activeBookingLimit,
+        guestAllowList: normalizeSchedulerGuestRules(input.guestAllowList),
+        guestDenyList: normalizeSchedulerGuestRules(input.guestDenyList),
+        requireEmailVerification: input.requireEmailVerification === true,
+        maxAdditionalGuests,
         windows,
         questions: normalizeSchedulerQuestions(input.questions),
     };
@@ -363,6 +445,9 @@ export function buildSchedulerCalendarEvent(event: BookingCalendarEvent): string
         `ATTENDEE;CN=${icalEscape(event.bookerName)}:mailto:${icalEscape(event.bookerEmail)}`,
         'TRANSP:OPAQUE',
     ];
+    for (const attendee of event.additionalAttendees || []) {
+        lines.splice(lines.length - 1, 0, `ATTENDEE;CN=${icalEscape(attendee.name || attendee.email)}:mailto:${icalEscape(attendee.email)}`);
+    }
     if (event.location) lines.push(`LOCATION:${icalEscape(event.location)}`);
     lines.push('END:VEVENT', 'END:VCALENDAR', '');
     return lines.join('\r\n');

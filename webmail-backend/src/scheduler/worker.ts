@@ -25,6 +25,9 @@ interface NotificationPayload {
     event?: { title?: string };
     notificationFrom?: string;
     notificationName?: string;
+    verificationCode?: string;
+    seats?: number;
+    additionalAttendees?: Array<{ name: string; email: string }>;
 }
 
 export interface SchedulerMail {
@@ -63,10 +66,25 @@ const readableDate = (value: string, timeZone = 'UTC'): string => new Intl.DateT
 
 export function schedulerNotificationMails(eventType: string, payload: NotificationPayload, baseUrl: string): SchedulerMail[] {
     const title = payload.title || payload.event?.title || 'Meeting';
-    const when = readableDate(payload.start, payload.timeZone || 'UTC');
     const senderAddress = payload.notificationFrom || payload.hostEmail || schedulerConfig.notificationFrom;
     const sender = { name: payload.notificationName || payload.hostEmail || 'OpenMailStack Scheduler', address: senderAddress };
     const common = { from: sender, replyTo: payload.hostEmail };
+    if (eventType === 'booking.verification') {
+        return [{
+            to: payload.bookerEmail,
+            subject: `Verify your email for ${title}`,
+            text: `Your OpenMailStack Scheduler verification code is ${payload.verificationCode}. It expires in 15 minutes.`,
+            ...common,
+        }];
+    }
+    const when = readableDate(payload.start, payload.timeZone || 'UTC');
+    const attendeeMails = (payload.additionalAttendees || []).map((attendee) => ({
+        to: attendee.email,
+        subject: `Confirmed: ${title}`,
+        text: `${title} with ${payload.hostEmail} is confirmed for ${when}.`,
+        ical: payload.ical,
+        ...common,
+    }));
     if (eventType === 'booking.requested') {
         const cancelUrl = `${baseUrl}/scheduler/action/cancel/${encodeURIComponent(payload.cancelToken || '')}`;
         return [
@@ -98,14 +116,15 @@ export function schedulerNotificationMails(eventType: string, payload: Notificat
             {
                 to: payload.hostEmail,
                 subject: `New booking: ${title}`,
-                text: `${payload.bookerName} (${payload.bookerEmail}) booked ${title} for ${when}.`,
+                text: `${payload.bookerName} (${payload.bookerEmail}) booked ${title} for ${when}${Number(payload.seats || 1) > 1 ? ` for ${payload.seats} seats` : ''}.`,
                 ical: payload.ical,
                 ...common,
             },
+            ...attendeeMails,
         ];
     }
     if (eventType === 'booking.cancelled') {
-        return [payload.bookerEmail, payload.hostEmail].map((to) => ({
+        return [payload.bookerEmail, payload.hostEmail, ...(payload.additionalAttendees || []).map((attendee) => attendee.email)].map((to) => ({
             ...common,
             to,
             subject: `Cancelled: ${title}`,
@@ -122,7 +141,7 @@ export function schedulerNotificationMails(eventType: string, payload: Notificat
         }];
     }
     if (eventType === 'booking.rescheduled') {
-        return [payload.bookerEmail, payload.hostEmail].map((to) => ({
+        return [payload.bookerEmail, payload.hostEmail, ...(payload.additionalAttendees || []).map((attendee) => attendee.email)].map((to) => ({
             ...common,
             to,
             subject: `Rescheduled: ${title}`,
@@ -190,7 +209,11 @@ async function deliverOutbox(row: OutboxRow, workerId: string): Promise<void> {
         }
         if (row.attempts >= 8) {
             await pool.query(
-                'UPDATE scheduler_outbox SET dead_lettered_at=UTC_TIMESTAMP(3), last_error_code=?, lease_owner=NULL, lease_expires_at=NULL WHERE id=? AND lease_owner=?',
+                `UPDATE scheduler_outbox
+                 SET dead_lettered_at=UTC_TIMESTAMP(3),
+                     payload=CASE WHEN event_type='booking.verification' THEN '{}' ELSE payload END,
+                     last_error_code=?, lease_owner=NULL, lease_expires_at=NULL
+                 WHERE id=? AND lease_owner=?`,
                 [errorCode, row.id, workerId]
             );
         } else {

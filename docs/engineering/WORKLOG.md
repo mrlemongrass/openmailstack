@@ -4795,3 +4795,58 @@ Add owner-configurable cancellation/reschedule cutoffs and private guest reason 
 ### Next recommended task
 
 Add per-event active booking limits keyed by normalized guest email, enforce them transactionally, and offer the existing secure reschedule path instead of creating another active booking.
+
+## 2026-07-12 — Scheduler booking-integrity five-slice release
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `a0d5d24a`
+Ending git state: clean after the five-slice Phase 2 release commit
+
+### Selected tasks
+
+Deliver the next five recommended personal-scheduling slices as one coherent release: active-booking limits, guest email/domain rules, email verification, additional attendees, and seat counts.
+
+### Acceptance criteria
+
+- [x] Existing events remain compatible with no cap, no eligibility rules, no verification, no additional guests, and one seat per booking.
+- [x] Active limits count future requested/confirmed bookings per event and normalized email under a durable mutex, preserve successful idempotency replay, release after cancellation, and return secure management/reschedule guidance.
+- [x] Bounded exact-email and `@domain` rules apply to bookers and attendees before capacity; denial wins and rule lists do not appear in public event responses.
+- [x] Optional 15-minute verification codes bind to event/email, store only a hash, allow five attempts, consume transactionally, and reserve no capacity merely by being requested.
+- [x] Additional attendees are bounded, unique, distinct from the booker, eligibility-checked, owner-visible, projected into iCalendar, and notified without primary management links.
+- [x] Named attendees consume seats; remaining capacity is public; booking, rejection, cancellation, and reschedule move the exact seat count without oversell or phantom capacity.
+- [x] Desktop and mobile owner/public flows expose all five controls without horizontal overflow or browser errors.
+
+### Changes
+
+- Added idempotent migrations `012` through `016` for event/email booking locks, allow/deny policies, verification challenges, attendee snapshots, and booking seat counts.
+- Added normalized policy/attendee validation, private public-view sanitization, verification-code mail, transactional verification consumption, active-limit locking, multi-seat holds, and exact seat restoration across every terminal transition.
+- Excluded same-event Scheduler projections from Calendar busy input so partially filled group slots remain available while unrelated events remain conflicts.
+- Made released workflow holds safely reacquirable with the same idempotency key after conditions change, while held and confirmed retries remain idempotent.
+- Added booking-row state rechecks so simultaneous reschedules of one booking yield exactly one capacity destination.
+- Added owner Limits controls, public verification and guest forms, remaining-seat labels, multi-seat confirmation detail, and responsive attendee editing.
+
+### Proof / checks run
+
+- Normal backend suite passed with the database-only gates skipped; disposable MariaDB then applied migrations `001` through `016` twice and passed all 89 tests with no skips.
+- Database coverage includes simultaneous active-limit attempts, cancellation/retry, rule precedence, verification failures and one-time consumption, attendee/ICS/outbox state, partial capacity, exact cancellation/reschedule restoration, and simultaneous reschedule serialization.
+- Frontend lint and production build passed. Desktop/mobile mocked Playwright covered owner policies/details and the complete public verification, attendee, seat, and confirmation payload flow with zero page errors or overflow.
+- Full static/integration checks and Scheduler documentation/capability guards passed.
+- Live migrations `012` through `016` are recorded. A temporary unlisted event proved public rule redaction plus 400 eligibility/attendee/seat rejection paths, with zero temporary bookings/outbox rows and complete cleanup; no mail was sent.
+- Tested and deployed backend, migrations, and frontend are byte-for-byte equal. Live desktop/mobile booking-integrity checks, the mail-message refresh regression, prior action-policy browser checks, service/Nginx health, Postfix `postqueue` and `ss` probes, and staging smoke all pass.
+
+### Deployment and rollback
+
+- Root-only backend, frontend, Scheduler-table, and service-unit snapshot: `/var/backups/openmailstack/20260712T052145Z_scheduler_booking_integrity`.
+- Applied only additive migrations `012` through `016`, synchronized tested artifacts, normalized webroot permissions, and restarted only `openmailstack.service`.
+
+### Risks and remaining work
+
+- Active limits without email verification remain workflow protection rather than a strong identity or anti-sybil boundary; the UI recommends enabling verification.
+- Verification email is provider-dependent. Codes are removed from successful and dead-lettered outbox payloads, but delivery retries can retain the still-needed code until success, expiry, or dead-lettering.
+- Named attendees and verification addresses are booking data and still need the planned suite-wide retention/export/deletion controls.
+- Clean-VM validation remains deferred until the second development Linux server is available; physical CalDAV/ActiveSync observation remains pending.
+
+### Next recommended task
+
+Add a capacity-aware waitlist that atomically promotes the next eligible party when seats are released, without bypassing verification, attendee, approval, or notification policies.

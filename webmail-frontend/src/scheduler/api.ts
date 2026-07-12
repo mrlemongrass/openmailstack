@@ -46,6 +46,11 @@ export interface SchedulerEventType {
   rescheduleCutoffMinutes: number | null;
   requireCancellationReason: boolean;
   requireRescheduleReason: boolean;
+  activeBookingLimit: number | null;
+  guestAllowList: string[];
+  guestDenyList: string[];
+  requireEmailVerification: boolean;
+  maxAdditionalGuests: number;
   questions: SchedulerBookingQuestion[];
 }
 
@@ -110,7 +115,14 @@ export interface SchedulerBooking {
   bookingAnswers: SchedulerBookingAnswer[];
   cancellationReason: string;
   rescheduleReason: string;
+  seats: number;
+  attendees: SchedulerAttendee[];
   event: SchedulerEventType;
+}
+
+export interface SchedulerAttendee {
+  name: string;
+  email: string;
 }
 
 export interface SchedulerCalendar {
@@ -209,12 +221,20 @@ export async function getPublicEvent(handle: string, slug: string, accessToken =
   return request(`/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}`, { headers: accessHeaders(accessToken) });
 }
 
-export async function getPublicSlots(handle: string, slug: string, start: Date, end: Date, accessToken = ''): Promise<Array<{ start: string; end: string }>> {
-  const result = await request<{ slots: Array<{ start: string; end: string }> }>(
+export async function getPublicSlots(handle: string, slug: string, start: Date, end: Date, accessToken = ''): Promise<Array<{ start: string; end: string; remainingSeats: number }>> {
+  const result = await request<{ slots: Array<{ start: string; end: string; remainingSeats: number }> }>(
     `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/slots?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`,
     { headers: accessHeaders(accessToken) },
   );
   return result.slots;
+}
+
+export async function requestPublicVerification(handle: string, slug: string, bookerEmail: string, accessToken = ''): Promise<{ challengeId: string; expiresAt: string }> {
+  const result = await request<{ verification: { challengeId: string; expiresAt: string } }>(
+    `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/verification`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json', ...accessHeaders(accessToken) }, body: JSON.stringify({ bookerEmail }) },
+  );
+  return result.verification;
 }
 
 export async function createPublicBooking(handle: string, slug: string, payload: Record<string, unknown>, accessToken = '', idempotencyKey = crypto.randomUUID()): Promise<{ id: string; status: string; start: string; end: string }> {

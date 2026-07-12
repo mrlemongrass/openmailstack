@@ -1,1 +1,1 @@
-{"version":3,"file":"outbox.js","sourceRoot":"","sources":["outbox.ts"],"names":[],"mappings":";;;AAAa,QAAA,4BAA4B,GAAG;IACxC,mBAAmB;IACnB,mBAAmB;IACnB,kBAAkB;IAClB,mBAAmB;IACnB,qBAAqB;IACrB,kBAAkB;IAClB,mBAAmB;IACnB,cAAc;IACd,gBAAgB;IAChB,iBAAiB;CACX,CAAC"}
+{"version":3,"file":"outbox.js","sourceRoot":"","sources":["outbox.ts"],"names":[],"mappings":";;;AAAa,QAAA,4BAA4B,GAAG;IACxC,mBAAmB;IACnB,mBAAmB;IACnB,kBAAkB;IAClB,mBAAmB;IACnB,qBAAqB;IACrB,sBAAsB;IACtB,kBAAkB;IAClB,mBAAmB;IACnB,cAAc;IACd,gBAAgB;IAChB,iBAAiB;CACX,CAAC"}

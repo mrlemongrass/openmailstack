@@ -99,6 +99,24 @@ test('idempotent replay returns the original hold without adding capacity', asyn
   assert.equal(connection.calls.filter((call) => typeof call === 'object').length, 1);
 });
 
+test('released idempotency records can reacquire capacity after a failed workflow', async () => {
+  const { SchedulerSlotHoldRepository } = require('../src/scheduler/slot-holds.js');
+  const connection = new FakeConnection({
+    existingHold: {
+      hold_token: 'released-token', tenant_key: input.tenantKey, event_type_key: input.eventTypeKey,
+      host_username: input.hostUsername, slot_start_utc: '2030-01-01 17:00:00.000',
+      slot_end_utc: '2030-01-01 17:30:00.000', seats: 1, status: 'released',
+      expires_at_utc: '2030-01-01 16:02:00.000',
+    },
+  });
+  const repository = new SchedulerSlotHoldRepository({ getConnection: async () => connection });
+  const hold = await repository.acquire(input);
+
+  assert.equal(hold.status, 'held');
+  assert.notEqual(hold.token, 'released-token');
+  assert.ok(connection.calls.some(call => typeof call === 'object' && call.sql.includes('DELETE FROM scheduler_slot_holds')));
+});
+
 test('acquire retries a deadlocked transaction from a fresh connection', async () => {
   const { SchedulerSlotHoldRepository } = require('../src/scheduler/slot-holds.js');
   const deadlocked = new FakeConnection();

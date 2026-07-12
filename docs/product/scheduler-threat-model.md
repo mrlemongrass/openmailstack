@@ -117,6 +117,10 @@ Booking-action policy tests also cover absent-policy compatibility, exact cutoff
 - Generic public errors and constant-shape responses for missing, disabled, or unpublished resources.
 - Layered rate limits per IP, network, handle, tenant, and verified identity; challenge escalation instead of universal CAPTCHA.
 - Email verification and domain allow/deny policy where configured.
+- Per-event active-booking limits use normalized email as workflow protection and serialize on an event/email mutex. Owners should combine limits with verification when they need stronger identity assurance; limits alone are not an anti-sybil boundary.
+- Verification challenges bind to one event and normalized email, use a 60-bit random ten-character code stored only as a SHA-256 challenge hash, expire after 15 minutes, allow at most five failed attempts, and are consumed under the booking transaction before capacity is confirmed. Successful delivery clears the outbox payload, and dead-lettering redacts the expired code.
+- Allow/deny rules accept only exact normalized emails or `@domain` entries, are bounded and deduplicated, apply equally to the primary booker and named attendees before capacity acquisition, and are removed from public event responses.
+- Additional attendees are bounded, deduplicated, included in the reserved seat count, and receive confirmation/cancellation/reschedule mail without the primary booker's capability links.
 - Short hold TTL, per-origin hold limits, cleanup on every locked acquisition, and background expiration.
 - Strict field sizes/types, allowlisted redirect schemes/hosts, output encoding, HTML sanitization, and safe template interpolation.
 - Do not place free-text answers in logs, metrics labels, routing traces, webhook errors, or audit metadata.
@@ -125,6 +129,7 @@ Booking-action policy tests also cover absent-policy compatibility, exact cutoff
 - Notification and webhook fan-out quotas with loop detection.
 
 Required tests include missing required answers, unknown/duplicate question IDs, invalid dropdown choices, maximum lengths, legacy owner updates, immutable answer snapshots after definition edits, output escaping, and absence from audit metadata.
+Booking-integrity tests additionally cover simultaneous active-limit attempts, cancellation release and retry, allow/deny precedence, verification failure/consumption/reuse, attendee uniqueness and iCalendar projection, partial capacity, exact seat restoration, and simultaneous reschedule serialization.
 
 ## 7. OAuth And Provider Secrets
 

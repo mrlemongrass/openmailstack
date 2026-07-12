@@ -8,6 +8,9 @@ exports.normalizeSchedulerHandle = normalizeSchedulerHandle;
 exports.defaultSchedulerHandle = defaultSchedulerHandle;
 exports.normalizeSchedulerQuestions = normalizeSchedulerQuestions;
 exports.normalizeSchedulerBookingAnswers = normalizeSchedulerBookingAnswers;
+exports.normalizeSchedulerGuestRules = normalizeSchedulerGuestRules;
+exports.assertSchedulerGuestEligible = assertSchedulerGuestEligible;
+exports.normalizeSchedulerAttendees = normalizeSchedulerAttendees;
 exports.normalizeSchedulerEventInput = normalizeSchedulerEventInput;
 exports.schedulerBookingActionPolicy = schedulerBookingActionPolicy;
 exports.normalizeSchedulerActionReason = normalizeSchedulerActionReason;
@@ -102,6 +105,57 @@ function normalizeSchedulerBookingAnswers(questions, value) {
         return answer ? [{ questionId: question.id, label: question.label, type: question.type, value: answer }] : [];
     });
 }
+const validEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+const validDomain = (value) => /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(value);
+function normalizeSchedulerGuestRules(value) {
+    if (value == null)
+        return [];
+    if (!Array.isArray(value) || value.length > 100)
+        throw new Error('Guest email rules support up to 100 entries');
+    const normalized = value.map((candidate) => String(candidate || '').trim().toLowerCase()).filter(Boolean).map((entry) => {
+        if (entry.startsWith('@')) {
+            const domain = entry.slice(1);
+            if (!validDomain(domain))
+                throw new Error('Guest domain rules must use @example.com');
+            return `@${domain}`;
+        }
+        if (!validEmail(entry) || entry.length > 255)
+            throw new Error('Guest email rules must use a full email or @domain');
+        return entry;
+    });
+    return Array.from(new Set(normalized));
+}
+const guestRuleMatches = (email, rule) => rule.startsWith('@')
+    ? email.endsWith(rule) && email.length > rule.length
+    : email === rule;
+function assertSchedulerGuestEligible(email, allowList, denyList) {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (denyList.some((rule) => guestRuleMatches(normalized, rule))
+        || (allowList.length > 0 && !allowList.some((rule) => guestRuleMatches(normalized, rule)))) {
+        throw new Error('This email address is not eligible for this event');
+    }
+}
+function normalizeSchedulerAttendees(value, bookerEmail, maximum) {
+    if (value == null)
+        return [];
+    if (!Array.isArray(value) || value.length > maximum)
+        throw new Error(`This event allows up to ${maximum} additional guests`);
+    const normalizedBookerEmail = bookerEmail.toLowerCase();
+    const seen = new Set();
+    return value.map((candidate) => {
+        const input = candidate;
+        const email = String(input.email || '').trim().toLowerCase();
+        const name = String(input.name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 160);
+        if (!validEmail(email) || email.length > 255)
+            throw new Error('Each additional guest needs a valid email address');
+        if (email === normalizedBookerEmail)
+            throw new Error('Additional guest email addresses must be different from the booker');
+        if (seen.has(email))
+            throw new Error('Additional guest email addresses must be unique');
+        seen.add(email);
+        return { name, email };
+    });
+}
 function normalizeSchedulerEventInput(input) {
     const title = String(input.title || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 160);
     if (!title)
@@ -158,6 +212,20 @@ function normalizeSchedulerEventInput(input) {
         }
         return minutes;
     };
+    const rawActiveBookingLimit = input.activeBookingLimit;
+    const activeBookingLimit = rawActiveBookingLimit == null || rawActiveBookingLimit === ''
+        ? null
+        : Number(rawActiveBookingLimit);
+    if (activeBookingLimit !== null && (!Number.isInteger(activeBookingLimit) || activeBookingLimit < 1 || activeBookingLimit > 100)) {
+        throw new Error('activeBookingLimit must be an integer between 1 and 100');
+    }
+    const maxAdditionalGuests = Number(input.maxAdditionalGuests ?? 0);
+    if (!Number.isInteger(maxAdditionalGuests) || maxAdditionalGuests < 0 || maxAdditionalGuests > 20) {
+        throw new Error('maxAdditionalGuests must be an integer between 0 and 20');
+    }
+    if (maxAdditionalGuests >= capacity) {
+        throw new Error('maxAdditionalGuests must be less than capacity so every guest has a seat');
+    }
     return {
         title,
         slug: cleanSlug(input.slug || title, 'meeting'),
@@ -180,6 +248,11 @@ function normalizeSchedulerEventInput(input) {
         rescheduleCutoffMinutes: actionCutoff('rescheduleCutoffMinutes', input.rescheduleCutoffMinutes),
         requireCancellationReason: input.requireCancellationReason === true,
         requireRescheduleReason: input.requireRescheduleReason === true,
+        activeBookingLimit,
+        guestAllowList: normalizeSchedulerGuestRules(input.guestAllowList),
+        guestDenyList: normalizeSchedulerGuestRules(input.guestDenyList),
+        requireEmailVerification: input.requireEmailVerification === true,
+        maxAdditionalGuests,
         windows,
         questions: normalizeSchedulerQuestions(input.questions),
     };
@@ -309,6 +382,9 @@ function buildSchedulerCalendarEvent(event) {
         `ATTENDEE;CN=${icalEscape(event.bookerName)}:mailto:${icalEscape(event.bookerEmail)}`,
         'TRANSP:OPAQUE',
     ];
+    for (const attendee of event.additionalAttendees || []) {
+        lines.splice(lines.length - 1, 0, `ATTENDEE;CN=${icalEscape(attendee.name || attendee.email)}:mailto:${icalEscape(attendee.email)}`);
+    }
     if (event.location)
         lines.push(`LOCATION:${icalEscape(event.location)}`);
     lines.push('END:VEVENT', 'END:VCALENDAR', '');

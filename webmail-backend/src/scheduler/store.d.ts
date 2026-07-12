@@ -1,6 +1,6 @@
 import type { Pool } from 'mysql2/promise';
 import { type AvailabilitySlot } from './availability';
-import { type SchedulerEventInput, type SchedulerBookingAnswerInput, type SchedulerBookingQuestion, type SchedulerOneOffWindow } from './phase1';
+import { type SchedulerEventInput, type SchedulerBookingAnswerInput, type SchedulerBookingQuestion, type SchedulerAttendeeInput, type SchedulerOneOffWindow } from './phase1';
 export interface SchedulerEntitlement {
     username: string;
     tenantKey: string;
@@ -39,6 +39,11 @@ export interface SchedulerEventType {
     rescheduleCutoffMinutes: number | null;
     requireCancellationReason: boolean;
     requireRescheduleReason: boolean;
+    activeBookingLimit: number | null;
+    guestAllowList: string[];
+    guestDenyList: string[];
+    requireEmailVerification: boolean;
+    maxAdditionalGuests: number;
     windows: Array<{
         weekday: number;
         startMinute: number;
@@ -84,6 +89,10 @@ export interface SchedulerBookingInput {
     bookerEmail: string;
     bookerNotes?: string;
     bookingAnswers?: SchedulerBookingAnswerInput[];
+    attendees?: SchedulerAttendeeInput[];
+    seats?: number;
+    verificationChallengeId?: string;
+    verificationCode?: string;
     idempotencyKey: string;
     privateAccessToken?: string;
 }
@@ -153,6 +162,7 @@ export declare class SchedulerStore {
         event: SchedulerEventType;
     } | null>;
     listSlots(handle: string, slug: string, rangeStart: Date, rangeEnd: Date, privateAccessToken?: string): Promise<AvailabilitySlot[]>;
+    requestEmailVerification(handle: string, slug: string, emailValue: unknown, privateAccessToken?: string): Promise<Record<string, unknown>>;
     createBooking(handle: string, slug: string, input: SchedulerBookingInput): Promise<Record<string, unknown>>;
     listBookings(username: string, filter?: string): Promise<Array<Record<string, unknown>>>;
     getCapabilityBooking(token: string, scope: 'cancel' | 'reschedule'): Promise<Record<string, unknown> | null>;
@@ -168,7 +178,7 @@ export declare class SchedulerStore {
     private ensureSystemDefaultEvent;
     private getSystemDefaultEvent;
     private busyIntervals;
-    private fullCapacitySlotStarts;
+    private remainingCapacityByStart;
     private assertCalendarOwnership;
     private bookingByIdempotency;
     private releaseHold;

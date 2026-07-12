@@ -884,3 +884,12 @@ Future entry template:
 - Verified: Normal backend tests passed 84/86 with two database gates skipped; disposable MariaDB applied migrations `001`-`011` twice and passed 86/86. Frontend lint/build, full integration, desktop/mobile policy/reason/closed-state browser checks, reversible no-mail live validation, prior Scheduler/mail regressions, artifact equality, service/Nginx health, and staging smoke pass.
 - Deployed: Root-only rollback snapshot `/var/backups/openmailstack/20260712T044542Z_scheduler_action_policies`; migration `011` and tested backend/frontend artifacts are live. Temporary live data was removed.
 - Follow-up: Add per-event active booking limits keyed by normalized guest email, with transactional enforcement and a safe reschedule-existing-booking offer.
+
+## 2026-07-12 Scheduler Booking Integrity And Group Capacity
+
+- Changed: Added migrations `012`-`016`, serialized per-event/email active-booking limits, bounded allow/deny rules, optional email verification, named additional attendees, and transactional seat counts.
+- Secured: Rule lists are private; eligibility covers booker and attendees before capacity; verification codes are hashed, attempt/expiry bounded, transactionally consumed, and redacted after delivery/dead-letter; attendee mails do not receive the primary guest's capability links.
+- Fixed: Same-event Calendar projections no longer hide partially filled group slots; released failed-workflow holds can reacquire with the original idempotency key; and concurrent reschedules cannot retain two seat destinations.
+- Verified: Disposable MariaDB applied migrations `001`-`016` twice and passed 89/89 tests with no skips. Frontend lint/build, full integration, desktop/mobile owner/public browser flows, reversible no-mail live validation, artifact equality, mail and Scheduler regressions, `postqueue`/`ss`, service/Nginx health, and staging smoke pass.
+- Deployed: Root-only rollback snapshot `/var/backups/openmailstack/20260712T052145Z_scheduler_booking_integrity`; migrations `012`-`016` and tested backend/frontend artifacts are live. Temporary data was removed and no mail was sent.
+- Follow-up: Add a capacity-aware waitlist with atomic policy-preserving promotion.

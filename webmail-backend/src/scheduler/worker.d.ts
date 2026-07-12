@@ -15,6 +15,12 @@ interface NotificationPayload {
     };
     notificationFrom?: string;
     notificationName?: string;
+    verificationCode?: string;
+    seats?: number;
+    additionalAttendees?: Array<{
+        name: string;
+        email: string;
+    }>;
 }
 export interface SchedulerMail {
     to: string;

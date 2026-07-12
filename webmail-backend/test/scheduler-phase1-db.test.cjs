@@ -71,7 +71,25 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         windows: [{ weekday: 1, startMinute: 540, endMinute: 600 }],
     });
     assert.equal(event.availabilityScheduleId, defaultAvailability.id);
+    assert.equal(event.visibility, 'public');
     assert.equal((await store.getPublicProfile('phase1')).defaultEvent, null);
+
+    const unlistedEvent = await store.saveEventType(username, {
+        title: 'Private Consultation', slug: 'private-consultation', visibility: 'unlisted',
+        durationMinutes: 30, intervalMinutes: 30, minimumNoticeMinutes: 0,
+        destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        windows: [{ weekday: 1, startMinute: 540, endMinute: 600 }],
+    });
+    const publicProfile = await store.getPublicProfile('phase1');
+    assert.equal(publicProfile.events.some(item => item.id === unlistedEvent.id), false);
+    assert.equal((await store.getPublicEvent('phase1', unlistedEvent.slug)).event.id, unlistedEvent.id);
+    const unlistedAfterLegacyUpdate = await store.saveEventType(username, {
+        ...unlistedEvent,
+        title: 'Private Consultation Updated',
+        visibility: undefined,
+    }, unlistedEvent.id);
+    assert.equal(unlistedAfterLegacyUpdate.visibility, 'unlisted');
+
     const start = new Date('2026-07-13T16:00:00.000Z');
     const slots = await store.listSlots('phase1', event.slug, start, new Date('2026-07-13T18:00:00.000Z'));
     assert.equal(slots[0].start.toISOString(), start.toISOString());

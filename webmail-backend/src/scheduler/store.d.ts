@@ -32,6 +32,7 @@ export interface SchedulerEventType {
     conflictCalendarIds: number[];
     availabilityScheduleId: string | null;
     systemManaged: boolean;
+    visibility: 'public' | 'unlisted';
     active: boolean;
     windows: Array<{
         weekday: number;

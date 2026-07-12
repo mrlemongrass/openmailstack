@@ -82,6 +82,9 @@ function normalizeSchedulerEventInput(input) {
     const availabilityScheduleId = input.availabilityScheduleId == null ? null : String(input.availabilityScheduleId).trim();
     if (availabilityScheduleId !== null && !/^[0-9a-f-]{36}$/i.test(availabilityScheduleId))
         throw new Error('Invalid availability schedule');
+    const visibility = input.visibility || 'public';
+    if (!['public', 'unlisted'].includes(visibility))
+        throw new Error('Invalid event visibility');
     return {
         title,
         slug: cleanSlug(input.slug || title, 'meeting'),
@@ -97,6 +100,7 @@ function normalizeSchedulerEventInput(input) {
         destinationCalendarId,
         conflictCalendarIds,
         availabilityScheduleId,
+        visibility,
         active: input.active !== false,
         windows,
     };

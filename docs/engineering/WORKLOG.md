@@ -4417,3 +4417,59 @@ Replace the generic `scheduler@<domain>` notification identity with a human, own
 - Live migration `004` is recorded; the rendered sender is `Thang Vo <thang@housevo.us>` with Reply-To `thang@housevo.us`.
 - Profile UI can select a valid cross-domain alias; desktop/modal/mobile checks remain clean.
 - `openmailstack.service` is active and staging smoke passed.
+
+## 2026-07-12 — Live Scheduler lifecycle and Phase 2 unlisted links
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `d0e5f8fb`
+Ending git state: clean after the focused Phase 2 release commit
+
+### Selected tasks
+
+- Complete one real booking, reschedule, and cancellation lifecycle on the live server.
+- Recheck the macOS, Android/DAVx5, and Thunderbird validation boundary.
+- Begin Scheduler Phase 2 with the bounded unlisted-event portion of private links.
+
+### Acceptance criteria
+
+- [x] A temporary booking confirms on a live public slot and all notification jobs complete.
+- [x] Reschedule preserves the native Calendar UID and updates the same booking.
+- [x] Cancel removes the Calendar projection, writes a tombstone, releases capacity, and restores the public slot.
+- [x] Existing event types remain listed by default.
+- [x] Owners can choose Unlisted and see that status in event management.
+- [x] Unlisted events do not appear in the public profile directory but remain bookable by exact URL.
+- [x] Physical-client rows remain pending unless those named clients are actually operated.
+
+### Changes
+
+- Added additive migration `005_scheduler_event_visibility.sql` with `public` as the compatibility default.
+- Added visibility normalization, persistence, types, public-directory filtering, and direct active-event lookup.
+- Preserved stored visibility when older clients update an event without sending the new field, preventing accidental relisting.
+- Added Listed/Unlisted controls under Advanced settings and an Unlisted badge in owner event lists.
+- Marked `individual.private-links` in progress; secret-token, expiring, single-use, and one-off links remain pending.
+- Recorded the user decision to defer clean-VM validation until another development Linux server is available and continue guarded live testing.
+
+### Proof
+
+- Live lifecycle: create/reschedule/cancel audit sequence present; all three outbox jobs completed; three Google SMTP acceptances, three local LMTP deliveries, and zero delivery failures.
+- Live data: reschedule retained the Calendar UID; cancel left zero event rows, one tombstone, zero confirmed seats for the canceled slot, and restored public availability.
+- Backend `npm test`: 79 passed, 2 optional database-gated tests skipped in the normal run.
+- Disposable MariaDB: migrations `001` through `005` applied; the Phase 1 lifecycle plus unlisted directory/direct-link assertions passed with no skipped tests; the temporary database and grant were removed.
+- The disposable lifecycle also proved a legacy-style update that omits visibility keeps an unlisted event unlisted.
+- Frontend lint and production build passed; Scheduler remains lazy-loaded and the largest route chunk remains below 500 kB.
+- Scheduler guard, full integration suite, and live staging smoke passed.
+- Safety snapshot: `/var/backups/openmailstack/20260712_015316_scheduler_unlisted`.
+- Live migration `005` is recorded; deployed backend matches the tested artifact, frontend contains the Unlisted UI, Nginx is valid, service is active, existing public event APIs pass, and recent Scheduler logs contain no errors.
+- A temporary live unlisted event was hidden from the profile directory, reachable through its exact direct API path, and removed after validation.
+
+### Remaining validation and risks
+
+- Gmail Inbox/Spam placement plus received ICS and management-link inspection requires access to the receiving mailbox UI; SMTP acceptance alone does not prove Inbox placement.
+- macOS Mail/Calendar/Contacts, Android mail plus DAVx5, and Thunderbird remain Not run because this Linux host cannot operate those physical clients and no authenticated smoke credentials are stored.
+- Unlisted URLs are stable discoverability controls, not yet unpredictable bearer-secret, expiring, or single-use links.
+- Clean-VM disabled/enabled validation is deferred by explicit user decision until the second Linux development server is available.
+
+### Next recommended task
+
+Add cryptographically random private-link tokens with rotation and expiry, then layer transactional single-use consumption on the same table.

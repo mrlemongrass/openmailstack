@@ -137,19 +137,19 @@ The contacts and notes apps have been extracted into their own directories with 
 - ❌ **Settings UI (React)**: Create a React-based connection wizard in the settings panel to allow users to link iCloud, Google Contacts, and custom CardDAV servers.
 - ❌ **Continuous Syncing**: Complete engine implementation to successfully push, pull, and merge vCards continuously in the background, serving as a native, free alternative to premium services like sync.blue.
 
-## 10. OMS Scheduler ❌
+## 10. OMS Scheduler 🟡
 
 `docs/product/scheduler.md` is the detailed product, parity, architecture, and delivery roadmap.
 
 - ✅ **Phase 0 foundation complete and deployed with Phase 1**: DST-safe availability and host/booker timezone projection, versioned slot inventory/hold migration, transactional MariaDB repository, booking/provider/outbox/audit contracts, tenant authorization, threat model, and automated parity register are implemented. Unit/contract tests and a disposable MariaDB 11 two-connection capacity-one race pass; migration `001` is now recorded live.
-- 🟡 **Phase 1 deployed; booking workflow validation pending**: optional installation, Admin mailbox entitlements, global handles, preferred/alias hosts, navigation after Notes, event types, availability, native conflict checks, public booking, outbox email/ICS, booking management, and secure cancel/reschedule are live on `mail.housevo.us`. `thang@housevo.us` is enabled at `/scheduler/thang`; both public host aliases, live profile APIs, entitlement-aware navigation, schema migrations, service health, and staging smokes pass. Clean-VM installation plus a real SMTP/CalDAV/ActiveSync booking workflow remain release gates.
+- 🟡 **Phase 1 deployed; live server lifecycle passed**: optional installation, Admin mailbox entitlements, global handles, preferred/alias hosts, navigation after Notes, event types, availability, native conflict checks, public booking, owned-sender email/ICS, booking management, and secure cancel/reschedule are live. A real create/reschedule/cancel cycle passed SMTP, outbox, Calendar projection, tombstone, capacity-release, and public-slot restoration checks. Physical CalDAV/ActiveSync observation remains pending; clean-VM validation is deferred until a second development Linux server is available.
 - ✅ Add **Scheduler** immediately after **Notes** in the desktop and mobile web-app navigation.
 - ✅ Add an optional installer choice persisted as `ENABLE_OMS_SCHEDULER`, and install no Scheduler components when it is disabled.
 - ✅ Let only authorized admins enable/disable Scheduler per mailbox; installation alone must not publish or entitle users.
 - ✅ Publish enabled users at `/scheduler/<local-part>` without the mail domain, with admin-assigned alternate handles for reserved/invalid names or cross-domain collisions.
 - ✅ Serve the same Scheduler path on every configured OMS webmail hostname; use a configured preferred base URL for generated links and provision configured aliases into Nginx and TLS SANs.
 - ✅ Deliver native individual event types, availability, public booking, secure reschedule/cancel, OMS Calendar projection, and OMS email notifications.
-- ❌ Reach personal parity with advanced limits, overrides, private/single-use links, seats, recurring bookings, meeting polls, embeds, and migration/import.
+- 🟡 Reach personal parity with advanced limits, overrides, private/single-use links, seats, recurring bookings, meeting polls, embeds, and migration/import. Phase 2 has started with deployed unlisted event types that stay off the public directory while remaining bookable by exact link; secret-token, expiring, and single-use links remain.
 - ❌ Add durable workflows, reminders, provider-backed SMS/WhatsApp/voice, and observable background delivery.
 - ❌ Add teams, collective/group/round-robin/managed events, delegated scheduling, routing forms, attributes, fairness, and explainable assignment.
 - ❌ Add payments, external calendars/conferencing, CRM/automation adapters, analytics, public APIs, OAuth, webhooks, CLI, embeds, and MCP/agent support.

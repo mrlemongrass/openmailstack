@@ -1,6 +1,6 @@
 # OMS Scheduler Product And Engineering Roadmap
 
-Status: `Phase 1 Deployed - First Mailbox Enabled, Booking Workflow Validation Pending`
+Status: `Phase 2 In Progress - Unlisted Links Deployed, Physical Client Validation Pending`
 
 Research date: 2026-07-10
 
@@ -318,7 +318,7 @@ Exit criteria:
 
 ### Phase 1 - Native individual scheduler MVP (6-8 weeks)
 
-Implementation status (2026-07-11): `Deployed; first mailbox enabled; booking workflow validation pending`
+Implementation status (2026-07-12): `Deployed; live booking lifecycle passed; physical client propagation pending`
 
 Delivered:
 
@@ -339,11 +339,11 @@ Exit criteria:
 - [x] Disposable MariaDB lifecycle proves an enabled user can publish a 30-minute event and accept a booking without an external provider.
 - [x] Installer guards prove disabled configuration omits Scheduler migrations and enabled installation begins with no entitled mailboxes; clean-VM execution remains a release gate.
 - [x] Admin enable/disable, globally unique handles, generic public not-found behavior, and entitlement-aware authenticated access are implemented and guarded.
-- [ ] Physical CalDAV/ActiveSync clients must confirm the projected booking after deployment; the disposable lifecycle proves one `events` row and sync-token changes in the shared native store.
+- [ ] Physical CalDAV/ActiveSync clients must confirm the projected booking after deployment; the disposable and live lifecycles prove create/update/delete, tombstone, capacity, and sync-token changes in the shared native store.
 - [x] Disposable lifecycle proves reschedule updates the same calendar UID and cancel removes it, writes a tombstone, and releases capacity.
 - [x] Playwright verified public booking and management layouts at 1440x900 and 390x844 with reachable primary actions, mobile More navigation, and no horizontal overflow.
 
-Live upgrade deployment passed on `mail.housevo.us`: migrations `001` through `003` are recorded, the backend/frontend match the tested build, Nginx serves `/scheduler/` on both `mail.housevo.us` and `webmail.housevo.us`, the certificate covers both names, and the staging smoke suite passes. `thang@housevo.us` is enabled and published as `/scheduler/thang` with Discovery Call and Consultation Call event types. One live 30-minute booking confirmed capacity, projected the native calendar event, delivered guest/host notifications through the repaired strict-TLS SMTP worker, and disappeared from fresh/focused public availability. Release validation still requires a clean supported VM with Scheduler both disabled and enabled plus real reschedule/cancel propagation through CalDAV and ActiveSync clients.
+Live upgrade deployment passed on `mail.housevo.us`: migrations `001` through `005` are recorded, the backend/frontend match the tested build, Nginx serves `/scheduler/` on both configured hostnames, and the staging smoke suite passes. A live create/reschedule/cancel cycle completed all three owned-sender notification jobs, received three Google SMTP acceptances and three local LMTP deliveries, preserved the Calendar UID on reschedule, deleted the projection on cancel, wrote a tombstone, released capacity, and restored the public slot. Physical macOS/Android/Thunderbird and CalDAV/ActiveSync observation remains pending. Clean-VM validation is intentionally deferred until a second development Linux server is available.
 
 ### Phase 2 - Complete personal parity (5-7 weeks)
 
@@ -354,6 +354,11 @@ Deliver:
 - Seats, waitlist, recurring bookings, meeting polls, no-show, and book-on-behalf.
 - Embed variants, email slots, prefill, UTM tracking, customization, locale, and timezone lock.
 - Import/export and a guided Calendly/Cal.com migration path where supported.
+
+Implementation progress (2026-07-12):
+
+- [x] Unlisted event types are hidden from the public profile directory while remaining bookable at their exact owner-copyable URL. Existing event types remain listed by default, and owner management labels unlisted events explicitly.
+- [ ] Secret-token, single-use, expiring, and one-off customized links remain to complete the private-links capability.
 
 Exit criteria:
 

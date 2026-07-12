@@ -29,6 +29,7 @@ for (const table of ['scheduler_availability_schedules', 'scheduler_schedule_win
 }
 if (!availabilityMigration.includes('system_managed')) throw new Error('Availability migration must distinguish the hidden default booking type');
 requireText('webmail-backend/migrations/004_scheduler_notification_identity.sql', /notification_from/, 'Scheduler notification identity migration is missing');
+requireText('webmail-backend/migrations/005_scheduler_event_visibility.sql', /visibility ENUM\('public', 'unlisted'\)/, 'Scheduler event visibility migration is missing');
 requireText('webmail-backend/src/index.ts', /app\.use\('\/api'.*schedulerRouter/, 'Backend must mount Scheduler APIs');
 requireText('webmail-backend/src/scheduler/router.ts', /\/public\/scheduler\/v1/, 'Public Scheduler API boundary is missing');
 requireText('webmail-backend/src/scheduler/router.ts', /\/admin\/scheduler\/v1/, 'Admin Scheduler API boundary is missing');
@@ -54,6 +55,9 @@ requireText('webmail-frontend/src/scheduler/routes.tsx', /aria-label="Duration m
 requireText('webmail-frontend/src/scheduler/routes.tsx', /between 5 minutes and 24 hours/, 'Scheduler custom duration validation is missing');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Use default availability/, 'Event types must inherit the default schedule');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Start-time increments/, 'Event type limits UI is missing');
+requireText('webmail-frontend/src/scheduler/routes.tsx', /Anyone with its exact link can still book/, 'Unlisted event guidance is missing');
+requireText('webmail-frontend/src/scheduler/routes.tsx', /scheduler-event-badge[^\n]+Unlisted/, 'Unlisted event status is missing from owner management');
+requireText('webmail-backend/src/scheduler/store.ts', /event\.active && event\.visibility === 'public'/, 'Unlisted events must not leak through the public profile directory');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Scheduler email sender/, 'Scheduler profile must expose the owned notification sender');
 requireText('webmail-backend/src/scheduler/store.ts', /Scheduler sender must be your mailbox or an active alias/, 'Scheduler notification sender must reject spoofed addresses');
 requireText('webmail-frontend/src/scheduler/scheduler.css', /scheduler-modal[^}]+background: var\(--surface-color\)/s, 'Scheduler modal must use an opaque surface token');

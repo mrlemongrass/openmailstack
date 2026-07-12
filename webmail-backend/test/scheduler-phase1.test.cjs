@@ -29,10 +29,13 @@ test('normalizes a useful 30-minute event with weekday availability', () => {
     assert.equal(event.durationMinutes, 30);
     assert.equal(event.intervalMinutes, 30);
     assert.equal(event.capacity, 1);
+    assert.equal(event.visibility, 'public');
     assert.deepEqual(event.windows.map((window) => window.weekday), [1, 2, 3, 4, 5]);
     assert.equal(normalizeSchedulerEventInput({ title: 'Hair Coloring', durationMinutes: 180 }).durationMinutes, 180);
     const scheduleId = '12345678-1234-1234-1234-123456789abc';
     assert.equal(normalizeSchedulerEventInput({ title: 'Consultation', durationMinutes: 60, availabilityScheduleId: scheduleId }).availabilityScheduleId, scheduleId);
+    assert.equal(normalizeSchedulerEventInput({ title: 'Private consult', visibility: 'unlisted' }).visibility, 'unlisted');
+    assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad visibility', visibility: 'secret' }), /event visibility/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad schedule', availabilityScheduleId: 'not-an-id' }), /availability schedule/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Bad', durationMinutes: 0 }), /durationMinutes/);
     assert.throws(() => normalizeSchedulerEventInput({ title: 'Too Long', durationMinutes: 1441 }), /durationMinutes/);

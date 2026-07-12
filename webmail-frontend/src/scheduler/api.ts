@@ -23,6 +23,7 @@ export interface SchedulerEventType {
   windows: SchedulerWindow[];
   availabilityScheduleId: string | null;
   systemManaged: boolean;
+  visibility: 'public' | 'unlisted';
 }
 
 export interface SchedulerAvailabilityOverride {

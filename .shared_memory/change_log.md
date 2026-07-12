@@ -819,3 +819,13 @@ Future entry template:
 - Supported: Active aliases on additional hosted domains automatically appear, giving multi-domain users a Scheduler-specific sender without hardcoding a domain.
 - Verified: Backend 20/20, frontend lint/build, static guard, disposable MariaDB cross-domain identity lifecycle, live migration, rendered From/Reply-To preview, modal/mobile regression, service health, and staging smoke pass.
 - Backed up: `/var/backups/openmailstack/20260712_011917_scheduler_identity` contains the pre-migration Scheduler schema/data.
+
+## 2026-07-12 Live Lifecycle And Phase 2 Unlisted Links
+
+- Verified live: A temporary booking completed create, reschedule, and cancel through public capability routes. Confirmation, reschedule, and cancellation outbox jobs completed; Postfix recorded three Google acceptances and three local LMTP deliveries with no failures.
+- Verified live: Reschedule preserved the Calendar UID; cancel removed the event, wrote a calendar tombstone, released confirmed capacity, restored the public slot, and left the test booking canceled.
+- Changed: Added migration `005_scheduler_event_visibility.sql`, public/unlisted event visibility in backend contracts/storage, directory filtering with direct exact-link access, and owner UI controls plus an Unlisted badge.
+- Compatibility: Owner updates that omit the new visibility field preserve the stored value, so an older client cannot accidentally relist an unlisted event.
+- Verified: Backend tests, frontend lint/build, static/full integration guards, and a disposable MariaDB lifecycle passed. A temporary live unlisted event stayed out of the public directory, remained reachable by exact URL, and was removed after the check.
+- Deployed: Safety snapshot `/var/backups/openmailstack/20260712_015316_scheduler_unlisted`; migration `005`, tested backend, and tested frontend are live. Service health, Nginx, existing public events, artifact equality, staging smoke, and recent logs pass.
+- Decision: Defer clean-VM testing until a second development Linux server is available. Continue guarded live testing; macOS, Android/DAVx5, and Thunderbird rows remain pending until the named clients are operated.

@@ -52,6 +52,7 @@ const eventFromRow = (row, windows = []) => ({
     conflictCalendarIds: jsonArray(row.conflict_calendar_ids),
     availabilityScheduleId: row.availability_schedule_id || null,
     systemManaged: booleanValue(row.system_managed),
+    visibility: row.visibility === 'unlisted' ? 'unlisted' : 'public',
     active: booleanValue(row.active),
     windows,
 });
@@ -358,27 +359,30 @@ class SchedulerStore {
         try {
             await connection.beginTransaction();
             if (eventId) {
-                const [owned] = await connection.query('SELECT id FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [id, username]);
+                const [owned] = await connection.query('SELECT id, visibility FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 FOR UPDATE', [id, username]);
                 if (!owned.length)
                     throw new Error('Event type not found');
+                const visibility = input.visibility === undefined
+                    ? (owned[0].visibility === 'unlisted' ? 'unlisted' : 'public')
+                    : normalized.visibility;
                 await connection.query(`UPDATE scheduler_event_types SET slug=?, title=?, description=?, duration_minutes=?, interval_minutes=?,
                         buffer_before_minutes=?, buffer_after_minutes=?, minimum_notice_minutes=?, capacity=?, location_type=?,
-                        location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, availability_schedule_id=?, active=? WHERE id=? AND system_managed = 0`, [normalized.slug, normalized.title, normalized.description, normalized.durationMinutes, normalized.intervalMinutes,
+                        location_label=?, destination_calendar_id=?, conflict_calendar_ids=?, availability_schedule_id=?, visibility=?, active=? WHERE id=? AND system_managed = 0`, [normalized.slug, normalized.title, normalized.description, normalized.durationMinutes, normalized.intervalMinutes,
                     normalized.bufferBeforeMinutes, normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                     normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
-                    JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, normalized.active ? 1 : 0, id]);
+                    JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, visibility, normalized.active ? 1 : 0, id]);
                 await connection.query('DELETE FROM scheduler_availability_windows WHERE event_type_id = ?', [id]);
             }
             else {
                 await connection.query(`INSERT INTO scheduler_event_types
                         (id, tenant_key, owner_username, slug, title, description, duration_minutes, interval_minutes,
                          buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, capacity, location_type,
-                         location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, active)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`, [id, entitlement.tenantKey, username, normalized.slug, normalized.title, normalized.description,
+                         location_label, destination_calendar_id, conflict_calendar_ids, availability_schedule_id, system_managed, visibility, active)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`, [id, entitlement.tenantKey, username, normalized.slug, normalized.title, normalized.description,
                     normalized.durationMinutes, normalized.intervalMinutes, normalized.bufferBeforeMinutes,
                     normalized.bufferAfterMinutes, normalized.minimumNoticeMinutes, normalized.capacity,
                     normalized.locationType, normalized.locationLabel, normalized.destinationCalendarId,
-                    JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, normalized.active ? 1 : 0]);
+                    JSON.stringify(normalized.conflictCalendarIds), availabilityScheduleId, normalized.visibility, normalized.active ? 1 : 0]);
             }
             for (const window of normalized.windows) {
                 await connection.query('INSERT INTO scheduler_availability_windows (event_type_id, weekday, start_minute, end_minute) VALUES (?, ?, ?, ?)', [id, window.weekday, window.startMinute, window.endMinute]);
@@ -425,7 +429,7 @@ class SchedulerStore {
             return null;
         const entitlement = entitlementFromRow(rows[0]);
         const allEvents = await this.listEventTypes(entitlement.username, true);
-        const events = allEvents.filter((event) => event.active);
+        const events = allEvents.filter((event) => event.active && event.visibility === 'public');
         const defaultEvent = allEvents.length === 0 ? await this.getSystemDefaultEvent(entitlement.username, true) : null;
         return { entitlement, events, defaultEvent };
     }
@@ -433,7 +437,8 @@ class SchedulerStore {
         const profile = await this.getPublicProfile(handle);
         if (!profile)
             return null;
-        const event = profile.events.find((candidate) => candidate.slug === slug.toLowerCase())
+        const directEvents = await this.listEventTypes(profile.entitlement.username, true);
+        const event = directEvents.find((candidate) => candidate.active && candidate.slug === slug.toLowerCase())
             || (profile.defaultEvent?.slug === slug ? profile.defaultEvent : null);
         return event ? { entitlement: profile.entitlement, event } : null;
     }

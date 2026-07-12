@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "owner": "OpenMailStack Scheduler",
-  "lastReviewed": "2026-07-11",
+  "lastReviewed": "2026-07-12",
   "capabilities": [
     {
       "id": "individual.availability",
@@ -64,9 +64,9 @@
       "name": "Secret, private, expiring, and single-use links",
       "source": "https://cal.com/help/event-types/private-links",
       "observedAt": "2026-07-10",
-      "status": "planned",
+      "status": "in_progress",
       "phase": "phase-2",
-      "test": null,
+      "test": "webmail-backend/test/scheduler-phase1-db.test.cjs",
       "release": null
     },
     {

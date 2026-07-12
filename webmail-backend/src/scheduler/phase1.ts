@@ -20,6 +20,7 @@ export interface SchedulerEventInput {
     destinationCalendarId?: number | null;
     conflictCalendarIds?: number[];
     availabilityScheduleId?: string | null;
+    visibility?: 'public' | 'unlisted';
     active?: boolean;
     windows?: Array<{ weekday: number; startMinute: number; endMinute: number }>;
 }
@@ -101,6 +102,8 @@ export function normalizeSchedulerEventInput(input: SchedulerEventInput): Requir
     if (!['in_person', 'phone', 'custom', 'conference'].includes(locationType)) throw new Error('Invalid location type');
     const availabilityScheduleId = input.availabilityScheduleId == null ? null : String(input.availabilityScheduleId).trim();
     if (availabilityScheduleId !== null && !/^[0-9a-f-]{36}$/i.test(availabilityScheduleId)) throw new Error('Invalid availability schedule');
+    const visibility = input.visibility || 'public';
+    if (!['public', 'unlisted'].includes(visibility)) throw new Error('Invalid event visibility');
     return {
         title,
         slug: cleanSlug(input.slug || title, 'meeting'),
@@ -116,6 +119,7 @@ export function normalizeSchedulerEventInput(input: SchedulerEventInput): Requir
         destinationCalendarId,
         conflictCalendarIds,
         availabilityScheduleId,
+        visibility,
         active: input.active !== false,
         windows,
     };

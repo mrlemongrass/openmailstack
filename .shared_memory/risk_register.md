@@ -2,7 +2,7 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 ## Resolved Risks
 
@@ -44,7 +44,8 @@ Last updated: 2026-07-11
 
 ## Remaining High-Priority Risks
 
-- OMS Scheduler Phase 1 has one enabled mailbox with published availability, Discovery Call and Consultation Call event types, one confirmed live booking, and a deployed owned-sender selector. New notifications default to `Display Name <mailbox>` or a valid active alias routed to that mailbox; catch-all routes and spoofed addresses are excluded. Gmail accepted the repaired earlier confirmation but classified the generic `scheduler@housevo.us` message as spam. SPF, MX, DKIM, and DMARC records are present/aligned; sender reputation, message composition, and Gmail learning still require repeated real-inbox validation. Before release, verify the new human sender in Gmail, received ICS/management links, disabled/enabled fresh installs, and live reschedule/cancel propagation through Calendar, CalDAV, and ActiveSync.
+- OMS Scheduler Phase 1 now has a live create/reschedule/cancel cycle with completed owned-sender outbox delivery, Google SMTP acceptance, local LMTP delivery, Calendar UID preservation, tombstone creation, capacity release, and public-slot restoration. Inbox-versus-spam placement, received ICS/management-link inspection, and physical CalDAV/ActiveSync observation still require the owner/devices. Clean-VM disabled/enabled validation is intentionally deferred until a second development Linux server is available.
+- Scheduler Phase 2 unlisted event types are live and tested: existing events default to public, unlisted events stay out of the profile directory, and exact direct links remain bookable. This is not yet a complete private-link implementation; unpredictable secret tokens, expiry, single-use consumption, and one-off customized availability remain security/concurrency work.
 - Scheduler advanced workflow automation, provider secret vault, OAuth, payments, webhooks, routing, external calendar reconciliation, guest verification, and complete abuse controls remain Phase 2+ security and reliability boundaries. Keep the capability register honest where those capabilities remain `in_progress` or planned.
 - Full Calendly/Cal.com functional parity is a moving, multi-release target. Track capabilities and acceptance tests rather than claiming blanket parity, recheck official sources each parity release, and distinguish OMS-owned features from third-party services that still charge usage fees.
 - Public Scheduler handle collisions and reserved routes are enforced by normalized validation plus a database-wide unique key. The Admin UI supports alternate handles. Recheck normalization before adding Unicode/IDN handles or organization-level aliases.

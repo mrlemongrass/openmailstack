@@ -65,6 +65,7 @@ The first-party UI must use these same APIs. No UI-only permission rule is autho
 - Capability tokens are high-entropy, stored only as hashes, booking-bound, scope-bound, expiring, revocable, and rotated on attendee email or ownership changes.
 - Private event tokens are 256-bit random values stored only as hashes. Owner rotation serializes on the event row, expiry is bounded, switching away from Private revokes active tokens, and missing/wrong/expired/revoked tokens share generic public failure behavior.
 - Private event links carry the bearer value in a URL fragment so it is absent from HTTP access logs and referrer headers. The public app moves it into tab-only storage, removes it from the address bar, sends it only in `X-Scheduler-Access`, and marks token-authorized API responses `no-store`.
+- Single-use private links consume only when a booking commits. The booking transaction locks the link row, decrements `uses_remaining`, records `consumed_at`, and writes a sanitized audit event; rollback preserves the use. The same booking attempt retains one idempotency key so a lost response can replay after token consumption.
 - Disabling entitlement unpublishes public resources and denies owner management without deleting historical bookings.
 
 ### Required tests
@@ -74,6 +75,7 @@ The first-party UI must use these same APIs. No UI-only permission rule is autho
 - Scoped admin cannot enumerate or mutate outside assigned tenants.
 - Capability token mismatch returns generic not-found.
 - Disabled/unpublished/unknown public profiles are indistinguishable.
+- Two simultaneous bookings against the last private-link use produce exactly one confirmed booking, one counter decrement, and one consumption audit; an idempotent replay returns the winner.
 
 ## 5. Availability And Calendar Privacy
 

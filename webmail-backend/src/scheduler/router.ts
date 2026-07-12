@@ -156,7 +156,7 @@ schedulerRouter.get('/scheduler/v1/event-types/:id/private-link', authenticatedI
 schedulerRouter.post('/scheduler/v1/event-types/:id/private-link', authenticatedInstalled, requireSession, async (req: any, res) => {
     try {
         const [rotated, entitlement, event] = await Promise.all([
-            store.rotatePrivateLink(req.user.username, req.params.id, req.body?.expiresAt),
+            store.rotatePrivateLink(req.user.username, req.params.id, req.body?.expiresAt, req.body?.singleUse === true),
             store.requireOwner(req.user.username),
             store.getOwnedEventType(req.user.username, req.params.id),
         ]);
@@ -274,7 +274,7 @@ schedulerRouter.post('/public/scheduler/v1/profiles/:handle/events/:slug/booking
         if (/no longer available|enough capacity|slot definition/i.test(message)) {
             return res.status(409).json({ success: false, error: 'The selected time is no longer available' });
         }
-        if (/name is required|valid email|time zone|idempotency key|required|valid new start/i.test(message)) {
+        if (/name is required|valid email|time zone|idempotency key|required|valid new start|already used for another booking/i.test(message)) {
             return res.status(400).json({ success: false, error: message });
         }
         res.status(500).json({ success: false, error: 'Unable to create booking' });

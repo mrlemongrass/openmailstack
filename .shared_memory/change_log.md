@@ -839,3 +839,13 @@ Future entry template:
 - Verified: Backend 80/82 with two optional DB tests skipped in the normal run; disposable MariaDB applied migrations `001`-`006` twice and passed private access, hash storage, wrong-token, rotation, expiry, revocation, downgrade, and reschedule tests with no skips.
 - Verified live: A temporary private event stayed out of discovery; missing/wrong tokens returned generic 404s; a valid fragment link rendered in mobile Chrome, left the address bar, retained tab access without overflow, and rotation/expiry/revocation/downgrade checks passed. The test event was removed.
 - Deployed: Safety snapshot `/var/backups/openmailstack/20260712_021623_scheduler_private_tokens`; migration `006`, tested backend, and tested frontend are live.
+
+## 2026-07-12 Mail Viewer Refresh And Scheduler Single-Use Links
+
+- Fixed: Mark-as-read summary refreshes no longer discard a prefetched message body and strand the viewer on `Loading message...`. Full details survive refreshes through a folder-scoped UID cache, empty bodies have explicit loaded state, and duplicate read actions are suppressed.
+- Verified live: The deployed browser race loaded an unread full body, performed one read action and two summary loads, retained the body, and showed no loading placeholder or page error.
+- Changed: Added migration `007_scheduler_private_link_uses.sql` and owner controls for reusable versus single-use private links. Existing links remain reusable.
+- Secured: Successful booking commits lock and decrement `uses_remaining` atomically, set `consumed_at`, and write one sanitized audit. Page views, unavailable slots, and rolled-back bookings do not consume a use.
+- Reliability: Public booking retries retain a stable idempotency key; a matching successful booking is returned before consumed-token authorization, while reuse for different booking details is rejected.
+- Verified: Normal backend tests passed 80/82 with the two database-gated tests skipped; disposable MariaDB applied migrations `001`-`007` twice and passed all 82 tests with no skips. Two simultaneous final-use bookings yielded one success, one database booking, one decrement/audit, and a successful replay.
+- Deployed: Safety snapshots `/var/backups/openmailstack/20260712_023355_message_viewer_fix` and `/var/backups/openmailstack/20260712_024448_scheduler_single_use`; migration `007`, tested backend, and tested frontend are live. Desktop/mobile owner UI, live failed-booking preservation, artifact equality, Nginx, service health, and staging smoke pass; temporary live data was removed.

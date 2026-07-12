@@ -134,6 +134,14 @@ test_authenticated_smoke_guards() {
     pass "Authenticated smoke scripts are credential-gated and present"
 }
 
+test_mail_message_view_regression() {
+    (
+        cd "${PROJECT_ROOT}/webmail-frontend"
+        npm test
+    )
+    pass "Mail message detail refresh regression"
+}
+
 test_scheduler_documentation_guards() {
     node "${PROJECT_ROOT}/tests/integration/scheduler_docs_guard.cjs"
 }
@@ -177,6 +185,7 @@ test_rspamd_milter_timeout_guards
 test_mysql_e_reduction_guards
 test_modern_webmail_deployment_guards
 test_authenticated_smoke_guards
+test_mail_message_view_regression
 test_scheduler_documentation_guards
 test_scheduler_phase1_guards
 test_dry_run_local

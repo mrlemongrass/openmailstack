@@ -83,6 +83,9 @@ export interface SchedulerBookingInput {
 export interface SchedulerPrivateLinkState {
     active: boolean;
     expired: boolean;
+    consumed: boolean;
+    singleUse: boolean;
+    remainingUses: number | null;
     tokenHint: string | null;
     expiresAt: Date | null;
 }
@@ -122,11 +125,12 @@ export declare class SchedulerStore {
     deleteEventType(username: string, eventId: string): Promise<void>;
     getOwnedEventType(username: string, id: string): Promise<SchedulerEventType | null>;
     getPrivateLinkState(username: string, eventId: string): Promise<SchedulerPrivateLinkState>;
-    rotatePrivateLink(username: string, eventId: string, expiry: unknown): Promise<{
+    rotatePrivateLink(username: string, eventId: string, expiry: unknown, singleUse?: boolean): Promise<{
         token: string;
         state: SchedulerPrivateLinkState;
     }>;
     revokePrivateLink(username: string, eventId: string): Promise<void>;
+    private activePrivateLink;
     private privateLinkAllows;
     getPublicProfile(handle: string): Promise<{
         entitlement: SchedulerEntitlement;

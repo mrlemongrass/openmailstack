@@ -56,6 +56,7 @@ export interface Message {
   preview?: string;
   html?: string;
   text?: string;
+  bodyLoaded?: boolean;
   messageId?: string;
   inReplyTo?: string;
   references?: string[];

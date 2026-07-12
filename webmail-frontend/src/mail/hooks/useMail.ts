@@ -8,6 +8,7 @@ import type {
 } from '../../shared/types';
 import * as api from '../../shared/api';
 import type { MailUserSettings } from '../../settings/settingsApi';
+import { markMessageBodyLoaded, mergeMessageDetails, messageCacheKey } from '../message-cache';
 
 interface UseMailOptions {
   mailSettings: MailUserSettings;
@@ -46,6 +47,8 @@ export function useMail(_opts: UseMailOptions) {
   const [viewingThread, setViewingThread] = useState<Message[] | null>(null);
   const [mailLowestUid, setMailLowestUid] = useState<number | null>(null);
   const [mailMoreAvailable, setMailMoreAvailable] = useState(false);
+  const messageDetailCacheRef = useRef<Map<string, Message>>(new Map());
+  const prefetchedRef = useRef<Set<string>>(new Set());
 
   // Loading state
   const [mailLoading, setMailLoading] = useState(false);
@@ -125,7 +128,10 @@ export function useMail(_opts: UseMailOptions) {
       const data = await api.fetchMessages(folder);
       if (data.messages) {
         if (activeFolderRef.current !== folder) return;
-        setMessages(data.messages);
+        setMessages(data.messages.map((message) => mergeMessageDetails(
+          message,
+          messageDetailCacheRef.current.get(messageCacheKey(folder, message.uid)),
+        )));
         setMailLowestUid(data.lowestUid || null);
         setMailMoreAvailable(data.moreAvailable !== false);
       }
@@ -206,41 +212,46 @@ export function useMail(_opts: UseMailOptions) {
     finally { setReplySending(false); }
   }, [replyText, fetchFolders, fetchMessages]);
 
-  // Track which message bodies have been fetched (or are being fetched)
-  const prefetchedRef = useRef<Set<number>>(new Set());
-
   // Fetch a single message body (full content)
   const fetchMessageBody = useCallback(async (uid: number, folderPath: string) => {
-    if (prefetchedRef.current.has(uid)) return; // already fetched or in-flight
-    prefetchedRef.current.add(uid);
+    const cacheKey = messageCacheKey(folderPath, uid);
+    if (prefetchedRef.current.has(cacheKey)) return; // already fetched or in-flight
+    prefetchedRef.current.add(cacheKey);
     try {
       const data = await api.fetchMessage(folderPath, uid);
       if (data.message) {
+        const detail = markMessageBodyLoaded(data.message);
+        messageDetailCacheRef.current.set(cacheKey, detail);
+        if (activeFolderRef.current !== folderPath) return;
         setMessages((prev) => prev.map((m) =>
-          m.uid === uid ? { ...m, html: data.message.html, text: data.message.text } : m
+          m.uid === uid ? mergeMessageDetails(m, detail) : m
         ));
         setViewingThread((prev) => {
           if (prev?.some((m) => m.uid === uid)) {
-            return prev.map((m) => m.uid === uid ? { ...m, html: data.message.html, text: data.message.text } : m);
+            return prev.map((m) => m.uid === uid ? mergeMessageDetails(m, detail) : m);
           }
-          return [{ ...data.message }];
+          return [detail];
         });
       }
-    } catch (e) { console.error('Failed to fetch message body', e); prefetchedRef.current.delete(uid); }
+    } catch (e) { console.error('Failed to fetch message body', e); prefetchedRef.current.delete(cacheKey); }
   }, []);
 
   // Pre-fetch message bodies in the background (non-blocking, silent)
   const prefetchBodies = useCallback((uids: number[], folderPath: string) => {
     for (const uid of uids) {
-      if (prefetchedRef.current.has(uid)) continue;
-      prefetchedRef.current.add(uid);
+      const cacheKey = messageCacheKey(folderPath, uid);
+      if (prefetchedRef.current.has(cacheKey)) continue;
+      prefetchedRef.current.add(cacheKey);
       api.fetchMessage(folderPath, uid).then((data) => {
         if (data.message) {
+          const detail = markMessageBodyLoaded(data.message);
+          messageDetailCacheRef.current.set(cacheKey, detail);
+          if (activeFolderRef.current !== folderPath) return;
           setMessages((prev) => prev.map((m) =>
-            m.uid === uid ? { ...m, html: data.message.html, text: data.message.text } : m
+            m.uid === uid ? mergeMessageDetails(m, detail) : m
           ));
         }
-      }).catch(() => { prefetchedRef.current.delete(uid); });
+      }).catch(() => { prefetchedRef.current.delete(cacheKey); });
     }
   }, []);
 

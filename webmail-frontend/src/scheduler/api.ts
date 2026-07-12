@@ -29,6 +29,9 @@ export interface SchedulerEventType {
 export interface SchedulerPrivateLinkState {
   active: boolean;
   expired: boolean;
+  consumed: boolean;
+  singleUse: boolean;
+  remainingUses: number | null;
   tokenHint: string | null;
   expiresAt: string | null;
 }
@@ -139,9 +142,9 @@ export async function getSchedulerPrivateLink(id: string): Promise<SchedulerPriv
   return result.privateLink;
 }
 
-export async function rotateSchedulerPrivateLink(id: string, expiresAt: string | null): Promise<{ privateLink: SchedulerPrivateLinkState; url: string }> {
+export async function rotateSchedulerPrivateLink(id: string, expiresAt: string | null, singleUse: boolean): Promise<{ privateLink: SchedulerPrivateLinkState; url: string }> {
   return request(`/api/scheduler/v1/event-types/${id}/private-link`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt, singleUse }),
   });
 }
 
@@ -171,8 +174,7 @@ export async function getPublicSlots(handle: string, slug: string, start: Date, 
   return result.slots;
 }
 
-export async function createPublicBooking(handle: string, slug: string, payload: Record<string, unknown>, accessToken = ''): Promise<{ id: string; status: string; start: string; end: string }> {
-  const idempotencyKey = crypto.randomUUID();
+export async function createPublicBooking(handle: string, slug: string, payload: Record<string, unknown>, accessToken = '', idempotencyKey = crypto.randomUUID()): Promise<{ id: string; status: string; start: string; end: string }> {
   const result = await request<{ booking: { id: string; status: string; start: string; end: string } }>(
     `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/bookings`,
     { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...accessHeaders(accessToken) }, body: JSON.stringify({ ...payload, idempotencyKey }) },

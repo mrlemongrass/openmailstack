@@ -4527,3 +4527,60 @@ Implement the next bounded private-links slice: cryptographically random bearer 
 ### Next recommended task
 
 Add transactional single-use private links with an atomic remaining-use counter, idempotent booking replay, and concurrency proof that two simultaneous final-use bookings yield one success.
+
+## 2026-07-12 — Mail message refresh fix and Scheduler single-use links
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `821a4a8e`
+Ending git state: clean after the focused release commit
+
+### Selected tasks
+
+- Fix the reported mail reader regression where a loaded message disappears and returns to `Loading message...`.
+- Complete the next Scheduler Phase 2 slice with transactional single-use private links.
+
+### Acceptance criteria
+
+- [x] A fetched message body survives the mark-as-read summary refresh.
+- [x] Empty messages finish loading, rapid folder/UID reuse cannot cross-contaminate cached bodies, and one open issues one read action.
+- [x] Existing private links remain reusable unless an owner explicitly chooses single-use.
+- [x] Page views, slot reads, failed bookings, and transaction rollbacks do not consume a single-use link.
+- [x] The first successful booking decrements the remaining-use counter in the booking transaction and records one sanitized audit.
+- [x] Two simultaneous final-use booking attempts yield exactly one confirmed booking.
+- [x] A matching idempotent retry returns the successful booking after the token is consumed; mismatched key reuse is rejected.
+
+### Changes
+
+- Added a folder-plus-UID message detail cache and merge boundary so fresh list flags remain authoritative while full bodies, attachments, headers, and calendar data survive summary refreshes.
+- Added explicit `bodyLoaded` state and an in-flight mark-as-read guard.
+- Added a frontend regression suite and made it part of the repository integration runner.
+- Added additive, idempotent migration `007_scheduler_private_link_uses.sql` with optional maximum/remaining uses and consumption time.
+- Added owner single-use generation/status controls, atomic row-locked consumption, sanitized auditing, stable browser idempotency keys, and replay-before-consumed-token lookup.
+
+### Proof / checks run
+
+- Frontend mail regression tests: 3/3 passed; frontend lint and production build passed.
+- Deployed browser race: the full body remained visible after two message-list loads and exactly one mark-as-read action; no loading placeholder or page error remained.
+- Normal backend suite: 80 passed, two database-gated tests skipped.
+- Disposable MariaDB: migrations `001` through `007` applied twice; all 82 backend tests passed with no skips. Two simultaneous final-use bookings created one booking, decremented once, audited once, and the winning idempotency key replayed after consumption.
+- Disposable database and user cleanup audit returned zero.
+- Owner UI on the deployed frontend passed at 1440x900 and 390x844 with single-use/used state visible, no page errors, and no horizontal overflow.
+- Live migration `007` is recorded once with all three columns. A reversible live link check proved single-use state and that an unavailable booking preserves the remaining use; the temporary event was removed.
+- Deployed backend/frontend match the tested artifacts; `openmailstack.service`, Nginx validation, staging smoke, and focused Scheduler log review pass.
+
+### Deployment and rollback
+
+- Mail-viewer webroot snapshot: `/var/backups/openmailstack/20260712_023355_message_viewer_fix`.
+- Scheduler schema/data plus backend/webroot snapshot: `/var/backups/openmailstack/20260712_024448_scheduler_single_use`.
+- Applied only additive migration `007`, synchronized the tested backend, restarted only `openmailstack.service`, and deployed the tested frontend.
+
+### Risks and remaining work
+
+- Single-use means one successful booking; the bearer link may be opened repeatedly until that booking commits. This is intentional and stated in the owner UI.
+- One-off customized availability links are still pending in the private-links capability.
+- Clean-VM and remaining physical-client validation stay deferred/pending as previously documented.
+
+### Next recommended task
+
+Add one-off private links with owner-selected customized availability, reusing the existing hash-only transport and transactional single-use boundary.

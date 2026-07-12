@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, CalendarCheck, CalendarClock, Check, Clock3, Download, Globe2, MapPin } from 'lucide-react';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
@@ -61,6 +61,7 @@ function BookingEvent({ profile, event, rootDefault = false, accessToken = '' }:
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState<Slot | null>(null);
+  const bookingAttemptKeyRef = useRef(crypto.randomUUID());
   const loadSlots = useCallback(async () => {
     const start = new Date();
     const end = new Date(start.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -93,7 +94,7 @@ function BookingEvent({ profile, event, rootDefault = false, accessToken = '' }:
     submitEvent.preventDefault(); if (!selected) return;
     setSubmitting(true); setError('');
     try {
-      await createPublicBooking(profile.handle, event.slug, { eventTypeId: event.id, start: selected.start, bookerTimeZone: timeZone, ...form }, accessToken);
+      await createPublicBooking(profile.handle, event.slug, { eventTypeId: event.id, start: selected.start, bookerTimeZone: timeZone, ...form }, accessToken, bookingAttemptKeyRef.current);
       setSlots(current => current.filter(slot => slot.start !== selected.start));
       setConfirmed(selected);
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to book this time'); await loadSlots(); }
@@ -103,7 +104,7 @@ function BookingEvent({ profile, event, rootDefault = false, accessToken = '' }:
   return <div className="public-scheduler-page"><PublicHeader /><main className="public-booking-layout">
     <section className="public-event-summary">{!rootDefault && <Link to={`/scheduler/${profile.handle}`}><ArrowLeft size={16} /> {profile.displayName || profile.handle}</Link>}<h1>{event.title}</h1>{event.description && <p>{event.description}</p>}<ul><li><Clock3 size={16} /> {event.durationMinutes} minutes</li>{event.locationLabel && <li><MapPin size={16} /> {event.locationLabel}</li>}<li><Globe2 size={16} /> {timeZone}</li></ul></section>
     <section className="public-slot-picker"><div className="public-picker-heading"><h2>Select a time</h2><label><Globe2 size={15} /><select aria-label="Booking time zone" value={timeZone} onChange={e => setTimeZone(e.target.value)}>{!timeZones.includes(timeZone) && <option value={timeZone}>{timeZone}</option>}{timeZones.map(zone => <option value={zone} key={zone}>{zone.replaceAll('_', ' ')}</option>)}</select></label></div>
-      {error && <ErrorBanner error={error} />}{loading ? <p className="public-muted">Loading available times...</p> : grouped.length === 0 ? <p className="public-muted">No available times in the next 30 days.</p> : <div className="public-slot-days">{grouped.map(([day, daySlots]) => <div key={day}><h3>{day}</h3><div>{daySlots.map(slot => <button className={selected?.start === slot.start ? 'selected' : ''} onClick={() => setSelected(slot)} key={slot.start}>{timeLabel(slot.start, timeZone)}</button>)}</div></div>)}</div>}
+      {error && <ErrorBanner error={error} />}{loading ? <p className="public-muted">Loading available times...</p> : grouped.length === 0 ? <p className="public-muted">No available times in the next 30 days.</p> : <div className="public-slot-days">{grouped.map(([day, daySlots]) => <div key={day}><h3>{day}</h3><div>{daySlots.map(slot => <button className={selected?.start === slot.start ? 'selected' : ''} onClick={() => { if (selected?.start !== slot.start) bookingAttemptKeyRef.current = crypto.randomUUID(); setSelected(slot); }} key={slot.start}>{timeLabel(slot.start, timeZone)}</button>)}</div></div>)}</div>}
     </section>
     {selected && <form className="public-booking-form" onSubmit={submit}><h2>Your details</h2><p>{dateLabel(selected.start, timeZone)} at {timeLabel(selected.start, timeZone)}</p><label>Name<input required autoComplete="name" value={form.bookerName} onChange={e => setForm({ ...form, bookerName: e.target.value })} /></label><label>Email<input required type="email" autoComplete="email" value={form.bookerEmail} onChange={e => setForm({ ...form, bookerEmail: e.target.value })} /></label><label>Notes<textarea rows={3} value={form.bookerNotes} onChange={e => setForm({ ...form, bookerNotes: e.target.value })} /></label><button className="btn btn-primary" disabled={submitting}>{submitting ? 'Booking...' : 'Confirm booking'}</button></form>}
   </main></div>;

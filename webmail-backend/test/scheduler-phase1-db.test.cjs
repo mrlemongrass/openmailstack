@@ -163,5 +163,59 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const [tombstones] = await pool.query('SELECT uid FROM calendar_tombstones WHERE calendar_id=?', [calendarId]);
     assert.equal(tombstones.length, 1);
 
+    const singleUseLink = await store.rotatePrivateLink(username, event.id, null, true);
+    assert.equal(singleUseLink.state.singleUse, true);
+    assert.equal(singleUseLink.state.remainingUses, 1);
+    const singleUseInputs = [
+        {
+            eventTypeId: event.id,
+            start: new Date('2026-07-13T16:00:00.000Z'),
+            bookerTimeZone: 'America/Phoenix',
+            bookerName: 'Single Use One',
+            bookerEmail: 'single-one@example.net',
+            idempotencyKey: 'phase1-single-use-race-0001',
+            privateAccessToken: singleUseLink.token,
+        },
+        {
+            eventTypeId: event.id,
+            start: new Date('2026-07-13T16:30:00.000Z'),
+            bookerTimeZone: 'America/Phoenix',
+            bookerName: 'Single Use Two',
+            bookerEmail: 'single-two@example.net',
+            idempotencyKey: 'phase1-single-use-race-0002',
+            privateAccessToken: singleUseLink.token,
+        },
+    ];
+    const singleUseAttempts = await Promise.allSettled(singleUseInputs.map(input =>
+        store.createBooking('phase1', event.slug, input)
+    ));
+    const successfulSingleUseAttempts = singleUseAttempts
+        .map((result, index) => ({ result, index }))
+        .filter(item => item.result.status === 'fulfilled');
+    assert.equal(successfulSingleUseAttempts.length, 1, 'two simultaneous final-use bookings must yield exactly one success');
+    const winnerIndex = successfulSingleUseAttempts[0].index;
+    const winner = successfulSingleUseAttempts[0].result.value;
+    const replay = await store.createBooking('phase1', event.slug, singleUseInputs[winnerIndex]);
+    assert.equal(replay.id, winner.id);
+    assert.equal(replay.idempotentReplay, true, 'the successful request must replay after its private token is consumed');
+    const [consumedLinks] = await pool.query(
+        'SELECT uses_remaining, consumed_at FROM scheduler_private_links WHERE event_type_id=? AND revoked_at IS NULL',
+        [event.id]
+    );
+    assert.equal(consumedLinks[0].uses_remaining, 0);
+    assert.ok(consumedLinks[0].consumed_at);
+    assert.equal((await store.getPrivateLinkState(username, event.id)).consumed, true);
+    assert.equal(await store.getPublicEvent('phase1', event.slug, singleUseLink.token), null);
+    const [singleUseBookings] = await pool.query(
+        "SELECT COUNT(*) AS total FROM scheduler_bookings WHERE booker_email IN ('single-one@example.net', 'single-two@example.net')"
+    );
+    assert.equal(Number(singleUseBookings[0].total), 1);
+    const [consumptionAudits] = await pool.query(
+        "SELECT COUNT(*) AS total FROM scheduler_audit_events WHERE action='private_link.consume' AND target_id=?",
+        [winner.id]
+    );
+    assert.equal(Number(consumptionAudits[0].total), 1);
+    await store.cancelBookingByToken(winner.cancelToken);
+
     await pool.end();
 });

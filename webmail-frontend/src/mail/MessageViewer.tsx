@@ -25,6 +25,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
   const [showBackFab, setShowBackFab] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const markingReadRef = useRef<Set<string>>(new Set());
   const { messages, fetchMessageBody, messageAction } = mail;
 
   const messageUid = uid ? parseInt(uid, 10) : 0;
@@ -38,15 +39,19 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           void fetchMessageBody(messageUid, decodeURIComponent(folder));
         }
       // Mark message as read automatically when viewing
-        if (!message.isRead) {
-          void messageAction('read', [messageUid]);
+        const readKey = `${folder}\u0000${messageUid}`;
+        if (!message.isRead && !markingReadRef.current.has(readKey)) {
+          markingReadRef.current.add(readKey);
+          void messageAction('read', [messageUid]).finally(() => {
+            markingReadRef.current.delete(readKey);
+          });
         }
       }, 0);
       return () => window.clearTimeout(timer);
     }
   }, [message, uid, folder, messageUid, fetchMessageBody, messageAction]);
 
-  const bodyLoading = !!message && !message.html && !message.text;
+  const bodyLoading = !!message && !message.bodyLoaded && !message.html && !message.text;
 
   // Show back button when scrolled past message header
   useEffect(() => {

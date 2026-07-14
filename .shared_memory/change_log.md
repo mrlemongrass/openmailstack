@@ -932,3 +932,14 @@ Future entry template:
 - Deployed: Commit `e8caa78b` is live. Root-only rollback snapshot: `/var/backups/openmailstack/20260714T121241Z_ios_smtp_tls_e8caa78`.
 - Verified: A physical iOS retry reached ActiveSync at 05:16 Phoenix time, completed SMTP and Sent append one second later, and the remote gateway accepted the message at 05:16:08. Queue id `1D1D3828` was removed and the Postfix queue remained empty.
 - Risk: Rspamd 4.1.1's proxy segfaulted while scanning the retry. Postfix's configured fail-open milter behavior preserved delivery and Rspamd auto-respawned, but functional health/recovery and crash investigation remain the next mail-operations task.
+
+## 2026-07-14 Rspamd Functional Health And Crash Recovery
+
+- Fixed: `OMS_QUARANTINE_CHECK` now registers directly during configuration load; the previous `add_on_load` registration reproducibly crashed normal/proxy workers in the postfilter cache path.
+- Added: Functional health exercises both the normal scan worker on `11333` and a real in-memory Milter v6 transaction on Postfix's `11332` path, with no mail delivery or production message data.
+- Added: Cross-invocation worker generation, master PID, and systemd restart-count tracking detects crash/respawn events even between minute probes.
+- Recovery: Three consecutive functional/generation failures restart only `rspamd.service`; a 15-minute cooldown bounds recovery loops, and controlled service restarts establish a new baseline.
+- Stabilized: Spam-map sync uses checksum-aware rsync and preserves unchanged map timestamps, removing avoidable reload churn.
+- Observability: Admin System Health now presents `filtering.rspamd` in a separate Mail Filtering card rather than treating it as a client protocol.
+- Verified: 93 backend tests passed with two optional database skips; 13 frontend tests, lint/build, full integration, systemd/config checks, staging smoke, repeated live scan/Milter transactions, stable worker generations, controlled restart baseline, and zero new fatal signals passed.
+- Deployed: Root-only rollback snapshot `/var/backups/openmailstack/20260714T125639Z_rspamd_health_ffd8034`; no production data or secrets changed.

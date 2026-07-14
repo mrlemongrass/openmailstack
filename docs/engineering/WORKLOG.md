@@ -5159,3 +5159,54 @@ Rspamd was a separate operational contributor to slow greetings: its normal and 
 ### Next recommended task
 
 Harden Rspamd functional health/recovery and investigate the reproducible proxy crash before resuming Scheduler Phase 3 workflows.
+
+## 2026-07-14 — Rspamd functional health and crash recovery
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `ffd80346`
+Ending git state: focused implementation, tests, deployment record, and rollback snapshot commit-ready
+
+### Selected task
+
+Stop the reproducible Rspamd worker crashes, monitor the complete Postfix filtering path rather than process state alone, and recover Rspamd safely after repeated failures.
+
+### Root cause
+
+`OMS_QUARANTINE_CHECK` was registered inside `rspamd_config:add_on_load`. Rspamd 4.1.1 accepted the configuration but crashed normal and proxy workers in `symcache_runtime::process_pre_postfilters` when a message reached the postfilter. Disabling that symbol stopped the crashes; registering the same symbol directly while the configuration loads preserved the behavior and eliminated the crash in repeated normal-worker and Milter scans.
+
+### Changes made
+
+- Register the quarantine postfilter directly at configuration load with a bounded score fallback.
+- Add a functional health probe that scans through the normal worker on `11333`, runs a real Milter v6 message transaction through the Postfix path on `11332`, and rejects a result if normal/proxy workers are replaced during the probe.
+- Persist the last successful worker generation, master PID, and systemd restart count across timer invocations so a child crash or systemd crash restart between probes becomes a counted failure. An intentional full restart establishes a new baseline.
+- Add a one-minute systemd timer that restarts only `rspamd.service` after three consecutive failures and enforces a 15-minute restart cooldown.
+- Make spam-map synchronization content-aware so unchanged generated maps keep their timestamps and no longer trigger avoidable reload churn.
+- Expose the saved functional result under `filtering.rspamd` in Admin System Health, separate from both process state and client protocols.
+
+### Proof / checks run
+
+- The original live probe reproduced `unexpected EOF` and one new fatal worker signal per scan; disabling the late-registered postfilter stopped the crash, and direct registration retained the symbol without worker replacement.
+- The focused recovery test covers normal-scan failure, malformed scan output, Milter failure, replacement during a probe, replacement between probes, systemd crash restart, controlled restart baseline, three-failure threshold, cooldown, and successful reset.
+- Backend suite: 93 passed, 2 optional database tests skipped, 0 failed. Frontend lint passed; 13 frontend tests passed; production build passed with a largest route chunk of 489.28 kB.
+- Full integration, bash syntax/lint, `git diff --check`, `rspamadm configtest`, systemd unit verification, and full staging smoke passed.
+- After deployment, ten repeated combined scan/Milter probes kept worker identities stable and added zero fatal signals. The Postfix queue remained empty.
+- A controlled live `rspamd.service` restart changed the master PID, established a new healthy generation with zero counted failures, and produced no fatal signals.
+- Running the live map sync twice preserved all generated map timestamps on the second run.
+
+### Deployment and rollback
+
+- Root-only diagnosis snapshot: `/var/backups/openmailstack/20260714T122717Z_rspamd_diagnosis_ffd8034`.
+- Root-only deployment rollback snapshot: `/var/backups/openmailstack/20260714T125639Z_rspamd_health_ffd8034`.
+- Installed only the health/recovery/map scripts, Milter probe, timer/service units, generated backend runtime modules, and tested frontend bundle. Restarted `openmailstack.service` and performed one controlled `rspamd.service` restart.
+- No database rows, mailboxes, messages, credentials, DKIM keys, Postfix data, or persistent uploads were changed.
+
+### Risks / notes
+
+- The live Rspamd package remains 4.1.1 because the configured official repository has no newer candidate. The known configuration-triggered crash is fixed, but the functional monitor remains the guard against any unrelated future worker failure.
+- Postfix keeps its bounded fail-open Milter policy so filtering downtime cannot indefinitely block SMTP submission; Admin now reports that degraded filtering state explicitly.
+- A deliberate crash signal was not injected into production. Crash/restart classification and threshold behavior are deterministic integration tests; live validation covered actual protocol work, persisted baselines, timer wiring, and a controlled service restart.
+
+### Next recommended task
+
+Observe the functional Rspamd timer through normal mail traffic, then resume Scheduler Phase 3 durable workflow foundations if no new worker generation failures appear.

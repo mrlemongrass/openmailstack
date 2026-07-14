@@ -78,6 +78,7 @@ check_service_active dovecot
 check_service_active rspamd
 check_service_active openmailstack
 check_service_active redis-server
+check_service_active openmailstack-rspamd-health.timer
 
 if [[ "${CLAMAV_ENABLED:-1}" -eq 1 ]]; then
     check_service_active clamav-daemon
@@ -100,6 +101,14 @@ postfix check >/dev/null
 pass "Postfix config test"
 doveconf -n >/dev/null
 pass "Dovecot config test"
+rspamadm configtest >/dev/null
+pass "Rspamd config test"
+
+RSPAMD_HEALTH_JSON=$(/usr/local/sbin/openmailstack-rspamd-health --json)
+if [[ "${RSPAMD_HEALTH_JSON}" != *'"ok":true'* ]]; then
+    fail "Rspamd functional scan failed"
+fi
+pass "Rspamd functional scan"
 
 echo "Checking TLS endpoints..."
 check_tls_endpoint "127.0.0.1:443" "${MAIL_HOSTNAME}"

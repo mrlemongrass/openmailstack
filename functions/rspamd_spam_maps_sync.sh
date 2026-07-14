@@ -4,6 +4,10 @@ set -euo pipefail
 DB_NAME="${POSTFIXADMIN_DB_NAME:-postfixadmin}"
 MAP_DIR="${RSPAMD_OMS_MAP_DIR:-/etc/rspamd/local.d/maps/openmailstack}"
 MULTIMAP_CONF="${RSPAMD_OMS_MULTIMAP_CONF:-/etc/rspamd/local.d/multimap.conf}"
+MYSQL_BIN="${MYSQL_BIN:-mysql}"
+RSYNC_BIN="${RSYNC_BIN:-rsync}"
+RSPAMADM_BIN="${RSPAMADM_BIN:-rspamadm}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 RELOAD_RSPAMD=0
 
 if [[ "${1:-}" == "--reload" ]]; then
@@ -13,7 +17,7 @@ fi
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mysql --batch --raw --skip-column-names "${DB_NAME}" <<'SQL' > "${TMP_DIR}/rules.tsv"
+"${MYSQL_BIN}" --batch --raw --skip-column-names "${DB_NAME}" <<'SQL' > "${TMP_DIR}/rules.tsv"
 SELECT 'global', 'GLOBAL', rules_json FROM global_spam_rules WHERE id = 1
 UNION ALL
 SELECT 'domain', domain, rules_json FROM domain_spam_rules
@@ -272,7 +276,7 @@ PHP
 php "${TMP_DIR}/render_maps.php" "${TMP_DIR}/rules.tsv" "${TMP_DIR}/generated" "${MAP_DIR}"
 
 install -d -m 0755 "${MAP_DIR}"
-cp -a "${TMP_DIR}/generated/maps/." "${MAP_DIR}/"
+"${RSYNC_BIN}" --archive --checksum --delete --no-times --omit-dir-times "${TMP_DIR}/generated/maps/" "${MAP_DIR}/"
 
 CONFIG_CHANGED=0
 if [[ ! -f "${MULTIMAP_CONF}" ]] || ! cmp -s "${TMP_DIR}/generated/multimap.conf" "${MULTIMAP_CONF}"; then
@@ -284,13 +288,13 @@ if [[ ! -f "${MULTIMAP_CONF}" ]] || ! cmp -s "${TMP_DIR}/generated/multimap.conf
 fi
 
 if [[ "${RELOAD_RSPAMD}" -eq 1 && "${CONFIG_CHANGED}" -eq 1 ]]; then
-    if ! rspamadm configtest >/dev/null; then
+    if ! "${RSPAMADM_BIN}" configtest >/dev/null; then
         if [[ -f "${TMP_DIR}/multimap.conf.previous" ]]; then
             install -m 0644 "${TMP_DIR}/multimap.conf.previous" "${MULTIMAP_CONF}"
         fi
         exit 1
     fi
-    if systemctl is-active --quiet rspamd.service; then
-        systemctl reload-or-restart rspamd.service
+    if "${SYSTEMCTL_BIN}" is-active --quiet rspamd.service; then
+        "${SYSTEMCTL_BIN}" reload-or-restart rspamd.service
     fi
 fi

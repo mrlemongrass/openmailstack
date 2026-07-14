@@ -29,6 +29,7 @@ import { getUserSettings, isSettingsNamespace, saveUserSettings } from './user-s
 import { getAdminSettings, isAdminSettingsNamespace, saveAdminSettings } from './admin-settings';
 import { BrandingValidationError, getBrandingSettings, saveBrandingSettings } from './branding';
 import { getSearchWorkerStatus, purgeUserSearchIndex } from './search-worker';
+import { parseRspamdHealthStatus } from './rspamd-health';
 
 export const apiRouter = Router();
 
@@ -96,6 +97,8 @@ const caldavReadyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_ca
 const caldavLatencyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_caldav_latency_ms', help: 'CalDAV challenge probe latency in milliseconds' });
 const carddavReadyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_carddav_ready', help: 'CardDAV challenge readiness (1=ready)' });
 const carddavLatencyGauge = new promClient.Gauge({ name: 'openmailstack_protocol_carddav_latency_ms', help: 'CardDAV challenge probe latency in milliseconds' });
+const rspamdReadyGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_functional_ready', help: 'Rspamd scan and Milter readiness (1=ready)' });
+const rspamdLatencyGauge = new promClient.Gauge({ name: 'openmailstack_rspamd_functional_latency_ms', help: 'Rspamd scan and Milter probe latency in milliseconds' });
 
 // Fail2ban per-jail banned IP count
 const fail2banBannedGauge = new promClient.Gauge({ name: 'openmailstack_fail2ban_banned_total', help: 'Currently banned IPs per jail', labelNames: ['jail'] });
@@ -227,8 +230,16 @@ const checkImapHealth = () => checkTcpGreetingHealth('IMAP', imapConfig.host, im
 const checkSmtpHealth = () => checkTcpGreetingHealth('SMTP submission', smtpConfig.host, smtpConfig.port, /^220/im, 8000);
 const checkCalDavHealth = () => checkHttpChallengeHealth('CalDAV', '/caldav/', 'OpenMailStack CalDAV');
 const checkCardDavHealth = () => checkHttpChallengeHealth('CardDAV', '/carddav/', 'OpenMailStack CardDAV');
+const checkRspamdHealth = async (): Promise<ProtocolHealth> => {
+    try {
+        const raw = await fs.promises.readFile('/run/openmailstack-rspamd-health/status.json', 'utf8');
+        return parseRspamdHealthStatus(raw);
+    } catch {
+        return parseRspamdHealthStatus('');
+    }
+};
 
-const setProtocolGauge = (readyGauge: promClient.Gauge, latencyGauge: promClient.Gauge, health: ProtocolHealth) => {
+const setHealthGauge = (readyGauge: promClient.Gauge, latencyGauge: promClient.Gauge, health: ProtocolHealth) => {
     readyGauge.set(health.ok ? 1 : 0);
     if (health.latencyMs !== null) latencyGauge.set(health.latencyMs);
 };
@@ -351,24 +362,27 @@ setInterval(async () => {
         } catch (e) {}
 
         try {
-            const [activeSync, imap, smtp, caldav, carddav] = await Promise.all([
+            const [activeSync, imap, smtp, caldav, carddav, rspamd] = await Promise.all([
                 checkActiveSyncHealth(),
                 checkImapHealth(),
                 checkSmtpHealth(),
                 checkCalDavHealth(),
                 checkCardDavHealth(),
+                checkRspamdHealth(),
             ]);
-            setProtocolGauge(activeSyncReadyGauge, activeSyncLatencyGauge, activeSync);
-            setProtocolGauge(imapReadyGauge, imapLatencyGauge, imap);
-            setProtocolGauge(smtpReadyGauge, smtpLatencyGauge, smtp);
-            setProtocolGauge(caldavReadyGauge, caldavLatencyGauge, caldav);
-            setProtocolGauge(carddavReadyGauge, carddavLatencyGauge, carddav);
+            setHealthGauge(activeSyncReadyGauge, activeSyncLatencyGauge, activeSync);
+            setHealthGauge(imapReadyGauge, imapLatencyGauge, imap);
+            setHealthGauge(smtpReadyGauge, smtpLatencyGauge, smtp);
+            setHealthGauge(caldavReadyGauge, caldavLatencyGauge, caldav);
+            setHealthGauge(carddavReadyGauge, carddavLatencyGauge, carddav);
+            setHealthGauge(rspamdReadyGauge, rspamdLatencyGauge, rspamd);
         } catch (e) {
             activeSyncReadyGauge.set(0);
             imapReadyGauge.set(0);
             smtpReadyGauge.set(0);
             caldavReadyGauge.set(0);
             carddavReadyGauge.set(0);
+            rspamdReadyGauge.set(0);
         }
 
         // Fail2ban banned IP counts per jail
@@ -2428,12 +2442,13 @@ apiRouter.get('/admin/telemetry/system-health', requireAuth, requireAdmin, async
             });
         } catch {}
 
-        const [activeSync, imap, smtp, caldav, carddav] = await Promise.all([
+        const [activeSync, imap, smtp, caldav, carddav, rspamd] = await Promise.all([
             checkActiveSyncHealth(true),
             checkImapHealth(),
             checkSmtpHealth(),
             checkCalDavHealth(),
             checkCardDavHealth(),
+            checkRspamdHealth(),
         ]);
 
         res.json({
@@ -2458,6 +2473,7 @@ apiRouter.get('/admin/telemetry/system-health', requireAuth, requireAdmin, async
                 caldav,
                 carddav,
             },
+            filtering: { rspamd },
             mailQueue,
             connections,
         });

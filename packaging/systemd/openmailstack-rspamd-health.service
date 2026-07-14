@@ -1,0 +1,7 @@
+[Unit]
+Description=Verify and recover OpenMailStack Rspamd functional health
+After=network-online.target redis-server.service rspamd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/openmailstack-rspamd-recover

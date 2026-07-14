@@ -74,10 +74,28 @@ test_secret_handling_guards() {
 
 test_rspamd_milter_timeout_guards() {
     local rspamd_file="${PROJECT_ROOT}/functions/05_rspamd_clamav.sh"
+    local health_service="${PROJECT_ROOT}/packaging/systemd/openmailstack-rspamd-health.service"
+    local health_timer="${PROJECT_ROOT}/packaging/systemd/openmailstack-rspamd-health.timer"
+    local backend_api="${PROJECT_ROOT}/webmail-backend/src/api.ts"
+    local health_dashboard="${PROJECT_ROOT}/webmail-frontend/src/admin/SystemHealthDashboard.tsx"
+    local staging_smoke="${PROJECT_ROOT}/tests/integration/staging_smoke.sh"
 
     assert_contains "${rspamd_file}" 'postconf -e "milter_default_action = accept"'
+    assert_contains "${rspamd_file}" 'openmailstack_install_required_packages rspamd rsync'
     assert_contains "${rspamd_file}" 'postconf -e "milter_connect_timeout = 5s"'
     assert_contains "${rspamd_file}" 'postconf -e "milter_command_timeout = 5s"'
+    assert_contains "${rspamd_file}" "rspamd_config:register_symbol({"
+    assert_not_contains "${rspamd_file}" "rspamd_config:add_on_load(function"
+    assert_contains "${rspamd_file}" 'openmailstack-rspamd-health'
+    assert_contains "${rspamd_file}" 'openmailstack-rspamd-recover'
+    assert_contains "${rspamd_file}" 'rspamd_milter_probe.php'
+    assert_contains "${rspamd_file}" 'openmailstack-rspamd-health.timer'
+    assert_contains "${health_service}" 'ExecStart=/usr/local/sbin/openmailstack-rspamd-recover'
+    assert_not_contains "${health_service}" 'Wants=network-online.target redis-server.service rspamd.service'
+    assert_contains "${health_timer}" 'OnUnitActiveSec=1min'
+    assert_contains "${backend_api}" 'checkRspamdHealth()'
+    assert_contains "${health_dashboard}" '<Shield size={18} /> Mail Filtering'
+    assert_contains "${staging_smoke}" 'openmailstack-rspamd-health --json'
     pass "Rspamd milter failures do not block SMTP greetings for default timeouts"
 }
 
@@ -187,6 +205,8 @@ test_cert_host_validation_target
 test_postfixadmin_dns_guard_defaults
 test_secret_handling_guards
 test_rspamd_milter_timeout_guards
+"${PROJECT_ROOT}/tests/integration/rspamd_health_recovery_test.sh"
+"${PROJECT_ROOT}/tests/integration/rspamd_map_sync_test.sh"
 test_mysql_e_reduction_guards
 test_modern_webmail_deployment_guards
 test_authenticated_smoke_guards

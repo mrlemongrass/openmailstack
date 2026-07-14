@@ -29,6 +29,7 @@ interface SystemHealth {
     caldav?: ProtocolHealth;
     carddav?: ProtocolHealth;
   };
+  filtering?: { rspamd?: ProtocolHealth };
   mailQueue: number;
   connections: { imap: number; smtp: number; http: number };
 }
@@ -343,6 +344,56 @@ export function SystemHealthDashboard() {
                   >
                     <RefreshCw size={16} className={remediating === 'restart-openmailstack' ? 'spin' : ''} />
                     {remediating === 'restart-openmailstack' ? 'Scheduling...' : 'Restart Backend'}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
+        <div className="glass-panel" style={{ padding: '20px' }}>
+          <h3 style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Shield size={18} /> Mail Filtering
+          </h3>
+          {(() => {
+            const filtering = health?.filtering?.rspamd;
+            const ready = Boolean(filtering?.ok);
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                      <Shield size={16} style={{ color: ready ? 'var(--success)' : 'var(--danger)' }} />
+                      Rspamd functional path
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                      {!filtering
+                        ? 'Loading...'
+                        : filtering.ok
+                          ? `Scan and Milter probes ready · ${filtering.latencyMs ?? '-'}ms`
+                          : filtering.lastError || 'Functional probe failed'}
+                    </div>
+                    {filtering?.endpoint && (
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                        {filtering.endpoint}
+                      </div>
+                    )}
+                  </div>
+                  <span style={{
+                    fontSize: '0.75rem', fontWeight: 600, padding: '2px 10px', borderRadius: '12px',
+                    background: ready ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                    color: ready ? 'var(--success)' : 'var(--danger)',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {ready ? 'Ready' : 'Degraded'}
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  OpenMailStack checks both Rspamd workers and restarts only Rspamd after three consecutive failures.
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button className="btn btn-secondary" onClick={fetchHealth} disabled={refreshing}>
+                    <RefreshCw size={16} className={refreshing ? 'spin' : ''} /> Refresh
                   </button>
                 </div>
               </div>

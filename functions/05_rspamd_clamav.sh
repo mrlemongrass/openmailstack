@@ -50,7 +50,7 @@ elif [[ "${PKG_MANAGER}" == "dnf" ]]; then
     dnf makecache -q
 fi
 echo -e "Installing Rspamd and optional ClamAV packages..."
-openmailstack_install_required_packages rspamd
+openmailstack_install_required_packages rspamd rsync
 openmailstack_install_optional_packages clamav-daemon clamav-freshclam
 
 # Allow pre-setting CLAMAV_ENABLED to disable antivirus on low-memory systems
@@ -100,30 +100,37 @@ greylist = 4;
 EOF
 
 cat <<EOF > /etc/rspamd/rspamd.local.lua
-rspamd_config:add_on_load(function(cfg, ev_base, worker)
-    rspamd_config:register_symbol({
-        name = 'OMS_QUARANTINE_CHECK',
-        type = 'postfilter',
-        callback = function(task)
-            local score = task:get_metric_score('default')[1]
-            if score >= 15.0 then
-                task:set_milter_reply({
-                    add_headers = {['X-OMS-Quarantine'] = 'YES'}
-                })
-            end
+rspamd_config:register_symbol({
+    name = 'OMS_QUARANTINE_CHECK',
+    type = 'postfilter',
+    priority = 10,
+    callback = function(task)
+        local metric_score = task:get_metric_score('default')
+        local score = metric_score and metric_score[1] or 0
+        if score >= 15.0 then
+            task:set_milter_reply({
+                add_headers = {['X-OMS-Quarantine'] = 'YES'}
+            })
         end
-    })
-end)
+    end
+})
 EOF
 
 install -m 0755 "${SCRIPT_DIR}/rspamd_spam_maps_sync.sh" /usr/local/sbin/openmailstack-spam-map-sync
+install -m 0755 "${SCRIPT_DIR}/rspamd_healthcheck.sh" /usr/local/sbin/openmailstack-rspamd-health
+install -m 0755 "${SCRIPT_DIR}/rspamd_health_recover.sh" /usr/local/sbin/openmailstack-rspamd-recover
+install -D -m 0755 "${SCRIPT_DIR}/rspamd_milter_probe.php" /usr/local/libexec/openmailstack-rspamd-milter-probe
 /usr/local/sbin/openmailstack-spam-map-sync
 if [[ -f "${SCRIPT_DIR}/../packaging/systemd/openmailstack-spam-map-sync.service" ]]; then
     install -m 0644 "${SCRIPT_DIR}/../packaging/systemd/openmailstack-spam-map-sync.service" /etc/systemd/system/openmailstack-spam-map-sync.service
     install -m 0644 "${SCRIPT_DIR}/../packaging/systemd/openmailstack-spam-map-sync.timer" /etc/systemd/system/openmailstack-spam-map-sync.timer
-    systemctl daemon-reload
-    systemctl enable --now openmailstack-spam-map-sync.timer
 fi
+if [[ -f "${SCRIPT_DIR}/../packaging/systemd/openmailstack-rspamd-health.service" ]]; then
+    install -m 0644 "${SCRIPT_DIR}/../packaging/systemd/openmailstack-rspamd-health.service" /etc/systemd/system/openmailstack-rspamd-health.service
+    install -m 0644 "${SCRIPT_DIR}/../packaging/systemd/openmailstack-rspamd-health.timer" /etc/systemd/system/openmailstack-rspamd-health.timer
+fi
+systemctl daemon-reload
+systemctl enable --now openmailstack-spam-map-sync.timer
 
 
 if [[ "${CLAMAV_ENABLED}" -eq 1 ]]; then
@@ -175,6 +182,8 @@ if [[ "${CLAMAV_ENABLED}" -eq 1 ]]; then
     systemctl restart ${CLAMAV_SERVICE} || openmailstack_record_soft_error "ClamAV daemon failed to start; antivirus scanning is currently inactive."
 fi
 systemctl restart rspamd postfix
+systemctl enable --now openmailstack-rspamd-health.timer
+systemctl start openmailstack-rspamd-health.service || openmailstack_record_soft_error "Rspamd functional health probe did not pass after restart."
 
 echo -e "${GREEN}Rspamd and ClamAV setup complete!${NC}"
 if find /var/lib/rspamd/dkim -maxdepth 1 -type f -name '*.pub' | grep -q .; then

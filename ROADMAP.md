@@ -127,7 +127,7 @@ The contacts and notes apps have been extracted into their own directories with 
 - ❌ Make Nginx route injection idempotent and safe on already-migrated hosts.
 - ✅ Keep generated backend JavaScript in sync while systemd still runs `node src/index.js`.
 - ❌ Add clearer upgrade/rollback docs that explicitly preserve live mail data.
-- 🟡 Improve monitoring for Rspamd proxy health, Postfix milter timeouts, Dovecot auth, disk space, queues, and certificate expiry (Fail2ban implemented, milter timeouts configured, System Health Dashboard live; functional Rspamd heartbeat/recovery remains open after July 14 worker crashes).
+- 🟡 Improve monitoring for Rspamd proxy health, Postfix milter timeouts, Dovecot auth, disk space, queues, and certificate expiry (Rspamd normal-scan plus real Milter health, cross-probe crash detection, rate-limited Rspamd-only recovery, Fail2ban, milter timeouts, and System Health Dashboard are live; broader certificate/disk/auth alerting remains).
 - ❌ Remove or clearly mark deprecated scaffold directories once the migration is complete.
 
 ## 9. OpenMailStack Sync (External CardDAV Bridge) ❌

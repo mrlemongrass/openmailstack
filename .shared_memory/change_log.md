@@ -922,3 +922,13 @@ Future entry template:
 - Verified: Backend 91 tests with two optional database gates skipped, frontend lint/13 tests/build, full integration, artifact equality, both live browser aliases, service logs, and staging smoke pass.
 - Deployed: Commit `8b83b268` is live. Root-only rollback snapshot: `/var/backups/openmailstack/20260712T213933Z_branding_8b83b268`.
 - Convention: `.opencode/` is ignored because OpenMailStack is not using OpenCode.
+
+## 2026-07-14 iOS SendMail SMTP TLS Recovery
+
+- Fixed: Core mail, ActiveSync `SendMail`, and scheduled-send now share one SMTP transport builder that connects locally while verifying TLS against the configured certificate hostname.
+- Configured: Added `OMS_SMTP_SERVER_NAME`, defaulted the installer to `${MAIL_HOSTNAME}`, documented `mail.example.com` in the packaged environment example, and set the live value to `mail.housevo.us` without weakening certificate verification.
+- Observability: Admin ActiveSync health now counts `[EAS] Error sending email` entries in its rolling recent-error signal.
+- Verified: The regression failed before implementation and passes now; backend 90/92 with two optional database gates skipped, frontend lint/build, full integration, pre/post-deploy staging smoke, runtime hash equality, strict live Nodemailer verification, and local/public ActiveSync `OPTIONS` pass.
+- Deployed: Commit `e8caa78b` is live. Root-only rollback snapshot: `/var/backups/openmailstack/20260714T121241Z_ios_smtp_tls_e8caa78`.
+- Verified: A physical iOS retry reached ActiveSync at 05:16 Phoenix time, completed SMTP and Sent append one second later, and the remote gateway accepted the message at 05:16:08. Queue id `1D1D3828` was removed and the Postfix queue remained empty.
+- Risk: Rspamd 4.1.1's proxy segfaulted while scanning the retry. Postfix's configured fail-open milter behavior preserved delivery and Rspamd auto-respawned, but functional health/recovery and crash investigation remain the next mail-operations task.

@@ -5091,3 +5091,71 @@ Make Admin > Branding intuitive about image dimensions and saved-size handling, 
 ### Next recommended task
 
 Resume Scheduler Phase 3 with the durable workflow foundation: versioned workflow definitions, leased jobs, retries/dead letters, and provider-independent OMS email reminders.
+
+## 2026-07-14 — iOS SendMail SMTP TLS recovery
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `5a9abb83`
+Ending git state: focused code and deployment record committed
+
+### Selected task
+
+Restore iOS Exchange sending after the user again received “Cannot Send Mail” and “The message was rejected by the server.”
+
+### Root cause
+
+The iOS ActiveSync request reached `SendMail`, the backend extracted the real MIME body, and one recipient was present. SMTP then failed before submission because the backend connected to `127.0.0.1:587` with strict TLS verification and validated the certificate against the loopback IP. The certificate is valid for `mail.housevo.us`, producing `ERR_TLS_CERT_ALTNAME_INVALID`. Admin appeared healthy because its submission probe checked only the SMTP greeting and its ActiveSync rolling error count did not include the exact send-error log.
+
+Rspamd was a separate operational contributor to slow greetings: its normal and proxy workers emitted segmentation faults, and a prior proxy process stopped answering Postfix milter requests. Restarting `rspamd.service` restored the listener and cleared the receive queue, but the crash cause remains open.
+
+### Changes made
+
+- Added `OMS_SMTP_SERVER_NAME` and one shared SMTP transport builder for webmail send, ActiveSync `SendMail`, and scheduled send.
+- Kept `OMS_SMTP_REJECT_UNAUTHORIZED=true`; the local connection now verifies TLS against `mail.housevo.us` instead of weakening validation.
+- Updated the installer, packaged environment example, and integration guards so upgrades preserve the setting.
+- Extended Admin ActiveSync health to count `[EAS] Error sending email` entries.
+- Added a regression test proving the configured certificate hostname reaches Nodemailer's TLS options.
+- Restarted the unhealthy Rspamd service, created a root-only rollback snapshot, deployed only the generated backend runtime artifacts, added the live environment value, and restarted only `openmailstack.service`.
+
+### Proof / checks run
+
+- Regression test failed before implementation with `smtpTransportOptions is not a function`, then passed after the shared builder was added.
+- Backend suite: 90 passed, 2 existing optional database tests skipped, 0 failed.
+- Frontend lint and production build passed; the largest route chunk was 487.56 kB.
+- `tests/integration/run.sh`, `tests/integration/staging_smoke.sh ./config.conf`, `bash -n functions/10_webmail.sh`, and `git diff --check` passed.
+- Repository and deployed `api.js`, `config.js`, `index.js`, and `scheduled-send.js` hashes match.
+- The deployed runtime loaded the live environment and completed strict Nodemailer verification against `mail.housevo.us` through `127.0.0.1:587`.
+- Local and public ActiveSync `OPTIONS` returned 200; post-deploy staging smoke passed; the Postfix queue was empty; Rspamd's listener receive queue was zero.
+- No warning-or-higher backend logs appeared after the deployment restart.
+- Physical iOS retry at 05:16 Phoenix time:
+  - ActiveSync logged `Cmd: SendMail`, sent one recipient through SMTP, reported success, and saved the message to Sent at 05:16:02.
+  - Postfix queue `1D1D3828` was accepted by the remote gateway with DSN `2.0.0` at 05:16:08, removed from the queue, and the queue remained empty.
+  - The Rspamd proxy segfaulted during the milter body-end step. Postfix's fail-open milter policy preserved delivery and the proxy auto-respawned by 05:16:04.
+
+### Acceptance criteria
+
+- [x] The exact certificate-hostname failure is reproduced and covered by regression test.
+- [x] All core SMTP send paths use the same strict TLS hostname configuration.
+- [x] Installer and manual deployment configuration preserve the setting.
+- [x] Admin health includes the exact ActiveSync send failure signal.
+- [x] Bounded live deployment has a verified rollback snapshot and byte-equal runtime artifacts.
+- [x] Strict live SMTP verification, protocol preflights, service health, and staging smoke pass.
+- [x] A fresh send from the affected physical iOS account reaches ActiveSync, succeeds through SMTP, and is saved to Sent.
+- [x] The external recipient gateway accepts the queued message and Postfix removes it from the queue.
+
+### Deployment and rollback
+
+- Code commit: `e8caa78b`.
+- Root-only rollback snapshot: `/var/backups/openmailstack/20260714T121241Z_ios_smtp_tls_e8caa78`.
+- Live environment: added `OMS_SMTP_SERVER_NAME="mail.housevo.us"` to `/etc/openmailstack/webmail-backend.env` with its existing root-only permissions.
+- Runtime sync was limited to `api.js`, `config.js`, `index.js`, `scheduled-send.js`, and their maps. No database, mailbox data, credentials, frontend, dependency, Postfix, or Dovecot changes were made.
+
+### Risks / notes
+
+- Rspamd 4.1.1 normal/proxy workers have segfaulted and auto-respawned. The current package repository has no newer candidate, so functional health/recovery and crash investigation remain the next mail-operations task.
+- The minute-level spam-map sync rewrites unchanged map files and causes repeated reloads. It is not proven to cause the crashes; make it content-aware as a separate bounded hardening change.
+
+### Next recommended task
+
+Harden Rspamd functional health/recovery and investigate the reproducible proxy crash before resuming Scheduler Phase 3 workflows.

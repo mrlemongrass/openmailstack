@@ -40,7 +40,6 @@ import { startSearchWorker } from './search-worker';
 import { startScheduledSender } from './scheduled-send';
 import { startCalendarSubscriptionWorker } from './calendar-subscription';
 import { schedulerRouter } from './scheduler/router';
-import { startSchedulerWorker } from './scheduler/worker';
 
 const app = express();
 const server = http.createServer(app);
@@ -66,7 +65,6 @@ ensureMailSearchSchema().catch(err => console.error('Failed to initialize mail s
 startSearchWorker();
 startScheduledSender();
 startCalendarSubscriptionWorker();
-startSchedulerWorker();
 ensureUserSettingsSchema().catch(err => console.error('Failed to initialize user settings schema:', err));
 ensureAdminSettingsSchema().catch(err => console.error('Failed to initialize admin settings schema:', err));
 ensureBrandingSchema().catch(err => console.error('Failed to initialize branding schema:', err));

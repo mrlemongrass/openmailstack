@@ -203,3 +203,14 @@ Security:
 - Login rate limit triggers after repeated failures.
 - CalDAV Basic auth rejects wrong password and does not expose calendar data.
 - No committed production secrets in repo diffs or packaged docs.
+
+## 2026-07-14 Scheduler Phase 3 Foundation Live Gate
+
+- Scope: durable workflow storage/execution only; no owner-facing workflow API or builder was represented as complete.
+- Database: disposable MariaDB applied migrations `001`-`024` twice and passed the opted-in lifecycle/concurrency proof 8/8. Live migration `024_scheduler_workflow_foundation` is recorded and all seven new tables exist.
+- Worker: `openmailstack-scheduler-worker.service` remained active through multiple poll cycles with `NRestarts=0`, and the web backend produced no warning-or-higher entries after its restart.
+- Safety: the live database contained zero workflow jobs, zero delivery attempts, and zero pending legacy outbox rows after cutover; no production workflow or booking fixture was created.
+- Artifacts: deployed `index.js`, `store.js`, `worker.js`, `worker-entry.js`, and `workflows.js` match the tested repository hashes.
+- System: full staging smoke passed, including the Scheduler worker, Rspamd functional scan, SMTP STARTTLS, API auth boundary, core services, listeners, and TLS endpoints.
+- Rollback: root-only code and database snapshot `/var/backups/openmailstack/20260714T140745Z_scheduler_phase3_a76809d`.
+- Remaining gate: add and validate owner/Admin workflow APIs, builder/test sends, operator retry/dead-letter reconciliation, and additional actions/providers before Phase 3 can be marked complete.

@@ -7,6 +7,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const { pool } = require('../src/db.js');
     const { SchedulerStore } = require('../src/scheduler/store.js');
     const { SchedulerPhase2Store } = require('../src/scheduler/phase2-store.js');
+    const { SchedulerWorkflowRepository, SchedulerJobRepository } = require('../src/scheduler/workflows.js');
     await pool.query(`CREATE TABLE IF NOT EXISTS mailbox (
         username VARCHAR(255) PRIMARY KEY, name VARCHAR(255), local_part VARCHAR(255), domain VARCHAR(255), active TINYINT(1)
     ) ENGINE=InnoDB`);
@@ -53,7 +54,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const publishedAvailability = await store.saveDefaultAvailability(username, {
         ...defaultAvailability,
         published: true,
-        overrides: [{ date: '2026-07-14', unavailableAllDay: true, windows: [] }],
+        overrides: [{ date: '2054-12-01', unavailableAllDay: true, windows: [] }],
     });
     assert.equal(publishedAvailability.published, true);
     assert.equal(publishedAvailability.overrides[0].unavailableAllDay, true);
@@ -61,9 +62,9 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(defaultProfile.events.length, 0);
     assert.equal(defaultProfile.defaultEvent.durationMinutes, 30);
     assert.equal(defaultProfile.defaultEvent.systemManaged, true);
-    const defaultSlots = await store.listSlots('phase1', '_default', new Date('2026-07-13T16:00:00.000Z'), new Date('2026-07-13T18:00:00.000Z'));
-    assert.equal(defaultSlots[0].start.toISOString(), '2026-07-13T16:00:00.000Z');
-    const blockedSlots = await store.listSlots('phase1', '_default', new Date('2026-07-14T16:00:00.000Z'), new Date('2026-07-14T18:00:00.000Z'));
+    const defaultSlots = await store.listSlots('phase1', '_default', new Date('2054-07-20T16:00:00.000Z'), new Date('2054-07-20T18:00:00.000Z'));
+    assert.equal(defaultSlots[0].start.toISOString(), '2054-07-20T16:00:00.000Z');
+    const blockedSlots = await store.listSlots('phase1', '_default', new Date('2054-12-01T16:00:00.000Z'), new Date('2054-12-01T18:00:00.000Z'));
     assert.equal(blockedSlots.length, 0);
 
     const event = await store.saveEventType(username, {
@@ -74,6 +75,24 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(event.availabilityScheduleId, defaultAvailability.id);
     assert.equal(event.visibility, 'public');
     assert.equal((await store.getPublicProfile('phase1')).defaultEvent, null);
+    const workflows = new SchedulerWorkflowRepository(pool);
+    const workflow = await workflows.createWorkflow({
+        tenantKey: entitlement.tenantKey,
+        ownerUsername: username,
+        name: 'Booking reminders',
+        enabled: true,
+        eventTypeIds: [event.id],
+    });
+    const workflowV1 = await workflows.publishVersion(workflow.id, username, {
+        trigger: { type: 'booking.start', offsetSeconds: -86400 },
+        steps: [
+            { action: 'message.email.reminder', delaySeconds: 0, config: {} },
+            { action: 'message.email.reminder', delaySeconds: 900, config: { subject: 'Soon: {{event.title}}' } },
+            { action: 'message.email.reminder', delaySeconds: 1800, config: {} },
+            { action: 'message.email.reminder', delaySeconds: 2700, config: {} },
+        ],
+    });
+    assert.equal(workflowV1.version, 1);
 
     const unlistedEvent = await store.saveEventType(username, {
         title: 'Private Consultation', slug: 'private-consultation', visibility: 'unlisted',
@@ -91,8 +110,8 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     }, unlistedEvent.id);
     assert.equal(unlistedAfterLegacyUpdate.visibility, 'unlisted');
 
-    const start = new Date('2026-07-13T16:00:00.000Z');
-    const slots = await store.listSlots('phase1', event.slug, start, new Date('2026-07-13T18:00:00.000Z'));
+    const start = new Date('2054-08-03T16:00:00.000Z');
+    const slots = await store.listSlots('phase1', event.slug, start, new Date('2054-08-03T18:00:00.000Z'));
     assert.equal(slots[0].start.toISOString(), start.toISOString());
 
     const booking = await store.createBooking('phase1', event.slug, {
@@ -100,6 +119,19 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         bookerEmail: 'ada@example.net', idempotencyKey: 'phase1-lifecycle-0001',
     });
     assert.equal(booking.status, 'confirmed');
+    assert.deepEqual(await workflows.listBookingVersions(entitlement.tenantKey, booking.id), [{
+        workflowId: workflow.id,
+        versionId: workflowV1.id,
+        version: 1,
+    }]);
+    const workflowV2 = await workflows.publishVersion(workflow.id, username, {
+        trigger: { type: 'booking.start', offsetSeconds: -7200 },
+        steps: [{ action: 'message.email.reminder', delaySeconds: 0, config: {} }],
+    });
+    assert.equal(workflowV2.version, 2);
+    assert.equal((await workflows.listBookingVersions(entitlement.tenantKey, booking.id))[0].version, 1, 'existing bookings must retain their captured workflow version');
+    const [workflowJobs] = await pool.query('SELECT COUNT(*) AS total FROM scheduler_jobs WHERE booking_id=?', [booking.id]);
+    assert.equal(Number(workflowJobs[0].total), 4);
 
     const questionEvent = await store.saveEventType(username, {
         title: 'Question Test', slug: 'question-test', durationMinutes: 30, intervalMinutes: 30,
@@ -110,7 +142,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         ],
     });
     assert.equal(questionEvent.questions.length, 2);
-    const questionStart = new Date('2026-07-15T16:00:00.000Z');
+    const questionStart = new Date('2054-07-15T16:00:00.000Z');
     await assert.rejects(() => store.createBooking('phase1', questionEvent.slug, {
         eventTypeId: questionEvent.id, start: questionStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Missing Answer', bookerEmail: 'missing-answer@example.net',
@@ -158,7 +190,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         ...approvalEvent, title: 'Approval Test Legacy Update', requiresConfirmation: undefined,
     }, approvalEvent.id);
     assert.equal(approvalEventAfterLegacyUpdate.requiresConfirmation, true, 'older clients must not disable host confirmation');
-    const approvalStart = new Date('2026-07-16T16:00:00.000Z');
+    const approvalStart = new Date('2054-07-16T16:00:00.000Z');
     const approvalRequest = await store.createBooking('phase1', approvalEvent.slug, {
         eventTypeId: approvalEvent.id, start: approvalStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Approval Guest', bookerEmail: 'approval@example.net', idempotencyKey: 'phase1-approval-0001',
@@ -190,7 +222,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     await assert.rejects(() => store.decideBooking(username, approvalRequest.id, 'rejected'), /no longer be approved or rejected/);
     await store.cancelOwnedBooking(username, approvalRequest.id);
 
-    const rejectionStart = new Date('2026-07-16T16:30:00.000Z');
+    const rejectionStart = new Date('2054-07-16T16:30:00.000Z');
     const rejectionRequest = await store.createBooking('phase1', approvalEvent.slug, {
         eventTypeId: approvalEvent.id, start: rejectionStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Rejected Guest', bookerEmail: 'rejected@example.net', idempotencyKey: 'phase1-rejection-0001',
@@ -210,7 +242,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(Number(rejectedOutbox[0].total), 1);
     assert.equal((await store.listBookings(username, 'rejected')).some(item => item.id === rejectionRequest.id), true);
 
-    const requestedCancelStart = new Date('2026-07-17T16:00:00.000Z');
+    const requestedCancelStart = new Date('2054-07-17T16:00:00.000Z');
     const requestedCancel = await store.createBooking('phase1', approvalEvent.slug, {
         eventTypeId: approvalEvent.id, start: requestedCancelStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Cancel Request', bookerEmail: 'cancel-request@example.net', idempotencyKey: 'phase1-request-cancel-0001',
@@ -220,7 +252,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const [tombstonesAfterRequestedCancel] = await pool.query('SELECT COUNT(*) AS total FROM calendar_tombstones');
     assert.equal(Number(tombstonesAfterRequestedCancel[0].total), Number(tombstonesBeforeRequestedCancel[0].total), 'requested cancellation must not write a phantom Calendar tombstone');
 
-    const raceStart = new Date('2026-07-17T16:30:00.000Z');
+    const raceStart = new Date('2054-07-17T16:30:00.000Z');
     const raceRequest = await store.createBooking('phase1', approvalEvent.slug, {
         eventTypeId: approvalEvent.id, start: raceStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Decision Race', bookerEmail: 'decision-race@example.net', idempotencyKey: 'phase1-decision-race-0001',
@@ -257,12 +289,12 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(policyEventAfterLegacyUpdate.requireCancellationReason, true);
     assert.equal(policyEventAfterLegacyUpdate.requireRescheduleReason, true);
 
-    const policyCancelStart = new Date('2026-07-20T16:00:00.000Z');
+    const policyCancelStart = new Date('2054-07-20T16:00:00.000Z');
     const policyCancelBooking = await store.createBooking('phase1', policyEvent.slug, {
         eventTypeId: policyEvent.id, start: policyCancelStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Policy Cancel Guest', bookerEmail: 'policy-cancel@example.net', idempotencyKey: 'phase1-policy-cancel-0001',
     });
-    const policyRescheduleStart = new Date('2026-07-20T16:30:00.000Z');
+    const policyRescheduleStart = new Date('2054-07-20T16:30:00.000Z');
     const policyRescheduleBooking = await store.createBooking('phase1', policyEvent.slug, {
         eventTypeId: policyEvent.id, start: policyRescheduleStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Policy Reschedule Guest', bookerEmail: 'policy-reschedule@example.net', idempotencyKey: 'phase1-policy-reschedule-0001',
@@ -289,7 +321,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(rescheduleCapability.policy.allowed, true);
     assert.equal(rescheduleCapability.policy.cutoffMinutes, 120, 'booking must retain its original reschedule policy');
     assert.equal(rescheduleCapability.policy.reasonRequired, true);
-    const policyRescheduledStart = new Date('2026-07-20T17:00:00.000Z');
+    const policyRescheduledStart = new Date('2054-07-20T17:00:00.000Z');
     await assert.rejects(() => store.rescheduleBookingByToken(policyRescheduleBooking.rescheduleToken, policyRescheduledStart), /reschedule reason is required/);
     const rescheduleReason = 'Need more preparation time';
     await store.rescheduleBookingByToken(policyRescheduleBooking.rescheduleToken, policyRescheduledStart, rescheduleReason);
@@ -303,27 +335,39 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(Number(reasonAuditLeaks[0].total), 0, 'action reasons must not enter audit metadata');
     await store.cancelOwnedBooking(username, policyRescheduleBooking.id);
 
-    const closedCancelStart = new Date('2026-07-21T16:00:00.000Z');
+    const closedCancelStart = new Date('2054-07-21T16:00:00.000Z');
     const closedCancelBooking = await store.createBooking('phase1', tightenedPolicyEvent.slug, {
         eventTypeId: tightenedPolicyEvent.id, start: closedCancelStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Closed Cancel Guest', bookerEmail: 'closed-cancel@example.net', idempotencyKey: 'phase1-closed-cancel-0001',
     });
+    await pool.query(
+        'UPDATE scheduler_bookings SET slot_start=DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 30 MINUTE), slot_end=DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 60 MINUTE) WHERE id=?',
+        [closedCancelBooking.id]
+    );
     assert.equal((await store.getCapabilityBooking(closedCancelBooking.cancelToken, 'cancel')).policy.allowed, false);
     await assert.rejects(() => store.cancelBookingByToken(closedCancelBooking.cancelToken), /Cancellation window has closed/);
     const [closedCancelStatus] = await pool.query('SELECT status FROM scheduler_bookings WHERE id=?', [closedCancelBooking.id]);
     assert.equal(closedCancelStatus[0].status, 'confirmed', 'closed cancellation must not mutate the booking');
+    await pool.query('UPDATE scheduler_bookings SET slot_start=?,slot_end=? WHERE id=?',
+        ['2054-07-21 16:00:00.000', '2054-07-21 16:30:00.000', closedCancelBooking.id]);
     await store.cancelOwnedBooking(username, closedCancelBooking.id);
 
-    const closedRescheduleStart = new Date('2026-07-21T16:30:00.000Z');
+    const closedRescheduleStart = new Date('2054-07-21T16:30:00.000Z');
     const closedRescheduleBooking = await store.createBooking('phase1', tightenedPolicyEvent.slug, {
         eventTypeId: tightenedPolicyEvent.id, start: closedRescheduleStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Closed Reschedule Guest', bookerEmail: 'closed-reschedule@example.net', idempotencyKey: 'phase1-closed-reschedule-0001',
     });
+    await pool.query(
+        'UPDATE scheduler_bookings SET slot_start=DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 30 MINUTE), slot_end=DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 60 MINUTE) WHERE id=?',
+        [closedRescheduleBooking.id]
+    );
     assert.equal((await store.getCapabilityBooking(closedRescheduleBooking.rescheduleToken, 'reschedule')).policy.allowed, false);
-    await assert.rejects(() => store.rescheduleBookingByToken(closedRescheduleBooking.rescheduleToken, new Date('2026-07-21T17:00:00.000Z')), /Reschedule window has closed/);
+    await assert.rejects(() => store.rescheduleBookingByToken(closedRescheduleBooking.rescheduleToken, new Date('2054-07-21T17:00:00.000Z')), /Reschedule window has closed/);
     const [closedRescheduleStatus] = await pool.query('SELECT status, CAST(slot_start AS CHAR) AS slot_start_utc FROM scheduler_bookings WHERE id=?', [closedRescheduleBooking.id]);
     assert.equal(closedRescheduleStatus[0].status, 'confirmed');
-    assert.equal(closedRescheduleStatus[0].slot_start_utc, '2026-07-21 16:30:00.000');
+    assert.notEqual(closedRescheduleStatus[0].slot_start_utc, '2054-07-21 17:00:00.000');
+    await pool.query('UPDATE scheduler_bookings SET slot_start=?,slot_end=? WHERE id=?',
+        ['2054-07-21 16:30:00.000', '2054-07-21 17:00:00.000', closedRescheduleBooking.id]);
     await store.cancelOwnedBooking(username, closedRescheduleBooking.id);
 
     const privateEvent = await store.saveEventType(username, { ...event, visibility: 'private' }, event.id);
@@ -355,15 +399,91 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(fullSlotRange.some(slot => slot.start.getTime() === start.getTime()), false, 'confirmed capacity must hide a slot even if calendar parsing fails');
     await pool.query('UPDATE events SET ical_data=? WHERE calendar_id=? AND uid=?', [calendarProjection[0].ical_data, calendarId, `scheduler-${booking.id}@openmailstack`]);
 
-    const rescheduledStart = new Date('2026-07-13T16:30:00.000Z');
+    const rescheduledStart = new Date('2054-08-03T16:30:00.000Z');
     const rescheduleSlots = await store.listSlots('phase1', event.slug, new Date(rescheduledStart.getTime() - 1), new Date(rescheduledStart.getTime() + 31 * 60 * 1000), booking.rescheduleToken);
     assert.equal(rescheduleSlots.some(slot => slot.start.getTime() === rescheduledStart.getTime()), true, 'reschedule capability must access private-event slots');
     const rescheduled = await store.rescheduleBookingByToken(booking.rescheduleToken, rescheduledStart);
     assert.equal(rescheduled.start.toISOString(), rescheduledStart.toISOString());
     const [rescheduledEvent] = await pool.query('SELECT ical_data FROM events WHERE calendar_id=?', [calendarId]);
-    assert.match(rescheduledEvent[0].ical_data, /DTSTART:20260713T163000Z/);
+    assert.match(rescheduledEvent[0].ical_data, /DTSTART:20540803T163000Z/);
+    const [rescheduledJobs] = await pool.query(
+        `SELECT j.id, CAST(j.available_at AS CHAR) AS available_at_utc, j.payload, s.step_order
+         FROM scheduler_jobs j JOIN scheduler_workflow_steps s ON s.id=j.workflow_step_id
+         WHERE j.booking_id=? AND j.cancelled_at IS NULL ORDER BY s.step_order`,
+        [booking.id]
+    );
+    assert.deepEqual(rescheduledJobs.map(row => row.available_at_utc), [
+        '2054-08-02 16:30:00.000',
+        '2054-08-02 16:45:00.000',
+        '2054-08-02 17:00:00.000',
+        '2054-08-02 17:15:00.000',
+    ], 'reschedule must re-time pending jobs from the captured workflow version');
+    assert.equal(JSON.parse(rescheduledJobs[0].payload).start, rescheduledStart.toISOString());
 
-    await pool.query("UPDATE scheduler_private_links SET expires_at='2026-07-01 00:00:00.000' WHERE event_type_id=? AND revoked_at IS NULL", [event.id]);
+    const jobs = new SchedulerJobRepository(pool);
+    await pool.query("UPDATE scheduler_jobs SET available_at='2100-01-01 00:00:00.000' WHERE booking_id=?", [booking.id]);
+    await pool.query('UPDATE scheduler_jobs SET available_at=UTC_TIMESTAMP(3) WHERE id=?', [rescheduledJobs[0].id]);
+    const firstClaim = await jobs.claimBatch('phase3-worker-1', 1, new Date(0));
+    assert.equal(firstClaim.length, 1);
+    assert.equal(firstClaim[0].id, rescheduledJobs[0].id);
+    const [leaseRows] = await pool.query('SELECT lease_expires_at>UTC_TIMESTAMP(3) AS active FROM scheduler_jobs WHERE id=?', [firstClaim[0].id]);
+    assert.equal(Number(leaseRows[0].active), 1, 'job leases must use database time instead of the worker clock');
+    assert.equal((await jobs.claimBatch('phase3-worker-other', 1, new Date('2100-01-01T00:00:00.000Z'))).length, 0,
+        'another worker must not reclaim an active lease');
+    await jobs.beginAttempt(firstClaim[0].id, 'phase3-worker-1', 'test-provider');
+    await jobs.complete(firstClaim[0].id, 'phase3-worker-1', 'test-provider', 'message-1');
+
+    await pool.query('UPDATE scheduler_jobs SET available_at=UTC_TIMESTAMP(3) WHERE id=?', [rescheduledJobs[1].id]);
+    const inFlightClaim = (await jobs.claimBatch('phase3-worker-2', 1, new Date(0)))[0];
+    await jobs.beginAttempt(inFlightClaim.id, 'phase3-worker-2', 'test-provider');
+    const secondRescheduledStart = new Date('2054-08-03T17:00:00.000Z');
+    const secondReschedule = await store.rescheduleBookingByToken(booking.rescheduleToken, secondRescheduledStart);
+    assert.equal(secondReschedule.start.toISOString(), secondRescheduledStart.toISOString());
+    const [inFlightAttemptRows] = await pool.query(
+        'SELECT outcome,error_code FROM scheduler_delivery_attempts WHERE job_id=?', [inFlightClaim.id]
+    );
+    assert.deepEqual([inFlightAttemptRows[0].outcome, inFlightAttemptRows[0].error_code],
+        ['dead_lettered', 'delivery_uncertain_rescheduled'], 'rescheduling must visibly reconcile an in-flight reminder');
+    const [activeJobs] = await pool.query(
+        `SELECT j.id,j.schedule_generation,j.payload,s.step_order
+         FROM scheduler_jobs j JOIN scheduler_workflow_steps s ON s.id=j.workflow_step_id
+         WHERE j.booking_id=? AND j.cancelled_at IS NULL AND j.completed_at IS NULL AND j.dead_lettered_at IS NULL
+         ORDER BY s.step_order`,
+        [booking.id]
+    );
+    assert.equal(activeJobs.length, 4, 'a new schedule generation must include steps already sent for the old time');
+    assert.equal(activeJobs.every(row => Number(row.schedule_generation) === 3), true);
+    assert.equal(activeJobs.every(row => JSON.parse(row.payload).start === secondRescheduledStart.toISOString()), true);
+    await pool.query("UPDATE scheduler_jobs SET available_at='2100-01-01 00:00:00.000' WHERE booking_id=? AND cancelled_at IS NULL", [booking.id]);
+
+    await pool.query('UPDATE scheduler_jobs SET available_at=UTC_TIMESTAMP(3) WHERE id=?', [activeJobs[0].id]);
+    const retryClaim = (await jobs.claimBatch('phase3-worker-3', 1, new Date(0)))[0];
+    await jobs.beginAttempt(retryClaim.id, 'phase3-worker-3', 'test-provider');
+    await jobs.fail(retryClaim.id, 'phase3-worker-3', 'test-provider', retryClaim.attempts, 'PROVIDER_DOWN');
+    const [retryRows] = await pool.query('SELECT completed_at, dead_lettered_at, last_error_code FROM scheduler_jobs WHERE id=?', [retryClaim.id]);
+    assert.equal(retryRows[0].completed_at, null);
+    assert.equal(retryRows[0].dead_lettered_at, null);
+    assert.equal(retryRows[0].last_error_code, 'PROVIDER_DOWN');
+    await pool.query('UPDATE scheduler_jobs SET attempts=7, available_at=UTC_TIMESTAMP(3) WHERE id=?', [retryClaim.id]);
+    const finalClaim = (await jobs.claimBatch('phase3-worker-4', 1, new Date(0)))[0];
+    assert.equal(finalClaim.attempts, 8);
+    await jobs.beginAttempt(finalClaim.id, 'phase3-worker-4', 'test-provider');
+    await jobs.fail(finalClaim.id, 'phase3-worker-4', 'test-provider', finalClaim.attempts, 'PROVIDER_DOWN');
+    const [deadLetterRows] = await pool.query('SELECT dead_lettered_at, payload FROM scheduler_jobs WHERE id=?', [finalClaim.id]);
+    assert.ok(deadLetterRows[0].dead_lettered_at);
+    assert.equal(deadLetterRows[0].payload, '{}', 'dead-lettered jobs must not retain booking capability payloads');
+
+    await pool.query('UPDATE scheduler_jobs SET available_at=UTC_TIMESTAMP(3) WHERE id=?', [activeJobs[1].id]);
+    const uncertainClaim = (await jobs.claimBatch('phase3-worker-5', 1, new Date(0)))[0];
+    await jobs.beginAttempt(uncertainClaim.id, 'phase3-worker-5', 'test-provider');
+    await pool.query("UPDATE scheduler_jobs SET lease_expires_at='2000-01-01 00:00:00.000' WHERE id=?", [uncertainClaim.id]);
+    assert.equal((await jobs.claimBatch('phase3-worker-6', 1, new Date(0))).length, 0,
+        'an uncertain accepted attempt must dead-letter instead of sending a duplicate');
+    const [uncertainRows] = await pool.query('SELECT dead_lettered_at,last_error_code FROM scheduler_jobs WHERE id=?', [uncertainClaim.id]);
+    assert.ok(uncertainRows[0].dead_lettered_at);
+    assert.equal(uncertainRows[0].last_error_code, 'delivery_uncertain');
+
+    await pool.query("UPDATE scheduler_private_links SET expires_at='2020-07-01 00:00:00.000' WHERE event_type_id=? AND revoked_at IS NULL", [event.id]);
     assert.equal(await store.getPublicEvent('phase1', event.slug, rotatedPrivateLink.token), null);
     assert.equal((await store.getPrivateLinkState(username, event.id)).expired, true);
     const finalPrivateLink = await store.rotatePrivateLink(username, event.id, null);
@@ -381,6 +501,9 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(await store.getPublicEvent('phase1', event.slug, revocablePrivateLink.token), null);
     assert.equal((await store.getPrivateLinkState(username, event.id)).active, false);
 
+    await pool.query('UPDATE scheduler_jobs SET available_at=UTC_TIMESTAMP(3) WHERE id=?', [activeJobs[2].id]);
+    const cancelInFlightClaim = (await jobs.claimBatch('phase3-worker-7', 1, new Date(0)))[0];
+    await jobs.beginAttempt(cancelInFlightClaim.id, 'phase3-worker-7', 'test-provider');
     await store.cancelBookingByToken(booking.cancelToken);
     const [cancelled] = await pool.query('SELECT status FROM scheduler_bookings WHERE id=?', [booking.id]);
     assert.equal(cancelled[0].status, 'cancelled');
@@ -388,6 +511,17 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(remaining.length, 0);
     const [tombstones] = await pool.query('SELECT uid FROM calendar_tombstones WHERE calendar_id=? AND uid=?', [calendarId, `scheduler-${booking.id}@openmailstack`]);
     assert.equal(tombstones.length, 1);
+    const [cancelledWorkflowJobs] = await pool.query(
+        'SELECT cancelled_at,payload FROM scheduler_jobs WHERE id IN (?,?) ORDER BY id', [activeJobs[2].id, activeJobs[3].id]
+    );
+    assert.equal(cancelledWorkflowJobs.length, 2);
+    assert.equal(cancelledWorkflowJobs.every(row => row.cancelled_at && row.payload === '{}'), true,
+        'cancellation must stop every pending reminder in the current generation');
+    const [cancelledAttemptRows] = await pool.query(
+        'SELECT outcome,error_code FROM scheduler_delivery_attempts WHERE job_id=?', [cancelInFlightClaim.id]
+    );
+    assert.deepEqual([cancelledAttemptRows[0].outcome, cancelledAttemptRows[0].error_code],
+        ['dead_lettered', 'delivery_uncertain_cancelled'], 'in-flight cancellation must remain observably uncertain');
 
     const singleUseLink = await store.rotatePrivateLink(username, event.id, null, true);
     assert.equal(singleUseLink.state.singleUse, true);
@@ -395,7 +529,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const singleUseInputs = [
         {
             eventTypeId: event.id,
-            start: new Date('2026-07-13T16:00:00.000Z'),
+            start: new Date('2054-08-10T16:00:00.000Z'),
             bookerTimeZone: 'America/Phoenix',
             bookerName: 'Single Use One',
             bookerEmail: 'single-one@example.net',
@@ -404,7 +538,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         },
         {
             eventTypeId: event.id,
-            start: new Date('2026-07-13T16:30:00.000Z'),
+            start: new Date('2054-08-10T16:30:00.000Z'),
             bookerTimeZone: 'America/Phoenix',
             bookerName: 'Single Use Two',
             bookerEmail: 'single-two@example.net',
@@ -443,33 +577,38 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(Number(consumptionAudits[0].total), 1);
     await store.cancelBookingByToken(winner.cancelToken);
 
+    const oneOffDateValue = new Date();
+    oneOffDateValue.setUTCDate(oneOffDateValue.getUTCDate() + ((8 - oneOffDateValue.getUTCDay()) % 7) + 14);
+    const oneOffDate = oneOffDateValue.toISOString().slice(0, 10);
+    const oneOffCompactDate = oneOffDate.replaceAll('-', '');
+    const oneOffTime = (time) => `${oneOffDate}T${time}:00.000Z`;
     const oneOffLink = await store.rotatePrivateLink(username, event.id, null, false, {
         timeZone: 'America/Phoenix',
-        windows: [{ date: '2026-07-13', startMinute: 660, endMinute: 720 }],
+        windows: [{ date: oneOffDate, startMinute: 660, endMinute: 720 }],
     });
     assert.equal(oneOffLink.state.oneOff, true);
     assert.equal(oneOffLink.state.singleUse, true, 'one-off links must always be single-use');
-    assert.deepEqual(oneOffLink.state.oneOffWindows, [{ date: '2026-07-13', startMinute: 660, endMinute: 720 }]);
+    assert.deepEqual(oneOffLink.state.oneOffWindows, [{ date: oneOffDate, startMinute: 660, endMinute: 720 }]);
     await pool.query(
         `INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, 'one-off-busy-test', ?)
          ON DUPLICATE KEY UPDATE ical_data=VALUES(ical_data)`,
-        [calendarId, 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:one-off-busy-test\r\nDTSTART:20260713T180000Z\r\nDTEND:20260713T183000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n']
+        [calendarId, `BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:one-off-busy-test\r\nDTSTART:${oneOffCompactDate}T180000Z\r\nDTEND:${oneOffCompactDate}T183000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`]
     );
     const oneOffSlotsWithConflict = await store.listSlots(
-        'phase1', event.slug, new Date('2026-07-13T15:00:00.000Z'), new Date('2026-07-13T20:00:00.000Z'), oneOffLink.token
+        'phase1', event.slug, new Date(oneOffTime('15:00')), new Date(oneOffTime('20:00')), oneOffLink.token
     );
-    assert.deepEqual(oneOffSlotsWithConflict.map(slot => slot.start.toISOString()), ['2026-07-13T18:30:00.000Z']);
+    assert.deepEqual(oneOffSlotsWithConflict.map(slot => slot.start.toISOString()), [oneOffTime('18:30')]);
     await pool.query("DELETE FROM events WHERE calendar_id=? AND uid='one-off-busy-test'", [calendarId]);
     const oneOffSlots = await store.listSlots(
-        'phase1', event.slug, new Date('2026-07-13T15:00:00.000Z'), new Date('2026-07-13T20:00:00.000Z'), oneOffLink.token
+        'phase1', event.slug, new Date(oneOffTime('15:00')), new Date(oneOffTime('20:00')), oneOffLink.token
     );
     assert.deepEqual(oneOffSlots.map(slot => slot.start.toISOString()), [
-        '2026-07-13T18:00:00.000Z',
-        '2026-07-13T18:30:00.000Z',
+        oneOffTime('18:00'),
+        oneOffTime('18:30'),
     ], 'one-off windows must replace the recurring event schedule');
     await assert.rejects(() => store.createBooking('phase1', event.slug, {
         eventTypeId: event.id,
-        start: new Date('2026-07-13T17:30:00.000Z'),
+        start: new Date(oneOffTime('17:30')),
         bookerTimeZone: 'America/Phoenix',
         bookerName: 'Outside One Off',
         bookerEmail: 'outside-one-off@example.net',
@@ -479,7 +618,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal((await store.getPrivateLinkState(username, event.id)).remainingUses, 1, 'failed one-off booking must preserve the use');
     const oneOffBookingInput = {
         eventTypeId: event.id,
-        start: new Date('2026-07-13T18:00:00.000Z'),
+        start: new Date(oneOffTime('18:00')),
         bookerTimeZone: 'America/Phoenix',
         bookerName: 'One Off Guest',
         bookerEmail: 'one-off@example.net',
@@ -498,7 +637,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         [event.id]
     );
     assert.equal(storedOneOffLinks[0].one_off_time_zone, 'America/Phoenix');
-    assert.deepEqual(JSON.parse(storedOneOffLinks[0].one_off_windows), [{ date: '2026-07-13', startMinute: 660, endMinute: 720 }]);
+    assert.deepEqual(JSON.parse(storedOneOffLinks[0].one_off_windows), [{ date: oneOffDate, startMinute: 660, endMinute: 720 }]);
     assert.equal(storedOneOffLinks[0].uses_remaining, 0);
     await store.cancelBookingByToken(oneOffBooking.cancelToken);
 
@@ -513,11 +652,11 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(limitedLegacy.activeBookingLimit, 1, 'older clients must preserve active booking limits');
     const limitedInputs = [
         {
-            eventTypeId: limitedEvent.id, start: new Date('2026-07-22T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+            eventTypeId: limitedEvent.id, start: new Date('2054-07-22T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
             bookerName: 'Limited Guest', bookerEmail: 'limited@example.net', idempotencyKey: 'phase2-active-limit-0001',
         },
         {
-            eventTypeId: limitedEvent.id, start: new Date('2026-07-22T16:30:00.000Z'), bookerTimeZone: 'America/Phoenix',
+            eventTypeId: limitedEvent.id, start: new Date('2054-07-22T16:30:00.000Z'), bookerTimeZone: 'America/Phoenix',
             bookerName: 'Limited Guest', bookerEmail: 'limited@example.net', idempotencyKey: 'phase2-active-limit-0002',
         },
     ];
@@ -532,7 +671,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     await store.cancelBookingByToken(limitedWinner.cancelToken);
     const limitedLoserIndex = limitedWinners[0].index === 0 ? 1 : 0;
     const limitedSlotsAfterCancel = await store.listSlots(
-        'phase1', limitedEvent.slug, new Date('2026-07-22T15:59:59.999Z'), new Date('2026-07-22T17:00:00.001Z')
+        'phase1', limitedEvent.slug, new Date('2054-07-22T15:59:59.999Z'), new Date('2054-07-22T17:00:00.001Z')
     );
     assert.equal(
         limitedSlotsAfterCancel.some(slot => slot.start.getTime() === limitedInputs[limitedLoserIndex].start.getTime()),
@@ -552,21 +691,21 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     });
     assert.deepEqual(guestEvent.guestAllowList, ['vip@outside.example', '@allowed.example']);
     await assert.rejects(() => store.createBooking('phase1', guestEvent.slug, {
-        eventTypeId: guestEvent.id, start: new Date('2026-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        eventTypeId: guestEvent.id, start: new Date('2054-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
         bookerName: 'Outside Guest', bookerEmail: 'outside@example.net', idempotencyKey: 'phase2-guest-outside-0001',
     }), /not eligible/);
     await assert.rejects(() => store.createBooking('phase1', guestEvent.slug, {
-        eventTypeId: guestEvent.id, start: new Date('2026-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        eventTypeId: guestEvent.id, start: new Date('2054-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
         bookerName: 'Allowed Guest', bookerEmail: 'owner@allowed.example', seats: 2,
         attendees: [{ name: 'Blocked', email: 'blocked@allowed.example' }], idempotencyKey: 'phase2-guest-denied-0001',
     }), /not eligible/);
     await assert.rejects(() => store.createBooking('phase1', guestEvent.slug, {
-        eventTypeId: guestEvent.id, start: new Date('2026-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        eventTypeId: guestEvent.id, start: new Date('2054-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
         bookerName: 'Allowed Guest', bookerEmail: 'owner@allowed.example', seats: 1,
         attendees: [{ name: 'Grace', email: 'grace@allowed.example' }], idempotencyKey: 'phase2-guest-seat-mismatch-0001',
     }), /Seats must include/);
     const guestBooking = await store.createBooking('phase1', guestEvent.slug, {
-        eventTypeId: guestEvent.id, start: new Date('2026-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        eventTypeId: guestEvent.id, start: new Date('2054-07-23T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
         bookerName: 'Allowed Guest', bookerEmail: 'vip@outside.example', seats: 3,
         attendees: [{ name: 'Grace', email: 'grace@allowed.example' }, { name: '', email: 'linus@allowed.example' }],
         idempotencyKey: 'phase2-guest-success-0001',
@@ -592,7 +731,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const [verificationJobs] = await pool.query("SELECT payload FROM scheduler_outbox WHERE aggregate_id=? AND event_type='booking.verification'", [challenge.challengeId]);
     const verificationCode = JSON.parse(verificationJobs[0].payload).verificationCode;
     const verificationInput = {
-        eventTypeId: verificationEvent.id, start: new Date('2026-07-24T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        eventTypeId: verificationEvent.id, start: new Date('2054-07-24T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
         bookerName: 'Verified Guest', bookerEmail: 'verified@example.net', idempotencyKey: 'phase2-verification-0001',
         verificationChallengeId: challenge.challengeId, verificationCode,
     };
@@ -609,7 +748,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(verifiedReplay.id, verifiedBooking.id);
     assert.equal(verifiedReplay.idempotentReplay, true);
     await assert.rejects(() => store.createBooking('phase1', verificationEvent.slug, {
-        ...verificationInput, start: new Date('2026-07-24T16:30:00.000Z'), idempotencyKey: 'phase2-verification-reuse-0001',
+        ...verificationInput, start: new Date('2054-07-24T16:30:00.000Z'), idempotencyKey: 'phase2-verification-reuse-0001',
     }), /valid email verification code/);
     await store.cancelBookingByToken(verifiedBooking.cancelToken);
 
@@ -617,7 +756,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         title: 'Seat Capacity', slug: 'seat-capacity', durationMinutes: 30, intervalMinutes: 30,
         minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId], capacity: 3,
     });
-    const seatStart = new Date('2026-07-27T16:00:00.000Z');
+    const seatStart = new Date('2054-07-27T16:00:00.000Z');
     const seatBookingTwo = await store.createBooking('phase1', seatsEvent.slug, {
         eventTypeId: seatsEvent.id, start: seatStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Two Seats', bookerEmail: 'two-seats@example.net', seats: 2, idempotencyKey: 'phase2-seats-two-0001',
@@ -637,7 +776,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     await store.cancelBookingByToken(seatBookingTwo.cancelToken);
     const restoredSeatSlots = await store.listSlots('phase1', seatsEvent.slug, new Date(seatStart.getTime() - 1), new Date(seatStart.getTime() + 31 * 60 * 1000));
     assert.equal(restoredSeatSlots.find(slot => slot.start.getTime() === seatStart.getTime()).remainingSeats, 2);
-    const seatRescheduleStarts = [new Date('2026-07-27T16:30:00.000Z'), new Date('2026-07-27T17:00:00.000Z')];
+    const seatRescheduleStarts = [new Date('2054-07-27T16:30:00.000Z'), new Date('2054-07-27T17:00:00.000Z')];
     const seatRescheduleRace = await Promise.allSettled(
         seatRescheduleStarts.map(candidate => store.rescheduleBookingByToken(seatBookingOne.rescheduleToken, candidate))
     );
@@ -655,8 +794,8 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const phase2Availability = await store.saveDefaultAvailability(username, {
         ...(await store.getDefaultAvailability(username)),
         exclusions: [
-            { kind: 'holiday', startDate: '2026-09-01', endDate: '2026-09-01', label: 'Company holiday' },
-            { kind: 'out_of_office', startDate: '2026-09-02', endDate: '2026-09-03', label: 'Conference' },
+            { kind: 'holiday', startDate: '2054-09-01', endDate: '2054-09-01', label: 'Company holiday' },
+            { kind: 'out_of_office', startDate: '2054-09-02', endDate: '2054-09-03', label: 'Conference' },
         ],
     });
     assert.deepEqual(phase2Availability.exclusions.map(item => item.kind), ['holiday', 'out_of_office']);
@@ -665,7 +804,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
     });
     const exclusionSlots = await store.listSlots(
-        'phase1', exclusionEvent.slug, new Date('2026-09-01T16:00:00.000Z'), new Date('2026-09-01T18:00:00.000Z')
+        'phase1', exclusionEvent.slug, new Date('2054-09-01T16:00:00.000Z'), new Date('2054-09-01T18:00:00.000Z')
     );
     assert.equal(exclusionSlots.length, 0, 'holidays must block inherited availability');
 
@@ -691,11 +830,11 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(phase2Legacy.publicAccentColor, '#aa3377', 'older clients must preserve public customization');
     assert.equal(phase2Legacy.lockedTimeZone, 'America/Phoenix', 'older clients must preserve timezone locks');
     await assert.rejects(() => store.createBooking('phase1', phase2Event.slug, {
-        eventTypeId: phase2Event.id, start: new Date('2026-08-07T16:00:00.000Z'), bookerTimeZone: 'Europe/Paris',
+        eventTypeId: phase2Event.id, start: new Date('2054-08-07T16:00:00.000Z'), bookerTimeZone: 'Europe/Paris',
         bookerName: 'Wrong Zone', bookerEmail: 'wrong-zone@example.net', idempotencyKey: 'phase2-locked-zone-wrong-0001',
     }), /requires the America\/Phoenix time zone/);
     const attributedBooking = await store.createBooking('phase1', phase2Event.slug, {
-        eventTypeId: phase2Event.id, start: new Date('2026-08-07T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
+        eventTypeId: phase2Event.id, start: new Date('2054-08-07T16:00:00.000Z'), bookerTimeZone: 'America/Phoenix',
         bookerName: '=Campaign Guest', bookerEmail: 'campaign@example.net', idempotencyKey: 'phase2-attribution-0001',
         attribution: { utm_source: 'newsletter', utm_campaign: 'phase-two', ignored: 'drop-me' },
     });
@@ -707,7 +846,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
         capacity: 1, waitlistEnabled: true,
     });
-    const waitlistStart = new Date('2026-08-04T16:00:00.000Z');
+    const waitlistStart = new Date('2054-08-04T16:00:00.000Z');
     const capacityBooking = await store.createBooking('phase1', waitlistEvent.slug, {
         eventTypeId: waitlistEvent.id, start: waitlistStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Capacity Guest', bookerEmail: 'capacity@example.net', idempotencyKey: 'phase2-waitlist-capacity-0001',
@@ -741,7 +880,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
         capacity: 1, waitlistEnabled: true,
     });
-    const policyWaitlistStart = new Date('2026-08-11T16:00:00.000Z');
+    const policyWaitlistStart = new Date('2054-08-11T16:00:00.000Z');
     const policyCapacityBooking = await store.createBooking('phase1', policyWaitlistEvent.slug, {
         eventTypeId: policyWaitlistEvent.id, start: policyWaitlistStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Policy Capacity Guest', bookerEmail: 'policy-capacity@example.net', idempotencyKey: 'phase2-policy-waitlist-capacity-0001',
@@ -774,7 +913,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
         capacity: 3, maxAdditionalGuests: 1, waitlistEnabled: true,
     });
-    const attendeePolicyStart = new Date('2026-08-18T16:00:00.000Z');
+    const attendeePolicyStart = new Date('2054-08-18T16:00:00.000Z');
     const attendeeCapacityBooking = await store.createBooking('phase1', attendeePolicyEvent.slug, {
         eventTypeId: attendeePolicyEvent.id, start: attendeePolicyStart, bookerTimeZone: 'America/Phoenix',
         bookerName: 'Attendee Capacity Guest', bookerEmail: 'attendee-capacity@example.net', seats: 3,
@@ -805,7 +944,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     });
     const poll = await phase2Store.createPoll(username, {
         eventTypeId: pollEvent.id, title: 'Choose our meeting',
-        starts: ['2026-08-05T16:00:00.000Z', '2026-08-05T16:30:00.000Z'],
+        starts: ['2054-08-05T16:00:00.000Z', '2054-08-05T16:30:00.000Z'],
     });
     const publicPoll = await phase2Store.getPublicPoll(poll.token);
     assert.equal(publicPoll.requireEmailVerification, true);
@@ -843,7 +982,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.ok(outcomeRows[0].no_show_at);
 
     const delegatedBooking = await store.bookOnBehalf(username, phase2Event.id, {
-        start: new Date('2026-08-06T16:00:00.000Z'), bookerTimeZone: 'UTC',
+        start: new Date('2054-08-06T16:00:00.000Z'), bookerTimeZone: 'UTC',
         bookerName: 'Delegated Guest', bookerEmail: 'delegated@example.net', idempotencyKey: 'phase2-delegated-0001',
     });
     const delegatedOwnerBooking = (await store.listBookings(username, 'upcoming')).find(item => item.id === delegatedBooking.id);
@@ -877,16 +1016,16 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         maxRecurrenceOccurrences: 3,
     });
     const recurring = await store.createRecurringBooking('phase1', recurringEvent.slug, {
-        eventTypeId: recurringEvent.id, start: new Date('2026-10-26T13:00:00.000Z'), bookerTimeZone: 'America/New_York',
+        eventTypeId: recurringEvent.id, start: new Date('2054-10-26T13:00:00.000Z'), bookerTimeZone: 'America/New_York',
         bookerName: 'Recurring Guest', bookerEmail: 'recurring@example.net', idempotencyKey: 'phase2-recurring-dst-0001',
         recurrenceCount: 3,
     });
     assert.equal(recurring.recurrenceCount, 3);
     assert.deepEqual(recurring.bookings.map(item => item.start.toISOString()), [
-        '2026-10-26T13:00:00.000Z', '2026-11-02T14:00:00.000Z', '2026-11-09T14:00:00.000Z',
+        '2054-10-26T13:00:00.000Z', '2054-11-02T14:00:00.000Z', '2054-11-09T14:00:00.000Z',
     ], 'weekly series must preserve the host-local time across DST');
     const recurringReplayInput = {
-        eventTypeId: recurringEvent.id, start: new Date('2026-10-26T13:00:00.000Z'), bookerTimeZone: 'America/New_York',
+        eventTypeId: recurringEvent.id, start: new Date('2054-10-26T13:00:00.000Z'), bookerTimeZone: 'America/New_York',
         bookerName: 'Recurring Guest', bookerEmail: 'recurring@example.net', idempotencyKey: 'phase2-recurring-dst-0001',
         recurrenceCount: 3,
     };

@@ -79,6 +79,9 @@ check_service_active rspamd
 check_service_active openmailstack
 check_service_active redis-server
 check_service_active openmailstack-rspamd-health.timer
+if [[ "${ENABLE_OMS_SCHEDULER:-false}" == "true" ]]; then
+    check_service_active openmailstack-scheduler-worker
+fi
 
 if [[ "${CLAMAV_ENABLED:-1}" -eq 1 ]]; then
     check_service_active clamav-daemon

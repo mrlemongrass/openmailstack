@@ -131,6 +131,7 @@ export interface SchedulerPrivateLinkState {
 export declare class SchedulerStore {
     private readonly pool;
     private readonly holds;
+    private readonly workflows;
     constructor(pool: Pool);
     listAdminMailboxes(): Promise<Array<Record<string, unknown>>>;
     setEntitlement(username: string, actor: string, input: {

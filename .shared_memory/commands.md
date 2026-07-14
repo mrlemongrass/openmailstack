@@ -33,9 +33,12 @@ Scheduler release checks:
 
 ```bash
 rtk node tests/integration/scheduler_phase1_guard.cjs
+rtk node tests/integration/scheduler_phase3_guard.cjs
 rtk node tests/integration/scheduler_docs_guard.cjs
 rtk bash /tmp/oms-scheduler-single-use-db-test.sh
 rtk bash tests/integration/run.sh
+rtk systemctl status openmailstack-scheduler-worker.service --no-pager
+rtk journalctl -u openmailstack-scheduler-worker.service --since '15 minutes ago' --no-pager
 ```
 
 When comparing a tested backend to `/opt/openmailstack-backend`, exclude `node_modules`, `.npm`, and persistent `uploads`. Deployment must also exclude `uploads` from `rsync --delete`.

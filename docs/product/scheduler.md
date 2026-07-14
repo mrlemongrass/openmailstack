@@ -1,6 +1,6 @@
 # OMS Scheduler Product And Engineering Roadmap
 
-Status: `Phase 2 Complete And Live - Ready For Phase 3; Physical Client And Clean-VM Release Gates Pending`
+Status: `Phase 3 In Progress - Durable Workflow Foundation Live; Product APIs, Builder, Providers, Physical Client, And Clean-VM Gates Pending`
 
 Research date: 2026-07-10
 
@@ -387,6 +387,8 @@ Exit criteria:
 - Capacity, recurrence, expiry, active-booker limits, and approval races are covered by integration tests.
 
 ### Phase 3 - Durable workflows (4-6 weeks)
+
+Implementation status (2026-07-14): the first bounded foundation slice is live through migration `024`. It provides tenant-scoped workflow definitions, immutable published versions, booking-version snapshots, schedule generations, MariaDB-time leases, bounded retries/dead letters, delivery-attempt state, and a separate systemd worker. The first provider-neutral action is an owned-sender OMS email reminder. Reschedules cancel the old generation and create a complete new one; cancellation and ambiguous provider acknowledgements retain an explicit delivery-uncertain state rather than reporting false certainty or retrying a possibly accepted message. Owner/Admin APIs, the visual builder, test sends, operator replay/alerting, additional triggers/actions, webhooks, in-app notifications, and paid messaging adapters remain open.
 
 Deliver:
 

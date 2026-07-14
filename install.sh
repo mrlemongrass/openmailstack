@@ -240,10 +240,10 @@ if [[ "$ANY_INSTALLED" == "yes" && "$DRY_RUN" -eq 0 ]]; then
         # Security and DKIM should probably be re-run if missing components are installed
         MODULES_TO_RUN+=("functions/07_security.sh" "functions/08_dkim_sync_timer.sh")
         [[ ${INSTALLED_COMPONENTS["admin_portal"]} == "no" ]] && MODULES_TO_RUN+=("functions/09_admin_portal.sh")
-        [[ "${ENABLE_OMS_SCHEDULER}" == "true" && ${INSTALLED_COMPONENTS["scheduler"]} == "no" ]] && MODULES_TO_RUN+=("functions/12_scheduler.sh")
         if [[ ${INSTALLED_COMPONENTS["modern_webmail"]} == "no" || ("${ENABLE_OMS_SCHEDULER}" == "true" && ${INSTALLED_COMPONENTS["scheduler"]} == "no") ]]; then
             MODULES_TO_RUN+=("functions/10_webmail.sh")
         fi
+        [[ "${ENABLE_OMS_SCHEDULER}" == "true" && ${INSTALLED_COMPONENTS["scheduler"]} == "no" ]] && MODULES_TO_RUN+=("functions/12_scheduler.sh")
         [[ ${INSTALLED_COMPONENTS["monit"]} == "no" ]] && MODULES_TO_RUN+=("functions/11_monitoring.sh")
     else
         # Option 2: Reinstall everything
@@ -259,8 +259,9 @@ if [[ "$ANY_INSTALLED" == "yes" && "$DRY_RUN" -eq 0 ]]; then
             "functions/08_dkim_sync_timer.sh"
             "functions/09_admin_portal.sh"
         )
+        MODULES_TO_RUN+=("functions/10_webmail.sh")
         [[ "${ENABLE_OMS_SCHEDULER}" == "true" ]] && MODULES_TO_RUN+=("functions/12_scheduler.sh")
-        MODULES_TO_RUN+=("functions/10_webmail.sh" "functions/11_monitoring.sh")
+        MODULES_TO_RUN+=("functions/11_monitoring.sh")
     fi
 else
     # Fresh installation
@@ -276,8 +277,9 @@ else
         "functions/08_dkim_sync_timer.sh"
         "functions/09_admin_portal.sh"
     )
+    MODULES_TO_RUN+=("functions/10_webmail.sh")
     [[ "${ENABLE_OMS_SCHEDULER}" == "true" ]] && MODULES_TO_RUN+=("functions/12_scheduler.sh")
-    MODULES_TO_RUN+=("functions/10_webmail.sh" "functions/11_monitoring.sh")
+    MODULES_TO_RUN+=("functions/11_monitoring.sh")
 fi
 
 # Pre-flight is required if installing system components

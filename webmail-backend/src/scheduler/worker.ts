@@ -2,6 +2,13 @@ import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { pool } from '../db';
 import { schedulerConfig } from '../config';
+import {
+    SchedulerJobRepository,
+    SchedulerProviderError,
+    runSchedulerJobCycle,
+    type SchedulerMessageProvider,
+    type SchedulerReminderMail,
+} from './workflows';
 
 interface OutboxRow {
     id: string;
@@ -51,6 +58,9 @@ export function schedulerTransportOptions(config: SchedulerSmtpOptions = schedul
         host: config.smtpHost,
         port: config.smtpPort,
         secure: false,
+        connectionTimeout: 15_000,
+        greetingTimeout: 15_000,
+        socketTimeout: 45_000,
         tls: {
             rejectUnauthorized: config.smtpRejectUnauthorized,
             ...(config.smtpServerName ? { servername: config.smtpServerName } : {}),
@@ -234,20 +244,64 @@ async function deliverOutbox(row: OutboxRow, workerId: string): Promise<void> {
     }
 }
 
-let timer: NodeJS.Timeout | null = null;
+export class OmsSchedulerMessageProvider implements SchedulerMessageProvider {
+    readonly name = 'oms-smtp';
 
-export function startSchedulerWorker(): void {
-    if (!schedulerConfig.enabled || timer) return;
-    const workerId = `scheduler-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
-    const run = async () => {
+    async send(mail: SchedulerReminderMail, idempotencyKey: string): Promise<{ messageId?: string }> {
+        const messageIdDomain = new URL(schedulerConfig.publicBaseUrl).hostname || 'openmailstack.local';
+        const deliveryKey = crypto.createHash('sha256').update(idempotencyKey).digest('hex');
+        const messageId = `<scheduler-${deliveryKey}@${messageIdDomain}>`;
+        const transporter = nodemailer.createTransport(schedulerTransportOptions());
+        let timeout: NodeJS.Timeout | null = null;
         try {
-            const rows = await claimOutbox(workerId);
-            for (const row of rows) await deliverOutbox(row, workerId);
-        } catch (error) {
-            if (process.env.NODE_ENV !== 'test') console.error('Scheduler worker failed:', error);
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                timeout = setTimeout(() => {
+                    transporter.close();
+                    const error: any = new Error('Scheduler SMTP delivery timed out');
+                    error.code = 'ETIMEDOUT';
+                    reject(error);
+                }, 60_000);
+            });
+            const result: any = await Promise.race([
+                transporter.sendMail({
+                    from: mail.from,
+                    replyTo: mail.replyTo,
+                    to: mail.to,
+                    subject: mail.subject,
+                    text: mail.text,
+                    messageId,
+                }),
+                timeoutPromise,
+            ]);
+            return { messageId: result.messageId || messageId };
+        } catch (error: any) {
+            const command = String(error?.command || '').toUpperCase();
+            const retrySafe = command ? command !== 'DATA' : new Set([
+                'ECONNECTION', 'ECONNREFUSED', 'EDNS', 'EAUTH', 'ETLS', 'EENVELOPE', 'EMESSAGE',
+            ]).has(String(error?.code || '').toUpperCase());
+            throw new SchedulerProviderError(
+                String(error?.message || 'Scheduler SMTP delivery failed'),
+                retrySafe ? 'safe_to_retry' : 'delivery_uncertain',
+                String(error?.code || error?.name || 'delivery_failed').slice(0, 80),
+            );
+        } finally {
+            if (timeout) clearTimeout(timeout);
+            transporter.close();
         }
-    };
-    timer = setInterval(() => void run(), 15_000);
-    timer.unref();
-    void run();
+    }
+}
+
+export async function runSchedulerOutboxCycle(workerId: string): Promise<number> {
+    const rows = await claimOutbox(workerId);
+    for (const row of rows) await deliverOutbox(row, workerId);
+    return rows.length;
+}
+
+export async function runSchedulerWorkerCycle(
+    workerId: string,
+    provider: SchedulerMessageProvider = new OmsSchedulerMessageProvider(),
+): Promise<{ outbox: number; jobs: number }> {
+    const outbox = await runSchedulerOutboxCycle(workerId);
+    const jobs = await runSchedulerJobCycle(new SchedulerJobRepository(pool), provider, workerId);
+    return { outbox, jobs };
 }

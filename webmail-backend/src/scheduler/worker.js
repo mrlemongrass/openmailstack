@@ -3,18 +3,24 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.OmsSchedulerMessageProvider = void 0;
 exports.schedulerTransportOptions = schedulerTransportOptions;
 exports.schedulerNotificationMails = schedulerNotificationMails;
-exports.startSchedulerWorker = startSchedulerWorker;
+exports.runSchedulerOutboxCycle = runSchedulerOutboxCycle;
+exports.runSchedulerWorkerCycle = runSchedulerWorkerCycle;
 const crypto_1 = __importDefault(require("crypto"));
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const db_1 = require("../db");
 const config_1 = require("../config");
+const workflows_1 = require("./workflows");
 function schedulerTransportOptions(config = config_1.schedulerConfig) {
     return {
         host: config.smtpHost,
         port: config.smtpPort,
         secure: false,
+        connectionTimeout: 15_000,
+        greetingTimeout: 15_000,
+        socketTimeout: 45_000,
         tls: {
             rejectUnauthorized: config.smtpRejectUnauthorized,
             ...(config.smtpServerName ? { servername: config.smtpServerName } : {}),
@@ -183,24 +189,60 @@ async function deliverOutbox(row, workerId) {
         }
     }
 }
-let timer = null;
-function startSchedulerWorker() {
-    if (!config_1.schedulerConfig.enabled || timer)
-        return;
-    const workerId = `scheduler-${process.pid}-${crypto_1.default.randomBytes(6).toString('hex')}`;
-    const run = async () => {
+class OmsSchedulerMessageProvider {
+    name = 'oms-smtp';
+    async send(mail, idempotencyKey) {
+        const messageIdDomain = new URL(config_1.schedulerConfig.publicBaseUrl).hostname || 'openmailstack.local';
+        const deliveryKey = crypto_1.default.createHash('sha256').update(idempotencyKey).digest('hex');
+        const messageId = `<scheduler-${deliveryKey}@${messageIdDomain}>`;
+        const transporter = nodemailer_1.default.createTransport(schedulerTransportOptions());
+        let timeout = null;
         try {
-            const rows = await claimOutbox(workerId);
-            for (const row of rows)
-                await deliverOutbox(row, workerId);
+            const timeoutPromise = new Promise((_, reject) => {
+                timeout = setTimeout(() => {
+                    transporter.close();
+                    const error = new Error('Scheduler SMTP delivery timed out');
+                    error.code = 'ETIMEDOUT';
+                    reject(error);
+                }, 60_000);
+            });
+            const result = await Promise.race([
+                transporter.sendMail({
+                    from: mail.from,
+                    replyTo: mail.replyTo,
+                    to: mail.to,
+                    subject: mail.subject,
+                    text: mail.text,
+                    messageId,
+                }),
+                timeoutPromise,
+            ]);
+            return { messageId: result.messageId || messageId };
         }
         catch (error) {
-            if (process.env.NODE_ENV !== 'test')
-                console.error('Scheduler worker failed:', error);
+            const command = String(error?.command || '').toUpperCase();
+            const retrySafe = command ? command !== 'DATA' : new Set([
+                'ECONNECTION', 'ECONNREFUSED', 'EDNS', 'EAUTH', 'ETLS', 'EENVELOPE', 'EMESSAGE',
+            ]).has(String(error?.code || '').toUpperCase());
+            throw new workflows_1.SchedulerProviderError(String(error?.message || 'Scheduler SMTP delivery failed'), retrySafe ? 'safe_to_retry' : 'delivery_uncertain', String(error?.code || error?.name || 'delivery_failed').slice(0, 80));
         }
-    };
-    timer = setInterval(() => void run(), 15_000);
-    timer.unref();
-    void run();
+        finally {
+            if (timeout)
+                clearTimeout(timeout);
+            transporter.close();
+        }
+    }
+}
+exports.OmsSchedulerMessageProvider = OmsSchedulerMessageProvider;
+async function runSchedulerOutboxCycle(workerId) {
+    const rows = await claimOutbox(workerId);
+    for (const row of rows)
+        await deliverOutbox(row, workerId);
+    return rows.length;
+}
+async function runSchedulerWorkerCycle(workerId, provider = new OmsSchedulerMessageProvider()) {
+    const outbox = await runSchedulerOutboxCycle(workerId);
+    const jobs = await (0, workflows_1.runSchedulerJobCycle)(new workflows_1.SchedulerJobRepository(db_1.pool), provider, workerId);
+    return { outbox, jobs };
 }
 //# sourceMappingURL=worker.js.map

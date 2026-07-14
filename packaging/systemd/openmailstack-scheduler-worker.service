@@ -1,0 +1,21 @@
+[Unit]
+Description=OpenMailStack Scheduler Worker
+After=network.target mariadb.service postfix.service
+ConditionPathExists=/etc/openmailstack/scheduler.enabled
+
+[Service]
+Type=simple
+User=openmailstack
+Group=openmailstack
+WorkingDirectory=/opt/openmailstack-backend
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/openmailstack/webmail-backend.env
+ExecStart=/usr/bin/node src/scheduler/worker-entry.js
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+ProtectSystem=full
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

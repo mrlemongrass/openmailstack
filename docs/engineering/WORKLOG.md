@@ -5210,3 +5210,81 @@ Stop the reproducible Rspamd worker crashes, monitor the complete Postfix filter
 ### Next recommended task
 
 Observe the functional Rspamd timer through normal mail traffic, then resume Scheduler Phase 3 durable workflow foundations if no new worker generation failures appear.
+
+## 2026-07-14 — Scheduler Phase 3 durable workflow foundation
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `a76809d1`
+Ending git state: focused implementation, tests, live deployment, and documentation commit-ready
+
+### Selected task
+
+After confirming Rspamd remained functionally healthy with no new crash generation, start Scheduler Phase 3 with the smallest durable execution slice: immutable workflow versions, confirmed-booking snapshots, leased retry/dead-letter jobs, observable delivery attempts, one provider-neutral OMS email reminder, and a separately supervised worker.
+
+### Acceptance criteria
+
+- [x] Workflow definitions are tenant-scoped and published versions are immutable.
+- [x] Confirmed bookings capture the currently applicable workflow versions and scheduling inputs.
+- [x] Reschedule/cancel behavior cannot leave an old schedule generation eligible to send.
+- [x] Jobs use database time for leases and expose bounded retry, dead-letter, malformed-payload, and delivery-uncertain states.
+- [x] A possible provider acceptance is never automatically retried as a duplicate.
+- [x] The email runner depends on a provider-neutral contract; SMTP classification remains in the OMS adapter.
+- [x] Workflow and legacy outbox processing run outside the web process under systemd crash recovery.
+- [x] Installer/upgrader ordering cannot mark Scheduler enabled before the worker runtime exists and is healthy.
+- [x] Focused, full, disposable-database, integration, and live release gates pass.
+- [x] Roadmap and project memory describe Phase 3 as in progress rather than complete.
+
+### Changes made
+
+- Added migration `024_scheduler_workflow_foundation.sql` with tenant-scoped workflow definitions, event-type assignment, immutable versions/steps, booking/version snapshots, schedule generations, leased jobs, and delivery attempts.
+- Added normalized definitions for the bounded `booking.start` trigger and `message.email.reminder` action.
+- Captured the active workflow versions when a booking becomes confirmed. A reschedule reconciles any in-flight delivery as uncertain, cancels the old generation, and enqueues every captured step against the new start; cancellation likewise preserves uncertainty instead of reporting a potentially accepted send as cleanly cancelled.
+- Implemented MariaDB-time claims with 120-second leases, bounded retries/dead letters, generation fencing, and explicit reconciliation for expired `sending` attempts. Invalid persisted payloads enter the same visible failure path rather than being leased forever.
+- Added `SchedulerMessageProvider` and `SchedulerProviderError`. The runner understands only safe-to-retry versus delivery-uncertain dispositions; Nodemailer/SMTP error classification remains inside `OmsSchedulerMessageProvider`.
+- Added stable message IDs and bounded SMTP timeouts below the lease duration. If SMTP accepts a message but database acknowledgement fails, the attempt remains `sending` for later uncertainty reconciliation and is not resent.
+- Moved outbox and workflow cycles into `worker-entry.ts` with graceful shutdown and a dedicated `openmailstack-scheduler-worker.service`. Removed the in-process timer from `index.ts`.
+- Updated installer and backend deployment ordering so worker runtime is deployed before Scheduler installation, backend upgrades restart an enabled worker, and an unhealthy worker removes the enablement marker instead of leaving false-ready state.
+- Added unit, real-MariaDB lifecycle, installer/integration guard, and staging-worker regressions.
+
+### Review findings resolved
+
+- Corrected installer ordering and enablement-marker failure behavior.
+- Ensured existing enabled workers restart when backend runtime changes.
+- Made job leases use MariaDB UTC instead of worker-local clocks.
+- Added tenant keys throughout workflow, job, and delivery storage.
+- Prevented automatic retry after ambiguous SMTP acceptance.
+- Added schedule generations so a reschedule recreates even previously delivered steps while fencing the old start.
+- Preserved explicit uncertainty for in-flight cancellation/reschedule and malformed stored payloads.
+- Kept provider-specific SMTP semantics behind the provider interface.
+- Shifted database fixtures away from near-term calendar dates so they remain stable.
+- Final independent standards and bounded-slice spec reviews reported no actionable findings.
+
+### Proof / checks run
+
+- Rspamd steady-state preflight: functional status healthy, zero failures/restarts, stable generation, no new fatal worker signals, and empty Postfix queue.
+- Backend: 101 tests, 99 passed, 2 optional DB gates skipped, 0 failed.
+- Frontend: 13 tests passed; ESLint and production build passed; largest route chunk 489.28 kB.
+- Disposable MariaDB: migrations `001`-`024` applied twice; Phase 1 lifecycle plus slot-hold concurrency passed 8/8 with no skips. The disposable database/user were removed by the test trap.
+- Integration: `tests/integration/run.sh` passed, including Rspamd recovery/map checks, Scheduler Phase 1 and Phase 3 guards, frontend regressions, and installer dry run.
+- Live staging smoke passed all core services/listeners, Nginx/Postfix/Dovecot/Rspamd validation, Rspamd functional scan, TLS/SMTP STARTTLS, web endpoints, API auth boundary, and DKIM checks.
+- Live migration row exists and all seven migration `024` tables are present. Workflow job count, delivery-attempt count, and pending legacy outbox count are all zero.
+- `openmailstack.service` and `openmailstack-scheduler-worker.service` are active. The worker stayed on one PID through a poll cycle with `NRestarts=0`, logged a clean start, and the backend had no warning-or-higher restart logs.
+- Deployed `index.js`, `store.js`, `worker.js`, `worker-entry.js`, and `workflows.js` hashes match the tested repository artifacts.
+
+### Deployment and rollback
+
+- Root-only rollback snapshot: `/var/backups/openmailstack/20260714T140745Z_scheduler_phase3_a76809d` (backend runtime, prior unit/marker state, and compressed full-database snapshot).
+- Synchronized the tested backend while excluding `node_modules`, `.npm`, and persistent `uploads`; applied only additive migration `024`; installed/enabled the dedicated unit; restarted the backend and worker; then ran live validation.
+- No production workflows, jobs, attempts, bookings, mailbox rows, messages, credentials, or uploads were created or changed by validation.
+
+### Risks / notes
+
+- This is the durable foundation, not completed Phase 3. There is no owner/Admin workflow mutation API or builder UI yet.
+- Operator retry/dead-letter alerting and manual reconciliation are still required. Delivery-uncertain rows intentionally favor visible ambiguity over duplicate sends or false cancellation claims.
+- Only the OMS email reminder adapter exists. Webhooks, in-app notifications, SMS, WhatsApp, and voice need separate provider/consent/security work.
+- Clean-install validation remains intentionally deferred until the second development Linux server is available; current proof is a guarded live upgrade plus disposable database lifecycle.
+
+### Next recommended task
+
+Add authenticated owner/Admin workflow APIs plus read-only job/delivery observability, then build the owner workflow list/editor and test-send flow on those contracts before adding paid messaging providers.

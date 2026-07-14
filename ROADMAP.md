@@ -1,6 +1,6 @@
 # OpenMailStack Roadmap
 
-Last reviewed: 2026-07-11
+Last reviewed: 2026-07-14
 
 This roadmap tracks the remaining product and release work for the modern OpenMailStack suite. The current product direction is a native React webmail, calendar, and contacts experience backed by the Node/Express sync proxy, while Roundcube and older SOGo-compatible paths remain compatibility or fallback surfaces.
 
@@ -142,7 +142,8 @@ The contacts and notes apps have been extracted into their own directories with 
 `docs/product/scheduler.md` is the detailed product, parity, architecture, and delivery roadmap.
 
 - ✅ **Phase 0 foundation complete and deployed with Phase 1**: DST-safe availability and host/booker timezone projection, versioned slot inventory/hold migration, transactional MariaDB repository, booking/provider/outbox/audit contracts, tenant authorization, threat model, and automated parity register are implemented. Unit/contract tests and a disposable MariaDB 11 two-connection capacity-one race pass; migration `001` is now recorded live.
-- ✅ **Phases 1 and 2 complete and live; ready for Phase 3**: installation/entitlements, event types, availability, native booking, private/one-off links, booking integrity, policy-preserving waitlists, DST-safe recurring series, meeting polls, delegation/outcomes, public embeds/customization/attribution, and guided import/export are live through migration `023`. Hardening commit `60864417` revalidated migrations `001`-`023` twice and all 90 backend tests without skips, including verification and attendee-policy changes after waitlist admission; the changed runtime artifacts are deployed and byte-for-byte equal. A real create/reschedule/cancel cycle passed SMTP, outbox, Calendar projection, tombstone, capacity-release, and public-slot restoration checks. Physical CalDAV/ActiveSync observation remains pending; clean-VM validation is deferred until a second development Linux server is available.
+- ✅ **Phases 1 and 2 complete and live**: installation/entitlements, event types, availability, native booking, private/one-off links, booking integrity, policy-preserving waitlists, DST-safe recurring series, meeting polls, delegation/outcomes, public embeds/customization/attribution, and guided import/export are live through migration `023`. Hardening commit `60864417` revalidated migrations `001`-`023` twice and all 90 backend tests without skips, including verification and attendee-policy changes after waitlist admission; the changed runtime artifacts are deployed and byte-for-byte equal. A real create/reschedule/cancel cycle passed SMTP, outbox, Calendar projection, tombstone, capacity-release, and public-slot restoration checks. Physical CalDAV/ActiveSync observation remains pending; clean-VM validation is deferred until a second development Linux server is available.
+- 🟡 **Phase 3 durable workflow foundation is live**: migration `024` adds tenant-scoped workflow definitions, immutable versions, booking snapshots, leased retry/dead-letter jobs, delivery attempts, and schedule generations. A separate crash-recovering worker executes provider-neutral OMS email reminders and reconciles uncertain delivery instead of risking duplicate sends. Owner/Admin APIs, the workflow builder, test sends, operator replay/alerting, additional triggers/actions, webhooks, and paid messaging providers remain to be delivered before Phase 3 is complete.
 - ✅ Add **Scheduler** immediately after **Notes** in the desktop and mobile web-app navigation.
 - ✅ Add an optional installer choice persisted as `ENABLE_OMS_SCHEDULER`, and install no Scheduler components when it is disabled.
 - ✅ Let only authorized admins enable/disable Scheduler per mailbox; installation alone must not publish or entitle users.
@@ -150,7 +151,7 @@ The contacts and notes apps have been extracted into their own directories with 
 - ✅ Serve the same Scheduler path on every configured OMS webmail hostname; use a configured preferred base URL for generated links and provision configured aliases into Nginx and TLS SANs.
 - ✅ Deliver native individual event types, availability, public booking, secure reschedule/cancel, OMS Calendar projection, and OMS email notifications.
 - ✅ Reach Phase 2 personal parity with advanced limits, overrides, holidays/out-of-office, private/single-use/one-off links, seats and waitlists, recurring bookings, meeting polls, no-show/delegation, embed variants, prefill/UTM, customization/locale/timezone lock, and guarded migration/import.
-- ❌ Add durable workflows, reminders, provider-backed SMS/WhatsApp/voice, and observable background delivery.
+- 🟡 Add durable workflows, reminders, provider-backed SMS/WhatsApp/voice, and observable background delivery. The versioned job/delivery foundation and OMS email reminder adapter are live; product APIs/UI, broader actions, operator tooling, and external providers remain.
 - ❌ Add teams, collective/group/round-robin/managed events, delegated scheduling, routing forms, attributes, fairness, and explainable assignment.
 - ❌ Add payments, external calendars/conferencing, CRM/automation adapters, analytics, public APIs, OAuth, webhooks, CLI, embeds, and MCP/agent support.
 - ❌ Add enterprise organization controls, SSO/SCIM reuse, audit/export/deletion/retention, operational recovery, and continuous competitor-parity review.

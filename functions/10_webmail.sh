@@ -194,6 +194,10 @@ deploy_backend() {
     systemctl daemon-reload
     systemctl enable --now openmailstack.service
     systemctl restart openmailstack.service
+    if [[ -f /etc/openmailstack/scheduler.enabled && -f /etc/systemd/system/openmailstack-scheduler-worker.service ]]; then
+        systemctl restart openmailstack-scheduler-worker.service
+        systemctl is-active --quiet openmailstack-scheduler-worker.service
+    fi
 }
 
 deploy_frontend() {

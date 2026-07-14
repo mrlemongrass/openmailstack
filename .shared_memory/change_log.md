@@ -943,3 +943,13 @@ Future entry template:
 - Observability: Admin System Health now presents `filtering.rspamd` in a separate Mail Filtering card rather than treating it as a client protocol.
 - Verified: 93 backend tests passed with two optional database skips; 13 frontend tests, lint/build, full integration, systemd/config checks, staging smoke, repeated live scan/Milter transactions, stable worker generations, controlled restart baseline, and zero new fatal signals passed.
 - Deployed: Root-only rollback snapshot `/var/backups/openmailstack/20260714T125639Z_rspamd_health_ffd8034`; no production data or secrets changed.
+
+## 2026-07-14 Scheduler Phase 3 Durable Workflow Foundation
+
+- Added: Migration `024` introduces tenant-scoped workflow definitions, immutable versions/steps, booking-version snapshots, schedule generations, leased jobs, and delivery attempts.
+- Reliability: Jobs lease against MariaDB UTC time, retry only provider-classified safe failures, dead-letter malformed payloads visibly, and retain an explicit delivery-uncertain result after ambiguous acceptance, cancellation, or reschedule.
+- Lifecycle: Confirmed bookings capture applicable workflow versions. Reschedules cancel the old generation and schedule every captured step again for the new start; cancellations stop unfinished jobs without reporting uncertain sends as safely cancelled.
+- Isolation: A separate `openmailstack-scheduler-worker.service` now runs legacy outbox and workflow cycles with systemd restart recovery; the web backend no longer owns an in-process timer.
+- Scope: The provider-neutral runner currently supports an owned-sender OMS email reminder. Owner/Admin APIs, workflow builder/test sends, operator replay/alerting, broader triggers/actions, webhooks, in-app delivery, and external messaging providers remain Phase 3 work.
+- Verified: Backend 99/101 with two optional DB skips, frontend 13/13 plus lint/build, full integration, systemd/shell guards, two migration passes, and the 8/8 disposable-MariaDB lifecycle/concurrency proof pass. Both code reviews returned no remaining actionable findings.
+- Deployed: Migration `024` is recorded live, all seven tables exist, worker/backend services are active, worker restarts remain zero, live jobs/attempts and pending legacy outbox are zero, deployed runtime hashes match, and staging smoke passes. Root-only rollback snapshot: `/var/backups/openmailstack/20260714T140745Z_scheduler_phase3_a76809d`.

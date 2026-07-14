@@ -336,4 +336,5 @@ test('Scheduler SMTP verifies the certificate using the configured mail hostname
     assert.equal(options.host, '127.0.0.1');
     assert.equal(options.tls.servername, 'mail.housevo.us');
     assert.equal(options.tls.rejectUnauthorized, true);
+    assert.equal(options.socketTimeout, 45_000);
 });

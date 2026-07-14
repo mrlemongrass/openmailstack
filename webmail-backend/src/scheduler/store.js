@@ -9,7 +9,9 @@ const availability_1 = require("./availability");
 const slot_holds_1 = require("./slot-holds");
 const phase1_1 = require("./phase1");
 const calendar_utils_1 = require("../calendar-utils");
+const config_1 = require("../config");
 const phase2_1 = require("./phase2");
+const workflows_1 = require("./workflows");
 const mysqlDate = (date) => date.toISOString().slice(0, 23).replace('T', ' ');
 const utcDate = (value) => new Date(`${String(value).replace(' ', 'T')}Z`);
 const booleanValue = (value) => Number(value) === 1;
@@ -207,9 +209,11 @@ async function loadWindows(db, eventIds) {
 class SchedulerStore {
     pool;
     holds;
+    workflows;
     constructor(pool) {
         this.pool = pool;
         this.holds = new slot_holds_1.SchedulerSlotHoldRepository(pool);
+        this.workflows = new workflows_1.SchedulerWorkflowRepository(pool);
     }
     async listAdminMailboxes() {
         const [rows] = await this.pool.query(`SELECT m.username, m.name, m.local_part, m.domain, m.active,
@@ -1013,6 +1017,22 @@ class SchedulerStore {
                      ON DUPLICATE KEY UPDATE ical_data = VALUES(ical_data)`, [calendar.id, calendarUid, ical]);
                 await connection.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar.id]);
             }
+            if (bookingStatus === 'confirmed') {
+                await this.workflows.captureForBooking(connection, {
+                    tenantKey: publicEvent.entitlement.tenantKey,
+                    bookingId,
+                    eventTypeId: publicEvent.event.id,
+                    hostEmail: publicEvent.entitlement.username,
+                    notificationFrom: publicEvent.entitlement.notificationFrom,
+                    notificationName: publicEvent.entitlement.displayName,
+                    bookerEmail,
+                    bookerName,
+                    title: publicEvent.event.title,
+                    start: input.start,
+                    timeZone: bookerTimeZone,
+                    manageUrl: `${config_1.schedulerConfig.publicBaseUrl}/scheduler/action/reschedule/${encodeURIComponent(rescheduleToken)}`,
+                });
+            }
             await connection.query("UPDATE scheduler_slot_holds SET status = 'confirmed' WHERE hold_token = ?", [hold.token]);
             await connection.query(`UPDATE scheduler_slot_inventory SET held_seats = GREATEST(held_seats - ?, 0), confirmed_seats = confirmed_seats + ?
                  WHERE tenant_key = ? AND event_type_key = ? AND host_username = ? AND slot_start = ?`, [hold.seats, hold.seats, hold.tenantKey, hold.eventTypeKey, hold.hostUsername, mysqlDate(hold.slotStart)]);
@@ -1533,6 +1553,20 @@ class SchedulerStore {
                 await connection.query(`INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?)
                      ON DUPLICATE KEY UPDATE ical_data=VALUES(ical_data)`, [booking.calendar_id, booking.calendar_event_uid, ical]);
                 await connection.query('UPDATE calendars SET sync_token=sync_token+1 WHERE id=?', [booking.calendar_id]);
+                await this.workflows.captureForBooking(connection, {
+                    tenantKey: booking.tenant_key,
+                    bookingId: booking.id,
+                    eventTypeId: booking.event_type_id,
+                    hostEmail: booking.host_username,
+                    notificationFrom: booking.notification_from || booking.host_username,
+                    notificationName: booking.display_name,
+                    bookerEmail: booking.booker_email,
+                    bookerName: booking.booker_name,
+                    title: snapshot.title || 'Meeting',
+                    start,
+                    timeZone: booking.booker_time_zone,
+                    manageUrl: `${config_1.schedulerConfig.publicBaseUrl}/scheduler/action/reschedule/${encodeURIComponent(nextRescheduleToken)}`,
+                });
                 await this.enqueue(connection, booking.tenant_key, booking.id, 'booking.confirmed', `booking:${booking.id}:confirmed`, {
                     bookingId: booking.id, hostEmail: booking.host_username, bookerEmail: booking.booker_email,
                     notificationFrom: booking.notification_from || booking.host_username, notificationName: booking.display_name,
@@ -1634,6 +1668,20 @@ class SchedulerStore {
                  WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [Number(booking.seats || 1), booking.tenant_key, booking.event_type_id, booking.host_username, booking.slot_start_utc]);
             await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [booking.slot_hold_token]);
             await connection.query('UPDATE scheduler_bookings SET slot_start=?, slot_end=?, slot_hold_token=?, action_tokens_expires_at=?, cancelled_at=NULL, reschedule_reason=? WHERE id=?', [mysqlDate(newStart), mysqlDate(newEnd), hold.token, mysqlDate(new Date(newEnd.getTime() + 30 * 24 * 60 * 60 * 1000)), normalizedReason || null, booking.id]);
+            await this.workflows.rescheduleForBooking(connection, {
+                tenantKey: booking.tenant_key,
+                bookingId: booking.id,
+                eventTypeId: booking.event_type_id,
+                hostEmail: booking.host_username,
+                notificationFrom: booking.notification_from || booking.host_username,
+                notificationName: booking.display_name,
+                bookerEmail: booking.booker_email,
+                bookerName: booking.booker_name,
+                title: snapshot.title || booking.title || 'Meeting',
+                start: newStart,
+                timeZone: booking.booker_time_zone,
+                manageUrl: `${config_1.schedulerConfig.publicBaseUrl}/scheduler/action/reschedule/${encodeURIComponent(token)}`,
+            });
             await connection.query('UPDATE events SET ical_data=? WHERE calendar_id=? AND uid=?', [ical, booking.calendar_id, booking.calendar_event_uid]);
             await connection.query('UPDATE calendars SET sync_token=sync_token+1 WHERE id=?', [booking.calendar_id]);
             await connection.query("UPDATE scheduler_slot_holds SET status='confirmed' WHERE hold_token=?", [hold.token]);
@@ -1686,6 +1734,7 @@ class SchedulerStore {
                 : '';
             const wasConfirmed = current.status === 'confirmed';
             await connection.query("UPDATE scheduler_bookings SET status='cancelled', cancelled_at=UTC_TIMESTAMP(3), cancellation_reason=? WHERE id=?", [normalizedReason || null, current.id]);
+            await this.workflows.cancelForBooking(connection, current.tenant_key, current.id);
             if (current.slot_hold_token) {
                 await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [current.slot_hold_token]);
             }

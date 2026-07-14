@@ -154,6 +154,7 @@ render_backend_env() {
             write_env_line "OMS_SMTP_HOST" "${OMS_SMTP_HOST:-127.0.0.1}"
             write_env_line "OMS_SMTP_PORT" "${OMS_SMTP_PORT:-587}"
             write_env_line "OMS_SMTP_SECURE" "${OMS_SMTP_SECURE:-false}"
+            write_env_line "OMS_SMTP_SERVER_NAME" "${OMS_SMTP_SERVER_NAME:-${MAIL_HOSTNAME}}"
             write_env_line "OMS_SMTP_REJECT_UNAUTHORIZED" "${OMS_SMTP_REJECT_UNAUTHORIZED:-true}"
             write_env_line "OMS_SIEVE_HOST" "${OMS_SIEVE_HOST:-127.0.0.1}"
             write_env_line "OMS_SIEVE_PORT" "${OMS_SIEVE_PORT:-4190}"

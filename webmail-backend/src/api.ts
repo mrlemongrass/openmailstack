@@ -10,7 +10,7 @@ import { ManageSieveClient } from './managesieve';
 import bcrypt from 'bcryptjs';
 import { pool } from './db';
 import { canDemoteGlobalAdmin, clearSession, createSession, hasGlobalAdminAccess, requireAdminSession, requireSession } from './auth';
-import { imapConfig, normalizeMailboxUsername, schedulerConfig, serverConfig, sieveConfig, smtpConfig } from './config';
+import { imapConfig, normalizeMailboxUsername, schedulerConfig, serverConfig, sieveConfig, smtpConfig, smtpTransportOptions } from './config';
 import { compileSieve, extractJsonFromSieve } from './sieve-compiler';
 import {
     createSavedMailSearch,
@@ -235,10 +235,11 @@ const setProtocolGauge = (readyGauge: promClient.Gauge, latencyGauge: promClient
 
 const countRecentActiveSyncErrors = async (): Promise<number | null> => {
     try {
-        const { stdout } = await execPromise('journalctl -u openmailstack --since "15 minutes ago" --no-pager -g "ActiveSync|Unknown tag" -n 300 2>/dev/null || true', { timeout: 4000 });
+        const { stdout } = await execPromise('journalctl -u openmailstack --since "15 minutes ago" --no-pager -g "ActiveSync|Unknown tag|\\[EAS\\] Error sending email" -n 300 2>/dev/null || true', { timeout: 4000 });
         return stdout.split('\n').filter((line: string) => (
             /Error handling ActiveSync/i.test(line) ||
             /Unknown tag .*page/i.test(line) ||
+            /\[EAS\] Error sending email/i.test(line) ||
             /ActiveSync.*(TypeError|ReferenceError|SyntaxError)/i.test(line)
         )).length;
     } catch {
@@ -1542,13 +1543,7 @@ apiRouter.post('/messages/send', requireAuth, upload.array('attachments'), async
     try {
         const nodemailer = require('nodemailer');
         
-        const transporter = nodemailer.createTransport({
-            host: smtpConfig.host,
-            port: smtpConfig.port,
-            secure: smtpConfig.secure,
-            auth: { user, pass },
-            tls: { rejectUnauthorized: smtpConfig.rejectUnauthorized }
-        });
+        const transporter = nodemailer.createTransport(smtpTransportOptions({ user, pass }));
 
         // Ensure "from" is valid. If it's just an email, format it. If we can get a name, use it.
         // If the user didn't specify from or it's empty, default to their username.

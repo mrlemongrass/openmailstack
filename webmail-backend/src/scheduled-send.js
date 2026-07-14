@@ -43,13 +43,7 @@ const runScheduledSender = async () => {
                 const [sessions] = await db_1.pool.query('SELECT password_ciphertext, password_iv, password_tag FROM webmail_sessions WHERE username = ? LIMIT 1', [username]);
                 if (sessions.length > 0) {
                     const pass = (0, auth_1.decryptPassword)(sessions[0].password_ciphertext, sessions[0].password_iv, sessions[0].password_tag);
-                    const transporter = nodemailer_1.default.createTransport({
-                        host: config_1.smtpConfig.host,
-                        port: config_1.smtpConfig.port,
-                        secure: config_1.smtpConfig.secure,
-                        auth: { user: username, pass },
-                        tls: { rejectUnauthorized: config_1.smtpConfig.rejectUnauthorized }
-                    });
+                    const transporter = nodemailer_1.default.createTransport((0, config_1.smtpTransportOptions)({ user: username, pass }));
                     await transporter.sendMail(mailOptions);
                     try {
                         const { ImapService } = require('./imap');

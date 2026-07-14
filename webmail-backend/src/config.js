@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPublicBaseUrl = exports.normalizeMailboxUsername = exports.sieveConfig = exports.smtpConfig = exports.imapConfig = exports.dbConfig = exports.schedulerConfig = exports.serverConfig = void 0;
+exports.getPublicBaseUrl = exports.normalizeMailboxUsername = exports.sieveConfig = exports.smtpTransportOptions = exports.smtpConfig = exports.imapConfig = exports.dbConfig = exports.schedulerConfig = exports.serverConfig = void 0;
 const parseNumber = (name, fallback) => {
     const raw = process.env[name];
     if (!raw)
@@ -77,10 +77,22 @@ exports.smtpConfig = {
     host: optional('OMS_SMTP_HOST', '127.0.0.1'),
     port: parseNumber('OMS_SMTP_PORT', 25),
     secure: parseBoolean('OMS_SMTP_SECURE', false),
+    serverName: optional('OMS_SMTP_SERVER_NAME'),
     rejectUnauthorized: parseBoolean('OMS_SMTP_REJECT_UNAUTHORIZED', process.env.NODE_ENV === 'production'),
     masterUser: optional('OMS_SMTP_MASTER_USER'),
     masterPass: optional('OMS_SMTP_MASTER_PASS'),
 };
+const smtpTransportOptions = (auth, config = exports.smtpConfig) => ({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth,
+    tls: {
+        rejectUnauthorized: config.rejectUnauthorized,
+        ...(config.serverName ? { servername: config.serverName } : {}),
+    },
+});
+exports.smtpTransportOptions = smtpTransportOptions;
 exports.sieveConfig = {
     host: optional('OMS_SIEVE_HOST', '127.0.0.1'),
     port: parseNumber('OMS_SIEVE_PORT', 4190),

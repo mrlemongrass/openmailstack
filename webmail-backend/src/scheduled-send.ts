@@ -1,6 +1,6 @@
 import { pool } from './db';
 import { decryptPassword } from './auth';
-import { smtpConfig } from './config';
+import { smtpTransportOptions } from './config';
 import nodemailer from 'nodemailer';
 
 let schemaPromise: Promise<void> | null = null;
@@ -41,13 +41,7 @@ export const runScheduledSender = async () => {
                 const [sessions]: any = await pool.query('SELECT password_ciphertext, password_iv, password_tag FROM webmail_sessions WHERE username = ? LIMIT 1', [username]);
                 if (sessions.length > 0) {
                     const pass = decryptPassword(sessions[0].password_ciphertext, sessions[0].password_iv, sessions[0].password_tag);
-                    const transporter = nodemailer.createTransport({
-                        host: smtpConfig.host,
-                        port: smtpConfig.port,
-                        secure: smtpConfig.secure,
-                        auth: { user: username, pass },
-                        tls: { rejectUnauthorized: smtpConfig.rejectUnauthorized }
-                    });
+                    const transporter = nodemailer.createTransport(smtpTransportOptions({ user: username, pass }));
                     
                     await transporter.sendMail(mailOptions);
                     

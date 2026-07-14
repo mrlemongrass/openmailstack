@@ -230,9 +230,10 @@ const setProtocolGauge = (readyGauge, latencyGauge, health) => {
 };
 const countRecentActiveSyncErrors = async () => {
     try {
-        const { stdout } = await execPromise('journalctl -u openmailstack --since "15 minutes ago" --no-pager -g "ActiveSync|Unknown tag" -n 300 2>/dev/null || true', { timeout: 4000 });
+        const { stdout } = await execPromise('journalctl -u openmailstack --since "15 minutes ago" --no-pager -g "ActiveSync|Unknown tag|\\[EAS\\] Error sending email" -n 300 2>/dev/null || true', { timeout: 4000 });
         return stdout.split('\n').filter((line) => (/Error handling ActiveSync/i.test(line) ||
             /Unknown tag .*page/i.test(line) ||
+            /\[EAS\] Error sending email/i.test(line) ||
             /ActiveSync.*(TypeError|ReferenceError|SyntaxError)/i.test(line))).length;
     }
     catch {
@@ -1438,13 +1439,7 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
     const files = req.files || [];
     try {
         const nodemailer = require('nodemailer');
-        const transporter = nodemailer.createTransport({
-            host: config_1.smtpConfig.host,
-            port: config_1.smtpConfig.port,
-            secure: config_1.smtpConfig.secure,
-            auth: { user, pass },
-            tls: { rejectUnauthorized: config_1.smtpConfig.rejectUnauthorized }
-        });
+        const transporter = nodemailer.createTransport((0, config_1.smtpTransportOptions)({ user, pass }));
         // Ensure "from" is valid. If it's just an email, format it. If we can get a name, use it.
         // If the user didn't specify from or it's empty, default to their username.
         const senderEmail = from || user;

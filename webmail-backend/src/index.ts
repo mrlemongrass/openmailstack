@@ -10,7 +10,7 @@ import cors from 'cors';
 import nodemailer from 'nodemailer';
 import { simpleParser } from 'mailparser';
 import { pool } from './db';
-import { getPublicBaseUrl, normalizeMailboxUsername, serverConfig, smtpConfig } from './config';
+import { getPublicBaseUrl, normalizeMailboxUsername, serverConfig, smtpConfig, smtpTransportOptions } from './config';
 import { rateLimit, securityHeaders } from './security';
 import { ensureMailSearchSchema } from './search-index';
 import { ensureUserSettingsSchema } from './user-settings';
@@ -1676,16 +1676,10 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 
         if (mimeContent) {
             try {
-                const transporter = nodemailer.createTransport({
-                    host: smtpConfig.host,
-                    port: smtpConfig.port,
-                    secure: smtpConfig.secure,
-                    tls: { rejectUnauthorized: smtpConfig.rejectUnauthorized },
-                    auth: {
-                        user: creds.user,
-                        pass: creds.pass
-                    }
-                });
+                const transporter = nodemailer.createTransport(smtpTransportOptions({
+                    user: creds.user,
+                    pass: creds.pass,
+                }));
 
                 const envelope = await buildActiveSyncSendMailEnvelope(mimeContent, creds.user);
                 console.log(`[EAS] Sending email for ${creds.user} to ${envelope.to.length} recipient(s) via SMTP ${smtpConfig.host}:${smtpConfig.port}...`);

@@ -82,10 +82,33 @@ export const smtpConfig = {
     host: optional('OMS_SMTP_HOST', '127.0.0.1'),
     port: parseNumber('OMS_SMTP_PORT', 25),
     secure: parseBoolean('OMS_SMTP_SECURE', false),
+    serverName: optional('OMS_SMTP_SERVER_NAME'),
     rejectUnauthorized: parseBoolean('OMS_SMTP_REJECT_UNAUTHORIZED', process.env.NODE_ENV === 'production'),
     masterUser: optional('OMS_SMTP_MASTER_USER'),
     masterPass: optional('OMS_SMTP_MASTER_PASS'),
 };
+
+interface SmtpTransportConfig {
+    host: string;
+    port: number;
+    secure: boolean;
+    serverName: string;
+    rejectUnauthorized: boolean;
+}
+
+export const smtpTransportOptions = (
+    auth: { user: string; pass: string },
+    config: SmtpTransportConfig = smtpConfig,
+): Record<string, unknown> => ({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth,
+    tls: {
+        rejectUnauthorized: config.rejectUnauthorized,
+        ...(config.serverName ? { servername: config.serverName } : {}),
+    },
+});
 
 export const sieveConfig = {
     host: optional('OMS_SIEVE_HOST', '127.0.0.1'),

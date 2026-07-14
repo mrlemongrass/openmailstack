@@ -95,6 +95,7 @@ test_mysql_e_reduction_guards() {
 test_modern_webmail_deployment_guards() {
     local install_file="${PROJECT_ROOT}/install.sh"
     local webmail_file="${PROJECT_ROOT}/functions/10_webmail.sh"
+    local webmail_env_example="${PROJECT_ROOT}/packaging/webmail-backend.env.example"
     local service_file="${PROJECT_ROOT}/packaging/systemd/openmailstack.service"
 
     assert_contains "${install_file}" 'INSTALLED_COMPONENTS["modern_webmail"]'
@@ -104,6 +105,9 @@ test_modern_webmail_deployment_guards() {
     assert_contains "${webmail_file}" 'umask 022'
     assert_contains "${webmail_file}" 'umask 077'
     assert_contains "${webmail_file}" 'write_env_line "OMS_DB_PASSWORD"'
+    assert_contains "${webmail_file}" 'write_env_line "OMS_SMTP_SERVER_NAME" "${OMS_SMTP_SERVER_NAME:-${MAIL_HOSTNAME}}"'
+    assert_contains "${webmail_env_example}" 'OMS_SMTP_SERVER_NAME=mail.example.com'
+    assert_contains "${PROJECT_ROOT}/webmail-backend/src/api.ts" '\[EAS\] Error sending email'
     assert_contains "${webmail_file}" 'location ^~ /api/'
     assert_contains "${webmail_file}" 'location ^~ /carddav'
     assert_contains "${webmail_file}" 'location = /Microsoft-Server-ActiveSync'

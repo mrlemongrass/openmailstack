@@ -39,10 +39,22 @@ export declare const smtpConfig: {
     host: string;
     port: number;
     secure: boolean;
+    serverName: string;
     rejectUnauthorized: boolean;
     masterUser: string;
     masterPass: string;
 };
+interface SmtpTransportConfig {
+    host: string;
+    port: number;
+    secure: boolean;
+    serverName: string;
+    rejectUnauthorized: boolean;
+}
+export declare const smtpTransportOptions: (auth: {
+    user: string;
+    pass: string;
+}, config?: SmtpTransportConfig) => Record<string, unknown>;
 export declare const sieveConfig: {
     host: string;
     port: number;
@@ -51,4 +63,5 @@ export declare const sieveConfig: {
 };
 export declare const normalizeMailboxUsername: (rawUser: string) => string;
 export declare const getPublicBaseUrl: (req: any) => string;
+export {};
 //# sourceMappingURL=config.d.ts.map

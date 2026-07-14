@@ -1631,16 +1631,10 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         }
         if (mimeContent) {
             try {
-                const transporter = nodemailer_1.default.createTransport({
-                    host: config_1.smtpConfig.host,
-                    port: config_1.smtpConfig.port,
-                    secure: config_1.smtpConfig.secure,
-                    tls: { rejectUnauthorized: config_1.smtpConfig.rejectUnauthorized },
-                    auth: {
-                        user: creds.user,
-                        pass: creds.pass
-                    }
-                });
+                const transporter = nodemailer_1.default.createTransport((0, config_1.smtpTransportOptions)({
+                    user: creds.user,
+                    pass: creds.pass,
+                }));
                 const envelope = await (0, eas_send_1.buildActiveSyncSendMailEnvelope)(mimeContent, creds.user);
                 console.log(`[EAS] Sending email for ${creds.user} to ${envelope.to.length} recipient(s) via SMTP ${config_1.smtpConfig.host}:${config_1.smtpConfig.port}...`);
                 await transporter.sendMail({ raw: mimeContent, envelope });

@@ -10,9 +10,16 @@ const security_1 = require("../security");
 const store_1 = require("./store");
 const phase1_1 = require("./phase1");
 const phase2_store_1 = require("./phase2-store");
+const workflows_1 = require("./workflows");
+const worker_1 = require("./worker");
 exports.schedulerRouter = (0, express_1.Router)();
 const store = new store_1.SchedulerStore(db_1.pool);
 const phase2Store = new phase2_store_1.SchedulerPhase2Store(db_1.pool, store);
+const schedulerSecrets = new workflows_1.SchedulerSecretBox(config_1.schedulerConfig.secretKeys);
+const workflows = new workflows_1.SchedulerWorkflowRepository(db_1.pool);
+const deliveryProviders = new workflows_1.SchedulerDeliveryProviderRepository(db_1.pool, schedulerSecrets);
+const contactPreferences = new workflows_1.SchedulerContactPreferenceRepository(db_1.pool, schedulerSecrets);
+const workflowDispatcher = new workflows_1.SchedulerWorkflowDeliveryDispatcher(db_1.pool, new worker_1.OmsSchedulerMessageProvider(), deliveryProviders, contactPreferences, config_1.schedulerConfig.publicBaseUrl);
 const authenticatedInstalled = (_req, res, next) => {
     if (!config_1.schedulerConfig.enabled)
         return res.status(403).json({ success: false, error: 'Scheduler is not installed' });
@@ -295,6 +302,174 @@ exports.schedulerRouter.post('/scheduler/v1/import', authenticatedInstalled, aut
         ownerError(res, error);
     }
 });
+const workflowSamplePayload = (username, value = {}) => ({
+    bookingId: 'preview',
+    hostEmail: username,
+    notificationFrom: username,
+    notificationName: String(value.notificationName || username.split('@')[0]),
+    bookerEmail: username,
+    bookerName: String(value.bookerName || 'Guest'),
+    title: String(value.title || 'Sample meeting'),
+    start: String(value.start || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()),
+    end: String(value.end || new Date(Date.now() + 24.5 * 60 * 60 * 1000).toISOString()),
+    status: String(value.status || 'confirmed'),
+    timeZone: String(value.timeZone || 'UTC'),
+    locale: String(value.locale || 'en'),
+    communicationConsents: [],
+    manageUrl: `${config_1.schedulerConfig.publicBaseUrl}/scheduler`,
+});
+exports.schedulerRouter.get('/scheduler/v1/workflows', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        res.json({ success: true, workflows: await workflows.listWorkflows(req.user.username) });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/scheduler/v1/workflows', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        const entitlement = await store.requireOwner(req.user.username);
+        const workflow = await workflows.createWorkflow({
+            tenantKey: entitlement.tenantKey,
+            ownerUsername: req.user.username,
+            name: req.body?.name,
+            enabled: false,
+            eventTypeIds: req.body?.eventTypeIds,
+        });
+        res.status(201).json({ success: true, workflow });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.put('/scheduler/v1/workflows/:id', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        await workflows.updateWorkflow(req.user.username, req.params.id, req.body || {});
+        res.json({ success: true });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.delete('/scheduler/v1/workflows/:id', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        await workflows.archiveWorkflow(req.user.username, req.params.id);
+        res.json({ success: true });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/scheduler/v1/workflows/:id/clone', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        const workflow = await workflows.cloneWorkflow(req.user.username, req.params.id);
+        res.status(201).json({ success: true, workflow });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/scheduler/v1/workflows/:id/publish', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        const version = await workflows.publishVersion(req.params.id, req.user.username, req.body?.definition);
+        res.status(201).json({ success: true, version });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/scheduler/v1/workflows/preview', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        const definition = (0, workflows_1.normalizeWorkflowDefinition)(req.body?.definition);
+        const payload = workflowSamplePayload(req.user.username, req.body?.sample);
+        const preview = definition.steps.map(step => step.action === 'webhook.http'
+            ? { action: step.action, body: JSON.stringify({ type: 'scheduler.workflow', booking: payload }, null, 2) }
+            : { action: step.action, ...(0, workflows_1.renderWorkflowAction)(payload, step.config) });
+        res.json({ success: true, preview });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/scheduler/v1/workflows/translate', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        const entitlement = await store.requireOwner(req.user.username);
+        const definition = await workflowDispatcher.translateDefinition(entitlement.tenantKey, String(req.body?.providerId || ''), req.body?.locales, req.body?.definition);
+        res.json({ success: true, definition });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/scheduler/v1/workflows/:id/test', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        const result = await workflows.enqueueTest(req.user.username, req.params.id, workflowSamplePayload(req.user.username, req.body));
+        res.status(202).json({ success: true, ...result });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.get('/scheduler/v1/delivery-providers', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        const entitlement = await store.requireOwner(req.user.username);
+        res.set('Cache-Control', 'no-store').json({
+            success: true,
+            providers: await deliveryProviders.listAvailable(entitlement.tenantKey),
+        });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.get('/scheduler/v1/workflow-operations', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        res.json({ success: true, ...await workflows.listOperations(req.user.username, Number(req.query.limit || 100)) });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/scheduler/v1/workflow-operations/:id/reconcile', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        const action = ['retry', 'delivered', 'cancel'].includes(req.body?.action) ? req.body.action : null;
+        if (!action)
+            throw new Error('Reconciliation action must be retry, delivered, or cancel');
+        await workflows.reconcileJob(req.user.username, req.params.id, action);
+        res.json({ success: true });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.get('/scheduler/v1/notifications', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        res.json({ success: true, notifications: await workflows.listNotifications(req.user.username) });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/scheduler/v1/notifications/:id/read', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        await workflows.markNotificationRead(req.user.username, req.params.id);
+        res.json({ success: true });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
 exports.schedulerRouter.get('/admin/scheduler/v1/mailboxes', authenticatedInstalled, auth_1.requireSession, auth_1.requireAdminSession, async (_req, res) => {
     try {
         const mailboxes = await store.listAdminMailboxes();
@@ -313,6 +488,76 @@ exports.schedulerRouter.put('/admin/scheduler/v1/mailboxes/:username', authentic
         ownerError(res, error);
     }
 });
+exports.schedulerRouter.get('/admin/scheduler/v1/providers', authenticatedInstalled, auth_1.requireSession, auth_1.requireAdminSession, async (req, res) => {
+    try {
+        res.set('Cache-Control', 'no-store').json({
+            success: true,
+            providers: await deliveryProviders.list(req.query.tenantKey ? String(req.query.tenantKey) : undefined),
+        });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/admin/scheduler/v1/providers', authenticatedInstalled, auth_1.requireSession, auth_1.requireAdminSession, async (req, res) => {
+    try {
+        const provider = await deliveryProviders.save(req.user.username, req.body?.tenantKey, req.body || {});
+        res.set('Cache-Control', 'no-store').status(201).json({ success: true, provider });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.put('/admin/scheduler/v1/providers/:id', authenticatedInstalled, auth_1.requireSession, auth_1.requireAdminSession, async (req, res) => {
+    try {
+        const provider = await deliveryProviders.save(req.user.username, req.body?.tenantKey, req.body || {}, req.params.id);
+        res.set('Cache-Control', 'no-store').json({ success: true, provider });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.delete('/admin/scheduler/v1/providers/:id', authenticatedInstalled, auth_1.requireSession, auth_1.requireAdminSession, async (req, res) => {
+    try {
+        await deliveryProviders.disable(String(req.params.id), req.user.username);
+        res.json({ success: true });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/admin/scheduler/v1/providers/:id/test', authenticatedInstalled, auth_1.requireSession, auth_1.requireAdminSession, async (req, res) => {
+    try {
+        await workflowDispatcher.testProvider(String(req.body?.tenantKey || ''), String(req.params.id));
+        res.json({ success: true });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.get('/admin/scheduler/v1/workflow-operations', authenticatedInstalled, auth_1.requireSession, auth_1.requireAdminSession, async (req, res) => {
+    try {
+        res.json({
+            success: true,
+            ...await workflows.listAdminOperations(req.query.tenantKey ? String(req.query.tenantKey) : undefined, Number(req.query.limit || 100)),
+        });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
+exports.schedulerRouter.post('/admin/scheduler/v1/workflow-operations/:id/reconcile', authenticatedInstalled, auth_1.requireSession, auth_1.requireAdminSession, async (req, res) => {
+    try {
+        const action = ['retry', 'delivered', 'cancel'].includes(req.body?.action) ? req.body.action : null;
+        if (!action)
+            throw new Error('Reconciliation action must be retry, delivered, or cancel');
+        await workflows.reconcileJobAsAdmin(req.user.username, req.params.id, action);
+        res.json({ success: true });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
 const publicLimiter = (0, security_1.rateLimit)(60 * 1000, 120);
 const bookingLimiter = (0, security_1.rateLimit)(15 * 60 * 1000, 20);
 const publicEventView = (event) => ({ ...event, guestAllowList: [], guestDenyList: [] });
@@ -321,11 +566,19 @@ exports.schedulerRouter.get('/public/scheduler/v1/profiles/:handle', publicLimit
         const profile = await store.getPublicProfile(String(req.params.handle));
         if (!profile)
             return publicNotFound(res);
+        const events = await Promise.all(profile.events.map(async (event) => ({
+            ...publicEventView(event),
+            communicationChannels: await workflows.requiredChannels(profile.entitlement.username, event.id),
+        })));
+        const defaultEvent = profile.defaultEvent ? {
+            ...publicEventView(profile.defaultEvent),
+            communicationChannels: await workflows.requiredChannels(profile.entitlement.username, profile.defaultEvent.id),
+        } : null;
         res.json({
             success: true,
             profile: profile.entitlement,
-            events: profile.events.map(publicEventView),
-            defaultEvent: profile.defaultEvent ? publicEventView(profile.defaultEvent) : null,
+            events,
+            defaultEvent,
         });
     }
     catch {
@@ -340,7 +593,8 @@ exports.schedulerRouter.get('/public/scheduler/v1/profiles/:handle/events/:slug'
             return publicNotFound(res);
         if (accessToken)
             res.set('Cache-Control', 'no-store');
-        res.json({ success: true, profile: result.entitlement, event: publicEventView(result.event) });
+        const communicationChannels = await workflows.requiredChannels(result.entitlement.username, result.event.id);
+        res.json({ success: true, profile: result.entitlement, event: { ...publicEventView(result.event), communicationChannels } });
     }
     catch {
         publicNotFound(res);
@@ -372,6 +626,7 @@ exports.schedulerRouter.post('/public/scheduler/v1/profiles/:handle/events/:slug
             bookerTimeZone: String(req.body?.bookerTimeZone || ''),
             bookerName: String(req.body?.bookerName || ''),
             bookerEmail: String(req.body?.bookerEmail || ''),
+            communicationConsents: req.body?.communicationConsents,
             bookerNotes: String(req.body?.bookerNotes || ''),
             bookingAnswers: req.body?.bookingAnswers,
             attendees: req.body?.attendees,
@@ -404,12 +659,31 @@ exports.schedulerRouter.post('/public/scheduler/v1/profiles/:handle/events/:slug
         res.status(500).json({ success: false, error: 'Unable to create booking' });
     }
 });
+exports.schedulerRouter.get('/public/scheduler/v1/unsubscribe/:token', publicLimiter, publicBoundary, async (req, res) => {
+    const token = String(req.params.token || '').trim();
+    const action = `/api/public/scheduler/v1/unsubscribe/${encodeURIComponent(token)}`;
+    res.set('Cache-Control', 'no-store').type('html').send(`<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unsubscribe from Scheduler messages</title>
+<main><h1>Stop Scheduler messages?</h1><p>This will stop future messages for this communication channel.</p>
+<form method="post" action="${action}"><button type="submit">Confirm unsubscribe</button></form></main></html>`);
+});
+exports.schedulerRouter.post('/public/scheduler/v1/unsubscribe/:token', publicLimiter, publicBoundary, async (req, res) => {
+    try {
+        const changed = await contactPreferences.unsubscribe(String(req.params.token));
+        res.set('Cache-Control', 'no-store').type('text/plain').send(changed ? 'You have been unsubscribed from Scheduler messages.' : 'This unsubscribe link is no longer active.');
+    }
+    catch {
+        res.status(500).type('text/plain').send('Unable to update communication preferences.');
+    }
+});
 exports.schedulerRouter.post('/public/scheduler/v1/profiles/:handle/events/:slug/waitlist', bookingLimiter, publicBoundary, async (req, res) => {
     try {
         const result = await store.joinWaitlist(String(req.params.handle), String(req.params.slug), {
             eventTypeId: String(req.body?.eventTypeId || ''), start: new Date(req.body?.start),
             bookerTimeZone: String(req.body?.bookerTimeZone || ''), bookerName: String(req.body?.bookerName || ''),
             bookerEmail: String(req.body?.bookerEmail || ''), bookerNotes: String(req.body?.bookerNotes || ''),
+            communicationConsents: req.body?.communicationConsents,
             attendees: req.body?.attendees, seats: req.body?.seats,
             verificationChallengeId: req.body?.verificationChallengeId, verificationCode: req.body?.verificationCode,
             idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || ''), privateAccessToken: privateAccessToken(req),

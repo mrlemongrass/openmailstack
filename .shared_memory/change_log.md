@@ -953,3 +953,11 @@ Future entry template:
 - Scope: The provider-neutral runner currently supports an owned-sender OMS email reminder. Owner/Admin APIs, workflow builder/test sends, operator replay/alerting, broader triggers/actions, webhooks, in-app delivery, and external messaging providers remain Phase 3 work.
 - Verified: Backend 99/101 with two optional DB skips, frontend 13/13 plus lint/build, full integration, systemd/shell guards, two migration passes, and the 8/8 disposable-MariaDB lifecycle/concurrency proof pass. Both code reviews returned no remaining actionable findings.
 - Deployed: Migration `024` is recorded live, all seven tables exist, worker/backend services are active, worker restarts remain zero, live jobs/attempts and pending legacy outbox are zero, deployed runtime hashes match, and staging smoke passes. Root-only rollback snapshot: `/var/backups/openmailstack/20260714T140745Z_scheduler_phase3_a76809d`.
+
+## 2026-07-16 Scheduler Phase 3 Complete And Live
+
+- Completed: all five workflow slices—owner/Admin operations, native builder/versioning, lifecycle automation, recovery/alerts/replay, and secured provider-dependent external channels.
+- Hardened: exact safe-placeholder preservation, real Express authorization/IDOR coverage, semantic delivery metrics, atomic booking-scoped consent, stable unsubscribe capabilities, versioned purpose-separated encryption, mandatory webhook signatures, DNS-pinned no-pool HTTPS, and delivery-uncertainty recovery.
+- Verified: migrations `001`-`025` twice and 114/114 backend tests; 14/14 frontend tests plus lint/build; full integration; owner/Admin desktop/mobile browser checks; independent Standards/Spec reviews with no findings; exact deployed artifacts; live API/worker/Rspamd/staging/queue/auth/schema gates.
+- Deployed: migration `025` and the tested application bundle are live. Workflow/job/provider/open-alert counts remain zero and no external send was performed. Root-only checksum-verified rollback snapshot: `/var/backups/openmailstack/20260716T151429Z-scheduler-phase3`.
+- Deferred: provider-specific certification and clean-VM install/upgrade/rollback on the planned second Linux server.

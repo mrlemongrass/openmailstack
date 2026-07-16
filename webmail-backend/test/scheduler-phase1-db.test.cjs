@@ -7,7 +7,13 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const { pool } = require('../src/db.js');
     const { SchedulerStore } = require('../src/scheduler/store.js');
     const { SchedulerPhase2Store } = require('../src/scheduler/phase2-store.js');
-    const { SchedulerWorkflowRepository, SchedulerJobRepository } = require('../src/scheduler/workflows.js');
+    const {
+        SchedulerContactPreferenceRepository,
+        SchedulerDeliveryProviderRepository,
+        SchedulerJobRepository,
+        SchedulerSecretBox,
+        SchedulerWorkflowRepository,
+    } = require('../src/scheduler/workflows.js');
     await pool.query(`CREATE TABLE IF NOT EXISTS mailbox (
         username VARCHAR(255) PRIMARY KEY, name VARCHAR(255), local_part VARCHAR(255), domain VARCHAR(255), active TINYINT(1)
     ) ENGINE=InnoDB`);
@@ -130,6 +136,105 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     });
     assert.equal(workflowV2.version, 2);
     assert.equal((await workflows.listBookingVersions(entitlement.tenantKey, booking.id))[0].version, 1, 'existing bookings must retain their captured workflow version');
+    const workflowList = await workflows.listWorkflows(username);
+    assert.equal(workflowList.find(item => item.id === workflow.id).definition.trigger.type, 'booking.start');
+    const clonedWorkflow = await workflows.cloneWorkflow(username, workflow.id);
+    const clonedWorkflowState = (await workflows.listWorkflows(username)).find(item => item.id === clonedWorkflow.id);
+    assert.equal(clonedWorkflowState.enabled, false);
+    assert.equal(clonedWorkflowState.currentVersion, 1);
+    assert.deepEqual(clonedWorkflowState.definition, workflowList.find(item => item.id === workflow.id).definition);
+
+    const approvalWorkflowEvent = await store.saveEventType(username, {
+        title: 'Approval Workflow Test', slug: 'approval-workflow-test', durationMinutes: 30, intervalMinutes: 30,
+        minimumNoticeMinutes: 0, requiresConfirmation: true,
+        destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
+        windows: [{ weekday: 1, startMinute: 540, endMinute: 600 }],
+    });
+    const approvalWorkflow = await workflows.createWorkflow({
+        tenantKey: entitlement.tenantKey, ownerUsername: username, name: 'Approval snapshot',
+        enabled: true, eventTypeIds: [approvalWorkflowEvent.id],
+    });
+    const approvalWorkflowV1 = await workflows.publishVersion(approvalWorkflow.id, username, {
+        trigger: { type: 'booking.confirmed', offsetSeconds: 0 },
+        steps: [{ action: 'message.email', delaySeconds: 0, config: { subject: 'Version one', body: '{{event.title}}' } }],
+    });
+    const approvalWorkflowStart = new Date('2054-08-10T16:00:00.000Z');
+    const approvalWorkflowBooking = await store.createBooking('phase1', approvalWorkflowEvent.slug, {
+        eventTypeId: approvalWorkflowEvent.id, start: approvalWorkflowStart, bookerTimeZone: 'America/Phoenix',
+        bookerName: 'Version Keeper', bookerEmail: 'version-keeper@example.net',
+        idempotencyKey: 'phase3-approval-version-0001',
+    });
+    assert.equal(approvalWorkflowBooking.status, 'requested');
+    assert.equal((await workflows.listBookingVersions(entitlement.tenantKey, approvalWorkflowBooking.id))[0].version, 1,
+        'requested bookings must capture workflow versions immediately');
+    await workflows.publishVersion(approvalWorkflow.id, username, {
+        trigger: { type: 'booking.confirmed', offsetSeconds: 0 },
+        steps: [{ action: 'message.email', delaySeconds: 0, config: { subject: 'Version two', body: '{{event.title}}' } }],
+    });
+    await store.decideBooking(username, approvalWorkflowBooking.id, 'confirmed');
+    const [approvalWorkflowJobs] = await pool.query(
+        'SELECT workflow_version_id FROM scheduler_jobs WHERE booking_id=?', [approvalWorkflowBooking.id],
+    );
+    assert.equal(approvalWorkflowJobs.some(row => row.workflow_version_id === approvalWorkflowV1.id), true,
+        'approval must activate the version captured when the booking was requested');
+    assert.equal(approvalWorkflowJobs.some(row => row.workflow_version_id !== approvalWorkflowV1.id), false);
+
+    const secrets = new SchedulerSecretBox('phase3-disposable-secret');
+    const providers = new SchedulerDeliveryProviderRepository(pool, secrets);
+    await assert.rejects(() => providers.save(username, entitlement.tenantKey, {
+        name: 'Unsigned webhook', channel: 'webhook', endpointUrl: 'https://adapter.example.test/unsigned',
+        timeoutSeconds: 10,
+    }), /require a secret/);
+    const savedProvider = await providers.save(username, entitlement.tenantKey, {
+        name: 'Disposable webhook', channel: 'webhook', endpointUrl: 'https://adapter.example.test/scheduler',
+        secret: 'Bearer disposable', timeoutSeconds: 10,
+    });
+    assert.equal(savedProvider.hasSecret, true);
+    assert.equal(Object.hasOwn(savedProvider, 'secret'), false, 'provider APIs must never return credentials');
+    assert.equal((await providers.forDelivery(entitlement.tenantKey, savedProvider.id)).secret, 'Bearer disposable');
+    const [providerSecretRows] = await pool.query('SELECT secret_key_version FROM scheduler_delivery_providers WHERE id=?', [savedProvider.id]);
+    assert.equal(Number(providerSecretRows[0].secret_key_version), 1);
+    await providers.recordTest(savedProvider.id, 'healthy');
+    const testedProvider = (await providers.list(entitlement.tenantKey)).find(item => item.id === savedProvider.id);
+    assert.equal(testedProvider.lastTestStatus, 'healthy');
+    assert.ok(testedProvider.lastTestedAt);
+    const preferences = new SchedulerContactPreferenceRepository(pool, secrets);
+    await preferences.recordConsents(pool, entitlement.tenantKey, 'ada@example.net', {
+        phone: '+16025550123', channels: ['sms'],
+    });
+    const currentPreference = await preferences.current(entitlement.tenantKey, 'ada@example.net', 'sms');
+    assert.equal(currentPreference.phone, '+16025550123');
+    await preferences.recordConsents(pool, entitlement.tenantKey, 'ada@example.net', {
+        phone: '+16025550124', channels: ['sms'],
+    });
+    const repeatedPreference = await preferences.current(entitlement.tenantKey, 'ada@example.net', 'sms');
+    assert.equal(repeatedPreference.token, currentPreference.token, 'repeat consent must not invalidate an existing unsubscribe link');
+    assert.equal(repeatedPreference.phone, '+16025550124');
+    const concurrentConsentEmail = 'concurrent-consent@example.net';
+    await Promise.all(['+16025550131', '+16025550132'].map(async phone => {
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            await preferences.recordConsents(connection, entitlement.tenantKey, concurrentConsentEmail, {
+                phone, channels: ['sms'],
+            });
+            await connection.commit();
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }));
+    const [concurrentConsentRows] = await pool.query(
+        `SELECT COUNT(*) AS total FROM scheduler_contact_preferences
+         WHERE tenant_key=? AND contact_email=? AND channel='sms'`,
+        [entitlement.tenantKey, concurrentConsentEmail],
+    );
+    assert.equal(Number(concurrentConsentRows[0].total), 1, 'concurrent first consent must converge on one preference');
+    assert.ok(await preferences.current(entitlement.tenantKey, concurrentConsentEmail, 'sms'));
+    assert.equal(await preferences.unsubscribe(currentPreference.token), true);
+    assert.equal(await preferences.current(entitlement.tenantKey, 'ada@example.net', 'sms'), null);
     const [workflowJobs] = await pool.query('SELECT COUNT(*) AS total FROM scheduler_jobs WHERE booking_id=?', [booking.id]);
     assert.equal(Number(workflowJobs[0].total), 4);
 
@@ -390,7 +495,9 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(confirmationPayload.notificationName, 'Phase One');
     const ownerBookings = await store.listBookings(username, 'upcoming');
     assert.equal(ownerBookings.find(item => item.id === booking.id).start.toISOString(), start.toISOString());
-    const [projected] = await pool.query('SELECT uid FROM events WHERE calendar_id=?', [calendarId]);
+    const [projected] = await pool.query('SELECT uid FROM events WHERE calendar_id=? AND uid=?', [
+        calendarId, `scheduler-${booking.id}@openmailstack`,
+    ]);
     assert.equal(projected.length, 1);
 
     const [calendarProjection] = await pool.query('SELECT ical_data FROM events WHERE calendar_id=? AND uid=?', [calendarId, `scheduler-${booking.id}@openmailstack`]);
@@ -404,7 +511,9 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(rescheduleSlots.some(slot => slot.start.getTime() === rescheduledStart.getTime()), true, 'reschedule capability must access private-event slots');
     const rescheduled = await store.rescheduleBookingByToken(booking.rescheduleToken, rescheduledStart);
     assert.equal(rescheduled.start.toISOString(), rescheduledStart.toISOString());
-    const [rescheduledEvent] = await pool.query('SELECT ical_data FROM events WHERE calendar_id=?', [calendarId]);
+    const [rescheduledEvent] = await pool.query('SELECT ical_data FROM events WHERE calendar_id=? AND uid=?', [
+        calendarId, `scheduler-${booking.id}@openmailstack`,
+    ]);
     assert.match(rescheduledEvent[0].ical_data, /DTSTART:20540803T163000Z/);
     const [rescheduledJobs] = await pool.query(
         `SELECT j.id, CAST(j.available_at AS CHAR) AS available_at_utc, j.payload, s.step_order
@@ -421,11 +530,12 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(JSON.parse(rescheduledJobs[0].payload).start, rescheduledStart.toISOString());
 
     const jobs = new SchedulerJobRepository(pool);
-    await pool.query("UPDATE scheduler_jobs SET available_at='2100-01-01 00:00:00.000' WHERE booking_id=?", [booking.id]);
+    await pool.query("UPDATE scheduler_jobs SET available_at='2100-01-01 00:00:00.000'");
     await pool.query('UPDATE scheduler_jobs SET available_at=UTC_TIMESTAMP(3) WHERE id=?', [rescheduledJobs[0].id]);
     const firstClaim = await jobs.claimBatch('phase3-worker-1', 1, new Date(0));
     assert.equal(firstClaim.length, 1);
     assert.equal(firstClaim[0].id, rescheduledJobs[0].id);
+    await assert.rejects(() => workflows.reconcileJob(username, firstClaim[0].id, 'retry'), /actively leased/);
     const [leaseRows] = await pool.query('SELECT lease_expires_at>UTC_TIMESTAMP(3) AS active FROM scheduler_jobs WHERE id=?', [firstClaim[0].id]);
     assert.equal(Number(leaseRows[0].active), 1, 'job leases must use database time instead of the worker clock');
     assert.equal((await jobs.claimBatch('phase3-worker-other', 1, new Date('2100-01-01T00:00:00.000Z'))).length, 0,
@@ -471,7 +581,26 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     await jobs.fail(finalClaim.id, 'phase3-worker-4', 'test-provider', finalClaim.attempts, 'PROVIDER_DOWN');
     const [deadLetterRows] = await pool.query('SELECT dead_lettered_at, payload FROM scheduler_jobs WHERE id=?', [finalClaim.id]);
     assert.ok(deadLetterRows[0].dead_lettered_at);
-    assert.equal(deadLetterRows[0].payload, '{}', 'dead-lettered jobs must not retain booking capability payloads');
+    assert.notEqual(deadLetterRows[0].payload, '{}', 'dead-lettered jobs must retain replay data until an owner reconciles them');
+    const operations = await workflows.listOperations(username);
+    assert.equal(operations.alerts.some(alert => alert.jobId === finalClaim.id && alert.alertType === 'dead_lettered'), true);
+    await workflows.reconcileJob(username, finalClaim.id, 'retry');
+    const [manualRetryRows] = await pool.query('SELECT attempts,dead_lettered_at FROM scheduler_jobs WHERE id=?', [finalClaim.id]);
+    assert.equal(Number(manualRetryRows[0].attempts), 8, 'manual retry must preserve delivery-attempt numbering');
+    assert.equal(manualRetryRows[0].dead_lettered_at, null);
+    const manualRetryClaim = (await jobs.claimBatch('phase3-worker-manual', 1, new Date(0)))[0];
+    assert.equal(manualRetryClaim.id, finalClaim.id);
+    assert.equal(manualRetryClaim.attempts, 9);
+    await jobs.beginAttempt(manualRetryClaim.id, 'phase3-worker-manual', 'test-provider');
+    await jobs.uncertain(manualRetryClaim.id, 'phase3-worker-manual', 'test-provider', 9, 'provider_timeout');
+    await workflows.reconcileJob(username, finalClaim.id, 'delivered');
+    const [reconciledRows] = await pool.query('SELECT completed_at,payload,dead_lettered_at FROM scheduler_jobs WHERE id=?', [finalClaim.id]);
+    assert.ok(reconciledRows[0].completed_at);
+    assert.equal(reconciledRows[0].payload, '{}', 'explicit delivery reconciliation must erase retained replay data');
+    assert.equal(reconciledRows[0].dead_lettered_at, null);
+    const [manualAttemptRows] = await pool.query('SELECT outcome,error_code FROM scheduler_delivery_attempts WHERE job_id=? AND attempt_no=9', [finalClaim.id]);
+    assert.deepEqual([manualAttemptRows[0].outcome, manualAttemptRows[0].error_code], ['sent', null],
+        'manual delivery reconciliation must keep the attempt ledger consistent');
 
     await pool.query('UPDATE scheduler_jobs SET available_at=UTC_TIMESTAMP(3) WHERE id=?', [activeJobs[1].id]);
     const uncertainClaim = (await jobs.claimBatch('phase3-worker-5', 1, new Date(0)))[0];
@@ -482,6 +611,10 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const [uncertainRows] = await pool.query('SELECT dead_lettered_at,last_error_code FROM scheduler_jobs WHERE id=?', [uncertainClaim.id]);
     assert.ok(uncertainRows[0].dead_lettered_at);
     assert.equal(uncertainRows[0].last_error_code, 'delivery_uncertain');
+    await workflows.reconcileJob(username, uncertainClaim.id, 'cancel');
+    const [cancelledUncertainRows] = await pool.query('SELECT cancelled_at,payload FROM scheduler_jobs WHERE id=?', [uncertainClaim.id]);
+    assert.ok(cancelledUncertainRows[0].cancelled_at);
+    assert.equal(cancelledUncertainRows[0].payload, '{}');
 
     await pool.query("UPDATE scheduler_private_links SET expires_at='2020-07-01 00:00:00.000' WHERE event_type_id=? AND revoked_at IS NULL", [event.id]);
     assert.equal(await store.getPublicEvent('phase1', event.slug, rotatedPrivateLink.token), null);
@@ -507,7 +640,9 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     await store.cancelBookingByToken(booking.cancelToken);
     const [cancelled] = await pool.query('SELECT status FROM scheduler_bookings WHERE id=?', [booking.id]);
     assert.equal(cancelled[0].status, 'cancelled');
-    const [remaining] = await pool.query('SELECT uid FROM events WHERE calendar_id=?', [calendarId]);
+    const [remaining] = await pool.query('SELECT uid FROM events WHERE calendar_id=? AND uid=?', [
+        calendarId, `scheduler-${booking.id}@openmailstack`,
+    ]);
     assert.equal(remaining.length, 0);
     const [tombstones] = await pool.query('SELECT uid FROM calendar_tombstones WHERE calendar_id=? AND uid=?', [calendarId, `scheduler-${booking.id}@openmailstack`]);
     assert.equal(tombstones.length, 1);
@@ -942,6 +1077,16 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         minimumNoticeMinutes: 0, destinationCalendarId: calendarId, conflictCalendarIds: [calendarId],
         capacity: 3, maxAdditionalGuests: 2, requireEmailVerification: true,
     });
+    const noShowWorkflow = await workflows.createWorkflow({
+        tenantKey: entitlement.tenantKey, ownerUsername: username, name: 'No-show owner alert',
+        enabled: true, eventTypeIds: [pollEvent.id],
+    });
+    await workflows.publishVersion(noShowWorkflow.id, username, {
+        trigger: { type: 'booking.no_show', offsetSeconds: 0 },
+        steps: [{ action: 'notification.in_app', delaySeconds: 0, config: {
+            title: 'No-show: {{event.title}}', body: '{{booker.name}} did not attend.',
+        } }],
+    });
     const poll = await phase2Store.createPoll(username, {
         eventTypeId: pollEvent.id, title: 'Choose our meeting',
         starts: ['2054-08-05T16:00:00.000Z', '2054-08-05T16:30:00.000Z'],
@@ -980,6 +1125,15 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     const [outcomeRows] = await pool.query('SELECT status,no_show_at FROM scheduler_bookings WHERE id=?', [finalizedPollBooking.id]);
     assert.equal(outcomeRows[0].status, 'no_show');
     assert.ok(outcomeRows[0].no_show_at);
+    const [noShowJobs] = await pool.query(
+        `SELECT j.job_type,j.payload FROM scheduler_jobs j
+         JOIN scheduler_workflow_versions v ON v.id=j.workflow_version_id
+         WHERE j.booking_id=? AND v.workflow_id=?`,
+        [finalizedPollBooking.id, noShowWorkflow.id]
+    );
+    assert.equal(noShowJobs.length, 1, 'no-show must enqueue the captured lifecycle workflow');
+    assert.equal(noShowJobs[0].job_type, 'notification.in_app');
+    assert.equal(JSON.parse(noShowJobs[0].payload).bookerEmail, 'voter@example.net');
 
     const delegatedBooking = await store.bookOnBehalf(username, phase2Event.id, {
         start: new Date('2054-08-06T16:00:00.000Z'), bookerTimeZone: 'UTC',

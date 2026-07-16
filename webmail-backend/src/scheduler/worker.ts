@@ -3,8 +3,12 @@ import nodemailer from 'nodemailer';
 import { pool } from '../db';
 import { schedulerConfig } from '../config';
 import {
+    SchedulerContactPreferenceRepository,
+    SchedulerDeliveryProviderRepository,
     SchedulerJobRepository,
     SchedulerProviderError,
+    SchedulerSecretBox,
+    SchedulerWorkflowDeliveryDispatcher,
     runSchedulerJobCycle,
     type SchedulerMessageProvider,
     type SchedulerReminderMail,
@@ -299,9 +303,18 @@ export async function runSchedulerOutboxCycle(workerId: string): Promise<number>
 
 export async function runSchedulerWorkerCycle(
     workerId: string,
-    provider: SchedulerMessageProvider = new OmsSchedulerMessageProvider(),
+    provider?: SchedulerMessageProvider,
 ): Promise<{ outbox: number; jobs: number }> {
     const outbox = await runSchedulerOutboxCycle(workerId);
-    const jobs = await runSchedulerJobCycle(new SchedulerJobRepository(pool), provider, workerId);
+    const smtp = provider || new OmsSchedulerMessageProvider();
+    const secretBox = new SchedulerSecretBox(schedulerConfig.secretKeys);
+    const dispatcher = provider || new SchedulerWorkflowDeliveryDispatcher(
+        pool,
+        smtp,
+        new SchedulerDeliveryProviderRepository(pool, secretBox),
+        new SchedulerContactPreferenceRepository(pool, secretBox),
+        schedulerConfig.publicBaseUrl,
+    );
+    const jobs = await runSchedulerJobCycle(new SchedulerJobRepository(pool), dispatcher, workerId);
     return { outbox, jobs };
 }

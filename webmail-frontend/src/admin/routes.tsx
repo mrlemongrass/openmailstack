@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback, useMemo } from 'react';
 import { Routes, Route, NavLink, Outlet, Navigate } from 'react-router';
 import {
   LayoutDashboard, Globe, Mail, Forward, GitMerge, Shield,
   Settings, Palette, BarChart3, Key, Box, ShieldAlert, AlertTriangle, Menu, X,
+  MessageSquareText,
 } from 'lucide-react';
 import { AdminSettingsPanel } from './AdminSettingsPanel';
 import { BrandingPanel } from './BrandingPanel';
@@ -31,6 +32,10 @@ import {
 import { useBranding } from '../branding-context';
 import { resolveBrandingPresentation } from '../branding';
 
+const SchedulerDeliveryPanel = lazy(() => import('./SchedulerDeliveryPanel').then(module => ({
+  default: module.SchedulerDeliveryPanel,
+})));
+
 // ─── Sidebar config ──────────────────────────────────────────────────────────
 
 interface NavItem {
@@ -49,6 +54,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/admin/admins',      label: 'Admins',    icon: <Shield size={18} /> },
   { path: '/admin/settings',    label: 'Settings',  icon: <Settings size={18} /> },
   { path: '/admin/branding',    label: 'Branding',  icon: <Palette size={18} /> },
+  { path: '/admin/scheduler-delivery', label: 'Scheduler Delivery', icon: <MessageSquareText size={18} /> },
   { path: '/admin/telemetry',   label: 'Telemetry', icon: <BarChart3 size={18} /> },
   { path: '/admin/intrusion',   label: 'Intrusion Detection', icon: <ShieldAlert size={18} /> },
   { path: '/admin/apikeys',     label: 'API Keys',  icon: <Key size={18} /> },
@@ -372,6 +378,11 @@ export function AdminRoutes() {
         <Route path="admins" element={<AdminsPanel />} />
         <Route path="settings" element={<SettingsLoader />} />
         <Route path="branding" element={<BrandingLoader />} />
+        <Route path="scheduler-delivery" element={(
+          <Suspense fallback={<p style={{ color: 'var(--text-secondary)' }}>Loading Scheduler delivery…</p>}>
+            <SchedulerDeliveryPanel />
+          </Suspense>
+        )} />
         <Route path="telemetry" element={<TelemetryPanel />} />
         <Route path="intrusion" element={<Fail2banPanel />} />
         <Route path="apikeys" element={<ApiKeysPanel />} />

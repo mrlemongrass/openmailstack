@@ -38,8 +38,23 @@ exports.serverConfig = {
 };
 const schedulerPublicBaseUrl = optional('OMS_SCHEDULER_PUBLIC_BASE_URL', exports.serverConfig.publicBaseUrl).replace(/\/$/, '');
 const schedulerPublicHost = schedulerPublicBaseUrl ? new URL(schedulerPublicBaseUrl).hostname.toLowerCase() : '';
+const schedulerEnabled = parseBoolean('ENABLE_OMS_SCHEDULER', false);
+const schedulerSecretKeyVersion = parseNumber('OMS_SCHEDULER_SECRET_KEY_VERSION', 1);
+const schedulerSecretKey = optional('OMS_SCHEDULER_SECRET_KEY', schedulerEnabled ? '' : exports.serverConfig.sessionSecret);
+const schedulerSecretKeys = {};
+for (const entry of optional('OMS_SCHEDULER_SECRET_KEYRING').split(',').map(value => value.trim()).filter(Boolean)) {
+    const separator = entry.indexOf(':');
+    const version = Number(entry.slice(0, separator));
+    const key = entry.slice(separator + 1);
+    if (separator < 1 || !Number.isInteger(version) || version < 1 || version > 65535 || key.length < 32) {
+        throw new Error('OMS_SCHEDULER_SECRET_KEYRING must contain comma-separated version:key entries');
+    }
+    schedulerSecretKeys[version] = key;
+}
+if (schedulerSecretKey)
+    schedulerSecretKeys[schedulerSecretKeyVersion] = schedulerSecretKey;
 exports.schedulerConfig = {
-    enabled: parseBoolean('ENABLE_OMS_SCHEDULER', false),
+    enabled: schedulerEnabled,
     publicBaseUrl: schedulerPublicBaseUrl,
     allowedHosts: Array.from(new Set([
         schedulerPublicHost,
@@ -53,9 +68,16 @@ exports.schedulerConfig = {
     smtpPort: parseNumber('OMS_SCHEDULER_SMTP_PORT', 25),
     smtpServerName: optional('OMS_SCHEDULER_SMTP_SERVER_NAME'),
     smtpRejectUnauthorized: parseBoolean('OMS_SCHEDULER_SMTP_REJECT_UNAUTHORIZED', true),
+    secretKeys: {
+        currentVersion: schedulerSecretKeyVersion,
+        keys: schedulerSecretKeys,
+    },
 };
 if (exports.schedulerConfig.enabled && (!exports.schedulerConfig.publicBaseUrl || exports.schedulerConfig.allowedHosts.length === 0)) {
     throw new Error('Enabled OMS Scheduler requires OMS_SCHEDULER_PUBLIC_BASE_URL and at least one allowed hostname');
+}
+if (exports.schedulerConfig.enabled && schedulerSecretKey.length < 32) {
+    throw new Error('Enabled OMS Scheduler requires OMS_SCHEDULER_SECRET_KEY with at least 32 characters');
 }
 exports.dbConfig = {
     host: optional('OMS_DB_HOST', '127.0.0.1'),

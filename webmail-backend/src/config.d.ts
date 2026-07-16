@@ -18,6 +18,10 @@ export declare const schedulerConfig: {
     smtpPort: number;
     smtpServerName: string;
     smtpRejectUnauthorized: boolean;
+    secretKeys: {
+        currentVersion: number;
+        keys: Record<number, string>;
+    };
 };
 export declare const dbConfig: {
     host: string;

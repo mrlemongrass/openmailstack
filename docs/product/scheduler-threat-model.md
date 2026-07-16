@@ -145,7 +145,9 @@ Booking-integrity tests additionally cover simultaneous active-limit attempts, c
 - Exact callback URI allowlist; no wildcard or request-host-derived redirect URI.
 - Minimal provider scopes and capability discovery.
 - Encrypt secrets with versioned keys separate from mailbox credential storage; never return refresh tokens to clients.
+- Scheduler provider credentials and unsubscribe capabilities record the encryption-key version beside AES-256-GCM ciphertext. The current key and retained decrypt-only rotation keys come from the root-only Scheduler keyring, not the session secret.
 - Redact authorization headers, tokens, codes, signatures, and provider payload secrets from logs and audits.
+- Reject unknown or malformed workflow placeholders at publish time. Locale variants must preserve the original placeholder set so provider-generated translations cannot introduce data access or defer a failure to delivery time.
 - Disconnect revokes provider tokens where possible and tombstones local credentials.
 - Provider references contain only provider ID plus external opaque ID.
 
@@ -179,6 +181,7 @@ Booking-integrity tests additionally cover simultaneous active-limit attempts, c
 
 - HTTPS-only outbound URLs by default; block loopback, private, link-local, multicast, Unix sockets, credentials in URLs, and nonstandard schemes.
 - Resolve and validate every connection target, including redirects; pin or revalidate DNS results to resist rebinding.
+- Phase 3 adapters perform one DNS resolution, reject any blocked answer including IPv4-mapped IPv6, and pass the validated address through a pinned TLS lookup while preserving hostname certificate verification. Redirects are not followed.
 - Sign outbound payloads with per-subscription secrets and stable event IDs.
 - Bounded timeout, response size, redirects, attempts, concurrency, and dead-letter retention.
 - Inbound provider callbacks require signature, replay window, and idempotency.
@@ -190,7 +193,10 @@ Booking-integrity tests additionally cover simultaneous active-limit attempts, c
 - Booking mutation and outbox enqueue occur in the same database transaction.
 - Delivery is at-least-once; every provider effect must be idempotent.
 - Claims use a worker lease, attempt count, bounded backoff, maximum attempts, and dead-letter state.
-- Retryable versus permanent failures are explicit. A worker crash cannot silently acknowledge an event.
+- Retryable, delivery-uncertain, operator-action, and consent/policy-skip outcomes are explicit. Operator-fixable failures retain their payload in an observable dead letter; only expected consent/policy skips erase it. A worker crash cannot silently acknowledge an event.
+- HTTP 429 and failures proven to occur before request transmission may retry. HTTP 5xx, timeouts, or network failures after transmission are delivery-uncertain and require terminal operator reconciliation; an idempotency header alone is not treated as proof that a provider deduplicates.
+- Manual retry preserves monotonic attempt numbers, can act only on an unleased dead letter with retained payload, and retains prior attempts. Manual delivered/cancel actions erase payload and keep the attempt ledger consistent.
+- SMS, WhatsApp, and voice dispatch require both the channel and destination captured on that booking plus a still-active contact preference. Repeat consent updates future contact details without rerouting an older booking or invalidating its unsubscribe capability. Unsubscribe links render a confirmation page on GET and mutate state only on POST; voice adapters receive the same capability as a structured request field.
 - Audit writes include tenant, actor type/ID, action, target, correlation ID, and sanitized metadata.
 - Audit metadata excludes secrets, message bodies, booking answers, calendar bodies, payment payloads, and capability tokens.
 - Clocks are not trusted for uniqueness; database constraints and idempotency keys remain authoritative.
@@ -218,4 +224,4 @@ Before Phase 1 routes are mounted:
 - Host alias allowlist and preferred public base URL are validated without trusting `Host`.
 - Security review confirms no live migration or public exposure occurred during Phase 0.
 
-Before payments, OAuth, outbound webhooks, or routing are enabled, their controls above require provider-specific contract and adversarial tests.
+Before payments, OAuth, or routing are enabled, their controls above require provider-specific contract and adversarial tests. Phase 3 outbound workflow webhooks passed DNS-pinning, mapped-address, signature, uncertainty, lease, replay, and recovery gates before the guarded 2026-07-16 live deployment. No external provider was configured or exercised during rollout; administrators must still validate each configured adapter's authentication, idempotency, cost, consent, retention, and regional-policy contract.

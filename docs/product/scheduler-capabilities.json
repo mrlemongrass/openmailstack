@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "owner": "OpenMailStack Scheduler",
-  "lastReviewed": "2026-07-12",
+  "lastReviewed": "2026-07-16",
   "capabilities": [
     {
       "id": "individual.availability",
@@ -262,10 +262,10 @@
       "name": "Durable triggers, steps, retries, leases, and dead letters",
       "source": "https://help.calendly.com/hc/en-us/articles/360051017814-Automate-tasks-with-Workflows",
       "observedAt": "2026-07-10",
-      "status": "planned",
+      "status": "implemented",
       "phase": "phase-3",
-      "test": null,
-      "release": null
+      "test": "webmail-backend/test/scheduler-phase1-db.test.cjs",
+      "release": "phase-3-2026-07-16"
     },
     {
       "id": "workflow.email",
@@ -273,10 +273,10 @@
       "name": "OMS email reminders and follow-ups",
       "source": "https://help.calendly.com/hc/en-us/articles/360051017814-Automate-tasks-with-Workflows",
       "observedAt": "2026-07-10",
-      "status": "planned",
+      "status": "implemented",
       "phase": "phase-3",
-      "test": null,
-      "release": null
+      "test": "webmail-backend/test/scheduler-phase3-completion.test.cjs",
+      "release": "phase-3-2026-07-16"
     },
     {
       "id": "workflow.multichannel",
@@ -286,8 +286,8 @@
       "observedAt": "2026-07-10",
       "status": "provider_dependent",
       "phase": "phase-3",
-      "test": null,
-      "release": null
+      "test": "webmail-backend/test/scheduler-phase3-completion.test.cjs",
+      "release": "phase-3-2026-07-16"
     },
     {
       "id": "payment.provider-contract",

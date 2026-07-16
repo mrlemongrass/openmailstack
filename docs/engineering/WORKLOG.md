@@ -5288,3 +5288,71 @@ After confirming Rspamd remained functionally healthy with no new crash generati
 ### Next recommended task
 
 Add authenticated owner/Admin workflow APIs plus read-only job/delivery observability, then build the owner workflow list/editor and test-send flow on those contracts before adding paid messaging providers.
+
+## 2026-07-16 — Scheduler Phase 3 completion and live rollout
+
+Agent/tool: Codex
+Branch: `main`
+Starting fixed point: `5970128d`
+Ending git state: implementation, review, guarded live deployment, and documentation commit-ready
+
+### Selected task
+
+Complete all five remaining Scheduler Phase 3 slices: owner/Admin workflow operations, native workflow building/versioning, lifecycle automation, observable recovery, and consent-safe external provider adapters.
+
+### Acceptance criteria
+
+- [x] Owners can create, clone, publish, assign, enable/archive, preview, translate, safely test, inspect, and reconcile tenant-scoped workflows.
+- [x] Request/start/end/confirmation/rejection/reschedule/cancellation/completion/no-show triggers capture and execute immutable booking workflow versions.
+- [x] Email, in-app notification, mandatory-signed webhook, SMS, WhatsApp, voice, and translation actions have explicit contracts and release gates.
+- [x] Retry, lease, delivery-uncertain, dead-letter, alert, replay, manual reconciliation, provider health, and queue/workflow metrics are visible and recoverable.
+- [x] External channels use immutable booking phone/consent state, active contact preferences, stable confirm-before-mutate unsubscribe capabilities, write-only versioned encryption, and DNS-pinned HTTPS.
+- [x] Public, owner, tenant, notification-IDOR, and Admin authorization boundaries have real Express/database tests.
+- [x] Local, disposable-database, browser, review, deployment, and live health gates pass.
+
+### Changes made
+
+- Added additive migration `025_scheduler_phase3_completion` for lifecycle/action expansion, conditions, booking communication snapshots, write-only provider configuration and health, contact preferences/unsubscribe state, in-app notifications, and delivery alerts.
+- Added native owner workflow and Admin Scheduler Delivery surfaces with cloning/version publishing, conditions, event assignment, safe placeholders, exact translation-placeholder preservation, previews, bounded test sends, readable in-app notifications, provider disclosures/testing, semantic metrics, and delivery recovery.
+- Expanded booking capture/activation and lifecycle scheduling while preserving immutable captured versions and reschedule generation fencing.
+- Added purpose-separated versioned AES-256-GCM secret storage and installer keyring preservation.
+- Added single-resolution pinned HTTPS with hostname certificate verification, no redirects/socket pooling, private/mapped-address blocking, signed webhooks, delivery uncertainty, booking-scoped consent, and stable GET-confirm/POST-mutate unsubscribe behavior.
+- Added real route-level session/Admin/tenant/IDOR tests, provider-health and semantic-metric database assertions, and browser/source/integration regressions.
+
+### Review findings resolved
+
+- Closed SSRF rebinding/mapped-address and pooled-socket reuse paths.
+- Made consent upserts atomic and booking-specific; used immutable booking phone and supplied unsubscribe links to voice.
+- Preserved operator-fixable payloads as dead letters and kept manual retry attempts monotonic and leased.
+- Required webhook secrets/signatures for live and test deliveries; made in-app notifications visible and read-scoped.
+- Rejected unknown/malformed placeholders and translations that remove or add any placeholder occurrence.
+- Added provider credential/cost disclosure, persisted health, workflow/queue metrics, and exact semantic delivered/active counts.
+- Added real Express authorization and unsubscribe-confirmation coverage.
+- Final independent Standards and Spec reviews reported no actionable findings.
+
+### Proof / checks run
+
+- Disposable MariaDB applied migrations `001`-`025` twice and passed all 114 backend tests with no skips, including concurrent consent, workflow lifecycle, route authorization, provider health, and semantic metrics.
+- Focused Phase 3 checks passed; frontend passed 14/14 tests, ESLint, and production build; the full integration suite passed.
+- Desktop/mobile owner workflows and notifications plus the Admin delivery metrics/disclosure/health/recovery surface passed real-browser checks with zero console errors.
+- Whole-tree and staged `git diff --check` passed.
+- Live migration `025` and all three provider-health columns exist; the Scheduler key/version/keyring are configured without exposing their values.
+- `openmailstack`, `openmailstack-scheduler-worker`, Postfix, Dovecot, Rspamd, Nginx, and MariaDB are active. API/worker had zero error-level lines after rollout.
+- Workflow SPA and public profile return `200`; unauthenticated owner/Admin workflow routes return `401`; backend/frontend deployments exactly match tested artifacts.
+- Live workflows, jobs, providers, and open alerts remain zero; the Postfix queue is empty; staging smoke including Rspamd functional scan, TLS, STARTTLS, DKIM, listeners, and API auth passes.
+
+### Deployment and rollback
+
+- Root-only verified snapshot: `/var/backups/openmailstack/20260716T151429Z-scheduler-phase3` with backend/frontend, environment, Nginx/systemd units, compressed database dump, and checksums.
+- Applied only additive migration `025`, then deployed through `functions/10_webmail.sh`, which preserved/generated the versioned Scheduler key configuration, built/synchronized tested artifacts, restarted API/worker, normalized frontend permissions, and validated Nginx.
+- No production workflow, job, provider, alert, booking, message, mailbox, or upload fixture was created or changed during validation.
+
+### Risks / notes
+
+- External SMS/WhatsApp/voice/translation behavior is provider-dependent. OMS supplies the secured adapter contract and Admin disclosure, but no provider account is bundled or enabled by default.
+- Administrators must validate provider authentication, idempotency, costs, consent, retention, and regional policy before enablement.
+- Clean-VM disabled/enabled install, upgrade, and rollback validation remains intentionally deferred until a second development Linux server is available.
+
+### Next recommended task
+
+Begin Scheduler Phase 4 with the team/event ownership model and transactional round-robin/collective assignment foundation before building team UI.

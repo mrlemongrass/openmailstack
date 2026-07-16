@@ -1,6 +1,6 @@
 # OMS Scheduler Product And Engineering Roadmap
 
-Status: `Phase 3 In Progress - Durable Workflow Foundation Live; Product APIs, Builder, Providers, Physical Client, And Clean-VM Gates Pending`
+Status: `Phase 3 Complete And Live - All Five Workflow Slices Deployed`
 
 Research date: 2026-07-10
 
@@ -388,19 +388,23 @@ Exit criteria:
 
 ### Phase 3 - Durable workflows (4-6 weeks)
 
-Implementation status (2026-07-14): the first bounded foundation slice is live through migration `024`. It provides tenant-scoped workflow definitions, immutable published versions, booking-version snapshots, schedule generations, MariaDB-time leases, bounded retries/dead letters, delivery-attempt state, and a separate systemd worker. The first provider-neutral action is an owned-sender OMS email reminder. Reschedules cancel the old generation and create a complete new one; cancellation and ambiguous provider acknowledgements retain an explicit delivery-uncertain state rather than reporting false certainty or retrying a possibly accepted message. Owner/Admin APIs, the visual builder, test sends, operator replay/alerting, additional triggers/actions, webhooks, in-app notifications, and paid messaging adapters remain open.
+Implementation status (2026-07-16): all five Phase 3 product slices are complete and live. Migration `024` remains the durable foundation, while live migration `025` adds provider, provider-health, contact-preference, in-app notification, and delivery-alert state plus key-version metadata. Owners have tenant-scoped CRUD, clone, immutable publish, safe-variable and exact translation-placeholder preservation checks, conditions, event assignment, preview, safe multi-step test sends, localized templates, provider-assisted translation, delivery operations, and readable in-app notifications. Admins have write-only provider configuration/testing, cost/credential disclosure, persisted adapter health, workflow/queue metrics, and cross-tenant recovery. Requested bookings capture versions immediately; confirmation activates that captured version; reschedules preserve it while fencing start/end generations. Lifecycle coverage includes request, start, end, confirmation, rejection, reschedule, cancellation, completion, and no-show. Webhooks require a signing secret. SMS, WhatsApp, and voice use administrator-supplied HTTPS adapters with per-booking and active-contact consent, stable confirm-before-mutate unsubscribe links, DNS-pinned SSRF protection, and conservative delivery-uncertainty handling. Deployed runtime artifacts match the tested repository, live authorization and staging/Rspamd gates pass, and the root-only rollback snapshot is `/var/backups/openmailstack/20260716T151429Z-scheduler-phase3`. Clean-VM validation remains intentionally deferred.
 
 Deliver:
 
-- Worker process, scheduler job queue, leases, retries, dead letters, outbox, and delivery observability.
-- Workflow builder, versioning, time/event triggers, OMS email, webhook, in-app notification, variables, and test sends.
-- Reminders, reconfirmation, follow-ups, feedback, cancellation, reschedule, and no-show automation.
-- Administrator-provided SMS/WhatsApp adapter and explicit consent/unsubscribe handling.
+- [x] Worker process, scheduler job queue, leases, retries, dead letters, outbox, and delivery observability.
+- [x] Workflow builder, cloning/versioning, conditions, time/event triggers, OMS email, webhook, in-app notification, variables, translation, preview, and safe multi-step test sends.
+- [x] Reminders, follow-ups, request/rejection, cancellation, reschedule, meeting-end, completion, and no-show workflow triggers and messages.
+- [x] Administrator-provided SMS/WhatsApp/voice/translation adapters and explicit booking-scoped consent/stable unsubscribe handling.
+
+Reconfirmation state/actions and native feedback collection remain later parity work; Phase 3 does not claim those product surfaces.
 
 Exit criteria:
 
-- Worker restart, duplicate delivery, clock skew, and provider outage tests pass.
-- Existing bookings keep the workflow version active when they were created unless an admin explicitly migrates them.
+- [x] Worker restart, duplicate delivery, clock skew, provider outage, consent, replay, and uncertainty tests pass.
+- [x] Existing and requested bookings keep the workflow version captured when they were created unless an administrator explicitly migrates them.
+
+Release evidence applies migrations `001` through `025` twice and passes 114 backend tests without skips, including real Express 401/403, tenant-isolation, notification-IDOR, unsubscribe GET-confirm/POST-mutate paths, and semantic delivery metrics. The live host records migration `025`, has active API/worker services with zero error-level restart logs, serves the workflow UI/public profile, rejects unauthenticated owner/Admin routes, and passes the full staging smoke including Rspamd's functional scan.
 
 ### Phase 4 - Teams and managed scheduling (6-9 weeks)
 

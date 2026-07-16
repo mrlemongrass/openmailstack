@@ -214,3 +214,15 @@ Security:
 - System: full staging smoke passed, including the Scheduler worker, Rspamd functional scan, SMTP STARTTLS, API auth boundary, core services, listeners, and TLS endpoints.
 - Rollback: root-only code and database snapshot `/var/backups/openmailstack/20260714T140745Z_scheduler_phase3_a76809d`.
 - Remaining gate: add and validate owner/Admin workflow APIs, builder/test sends, operator retry/dead-letter reconciliation, and additional actions/providers before Phase 3 can be marked complete.
+
+## 2026-07-16 Scheduler Phase 3 Completion Live Gate
+
+- Scope: all five Phase 3 workflow slices, including owner/Admin UI and APIs, lifecycle automation, recovery/observability, and provider-dependent external channels.
+- Database: disposable MariaDB applied migrations `001`-`025` twice and passed 114/114 backend tests. Live migration `025_scheduler_phase3_completion` and all three provider-health columns exist.
+- Authorization: real Express tests pass for 401/403, owner/Admin success, tenant/provider isolation, notification-read IDOR, and unsubscribe GET-confirm/POST-mutate behavior. Live unauthenticated owner/Admin workflow routes return `401`.
+- UI: 14/14 frontend tests, lint, production build, and real-browser owner/Admin desktop/mobile checks pass with zero console errors.
+- Worker/system: API and Scheduler worker are active with zero post-rollout error-level lines; full staging smoke passes, including Rspamd functional scan, TLS/STARTTLS, API auth, listeners, and DKIM.
+- Safety: live workflow, job, provider, and open-alert counts remain zero; no external provider or message was exercised; the Postfix queue is empty.
+- Artifacts: tested backend modules and complete frontend `dist` exactly match the deployed trees.
+- Rollback: root-only checksum-verified snapshot `/var/backups/openmailstack/20260716T151429Z-scheduler-phase3`.
+- Deferred: provider-specific operational certification and clean-VM install/upgrade/rollback remain explicit post-Phase-3 deployment follow-ups.

@@ -15,7 +15,6 @@ async function main() {
         return;
     }
     const workerId = `scheduler-${process.pid}-${crypto_1.default.randomBytes(6).toString('hex')}`;
-    const provider = new worker_1.OmsSchedulerMessageProvider();
     let stopping = false;
     let wake = null;
     let sleepTimer = null;
@@ -30,7 +29,7 @@ async function main() {
     console.log('Scheduler worker started.', { workerId });
     while (!stopping) {
         try {
-            await (0, worker_1.runSchedulerWorkerCycle)(workerId, provider);
+            await (0, worker_1.runSchedulerWorkerCycle)(workerId);
         }
         catch (error) {
             console.error('Scheduler worker cycle failed:', error);

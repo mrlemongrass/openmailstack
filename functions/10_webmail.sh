@@ -41,6 +41,23 @@ SCHEDULER_ENABLED="${ENABLE_OMS_SCHEDULER:-false}"
 SCHEDULER_PUBLIC_BASE_URL="${OMS_SCHEDULER_PUBLIC_BASE_URL:-${PUBLIC_BASE_URL}}"
 SCHEDULER_HOST_ALIASES="${OMS_SCHEDULER_HOST_ALIASES:-${MAIL_HOSTNAME}}"
 
+existing_env_value() {
+    local key="$1"
+    [[ -f "${ENV_FILE}" ]] || return 0
+    sed -n "s/^${key}=\"\([^\"]*\)\"$/\1/p" "${ENV_FILE}" | tail -n 1
+}
+
+SCHEDULER_SECRET_KEY_VERSION="${OMS_SCHEDULER_SECRET_KEY_VERSION:-$(existing_env_value OMS_SCHEDULER_SECRET_KEY_VERSION)}"
+SCHEDULER_SECRET_KEY_VERSION="${SCHEDULER_SECRET_KEY_VERSION:-1}"
+SCHEDULER_SECRET_KEY="${OMS_SCHEDULER_SECRET_KEY:-$(existing_env_value OMS_SCHEDULER_SECRET_KEY)}"
+SCHEDULER_SECRET_KEYRING="${OMS_SCHEDULER_SECRET_KEYRING:-$(existing_env_value OMS_SCHEDULER_SECRET_KEYRING)}"
+if [[ "${SCHEDULER_ENABLED}" == "true" && -z "${SCHEDULER_SECRET_KEY}" ]]; then
+    SCHEDULER_SECRET_KEY="$(openssl rand -hex 32)"
+fi
+if [[ "${SCHEDULER_ENABLED}" == "true" && -z "${SCHEDULER_SECRET_KEYRING}" ]]; then
+    SCHEDULER_SECRET_KEYRING="${SCHEDULER_SECRET_KEY_VERSION}:${SCHEDULER_SECRET_KEY}"
+fi
+
 if [[ "${SCHEDULER_ENABLED}" == "true" ]]; then
     SCHEDULER_SERVER_NAMES="$(openmailstack_scheduler_server_names)"
     if [[ ! "${SCHEDULER_PUBLIC_BASE_URL}" =~ ^https://[^/]+$ ]]; then
@@ -141,6 +158,11 @@ render_backend_env() {
             write_env_line "OMS_SCHEDULER_SMTP_PORT" "${OMS_SCHEDULER_SMTP_PORT:-25}"
             write_env_line "OMS_SCHEDULER_SMTP_SERVER_NAME" "${OMS_SCHEDULER_SMTP_SERVER_NAME:-${MAIL_HOSTNAME}}"
             write_env_line "OMS_SCHEDULER_SMTP_REJECT_UNAUTHORIZED" "${OMS_SCHEDULER_SMTP_REJECT_UNAUTHORIZED:-true}"
+            if [[ "${SCHEDULER_ENABLED}" == "true" ]]; then
+                write_env_line "OMS_SCHEDULER_SECRET_KEY_VERSION" "${SCHEDULER_SECRET_KEY_VERSION}"
+                write_env_line "OMS_SCHEDULER_SECRET_KEY" "${SCHEDULER_SECRET_KEY}"
+                write_env_line "OMS_SCHEDULER_SECRET_KEYRING" "${SCHEDULER_SECRET_KEYRING}"
+            fi
             write_env_line "OMS_DB_HOST" "${OMS_DB_HOST:-127.0.0.1}"
             write_env_line "OMS_DB_PORT" "${OMS_DB_PORT:-3306}"
             write_env_line "OMS_DB_USER" "${OMS_DB_USER:-${POSTFIXADMIN_DB_USER}}"

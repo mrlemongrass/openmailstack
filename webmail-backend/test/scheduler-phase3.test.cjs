@@ -27,11 +27,11 @@ test('workflow definitions accept the bounded reminder action and reject mutable
     assert.throws(() => normalizeWorkflowDefinition({
         trigger: { type: 'booking.created', offsetSeconds: 0 },
         steps: input.steps,
-    }), /booking.start/);
+    }), /unsupported/);
     assert.throws(() => normalizeWorkflowDefinition({
         trigger: { type: 'booking.start', offsetSeconds: 0 },
         steps: [{ action: 'webhook', delaySeconds: 0, config: {} }],
-    }), /message.email.reminder/);
+    }), /unsupported/);
 });
 
 test('workflow run time is deterministic across worker clock skew', () => {
@@ -99,6 +99,67 @@ test('job cycle acknowledges success and records a retry without hiding provider
     assert.equal(await runSchedulerJobCycle(repository, provider, 'worker-1'), 1);
     assert.equal(failed.length, 1);
     assert.deepEqual(failed[0].slice(0, 5), ['job-1', 'worker-1', 'test', 1, 'ECONNECTION']);
+});
+
+test('ambiguous provider delivery is reconciled immediately instead of retried', async () => {
+    const uncertain = [];
+    const failed = [];
+    const job = {
+        id: 'job-uncertain', idempotencyKey: 'workflow:booking-uncertain:step-1', attempts: 1,
+        jobType: 'webhook.http', config: {},
+        payload: {
+            bookingId: 'booking-uncertain', hostEmail: 'owner@housevo.us', bookerEmail: 'guest@example.net',
+            bookerName: 'Ada', title: 'Design review', start: '2026-07-20T18:00:00.000Z', timeZone: 'UTC',
+            manageUrl: 'https://mail.housevo.us/scheduler',
+        },
+    };
+    const repository = {
+        claimBatch: async () => [job],
+        beginAttempt: async () => undefined,
+        complete: async () => undefined,
+        fail: async (...args) => failed.push(args),
+        uncertain: async (...args) => uncertain.push(args),
+    };
+    const dispatcher = {
+        providerName: () => 'test-webhook',
+        deliver: async () => { throw new SchedulerProviderError('timeout after write', 'delivery_uncertain', 'provider_timeout'); },
+    };
+
+    assert.equal(await runSchedulerJobCycle(repository, dispatcher, 'worker-uncertain'), 1);
+    assert.deepEqual(uncertain, [['job-uncertain', 'worker-uncertain', 'test-webhook', 1, 'provider_timeout']]);
+    assert.deepEqual(failed, []);
+});
+
+test('operator-fixable provider failures dead-letter with retained recovery state', async () => {
+    const deadLettered = [];
+    const cancelled = [];
+    const job = {
+        id: 'job-provider-config', idempotencyKey: 'workflow:booking-provider-config:step-1', attempts: 1,
+        jobType: 'webhook.http', config: {},
+        payload: {
+            bookingId: 'booking-provider-config', hostEmail: 'owner@housevo.us', bookerEmail: 'guest@example.net',
+            bookerName: 'Ada', title: 'Design review', start: '2026-07-20T18:00:00.000Z', timeZone: 'UTC',
+            manageUrl: 'https://mail.housevo.us/scheduler',
+        },
+    };
+    const repository = {
+        claimBatch: async () => [job],
+        beginAttempt: async () => undefined,
+        complete: async () => undefined,
+        fail: async () => undefined,
+        deadLetter: async (...args) => deadLettered.push(args),
+        cancel: async (...args) => cancelled.push(args),
+    };
+    const dispatcher = {
+        providerName: () => 'test-webhook',
+        deliver: async () => { throw new SchedulerProviderError('missing provider', 'operator_action', 'provider_unavailable'); },
+    };
+
+    assert.equal(await runSchedulerJobCycle(repository, dispatcher, 'worker-provider-config'), 1);
+    assert.deepEqual(deadLettered, [[
+        'job-provider-config', 'worker-provider-config', 'test-webhook', 1, 'provider_unavailable',
+    ]]);
+    assert.deepEqual(cancelled, []);
 });
 
 test('SMTP acceptance followed by acknowledgement failure is not retried as a duplicate', async () => {

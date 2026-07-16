@@ -37,7 +37,13 @@ import {
     normalizeSchedulerExclusions,
     type SchedulerAvailabilityExclusion,
 } from './phase2';
-import { SchedulerWorkflowRepository } from './workflows';
+import {
+    SchedulerContactPreferenceRepository,
+    SchedulerSecretBox,
+    SchedulerWorkflowRepository,
+    normalizeCommunicationConsents,
+    type SchedulerCommunicationConsents,
+} from './workflows';
 
 type Queryable = Pick<Pool, 'query'> | Pick<PoolConnection, 'query'>;
 
@@ -136,6 +142,7 @@ export interface SchedulerBookingInput {
     bookerTimeZone: string;
     bookerName: string;
     bookerEmail: string;
+    communicationConsents?: SchedulerCommunicationConsents;
     bookerNotes?: string;
     bookingAnswers?: SchedulerBookingAnswerInput[];
     attendees?: SchedulerAttendeeInput[];
@@ -370,10 +377,12 @@ async function loadWindows(db: Queryable, eventIds: string[]): Promise<Map<strin
 export class SchedulerStore {
     private readonly holds: SchedulerSlotHoldRepository;
     private readonly workflows: SchedulerWorkflowRepository;
+    private readonly contactPreferences: SchedulerContactPreferenceRepository;
 
     constructor(private readonly pool: Pool) {
         this.holds = new SchedulerSlotHoldRepository(pool);
         this.workflows = new SchedulerWorkflowRepository(pool);
+        this.contactPreferences = new SchedulerContactPreferenceRepository(pool, new SchedulerSecretBox(schedulerConfig.secretKeys));
     }
 
     async listAdminMailboxes(): Promise<Array<Record<string, unknown>>> {
@@ -1086,6 +1095,13 @@ export class SchedulerStore {
 
         const publicEvent = await this.getPublicEvent(handle, slug, input.privateAccessToken);
         if (!publicEvent || publicEvent.event.id !== input.eventTypeId) throw new Error('Event type not found');
+        const communicationConsents = normalizeCommunicationConsents(input.communicationConsents || {});
+        const availableCommunicationChannels = await this.workflows.requiredChannels(
+            publicEvent.entitlement.username, publicEvent.event.id,
+        );
+        if (communicationConsents.channels.some(channel => !availableCommunicationChannels.includes(channel))) {
+            throw new Error('Communication consent was provided for an unavailable channel');
+        }
         if (publicEvent.event.lockedTimeZone && bookerTimeZone !== publicEvent.event.lockedTimeZone) {
             throw new SchedulerGuestPolicyError(`This event requires the ${publicEvent.event.lockedTimeZone} time zone`);
         }
@@ -1238,15 +1254,19 @@ export class SchedulerStore {
             await connection.query(
                 `INSERT INTO scheduler_bookings
                     (id, tenant_key, event_type_id, host_username, booked_by_username, status, seats, slot_start, slot_end, host_time_zone,
-                     booker_time_zone, booker_name, booker_email, booker_notes, booking_answers, attribution, attendees, series_id, series_index, series_count, event_snapshot, cancel_token_hash,
+                     booker_time_zone, booker_name, booker_email, booker_phone, communication_consents, booker_notes, booking_answers, attribution, attendees, series_id, series_index, series_count, event_snapshot, cancel_token_hash,
                      reschedule_token_hash, action_tokens_expires_at, slot_hold_token, calendar_id, calendar_event_uid, idempotency_key, confirmed_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [bookingId, publicEvent.entitlement.tenantKey, publicEvent.event.id, publicEvent.entitlement.username,
                     input.bookedByUsername || null, bookingStatus, seats, mysqlDate(input.start), mysqlDate(end), publicEvent.entitlement.timeZone, bookerTimeZone, bookerName,
-                    bookerEmail, String(input.bookerNotes || '').trim().slice(0, 4000), JSON.stringify(bookingAnswers), JSON.stringify(attribution), JSON.stringify(attendees),
+                    bookerEmail, communicationConsents.phone || null, JSON.stringify(communicationConsents.channels),
+                    String(input.bookerNotes || '').trim().slice(0, 4000), JSON.stringify(bookingAnswers), JSON.stringify(attribution), JSON.stringify(attendees),
                     input.seriesId || null, input.seriesIndex ?? null, input.seriesCount ?? null, eventSnapshot,
                     schedulerTokenHash(cancelToken), schedulerTokenHash(rescheduleToken), mysqlDate(new Date(end.getTime() + 30 * 24 * 60 * 60 * 1000)),
                     hold.token, calendar.id, calendarUid, idempotencyKey, bookingStatus === 'confirmed' ? mysqlDate(new Date()) : null]
+            );
+            await this.contactPreferences.recordConsents(
+                connection, publicEvent.entitlement.tenantKey, bookerEmail, communicationConsents,
             );
             if (ical) {
                 await connection.query(
@@ -1256,8 +1276,7 @@ export class SchedulerStore {
                 );
                 await connection.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar.id]);
             }
-            if (bookingStatus === 'confirmed') {
-                await this.workflows.captureForBooking(connection, {
+            await this.workflows.captureForBooking(connection, {
                     tenantKey: publicEvent.entitlement.tenantKey,
                     bookingId,
                     eventTypeId: publicEvent.event.id,
@@ -1266,12 +1285,16 @@ export class SchedulerStore {
                     notificationName: publicEvent.entitlement.displayName,
                     bookerEmail,
                     bookerName,
+                    bookerPhone: communicationConsents.phone || undefined,
+                    communicationConsents: communicationConsents.channels,
                     title: publicEvent.event.title,
                     start: input.start,
+                    end,
+                    status: bookingStatus,
+                    locale: publicEvent.event.locale,
                     timeZone: bookerTimeZone,
                     manageUrl: `${schedulerConfig.publicBaseUrl}/scheduler/action/reschedule/${encodeURIComponent(rescheduleToken)}`,
-                });
-            }
+                }, bookingStatus === 'requested' ? 'booking.requested' : 'booking.confirmed');
             await connection.query("UPDATE scheduler_slot_holds SET status = 'confirmed' WHERE hold_token = ?", [hold.token]);
             await connection.query(
                 `UPDATE scheduler_slot_inventory SET held_seats = GREATEST(held_seats - ?, 0), confirmed_seats = confirmed_seats + ?
@@ -1403,6 +1426,13 @@ export class SchedulerStore {
         const bookerEmail = String(input.bookerEmail || '').trim().toLowerCase();
         if (!bookerName) throw new Error('Your name is required');
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(bookerEmail)) throw new Error('A valid email address is required');
+        const communicationConsents = normalizeCommunicationConsents(input.communicationConsents || {});
+        const availableCommunicationChannels = await this.workflows.requiredChannels(
+            publicEvent.entitlement.username, publicEvent.event.id,
+        );
+        if (communicationConsents.channels.some(channel => !availableCommunicationChannels.includes(channel))) {
+            throw new Error('Communication consent was provided for an unavailable channel');
+        }
         const bookerTimeZone = assertTimeZone(input.bookerTimeZone);
         if (publicEvent.event.lockedTimeZone && publicEvent.event.lockedTimeZone !== bookerTimeZone) {
             throw new Error(`This event requires the ${publicEvent.event.lockedTimeZone} time zone`);
@@ -1483,11 +1513,16 @@ export class SchedulerStore {
             }
             await connection.query(
                 `INSERT INTO scheduler_waitlist_entries
-                 (id,tenant_key,event_type_id,desired_start,desired_end,booker_time_zone,booker_name,booker_email,booker_notes,seats,attendees,verified_at,idempotency_key)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                 (id,tenant_key,event_type_id,desired_start,desired_end,booker_time_zone,booker_name,booker_email,
+                  booker_phone,communication_consents,booker_notes,seats,attendees,verified_at,idempotency_key)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 [id, publicEvent.entitlement.tenantKey, publicEvent.event.id, mysqlDate(input.start), mysqlDate(end), bookerTimeZone,
-                    bookerName, bookerEmail, String(input.bookerNotes || '').trim().slice(0, 4000), seats, JSON.stringify(attendees),
+                    bookerName, bookerEmail, communicationConsents.phone || null, JSON.stringify(communicationConsents.channels),
+                    String(input.bookerNotes || '').trim().slice(0, 4000), seats, JSON.stringify(attendees),
                     verification ? mysqlDate(new Date()) : null, idempotencyKey]
+            );
+            await this.contactPreferences.recordConsents(
+                connection, publicEvent.entitlement.tenantKey, bookerEmail, communicationConsents,
             );
             await this.enqueue(connection, publicEvent.entitlement.tenantKey, id, 'waitlist.joined', `waitlist:${id}:joined`, {
                 bookingId: id, hostEmail: publicEvent.entitlement.username, bookerEmail, bookerName,
@@ -1539,6 +1574,10 @@ export class SchedulerStore {
             const booking = await this.createBooking(entry.public_handle, entry.slug, {
                 eventTypeId, start, bookerTimeZone: entry.booker_time_zone, bookerName: entry.booker_name,
                 bookerEmail: entry.booker_email, bookerNotes: entry.booker_notes || '', seats: Number(entry.seats),
+                communicationConsents: {
+                    phone: entry.booker_phone || '',
+                    channels: jsonArray(entry.communication_consents) as any,
+                },
                 attendees: attendeesFromRow(entry.attendees), idempotencyKey: `waitlist:${entry.id}`, waitlistEntryId: entry.id,
             });
             await this.pool.query("UPDATE scheduler_waitlist_entries SET status='promoted', promoted_booking_id=? WHERE id=?", [booking.id, entry.id]);
@@ -1568,7 +1607,11 @@ export class SchedulerStore {
         try {
             await connection.beginTransaction();
             const [rows]: any = await connection.query(
-                `SELECT status,CAST(slot_end AS CHAR) AS slot_end_utc FROM scheduler_bookings WHERE id=? AND host_username=? FOR UPDATE`, [bookingId, username]
+                `SELECT b.*, CAST(b.slot_start AS CHAR) AS slot_start_utc, CAST(b.slot_end AS CHAR) AS slot_end_utc,
+                        m.notification_from, m.display_name
+                 FROM scheduler_bookings b
+                 JOIN scheduler_mailbox_entitlements m ON m.username=b.host_username
+                 WHERE b.id=? AND b.host_username=? FOR UPDATE`, [bookingId, username]
             );
             if (!rows.length) throw new Error('Booking not found');
             if (rows[0].status === outcome) { await connection.commit(); return; }
@@ -1578,6 +1621,27 @@ export class SchedulerStore {
                 `UPDATE scheduler_bookings SET status=?, no_show_at=CASE WHEN ?='no_show' THEN UTC_TIMESTAMP(3) ELSE NULL END WHERE id=?`,
                 [outcome, outcome, bookingId]
             );
+            const booking = rows[0];
+            const snapshot = JSON.parse(booking.event_snapshot);
+            await this.workflows.triggerForBooking(connection, {
+                tenantKey: booking.tenant_key,
+                bookingId: booking.id,
+                eventTypeId: booking.event_type_id,
+                hostEmail: booking.host_username,
+                notificationFrom: booking.notification_from || booking.host_username,
+                notificationName: booking.display_name,
+                bookerEmail: booking.booker_email,
+                bookerName: booking.booker_name,
+                bookerPhone: booking.booker_phone || undefined,
+                communicationConsents: jsonArray(booking.communication_consents) as any,
+                title: snapshot.title || 'Meeting',
+                start: utcDate(booking.slot_start_utc),
+                end: utcDate(booking.slot_end_utc),
+                status: outcome,
+                locale: snapshot.locale || 'en',
+                timeZone: booking.booker_time_zone,
+                manageUrl: `${schedulerConfig.publicBaseUrl}/scheduler`,
+            }, outcome === 'completed' ? 'booking.completed' : 'booking.no_show');
             await this.writeAudit(connection, entitlement.tenantKey, 'user', username, `booking.${outcome}`, 'booking', bookingId, {});
             await connection.commit();
         } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
@@ -1786,7 +1850,7 @@ export class SchedulerStore {
                     [booking.calendar_id, booking.calendar_event_uid, ical]
                 );
                 await connection.query('UPDATE calendars SET sync_token=sync_token+1 WHERE id=?', [booking.calendar_id]);
-                await this.workflows.captureForBooking(connection, {
+                await this.workflows.activateCapturedForBooking(connection, {
                     tenantKey: booking.tenant_key,
                     bookingId: booking.id,
                     eventTypeId: booking.event_type_id,
@@ -1795,8 +1859,13 @@ export class SchedulerStore {
                     notificationName: booking.display_name,
                     bookerEmail: booking.booker_email,
                     bookerName: booking.booker_name,
+                    bookerPhone: booking.booker_phone || undefined,
+                    communicationConsents: jsonArray(booking.communication_consents) as any,
                     title: snapshot.title || 'Meeting',
                     start,
+                    end,
+                    status: 'confirmed',
+                    locale: snapshot.locale || 'en',
                     timeZone: booking.booker_time_zone,
                     manageUrl: `${schedulerConfig.publicBaseUrl}/scheduler/action/reschedule/${encodeURIComponent(nextRescheduleToken)}`,
                 });
@@ -1815,6 +1884,25 @@ export class SchedulerStore {
                      WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`,
                     [Number(booking.seats || 1), booking.tenant_key, booking.event_type_id, booking.host_username, booking.slot_start_utc]
                 );
+                await this.workflows.triggerForBooking(connection, {
+                    tenantKey: booking.tenant_key,
+                    bookingId: booking.id,
+                    eventTypeId: booking.event_type_id,
+                    hostEmail: booking.host_username,
+                    notificationFrom: booking.notification_from || booking.host_username,
+                    notificationName: booking.display_name,
+                    bookerEmail: booking.booker_email,
+                    bookerName: booking.booker_name,
+                    bookerPhone: booking.booker_phone || undefined,
+                    communicationConsents: jsonArray(booking.communication_consents) as any,
+                    title: snapshot.title || 'Meeting',
+                    start: utcDate(booking.slot_start_utc),
+                    end: utcDate(booking.slot_end_utc),
+                    status: 'rejected',
+                    locale: snapshot.locale || 'en',
+                    timeZone: booking.booker_time_zone,
+                    manageUrl: `${schedulerConfig.publicBaseUrl}/scheduler`,
+                }, 'booking.rejected');
                 await this.enqueue(connection, booking.tenant_key, booking.id, 'booking.rejected', `booking:${booking.id}:rejected`, {
                     bookingId: booking.id, hostEmail: booking.host_username, bookerEmail: booking.booker_email,
                     notificationFrom: booking.notification_from || booking.host_username, notificationName: booking.display_name,
@@ -1918,8 +2006,13 @@ export class SchedulerStore {
                 notificationName: booking.display_name,
                 bookerEmail: booking.booker_email,
                 bookerName: booking.booker_name,
+                bookerPhone: booking.booker_phone || undefined,
+                communicationConsents: jsonArray(booking.communication_consents) as any,
                 title: snapshot.title || booking.title || 'Meeting',
                 start: newStart,
+                end: newEnd,
+                status: 'confirmed',
+                locale: snapshot.locale || 'en',
                 timeZone: booking.booker_time_zone,
                 manageUrl: `${schedulerConfig.publicBaseUrl}/scheduler/action/reschedule/${encodeURIComponent(token)}`,
             });
@@ -1977,7 +2070,25 @@ export class SchedulerStore {
                 : '';
             const wasConfirmed = current.status === 'confirmed';
             await connection.query("UPDATE scheduler_bookings SET status='cancelled', cancelled_at=UTC_TIMESTAMP(3), cancellation_reason=? WHERE id=?", [normalizedReason || null, current.id]);
-            await this.workflows.cancelForBooking(connection, current.tenant_key, current.id);
+            await this.workflows.cancelForBooking(connection, {
+                tenantKey: current.tenant_key,
+                bookingId: current.id,
+                eventTypeId: current.event_type_id,
+                hostEmail: current.host_username,
+                notificationFrom: current.notification_from || current.host_username,
+                notificationName: current.display_name,
+                bookerEmail: current.booker_email,
+                bookerName: current.booker_name,
+                bookerPhone: current.booker_phone || undefined,
+                communicationConsents: jsonArray(current.communication_consents) as any,
+                title: snapshot.title || 'Meeting',
+                start: utcDate(current.slot_start_utc),
+                end: utcDate(current.slot_end_utc),
+                status: 'cancelled',
+                locale: snapshot.locale || 'en',
+                timeZone: current.booker_time_zone,
+                manageUrl: `${schedulerConfig.publicBaseUrl}/scheduler`,
+            });
             if (current.slot_hold_token) {
                 await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [current.slot_hold_token]);
             }

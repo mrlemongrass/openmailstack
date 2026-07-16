@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { pool } from '../db';
 import { schedulerConfig } from '../config';
-import { OmsSchedulerMessageProvider, runSchedulerWorkerCycle } from './worker';
+import { runSchedulerWorkerCycle } from './worker';
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -13,7 +13,6 @@ async function main(): Promise<void> {
     }
 
     const workerId = `scheduler-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
-    const provider = new OmsSchedulerMessageProvider();
     let stopping = false;
     let wake: (() => void) | null = null;
     let sleepTimer: NodeJS.Timeout | null = null;
@@ -28,7 +27,7 @@ async function main(): Promise<void> {
     console.log('Scheduler worker started.', { workerId });
     while (!stopping) {
         try {
-            await runSchedulerWorkerCycle(workerId, provider);
+            await runSchedulerWorkerCycle(workerId);
         } catch (error) {
             console.error('Scheduler worker cycle failed:', error);
         }

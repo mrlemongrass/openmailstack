@@ -240,9 +240,12 @@ async function runSchedulerOutboxCycle(workerId) {
         await deliverOutbox(row, workerId);
     return rows.length;
 }
-async function runSchedulerWorkerCycle(workerId, provider = new OmsSchedulerMessageProvider()) {
+async function runSchedulerWorkerCycle(workerId, provider) {
     const outbox = await runSchedulerOutboxCycle(workerId);
-    const jobs = await (0, workflows_1.runSchedulerJobCycle)(new workflows_1.SchedulerJobRepository(db_1.pool), provider, workerId);
+    const smtp = provider || new OmsSchedulerMessageProvider();
+    const secretBox = new workflows_1.SchedulerSecretBox(config_1.schedulerConfig.secretKeys);
+    const dispatcher = provider || new workflows_1.SchedulerWorkflowDeliveryDispatcher(db_1.pool, smtp, new workflows_1.SchedulerDeliveryProviderRepository(db_1.pool, secretBox), new workflows_1.SchedulerContactPreferenceRepository(db_1.pool, secretBox), config_1.schedulerConfig.publicBaseUrl);
+    const jobs = await (0, workflows_1.runSchedulerJobCycle)(new workflows_1.SchedulerJobRepository(db_1.pool), dispatcher, workerId);
     return { outbox, jobs };
 }
 //# sourceMappingURL=worker.js.map

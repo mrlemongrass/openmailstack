@@ -2,6 +2,7 @@ import type { Pool } from 'mysql2/promise';
 import { type AvailabilitySlot } from './availability';
 import { type SchedulerEventInput, type SchedulerBookingAnswerInput, type SchedulerBookingQuestion, type SchedulerAttendeeInput, type SchedulerOneOffWindow } from './phase1';
 import { type SchedulerAvailabilityExclusion } from './phase2';
+import { type SchedulerCommunicationConsents } from './workflows';
 export interface SchedulerEntitlement {
     username: string;
     tenantKey: string;
@@ -98,6 +99,7 @@ export interface SchedulerBookingInput {
     bookerTimeZone: string;
     bookerName: string;
     bookerEmail: string;
+    communicationConsents?: SchedulerCommunicationConsents;
     bookerNotes?: string;
     bookingAnswers?: SchedulerBookingAnswerInput[];
     attendees?: SchedulerAttendeeInput[];
@@ -132,6 +134,7 @@ export declare class SchedulerStore {
     private readonly pool;
     private readonly holds;
     private readonly workflows;
+    private readonly contactPreferences;
     constructor(pool: Pool);
     listAdminMailboxes(): Promise<Array<Record<string, unknown>>>;
     setEntitlement(username: string, actor: string, input: {

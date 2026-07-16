@@ -4,7 +4,8 @@ export interface SchedulerWindow {
   endMinute: number;
 }
 
-export type SchedulerBookingQuestionType = 'short_text' | 'long_text' | 'select';
+export type SchedulerBookingQuestionType =
+  "short_text" | "long_text" | "select";
 
 export interface SchedulerBookingQuestion {
   id: string;
@@ -32,7 +33,7 @@ export interface SchedulerEventType {
   bufferAfterMinutes: number;
   minimumNoticeMinutes: number;
   capacity: number;
-  locationType: 'in_person' | 'phone' | 'custom' | 'conference';
+  locationType: "in_person" | "phone" | "custom" | "conference";
   locationLabel: string;
   destinationCalendarId: number | null;
   conflictCalendarIds: number[];
@@ -40,7 +41,7 @@ export interface SchedulerEventType {
   windows: SchedulerWindow[];
   availabilityScheduleId: string | null;
   systemManaged: boolean;
-  visibility: 'public' | 'unlisted' | 'private';
+  visibility: "public" | "unlisted" | "private";
   requiresConfirmation: boolean;
   cancellationCutoffMinutes: number | null;
   rescheduleCutoffMinutes: number | null;
@@ -60,6 +61,80 @@ export interface SchedulerEventType {
   locale: string;
   lockedTimeZone: string | null;
   questions: SchedulerBookingQuestion[];
+  communicationChannels?: Array<"sms" | "whatsapp" | "voice">;
+}
+
+export type SchedulerWorkflowTrigger =
+  | "booking.requested"
+  | "booking.start"
+  | "booking.ended"
+  | "booking.confirmed"
+  | "booking.rejected"
+  | "booking.cancelled"
+  | "booking.rescheduled"
+  | "booking.completed"
+  | "booking.no_show";
+export type SchedulerWorkflowAction =
+  | "message.email.reminder"
+  | "message.email"
+  | "notification.in_app"
+  | "webhook.http"
+  | "message.external";
+export interface SchedulerWorkflowCondition {
+  field: "booking.status" | "booker.locale" | "booking.consent";
+  operator: "equals" | "not_equals" | "contains";
+  value: string;
+}
+export interface SchedulerWorkflowDefinition {
+  trigger: { type: SchedulerWorkflowTrigger; offsetSeconds: number };
+  steps: Array<{
+    action: SchedulerWorkflowAction;
+    delaySeconds: number;
+    condition?: SchedulerWorkflowCondition;
+    config: Record<string, unknown>;
+  }>;
+}
+export interface SchedulerAvailableProvider {
+  id: string;
+  name: string;
+  channel: "webhook" | "sms" | "whatsapp" | "voice" | "translation";
+}
+export interface SchedulerWorkflow {
+  id: string;
+  name: string;
+  enabled: boolean;
+  archivedAt: string | null;
+  eventTypeIds: string[];
+  currentVersion: number | null;
+  definition: SchedulerWorkflowDefinition | null;
+}
+export interface SchedulerWorkflowJob {
+  id: string;
+  workflowName: string;
+  jobType: SchedulerWorkflowAction;
+  attempts: number;
+  lastErrorCode: string | null;
+  contactEmail: string | null;
+  availableAt: string;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  deadLetteredAt: string | null;
+}
+export interface SchedulerDeliveryAlert {
+  id: string;
+  jobId: string;
+  severity: "warning" | "critical";
+  alertType: string;
+  errorCode: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+export interface SchedulerInAppNotification {
+  id: string;
+  title: string;
+  body: string;
+  readAt: string | null;
+  createdAt: string;
 }
 
 export interface SchedulerPrivateLinkState {
@@ -102,7 +177,7 @@ export interface SchedulerAvailability {
 
 export interface SchedulerAvailabilityExclusion {
   id?: string;
-  kind: 'holiday' | 'out_of_office';
+  kind: "holiday" | "out_of_office";
   startDate: string;
   endDate: string;
   label: string;
@@ -166,158 +241,515 @@ export interface SchedulerState {
 }
 
 export interface SchedulerWaitlistEntry {
-  id: string; status: string; booker_name: string; booker_email: string; seats: number;
-  desiredStart: string; title: string; slug: string; promoted_booking_id: string | null;
+  id: string;
+  status: string;
+  booker_name: string;
+  booker_email: string;
+  seats: number;
+  desiredStart: string;
+  title: string;
+  slug: string;
+  promoted_booking_id: string | null;
 }
 
-export interface SchedulerPollOption { id: string; start: string; end?: string; votes: number }
-export interface SchedulerPoll { id: string; title: string; status: string; eventTypeId: string; eventTitle: string; finalizedOptionId: string | null; options: SchedulerPollOption[] }
+export interface SchedulerPollOption {
+  id: string;
+  start: string;
+  end?: string;
+  votes: number;
+}
+export interface SchedulerPoll {
+  id: string;
+  title: string;
+  status: string;
+  eventTypeId: string;
+  eventTitle: string;
+  finalizedOptionId: string | null;
+  options: SchedulerPollOption[];
+}
 
-export async function saveDefaultAvailability(availability: Partial<SchedulerAvailability>): Promise<SchedulerAvailability> {
-  const result = await request<{ availability: SchedulerAvailability }>('/api/scheduler/v1/availability/default', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(availability),
-  });
+export async function saveDefaultAvailability(
+  availability: Partial<SchedulerAvailability>,
+): Promise<SchedulerAvailability> {
+  const result = await request<{ availability: SchedulerAvailability }>(
+    "/api/scheduler/v1/availability/default",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(availability),
+    },
+  );
   return result.availability;
 }
 
-export async function previewDefaultAvailability(start: Date, end: Date): Promise<{ slots: Array<{ start: string; end: string }>; busyIntervalCount: number; overrideCount: number }> {
-  return request<{ slots: Array<{ start: string; end: string }>; busyIntervalCount: number; overrideCount: number }>(
+export async function previewDefaultAvailability(
+  start: Date,
+  end: Date,
+): Promise<{
+  slots: Array<{ start: string; end: string }>;
+  busyIntervalCount: number;
+  overrideCount: number;
+}> {
+  return request<{
+    slots: Array<{ start: string; end: string }>;
+    busyIntervalCount: number;
+    overrideCount: number;
+  }>(
     `/api/scheduler/v1/availability/preview?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`,
   );
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, { credentials: 'include', ...options });
-  const body = await response.json() as { success: boolean; error?: string } & T;
-  if (!response.ok || !body.success) throw new Error(body.error || 'Scheduler request failed');
+  const response = await fetch(url, { credentials: "include", ...options });
+  const body = (await response.json()) as {
+    success: boolean;
+    error?: string;
+  } & T;
+  if (!response.ok || !body.success)
+    throw new Error(body.error || "Scheduler request failed");
   return body;
 }
 
-export async function getSchedulerState(filter = 'upcoming'): Promise<SchedulerState> {
-  return request<SchedulerState>(`/api/scheduler/v1/me?filter=${encodeURIComponent(filter)}`);
+export async function getSchedulerState(
+  filter = "upcoming",
+): Promise<SchedulerState> {
+  return request<SchedulerState>(
+    `/api/scheduler/v1/me?filter=${encodeURIComponent(filter)}`,
+  );
 }
 
-export async function saveSchedulerProfile(profile: Partial<SchedulerEntitlement>): Promise<SchedulerEntitlement> {
-  const result = await request<{ entitlement: SchedulerEntitlement }>('/api/scheduler/v1/profile', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profile),
+export async function getSchedulerWorkflows(): Promise<SchedulerWorkflow[]> {
+  const result = await request<{ workflows: SchedulerWorkflow[] }>(
+    "/api/scheduler/v1/workflows",
+  );
+  return result.workflows;
+}
+
+export async function createSchedulerWorkflow(
+  name: string,
+  eventTypeIds: string[],
+): Promise<{ id: string }> {
+  const result = await request<{ workflow: { id: string } }>(
+    "/api/scheduler/v1/workflows",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, eventTypeIds }),
+    },
+  );
+  return result.workflow;
+}
+
+export async function updateSchedulerWorkflow(
+  id: string,
+  value: { name?: string; enabled?: boolean; eventTypeIds?: string[] },
+): Promise<void> {
+  await request(`/api/scheduler/v1/workflows/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(value),
   });
+}
+
+export async function publishSchedulerWorkflow(
+  id: string,
+  definition: SchedulerWorkflowDefinition,
+): Promise<void> {
+  await request(`/api/scheduler/v1/workflows/${id}/publish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ definition }),
+  });
+}
+
+export async function archiveSchedulerWorkflow(id: string): Promise<void> {
+  await request(`/api/scheduler/v1/workflows/${id}`, { method: "DELETE" });
+}
+
+export async function cloneSchedulerWorkflow(
+  id: string,
+): Promise<{ id: string }> {
+  const result = await request<{ workflow: { id: string } }>(
+    `/api/scheduler/v1/workflows/${id}/clone`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    },
+  );
+  return result.workflow;
+}
+
+export async function getSchedulerDeliveryProviders(): Promise<
+  SchedulerAvailableProvider[]
+> {
+  const result = await request<{ providers: SchedulerAvailableProvider[] }>(
+    "/api/scheduler/v1/delivery-providers",
+  );
+  return result.providers;
+}
+
+export async function translateSchedulerWorkflow(
+  definition: SchedulerWorkflowDefinition,
+  providerId: string,
+  locales: string[],
+): Promise<SchedulerWorkflowDefinition> {
+  const result = await request<{ definition: SchedulerWorkflowDefinition }>(
+    "/api/scheduler/v1/workflows/translate",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ definition, providerId, locales }),
+    },
+  );
+  return result.definition;
+}
+
+export async function previewSchedulerWorkflow(
+  definition: SchedulerWorkflowDefinition,
+  locale = "en",
+): Promise<Array<Record<string, string>>> {
+  const result = await request<{ preview: Array<Record<string, string>> }>(
+    "/api/scheduler/v1/workflows/preview",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ definition, sample: { locale } }),
+    },
+  );
+  return result.preview;
+}
+
+export async function testSchedulerWorkflow(
+  id: string,
+): Promise<{ jobIds: string[]; skippedActions: SchedulerWorkflowAction[] }> {
+  return request(`/api/scheduler/v1/workflows/${id}/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+}
+
+export async function getSchedulerWorkflowOperations(): Promise<{
+  jobs: SchedulerWorkflowJob[];
+  alerts: SchedulerDeliveryAlert[];
+}> {
+  return request("/api/scheduler/v1/workflow-operations");
+}
+
+export async function getSchedulerNotifications(): Promise<
+  SchedulerInAppNotification[]
+> {
+  const result = await request<{
+    notifications: SchedulerInAppNotification[];
+  }>("/api/scheduler/v1/notifications");
+  return result.notifications;
+}
+
+export async function markSchedulerNotificationRead(id: string): Promise<void> {
+  await request(`/api/scheduler/v1/notifications/${id}/read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+}
+
+export async function reconcileSchedulerWorkflowJob(
+  id: string,
+  action: "retry" | "delivered" | "cancel",
+): Promise<void> {
+  await request(`/api/scheduler/v1/workflow-operations/${id}/reconcile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+}
+
+export async function saveSchedulerProfile(
+  profile: Partial<SchedulerEntitlement>,
+): Promise<SchedulerEntitlement> {
+  const result = await request<{ entitlement: SchedulerEntitlement }>(
+    "/api/scheduler/v1/profile",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    },
+  );
   return result.entitlement;
 }
 
-export async function saveSchedulerEvent(event: Partial<SchedulerEventType>): Promise<SchedulerEventType> {
+export async function saveSchedulerEvent(
+  event: Partial<SchedulerEventType>,
+): Promise<SchedulerEventType> {
   const editing = Boolean(event.id);
-  const result = await request<{ event: SchedulerEventType }>(editing ? `/api/scheduler/v1/event-types/${event.id}` : '/api/scheduler/v1/event-types', {
-    method: editing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event),
-  });
+  const result = await request<{ event: SchedulerEventType }>(
+    editing
+      ? `/api/scheduler/v1/event-types/${event.id}`
+      : "/api/scheduler/v1/event-types",
+    {
+      method: editing ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+    },
+  );
   return result.event;
 }
 
 export async function deleteSchedulerEvent(id: string): Promise<void> {
-  await request(`/api/scheduler/v1/event-types/${id}`, { method: 'DELETE' });
+  await request(`/api/scheduler/v1/event-types/${id}`, { method: "DELETE" });
 }
 
-export async function getSchedulerPrivateLink(id: string): Promise<SchedulerPrivateLinkState> {
-  const result = await request<{ privateLink: SchedulerPrivateLinkState }>(`/api/scheduler/v1/event-types/${id}/private-link`);
+export async function getSchedulerPrivateLink(
+  id: string,
+): Promise<SchedulerPrivateLinkState> {
+  const result = await request<{ privateLink: SchedulerPrivateLinkState }>(
+    `/api/scheduler/v1/event-types/${id}/private-link`,
+  );
   return result.privateLink;
 }
 
-export async function rotateSchedulerPrivateLink(id: string, options: {
-  expiresAt: string | null;
-  singleUse: boolean;
-  oneOffAvailability: { timeZone: string; windows: SchedulerOneOffWindow[] } | null;
-}): Promise<{ privateLink: SchedulerPrivateLinkState; url: string }> {
+export async function rotateSchedulerPrivateLink(
+  id: string,
+  options: {
+    expiresAt: string | null;
+    singleUse: boolean;
+    oneOffAvailability: {
+      timeZone: string;
+      windows: SchedulerOneOffWindow[];
+    } | null;
+  },
+): Promise<{ privateLink: SchedulerPrivateLinkState; url: string }> {
   return request(`/api/scheduler/v1/event-types/${id}/private-link`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options),
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
   });
 }
 
 export async function revokeSchedulerPrivateLink(id: string): Promise<void> {
-  await request(`/api/scheduler/v1/event-types/${id}/private-link`, { method: 'DELETE' });
+  await request(`/api/scheduler/v1/event-types/${id}/private-link`, {
+    method: "DELETE",
+  });
 }
 
 export async function cancelSchedulerBooking(id: string): Promise<void> {
-  await request(`/api/scheduler/v1/bookings/${id}/cancel`, { method: 'POST' });
+  await request(`/api/scheduler/v1/bookings/${id}/cancel`, { method: "POST" });
 }
 
-export async function decideSchedulerBooking(id: string, decision: 'confirm' | 'reject'): Promise<void> {
-  await request(`/api/scheduler/v1/bookings/${id}/${decision}`, { method: 'POST' });
+export async function decideSchedulerBooking(
+  id: string,
+  decision: "confirm" | "reject",
+): Promise<void> {
+  await request(`/api/scheduler/v1/bookings/${id}/${decision}`, {
+    method: "POST",
+  });
 }
 
-export async function getPublicProfile(handle: string): Promise<{ profile: SchedulerEntitlement; events: SchedulerEventType[]; defaultEvent: SchedulerEventType | null }> {
-  return request(`/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}`);
+export async function getPublicProfile(handle: string): Promise<{
+  profile: SchedulerEntitlement;
+  events: SchedulerEventType[];
+  defaultEvent: SchedulerEventType | null;
+}> {
+  return request(
+    `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}`,
+  );
 }
 
-const accessHeaders = (accessToken = ''): HeadersInit => accessToken ? { 'X-Scheduler-Access': accessToken } : {};
+const accessHeaders = (accessToken = ""): HeadersInit =>
+  accessToken ? { "X-Scheduler-Access": accessToken } : {};
 
-export async function getPublicEvent(handle: string, slug: string, accessToken = ''): Promise<{ profile: SchedulerEntitlement; event: SchedulerEventType }> {
-  return request(`/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}`, { headers: accessHeaders(accessToken) });
+export async function getPublicEvent(
+  handle: string,
+  slug: string,
+  accessToken = "",
+): Promise<{ profile: SchedulerEntitlement; event: SchedulerEventType }> {
+  return request(
+    `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}`,
+    { headers: accessHeaders(accessToken) },
+  );
 }
 
-export async function getPublicSlots(handle: string, slug: string, start: Date, end: Date, accessToken = '', includeFull = false): Promise<Array<{ start: string; end: string; remainingSeats: number }>> {
-  const result = await request<{ slots: Array<{ start: string; end: string; remainingSeats: number }> }>(
-    `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/slots?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}${includeFull ? '&includeFull=true' : ''}`,
+export async function getPublicSlots(
+  handle: string,
+  slug: string,
+  start: Date,
+  end: Date,
+  accessToken = "",
+  includeFull = false,
+): Promise<Array<{ start: string; end: string; remainingSeats: number }>> {
+  const result = await request<{
+    slots: Array<{ start: string; end: string; remainingSeats: number }>;
+  }>(
+    `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/slots?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}${includeFull ? "&includeFull=true" : ""}`,
     { headers: accessHeaders(accessToken) },
   );
   return result.slots;
 }
 
-export async function joinPublicWaitlist(handle: string, slug: string, payload: Record<string, unknown>, accessToken = '', idempotencyKey = crypto.randomUUID()): Promise<void> {
-  await request(`/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/waitlist`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...accessHeaders(accessToken) },
-    body: JSON.stringify({ ...payload, idempotencyKey }),
+export async function joinPublicWaitlist(
+  handle: string,
+  slug: string,
+  payload: Record<string, unknown>,
+  accessToken = "",
+  idempotencyKey = crypto.randomUUID(),
+): Promise<void> {
+  await request(
+    `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/waitlist`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+        ...accessHeaders(accessToken),
+      },
+      body: JSON.stringify({ ...payload, idempotencyKey }),
+    },
+  );
+}
+
+export async function bookSchedulerOnBehalf(
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await request("/api/scheduler/v1/bookings/on-behalf", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify(payload),
   });
 }
 
-export async function bookSchedulerOnBehalf(payload: Record<string, unknown>): Promise<void> {
-  await request('/api/scheduler/v1/bookings/on-behalf', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(payload) });
+export async function markSchedulerBookingOutcome(
+  id: string,
+  outcome: "completed" | "no_show",
+): Promise<void> {
+  await request(`/api/scheduler/v1/bookings/${id}/outcome`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ outcome }),
+  });
 }
 
-export async function markSchedulerBookingOutcome(id: string, outcome: 'completed' | 'no_show'): Promise<void> {
-  await request(`/api/scheduler/v1/bookings/${id}/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome }) });
+export async function createSchedulerPoll(
+  payload: Record<string, unknown>,
+): Promise<{ poll: SchedulerPoll & { token: string }; url: string }> {
+  return request("/api/scheduler/v1/polls", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
-export async function createSchedulerPoll(payload: Record<string, unknown>): Promise<{ poll: SchedulerPoll & { token: string }; url: string }> {
-  return request('/api/scheduler/v1/polls', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+export async function finalizeSchedulerPoll(
+  id: string,
+  optionId: string,
+): Promise<void> {
+  await request(`/api/scheduler/v1/polls/${id}/finalize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ optionId }),
+  });
 }
 
-export async function finalizeSchedulerPoll(id: string, optionId: string): Promise<void> {
-  await request(`/api/scheduler/v1/polls/${id}/finalize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ optionId }) });
-}
-
-export async function getPublicPoll(token: string): Promise<{ poll: SchedulerPoll & { eventTitle: string; hostName: string; requireEmailVerification: boolean } }> {
+export async function getPublicPoll(token: string): Promise<{
+  poll: SchedulerPoll & {
+    eventTitle: string;
+    hostName: string;
+    requireEmailVerification: boolean;
+  };
+}> {
   return request(`/api/public/scheduler/v1/polls/${encodeURIComponent(token)}`);
 }
 
-export async function requestPublicPollVerification(token: string, voterEmail: string): Promise<{ challengeId: string; expiresAt: string }> {
-  const result = await request<{ verification: { challengeId: string; expiresAt: string } }>(`/api/public/scheduler/v1/polls/${encodeURIComponent(token)}/verification`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voterEmail }),
-  });
-  return result.verification;
-}
-
-export async function votePublicPoll(token: string, payload: Record<string, unknown>): Promise<void> {
-  await request(`/api/public/scheduler/v1/polls/${encodeURIComponent(token)}/votes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-}
-
-export async function importSchedulerData(source: 'openmailstack' | 'calendly' | 'calcom', payload: unknown): Promise<{ imported: number; skipped: number; errors: string[] }> {
-  const result = await request<{ result: { imported: number; skipped: number; errors: string[] } }>('/api/scheduler/v1/import', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, payload }),
-  });
-  return result.result;
-}
-
-export async function requestPublicVerification(handle: string, slug: string, bookerEmail: string, accessToken = ''): Promise<{ challengeId: string; expiresAt: string }> {
-  const result = await request<{ verification: { challengeId: string; expiresAt: string } }>(
-    `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/verification`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json', ...accessHeaders(accessToken) }, body: JSON.stringify({ bookerEmail }) },
+export async function requestPublicPollVerification(
+  token: string,
+  voterEmail: string,
+): Promise<{ challengeId: string; expiresAt: string }> {
+  const result = await request<{
+    verification: { challengeId: string; expiresAt: string };
+  }>(
+    `/api/public/scheduler/v1/polls/${encodeURIComponent(token)}/verification`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voterEmail }),
+    },
   );
   return result.verification;
 }
 
-export async function createPublicBooking(handle: string, slug: string, payload: Record<string, unknown>, accessToken = '', idempotencyKey = crypto.randomUUID()): Promise<{ id: string; status: string; start: string; end: string }> {
-  const result = await request<{ booking: { id: string; status: string; start: string; end: string } }>(
+export async function votePublicPoll(
+  token: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await request(
+    `/api/public/scheduler/v1/polls/${encodeURIComponent(token)}/votes`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function importSchedulerData(
+  source: "openmailstack" | "calendly" | "calcom",
+  payload: unknown,
+): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  const result = await request<{
+    result: { imported: number; skipped: number; errors: string[] };
+  }>("/api/scheduler/v1/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, payload }),
+  });
+  return result.result;
+}
+
+export async function requestPublicVerification(
+  handle: string,
+  slug: string,
+  bookerEmail: string,
+  accessToken = "",
+): Promise<{ challengeId: string; expiresAt: string }> {
+  const result = await request<{
+    verification: { challengeId: string; expiresAt: string };
+  }>(
+    `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/verification`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...accessHeaders(accessToken),
+      },
+      body: JSON.stringify({ bookerEmail }),
+    },
+  );
+  return result.verification;
+}
+
+export async function createPublicBooking(
+  handle: string,
+  slug: string,
+  payload: Record<string, unknown>,
+  accessToken = "",
+  idempotencyKey = crypto.randomUUID(),
+): Promise<{ id: string; status: string; start: string; end: string }> {
+  const result = await request<{
+    booking: { id: string; status: string; start: string; end: string };
+  }>(
     `/api/public/scheduler/v1/profiles/${encodeURIComponent(handle)}/events/${encodeURIComponent(slug)}/bookings`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...accessHeaders(accessToken) }, body: JSON.stringify({ ...payload, idempotencyKey }) },
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+        ...accessHeaders(accessToken),
+      },
+      body: JSON.stringify({ ...payload, idempotencyKey }),
+    },
   );
   return result.booking;
 }
@@ -329,12 +761,31 @@ export interface SchedulerBookingActionPolicy {
   closesAt: string | null;
 }
 
-export async function getBookingAction(scope: 'cancel' | 'reschedule', token: string): Promise<{ booking: SchedulerBooking; scope: string; policy: SchedulerBookingActionPolicy }> {
-  return request(`/api/public/scheduler/v1/actions/${scope}/${encodeURIComponent(token)}`);
+export async function getBookingAction(
+  scope: "cancel" | "reschedule",
+  token: string,
+): Promise<{
+  booking: SchedulerBooking;
+  scope: string;
+  policy: SchedulerBookingActionPolicy;
+}> {
+  return request(
+    `/api/public/scheduler/v1/actions/${scope}/${encodeURIComponent(token)}`,
+  );
 }
 
-export async function applyBookingAction(scope: 'cancel' | 'reschedule', token: string, start?: string, reason = ''): Promise<void> {
-  await request(`/api/public/scheduler/v1/actions/${scope}/${encodeURIComponent(token)}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(start ? { start } : {}), reason }),
-  });
+export async function applyBookingAction(
+  scope: "cancel" | "reschedule",
+  token: string,
+  start?: string,
+  reason = "",
+): Promise<void> {
+  await request(
+    `/api/public/scheduler/v1/actions/${scope}/${encodeURIComponent(token)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...(start ? { start } : {}), reason }),
+    },
+  );
 }

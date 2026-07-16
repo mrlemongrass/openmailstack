@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CalendarClock, CalendarDays, Clock3, Copy, ExternalLink, Link2, Plus, Settings2, Trash2, Wrench, X } from 'lucide-react';
+import { AlertTriangle, CalendarClock, CalendarDays, Clock3, Copy, ExternalLink, Link2, Plus, Settings2, Trash2, Workflow, Wrench, X } from 'lucide-react';
 import { EmptyState } from '../shared/components/EmptyState';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { useToast } from '../shared/components/Toast';
@@ -25,9 +25,10 @@ import {
 } from './api';
 import { AvailabilityPanel } from './AvailabilityPanel';
 import { SchedulerToolsPanel } from './SchedulerToolsPanel';
+import { WorkflowsPanel } from './WorkflowsPanel';
 import './scheduler.css';
 
-type SchedulerTab = 'events' | 'bookings' | 'availability' | 'tools' | 'profile';
+type SchedulerTab = 'events' | 'bookings' | 'availability' | 'workflows' | 'tools' | 'profile';
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DEFAULT_WINDOWS: SchedulerWindow[] = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMinute: 540, endMinute: 1020 }));
 
@@ -391,6 +392,7 @@ export function SchedulerRoutes() {
     { id: 'events', label: 'Event Types', icon: CalendarClock },
     { id: 'bookings', label: 'Bookings', icon: CalendarDays },
     { id: 'availability', label: 'Availability', icon: Clock3 },
+    { id: 'workflows', label: 'Workflows', icon: Workflow },
     { id: 'tools', label: 'Tools', icon: Wrench },
     { id: 'profile', label: 'Profile', icon: Settings2 },
   ];
@@ -411,6 +413,7 @@ export function SchedulerRoutes() {
         {state.bookings.length === 0 ? <EmptyState icon={CalendarDays} title={`No ${filter} bookings`} description="" /> : <div className="scheduler-booking-list">{state.bookings.map(booking => <article key={booking.id}><time>{new Date(booking.start).toLocaleDateString([], { month: 'short', day: 'numeric' })}<strong>{new Date(booking.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong></time><div><h3>{booking.event.title}{booking.seriesId && <span className="scheduler-event-badge">Series {booking.seriesIndex}/{booking.seriesCount}</span>}</h3><p>{booking.bookerName} · {booking.bookerEmail}</p></div><span className={`booking-status ${booking.status}`}>{booking.status.replace('_', ' ')}</span><button className="btn btn-secondary" onClick={() => setSelectedBooking(booking)}>View</button>{booking.status === 'requested' && <><button className="btn btn-primary" disabled={reviewingBookingId === booking.id} onClick={() => void reviewBooking(booking.id, 'confirm')}>Approve</button><button className="btn btn-secondary" disabled={reviewingBookingId === booking.id} onClick={() => { if (confirm('Reject this booking request?')) void reviewBooking(booking.id, 'reject'); }}>Reject</button></>}{booking.status === 'confirmed' && <>{currentTime > 0 && new Date(booking.end).getTime() <= currentTime && <><button className="btn btn-secondary" onClick={async () => { await markSchedulerBookingOutcome(booking.id, 'completed'); await load(); }}>Complete</button><button className="btn btn-secondary" onClick={async () => { if (confirm('Mark this guest as a no-show?')) { await markSchedulerBookingOutcome(booking.id, 'no_show'); await load(); } }}>No-show</button></>}<button className="btn btn-secondary" onClick={async () => { if (confirm('Cancel this booking?')) { await cancelSchedulerBooking(booking.id); await load(); } }}>Cancel</button></>}</article>)}</div>}
       </>}
       {tab === 'availability' && <AvailabilityPanel availability={state.defaultAvailability} onSaved={load} />}
+      {tab === 'workflows' && <WorkflowsPanel events={state.events} />}
       {tab === 'tools' && <SchedulerToolsPanel state={state} onChanged={load} />}
       {tab === 'profile' && <ProfilePanel state={state} onSaved={load} />}
     </main>

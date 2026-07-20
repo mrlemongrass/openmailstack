@@ -4,7 +4,7 @@ Last reviewed: 2026-07-20. All 6 settings milestones complete. Major feature pas
 
 ## 2026-07-20 Message Templates Settings Contract
 
-**Status: Fixed and regression-tested in the repository; deployment pending.** The compose templates UI now uses the shared user-settings response/write contract, and the backend recognizes a bounded `templates` namespace stored in the existing `webmail_user_settings` table. The authenticated route regression reproduces the former `404` and now proves GET/PUT success; backend tests pass 113/116 with only three existing optional database skips, frontend tests pass 19/19, and ESLint, both builds, and integration pass. No migration or production mutation is required.
+**Status: Deployed and live-artifact validated at commit `49d14d3c`.** The compose templates UI now uses the shared user-settings response/write contract, and the backend recognizes a bounded `templates` namespace stored in the existing `webmail_user_settings` table. Repository and deployed backend hashes match, the frontend checksum dry-run is empty, and an isolated harness against the deployed backend artifact returns `200` for authenticated GET and PUT without querying production data. The public route retains its `401` unauthenticated boundary; Nginx, services, permissions, staging smoke, and post-restart logs pass. No migration, authentication-session mutation, mailbox mutation, or Scheduler-worker restart occurred. Root-only rollback snapshot: `/var/backups/openmailstack/20260720T113924Z_webmail_templates_contract`.
 
 ## 2026-07-20 Webmail Endless Scrolling Live
 

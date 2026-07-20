@@ -5490,3 +5490,41 @@ Remove the authenticated `/api/settings/templates` `404` without changing unrela
 ### Next recommended task
 
 Guardedly deploy the tested backend/frontend contract repair, verify exact artifacts and service health, then confirm the authenticated templates request returns `200` through a user-owned session without creating or cloning production authentication state.
+
+## 2026-07-20 — Message templates contract live rollout
+
+Agent/tool: Codex
+Branch: `main`
+Release commit: `49d14d3c`
+Ending git state: production deployed and validated; rollout records ready for review
+
+### Selected task
+
+Deploy the templates settings contract repair and prove the production artifacts and route behavior without creating, cloning, or modifying authentication or mailbox state.
+
+### Deployment and rollback
+
+- Confirmed the repository was clean at `49d14d3c`, the old live backend/frontend hashes differed, core services were active, Nginx validated, public root returned `200`, and unauthenticated auth/templates routes returned `401`.
+- Re-ran the backend build, focused backend/frontend contract tests, and frontend ESLint before deployment.
+- Captured the full live frontend plus all five deployed `user-settings` artifacts in root-only snapshot `/var/backups/openmailstack/20260720T113924Z_webmail_templates_contract`.
+- Snapshot checksums: frontend `91b5ba1c37b611e834034bff015cc099ef0286d5d60a7dbc0513c582f219b178`; backend `142b7b8adce233caffe78a095bf044ff56aa0f074cddef9917ed20e6d9002528`.
+- Installed only `user-settings.ts`, `.js`, `.js.map`, `.d.ts`, and `.d.ts.map`, preserving `openmailstack:openmailstack` ownership and `0600` modes; restarted only `openmailstack`.
+- Deployed the frontend with `functions/deploy_webmail_frontend.sh`, which rebuilt, removed stale assets, and normalized root-owned `755/644` modes.
+
+### Production proof
+
+- All five repository/deployed backend hashes match exactly; checksum-mode frontend rsync returned no differences and repository/live `index.html` hashes both equal `305515c77a14808f5957fe2aad96660abcf6dc57a9ee6b679414d5fde47e9b19`.
+- An isolated harness loaded the deployed `/opt/openmailstack-backend/src/api.js` and exercised authenticated templates GET/PUT with in-memory settings only; both returned `200` and the saved response contained one template.
+- Public `/api/settings/templates` returns `401` without authentication, preserving the production security boundary.
+- `openmailstack`, Nginx, and the Scheduler worker are active with zero systemd restart failures. The Scheduler worker retained its pre-deploy activation timestamp and was not restarted.
+- Nginx syntax, public root/auth boundaries, frontend permissions, complete staging smoke, and warning-or-higher backend journal checks since restart pass.
+
+### Safety
+
+- No production session was created, cloned, refreshed, or deleted.
+- No settings row, mailbox, message, flag, migration, dependency, environment, Nginx, or systemd configuration was changed.
+- The artifact harness used only in-memory test data on an ephemeral loopback port and closed cleanly.
+
+### Next recommended task
+
+Have a user with an already-owned browser session open Compose once and confirm Templates loads without a console error; no privileged session manipulation is required.

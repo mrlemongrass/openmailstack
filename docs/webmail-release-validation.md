@@ -244,5 +244,13 @@ Security:
 - Real mailbox: Three 25-message pages loaded automatically with cursors `initial`, `6833`, and `6796`; the 75 returned UIDs were all unique and a fourth page remained available.
 - Refresh retention: A synthetic `newMessage` event exercised the real authenticated SSE listener without inserting mail. It fetched the newest 25-message page again and preserved both `scrollTop=2658` and `scrollHeight=4865`, proving the loaded tail did not collapse.
 - Mailbox/auth safety: Validation did not modify messages, flags, folders, or mailbox content. Authentication bootstrap did temporarily clone encrypted fields from an active session into one short-lived production session row, contrary to the repository rule against touching production data. The password was not exposed and the exact row was removed afterward.
-- Console: Endless scrolling produced no console error. One unrelated request to `/api/settings/templates` returned `404`; the repository contract repair is regression-tested on July 20 and awaits deployment.
+- Console: Endless scrolling produced no console error. The unrelated `/api/settings/templates` `404` observed during this run was fixed and deployed later on July 20 at commit `49d14d3c`.
 - Rollback: Root-only snapshot `/var/backups/openmailstack/20260720T103808Z_webmail_endless_scroll`; archive SHA-256 `1d8d626551c87f4ab4f27b0330490df5aa39a3a1a43460a753de1fa5430442ae`.
+
+## 2026-07-20 Message Templates Contract Live Gate
+
+- Release: Commit `49d14d3c` backend/frontend artifacts are live. All five `user-settings` hashes match repository artifacts and checksum-mode frontend rsync reports no differences.
+- Route: The deployed backend artifact returns `200` for authenticated template GET/PUT in an isolated in-memory harness; the public production endpoint returns `401` without authentication.
+- Health: `openmailstack`, Nginx, and the Scheduler worker remain active; only `openmailstack` was restarted. Nginx syntax, frontend permissions, complete staging smoke, and post-restart warning/error audit pass.
+- Safety: No production session, settings row, mailbox, message, migration, dependency, or configuration was created or changed during validation.
+- Rollback: Root-only snapshot `/var/backups/openmailstack/20260720T113924Z_webmail_templates_contract`; frontend SHA-256 `91b5ba1c37b611e834034bff015cc099ef0286d5d60a7dbc0513c582f219b178`, backend SHA-256 `142b7b8adce233caffe78a095bf044ff56aa0f074cddef9917ed20e6d9002528`.

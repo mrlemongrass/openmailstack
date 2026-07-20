@@ -986,3 +986,12 @@ Future entry template:
 - Regression: Added an authenticated Express route test for GET/PUT plus a frontend settings-client contract test; the route test reproduced the original `404` twice before the fix.
 - Verified: Backend 113/116 with three existing optional database skips, frontend 19/19, backend/frontend builds, ESLint, full integration, and `git diff --check` pass.
 - Deployment: Repository fix only; no production data, service, configuration, or deployed artifact was changed. A guarded backend/frontend release is still required to remove the live console error.
+
+## 2026-07-20 Message Templates Contract Live Rollout
+
+- Deployed: Commit `49d14d3c` through a targeted five-file backend artifact sync, one `openmailstack` restart, and the standard frontend deployment helper. The Scheduler worker was not restarted.
+- Exactness: All five repository/live `user-settings` hashes match; checksum-mode frontend rsync reports no differences; the live bundle contains the updated Templates UI.
+- Route proof: An isolated in-memory harness loaded `/opt/openmailstack-backend/src/api.js` and returned `200` for authenticated template GET/PUT without querying or mutating production data. The public route returns `401` without authentication.
+- Health: Nginx syntax, active services, frontend `755/644` modes, full staging smoke, and warning-or-higher backend journal checks pass.
+- Safety: No migration, production authentication-session change, mailbox/message change, dependency installation, configuration change, or Scheduler-worker restart occurred.
+- Rollback: Root-only snapshot `/var/backups/openmailstack/20260720T113924Z_webmail_templates_contract`; frontend archive SHA-256 `91b5ba1c37b611e834034bff015cc099ef0286d5d60a7dbc0513c582f219b178`, backend archive SHA-256 `142b7b8adce233caffe78a095bf044ff56aa0f074cddef9917ed20e6d9002528`.

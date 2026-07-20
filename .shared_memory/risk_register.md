@@ -45,6 +45,7 @@ Last updated: 2026-07-20
 - ✅ Scheduler entitlement navigation refresh: Admin enable/disable changes now notify the authenticated shell immediately, while focus and visibility refresh cover changes made in another tab. Playwright proved the disabled-to-enabled transition and desktop/mobile placement after Notes.
 - ✅ Frontend dependency and Node compatibility: removed unused vulnerable `pdfjs-dist`, pinned React Router to Node-20-compatible `7.18.1`, and locked Quill to non-vulnerable `2.0.2`. Frontend and backend registry audits report zero vulnerabilities on live Node `20.19.2`.
 - ✅ Webmail deployment umask isolation: secret environment rendering confines `umask 077` to a subshell, while dependency installs use `umask 022`, preventing deployment from leaving repository dependencies unreadable.
+- ✅ Message templates settings contract: commit `49d14d3c` is live; the backend recognizes the bounded `templates` namespace, compose uses the shared settings shape, deployed artifacts are exact, and deployed-artifact authenticated GET/PUT returns `200` without production-data access. The public endpoint remains `401` when unauthenticated.
 
 ## Remaining High-Priority Risks
 
@@ -73,7 +74,6 @@ Security and authorization areas to re-check:
 
 Operational/release risks:
 
-- The authenticated `/api/settings/templates` `404` has a tested repository fix: the backend now recognizes a bounded `templates` namespace and compose uses the shared settings response/write shape. The live deployment still returns `404` until the backend/frontend fix is released; no migration is required.
 - `functions/10_webmail.sh` now renders `/etc/openmailstack/webmail-backend.env`, installs `openmailstack.service`, deploys the React app, and injects Nginx proxy routes with candidate validation/rollback. It has still not been exercised on a clean VM in this cycle; validate on a clean VM before release.
 - On the live server, Nginx already had root, `/api`, `/caldav`, and ActiveSync routes before migration. Do not blindly run the `functions/10_webmail.sh` Nginx injection against an already-migrated live config without checking for duplicate locations first.
 - The backend's global raw body parser must not consume `/api/` or `multipart/form-data` requests; otherwise webmail send/draft uploads fail with Busboy `Unexpected end of form`.

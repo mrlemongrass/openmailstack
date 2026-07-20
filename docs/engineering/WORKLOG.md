@@ -5356,3 +5356,53 @@ Complete all five remaining Scheduler Phase 3 slices: owner/Admin workflow opera
 ### Next recommended task
 
 Begin Scheduler Phase 4 with the team/event ownership model and transactional round-robin/collective assignment foundation before building team UI.
+
+## 2026-07-19 — Webmail endless message scrolling
+
+Agent/tool: Codex
+Branch: `main`
+Starting fixed point: `HEAD` before this entry
+Ending git state: implementation, regression coverage, browser validation, and documentation ready for review
+
+### Selected task
+
+Replace the folder list's manual-only 25-message boundary with safe endless scrolling without changing the backend page contract or search behavior.
+
+### Acceptance criteria
+
+- [x] Approaching the folder-list footer automatically loads the next existing 25-message UID page.
+- [x] Page boundaries cannot introduce duplicate rows or concurrent duplicate cursor requests.
+- [x] Folder switches, searches, and superseding requests cannot append stale rows.
+- [x] Refreshes and successful actions preserve already loaded older pages when the newest page overlaps; a non-overlapping refresh resets instead of retaining a gap.
+- [x] Transient pagination failures retain loaded rows and expose an accessible retry control.
+- [x] Desktop and mobile use the correct scroll geometry, and search remains on its existing bounded result contract.
+
+### Changes made
+
+- Added a bottom sentinel with a 600-pixel prefetch margin and kept the button as an accessible fallback/retry surface.
+- Added UID de-duplication, single-flight and stale-request guards, cursor-progress termination, detail-cache merging, and refresh reconciliation helpers.
+- Applied successful read/star/move-like actions to the complete loaded list before server reconciliation so older pages do not collapse.
+- Selected the constrained message pane as the desktop observer root and the viewport for auto-growing mobile layouts.
+- Added focused regression coverage for page merging, refresh overlap/gaps, and loaded actions; desktop/mobile observer selection was covered by the browser validation.
+
+### Proof / checks run
+
+- Frontend tests passed 18/18; ESLint and the Vite production build passed. The largest route chunk remained 489.77 kB.
+- Shell lint passed with ShellCheck unavailable; the complete integration suite passed, including frontend regressions and installer dry run.
+- Mocked desktop browser validation requested cursors `initial -> 51 -> 26` exactly once, reached message 1, stopped at the true end, and recovered from a one-time page failure through the visible retry control.
+- Mocked mobile validation at 390x844 requested only the initial page before scrolling, then requested `olderThan=51` as the viewport approached the footer. The final console contained only the expected mocked-SSE disconnect error.
+- `git diff --check` passed.
+
+### Deployment and rollback
+
+- Not deployed. No production mailbox, data, credentials, service, or filesystem state was touched.
+- Rollback is the single feature commit because there is no schema or backend contract change.
+
+### Risks / notes
+
+- Search pagination is deliberately unchanged; extending indexed/IMAP search beyond its current bounded result set needs a separate cursor contract.
+- The browser run used deterministic API mocks rather than a production mailbox, so live rollout should still include a guarded large-folder smoke check.
+
+### Next recommended task
+
+Deploy the tested frontend through the normal guarded webmail path, then verify one real mailbox with more than 50 messages can cross two page boundaries without duplicate rows or list-depth loss after a new-message refresh.

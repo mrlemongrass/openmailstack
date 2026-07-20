@@ -226,3 +226,13 @@ Security:
 - Artifacts: tested backend modules and complete frontend `dist` exactly match the deployed trees.
 - Rollback: root-only checksum-verified snapshot `/var/backups/openmailstack/20260716T151429Z-scheduler-phase3`.
 - Deferred: provider-specific operational certification and clean-VM install/upgrade/rollback remain explicit post-Phase-3 deployment follow-ups.
+
+## 2026-07-19 Endless Message Scrolling Local Gate
+
+- Scope: Folder lists only. Search retains its existing bounded result contract, and the backend continues to return 25-message UID-cursor pages.
+- Automated checks: 18/18 frontend tests, ESLint, production build, shell lint, full integration, and `git diff --check` passed. Pagination tests cover UID de-duplication, overlapping and non-overlapping refreshes, and loaded-row actions; the desktop/mobile observer-root behavior was exercised in the browser checks below.
+- Desktop browser: A mocked 75-message mailbox requested `initial`, `olderThan=51`, and `olderThan=26` exactly once as the list approached each footer, reached message 1, and removed the footer when `moreAvailable` became false.
+- Recovery browser: A one-time `503` on `olderThan=51` left the loaded messages intact, exposed `Retry loading older messages`, and loaded message 50 after one retry.
+- Mobile browser: The initial 390x844 layout requested only the newest page. Scrolling the footer into view requested `olderThan=51`; it did not cascade-load all pages while the mobile list expanded with the document.
+- Console: No application exception was observed. The sole final-session console error was caused by the mocked SSE response ending instead of remaining open.
+- Safety: Validation used only a local Vite server and browser route mocks. No live deployment, production mailbox mutation, or production service action occurred.

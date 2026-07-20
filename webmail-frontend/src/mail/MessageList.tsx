@@ -23,10 +23,16 @@ export function MessageList({ mail, density }: MessageListProps) {
   const { folder } = useParams<{ folder: string }>();
   const navigate = useNavigate();
   const parentRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
   const starringRef = useRef<Set<number>>(new Set());
   const decodedFolder = folder ? decodeURIComponent(folder) : 'INBOX';
   const {
     activeFolder,
+    isSearchActive,
+    loadOlderMessages,
+    loadingOlderMessages,
+    mailMoreAvailable,
+    mailPaginationError,
     messages,
     prefetchBodies,
     setActiveFolder,
@@ -41,6 +47,10 @@ export function MessageList({ mail, density }: MessageListProps) {
       setIsSearchActive(false);
     }
   }, [activeFolder, decodedFolder, setActiveFolder, setIsSearchActive, setSelectedMessages]);
+
+  useEffect(() => {
+    parentRef.current?.scrollTo({ top: 0 });
+  }, [decodedFolder]);
 
   // Pre-fetch message bodies for the first batch of visible messages
   useEffect(() => {
@@ -62,6 +72,32 @@ export function MessageList({ mail, density }: MessageListProps) {
     estimateSize: useCallback(() => DENSITY_HEIGHTS[density], [density]),
     overscan: 10,
   });
+
+  useEffect(() => {
+    const root = parentRef.current;
+    const target = loadMoreRef.current;
+    if (
+      typeof IntersectionObserver === 'undefined'
+      || !root || !target || isSearchActive || !mailMoreAvailable
+      || loadingOlderMessages || mailPaginationError
+    ) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) void loadOlderMessages();
+    }, {
+      root: root.scrollHeight > root.clientHeight ? root : null,
+      rootMargin: '0px 0px 600px 0px',
+    });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [
+    isSearchActive,
+    loadOlderMessages,
+    loadingOlderMessages,
+    mailMoreAvailable,
+    mailPaginationError,
+    messages.length,
+  ]);
 
   const handleSelect = (uid: number, shift: boolean) => {
     if (shift) {
@@ -184,11 +220,18 @@ export function MessageList({ mail, density }: MessageListProps) {
             );
           })}
         </div>
-        {mail.mailMoreAvailable && (
-          <div style={{ textAlign: 'center', padding: 12 }}>
-            <button className="btn btn-ghost" onClick={mail.loadOlderMessages} disabled={mail.loadingOlderMessages}>
-              {mail.loadingOlderMessages ? 'Loading...' : 'Load older messages'}
+        {!isSearchActive && mailMoreAvailable && (
+          <div ref={loadMoreRef} role="status" aria-live="polite" aria-busy={loadingOlderMessages} style={{ textAlign: 'center', padding: 12 }}>
+            <button className="btn btn-ghost" onClick={loadOlderMessages} disabled={loadingOlderMessages}>
+              {mailPaginationError
+                ? 'Retry loading older messages'
+                : loadingOlderMessages ? 'Loading older messages...' : 'Load older messages'}
             </button>
+            {mailPaginationError && (
+              <div style={{ marginTop: 6, color: 'var(--danger)', fontSize: '0.75rem' }}>
+                {mailPaginationError}
+              </div>
+            )}
           </div>
         )}
       </div>

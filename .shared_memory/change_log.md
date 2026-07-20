@@ -961,3 +961,11 @@ Future entry template:
 - Verified: migrations `001`-`025` twice and 114/114 backend tests; 14/14 frontend tests plus lint/build; full integration; owner/Admin desktop/mobile browser checks; independent Standards/Spec reviews with no findings; exact deployed artifacts; live API/worker/Rspamd/staging/queue/auth/schema gates.
 - Deployed: migration `025` and the tested application bundle are live. Workflow/job/provider/open-alert counts remain zero and no external send was performed. Root-only checksum-verified rollback snapshot: `/var/backups/openmailstack/20260716T151429Z-scheduler-phase3`.
 - Deferred: provider-specific certification and clean-VM install/upgrade/rollback on the planned second Linux server.
+
+## 2026-07-19 Webmail Endless Message Scrolling
+
+- Changed: Folder message lists automatically request the next existing 25-message UID page as the user nears the bottom, while retaining the accessible manual load/retry control. Search remains on its separate bounded result contract.
+- Reliability: Appends de-duplicate UIDs, enforce one in-flight older-page request, reject stale folder/search responses, stop on empty or non-advancing cursors, and preserve loaded older pages through overlapping refreshes and successful message actions. A non-overlapping refresh resets safely rather than leaving a hidden UID gap.
+- Responsive: Constrained desktop panes are used as the intersection root; mobile uses the viewport. This prevents the auto-growing mobile page from immediately cascading through every mailbox page.
+- Verified: 18/18 frontend tests, ESLint, production build, shell lint, full integration, and `git diff --check` passed. Mocked real-browser checks loaded cursors `initial -> 51 -> 26` exactly once, reached message 1, showed and recovered from a one-time older-page failure, and confirmed desktop/mobile pagination behavior. The only browser console error was the intentionally completed mocked SSE stream.
+- Deployment: Not deployed; no production data, mailbox state, credentials, or services were touched.

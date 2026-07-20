@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, type SetStateAction } from 'react';
 import type {
   Message, MailFolder, Signature, Rule, SavedSearch,
   MailUndoState,
@@ -9,6 +9,11 @@ import type {
 import * as api from '../../shared/api';
 import type { MailUserSettings } from '../../settings/settingsApi';
 import { markMessageBodyLoaded, mergeMessageDetails, messageCacheKey } from '../message-cache';
+import {
+  appendOlderMessagePage,
+  applyLoadedMessageAction,
+  reconcileNewestMessagePage,
+} from '../mail-pagination';
 
 interface UseMailOptions {
   mailSettings: MailUserSettings;
@@ -42,18 +47,31 @@ export function useMail(_opts: UseMailOptions) {
   };
 
   // Message state
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessagesState] = useState<Message[]>([]);
+  const messagesRef = useRef<Message[]>([]);
+  const setMessages = useCallback((update: SetStateAction<Message[]>) => {
+    setMessagesState((current) => {
+      const next = typeof update === 'function' ? update(current) : update;
+      messagesRef.current = next;
+      return next;
+    });
+  }, []);
   const [selectedMessages, setSelectedMessages] = useState<number[]>([]);
   const [viewingThread, setViewingThread] = useState<Message[] | null>(null);
   const [mailLowestUid, setMailLowestUid] = useState<number | null>(null);
   const [mailMoreAvailable, setMailMoreAvailable] = useState(false);
   const messageDetailCacheRef = useRef<Map<string, Message>>(new Map());
   const prefetchedRef = useRef<Set<string>>(new Set());
+  const messageRequestIdRef = useRef(0);
+  const olderMessageRequestIdRef = useRef(0);
+  const olderMessageLoadingRef = useRef(false);
+  const searchRequestIdRef = useRef(0);
 
   // Loading state
   const [mailLoading, setMailLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [mailPaginationError, setMailPaginationError] = useState('');
 
   // Undo
   const [mailUndo, setMailUndo] = useState<MailUndoState | null>(null);
@@ -121,23 +139,53 @@ export function useMail(_opts: UseMailOptions) {
     } catch (e: unknown) { setMailError(errorMessage(e, 'Failed to load folders')); console.error('Failed to fetch folders', e); }
   }, []);
 
-  const fetchMessages = useCallback(async () => {
+  const invalidateOlderMessageRequest = useCallback(() => {
+    olderMessageRequestIdRef.current += 1;
+    olderMessageLoadingRef.current = false;
+    setLoadingOlderMessages(false);
+    setMailPaginationError('');
+  }, []);
+
+  const fetchMessages = useCallback(async (mode: 'refresh' | 'reset' = 'refresh') => {
     const folder = activeFolder;
+    const requestId = ++messageRequestIdRef.current;
+    if (mode === 'reset') {
+      searchRequestIdRef.current += 1;
+      invalidateOlderMessageRequest();
+      setSearchLoading(false);
+      setMessages([]);
+      setMailLowestUid(null);
+      setMailMoreAvailable(false);
+    }
     setMailLoading(true);
+    setMailError('');
     try {
       const data = await api.fetchMessages(folder);
       if (data.messages) {
-        if (activeFolderRef.current !== folder) return;
-        setMessages(data.messages.map((message) => mergeMessageDetails(
+        if (requestId !== messageRequestIdRef.current || activeFolderRef.current !== folder) return;
+        const refreshed = data.messages.map((message) => mergeMessageDetails(
           message,
           messageDetailCacheRef.current.get(messageCacheKey(folder, message.uid)),
-        )));
-        setMailLowestUid(data.lowestUid || null);
-        setMailMoreAvailable(data.moreAvailable !== false);
+        ));
+        const result = mode === 'reset'
+          ? { messages: refreshed, preservedTail: false }
+          : reconcileNewestMessagePage(messagesRef.current, refreshed);
+        setMessages(result.messages);
+        if (mode === 'reset' || !result.preservedTail) {
+          if (mode === 'refresh') invalidateOlderMessageRequest();
+          setMailLowestUid(data.lowestUid || null);
+          setMailMoreAvailable(Boolean(data.moreAvailable));
+        }
       }
-    } catch (e: unknown) { setMailError(errorMessage(e, 'Failed to load messages')); console.error('Failed to fetch messages', e); }
-    finally { setMailLoading(false); }
-  }, [activeFolder]);
+    } catch (e: unknown) {
+      if (requestId === messageRequestIdRef.current && activeFolderRef.current === folder) {
+        setMailError(errorMessage(e, 'Failed to load messages'));
+      }
+      console.error('Failed to fetch messages', e);
+    } finally {
+      if (requestId === messageRequestIdRef.current) setMailLoading(false);
+    }
+  }, [activeFolder, invalidateOlderMessageRequest, setMessages]);
 
   // Compose send
   const handleSend = useCallback(async (sendAt?: Date | null) => {
@@ -234,7 +282,7 @@ export function useMail(_opts: UseMailOptions) {
         });
       }
     } catch (e) { console.error('Failed to fetch message body', e); prefetchedRef.current.delete(cacheKey); }
-  }, []);
+  }, [setMessages]);
 
   // Pre-fetch message bodies in the background (non-blocking, silent)
   const prefetchBodies = useCallback((uids: number[], folderPath: string) => {
@@ -253,19 +301,23 @@ export function useMail(_opts: UseMailOptions) {
         }
       }).catch(() => { prefetchedRef.current.delete(cacheKey); });
     }
-  }, []);
+  }, [setMessages]);
 
   // Snooze
   const snoozeMessages = useCallback(async (uids: number[], until: Date) => {
+    const folder = activeFolder;
     try {
-      await fetch('/api/messages/snooze', {
+      const response = await fetch('/api/messages/snooze', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder: activeFolder, uids, until: until.toISOString() }),
+        body: JSON.stringify({ folder, uids, until: until.toISOString() }),
       });
+      if (!response.ok) throw new Error('Failed to snooze messages');
+      if (activeFolderRef.current !== folder) return;
+      setMessages((current) => applyLoadedMessageAction(current, 'snooze', uids));
       await fetchMessages();
       await fetchFolders();
     } catch (e) { console.error('Snooze failed', e); }
-  }, [activeFolder, fetchMessages, fetchFolders]);
+  }, [activeFolder, fetchMessages, fetchFolders, setMessages]);
 
   // Mute thread
   const muteThread = useCallback(async (uids: number[]) => {
@@ -279,18 +331,38 @@ export function useMail(_opts: UseMailOptions) {
   }, [fetchMessages]);
 
   const loadOlderMessages = useCallback(async () => {
-    if (loadingOlderMessages || !mailMoreAvailable || !mailLowestUid) return;
+    if (olderMessageLoadingRef.current || !mailMoreAvailable || !mailLowestUid || isSearchActive) return;
+    const folder = activeFolder;
+    const cursor = mailLowestUid;
+    const requestId = ++olderMessageRequestIdRef.current;
+    olderMessageLoadingRef.current = true;
     setLoadingOlderMessages(true);
+    setMailPaginationError('');
     try {
-      const data = await api.fetchMessages(activeFolder, mailLowestUid);
-      if (data.messages) {
-        setMessages((prev) => [...prev, ...data.messages!]);
-        setMailLowestUid(data.lowestUid || null);
-        setMailMoreAvailable(data.moreAvailable || false);
+      const data = await api.fetchMessages(folder, cursor);
+      if (requestId !== olderMessageRequestIdRef.current || activeFolderRef.current !== folder) return;
+      const older = (data.messages || []).map((message) => mergeMessageDetails(
+        message,
+        messageDetailCacheRef.current.get(messageCacheKey(folder, message.uid)),
+      ));
+      const nextCursor = data.lowestUid || null;
+      setMessages((current) => appendOlderMessagePage(current, older));
+      setMailLowestUid(nextCursor);
+      setMailMoreAvailable(Boolean(
+        data.moreAvailable && older.length > 0 && nextCursor && nextCursor < cursor
+      ));
+    } catch (e: unknown) {
+      if (requestId === olderMessageRequestIdRef.current && activeFolderRef.current === folder) {
+        setMailPaginationError(errorMessage(e, 'Failed to load older messages'));
       }
-    } catch (e) { console.error('Failed to load older messages', e); }
-    setLoadingOlderMessages(false);
-  }, [activeFolder, mailLowestUid, mailMoreAvailable, loadingOlderMessages]);
+      console.error('Failed to load older messages', e);
+    } finally {
+      if (requestId === olderMessageRequestIdRef.current) {
+        olderMessageLoadingRef.current = false;
+        setLoadingOlderMessages(false);
+      }
+    }
+  }, [activeFolder, isSearchActive, mailLowestUid, mailMoreAvailable, setMessages]);
 
   const refreshMessages = useCallback(async () => {
     setIsRefreshing(true);
@@ -302,22 +374,30 @@ export function useMail(_opts: UseMailOptions) {
   const messageAction = useCallback(async (action: string, uids?: number[]) => {
     const targetUids = uids || selectedMessages;
     if (!targetUids.length) return;
+    const folder = activeFolder;
     try {
-      const result = await api.messageAction(action, activeFolder, targetUids);
+      const result = await api.messageAction(action, folder, targetUids);
       if (result.undoUids && result.undoUids.length > 0) {
         setMailUndo({
           message: getUndoMessage(action),
           uids: result.undoUids,
           targetFolder: result.targetFolder,
-          sourceFolder: activeFolder,
+          sourceFolder: folder,
           timestamp: Date.now(),
         });
+      }
+      if (activeFolderRef.current !== folder) {
+        await fetchFolders();
+        return;
+      }
+      if (action !== 'move' || result.targetFolder) {
+        setMessages((current) => applyLoadedMessageAction(current, action, targetUids));
       }
       setSelectedMessages([]);
       await fetchMessages();
       await fetchFolders();
     } catch (e) { console.error('Action failed', e); }
-  }, [activeFolder, selectedMessages, fetchMessages, fetchFolders]);
+  }, [activeFolder, selectedMessages, fetchMessages, fetchFolders, setMessages]);
 
   const undoAction = useCallback(async () => {
     if (!mailUndo) return;
@@ -331,17 +411,29 @@ export function useMail(_opts: UseMailOptions) {
 
   // ---- Search ----
   const doSearch = useCallback(async (query: string, scope: SearchScope) => {
-    if (!query.trim()) { setIsSearchActive(false); await fetchMessages(); return; }
+    const requestId = ++searchRequestIdRef.current;
+    if (!query.trim()) { setIsSearchActive(false); await fetchMessages('reset'); return; }
+    const folder = activeFolder;
+    messageRequestIdRef.current += 1;
+    setMailLoading(false);
+    invalidateOlderMessageRequest();
     setIsSearchActive(true);
     setSearchLoading(true);
     setSearchError('');
     try {
-      const result = await api.searchMessages(query, scope === 'folder' ? activeFolder : undefined);
+      const result = await api.searchMessages(query, scope === 'folder' ? folder : undefined);
+      if (requestId !== searchRequestIdRef.current || activeFolderRef.current !== folder) return;
       if (result.messages) setMessages(result.messages);
       setSearchInfo(result.source ? `Results from ${result.source}` : '');
-    } catch (e: unknown) { setSearchError(errorMessage(e, 'Search failed')); }
-    setSearchLoading(false);
-  }, [activeFolder, fetchMessages]);
+    } catch (e: unknown) {
+      if (requestId === searchRequestIdRef.current && activeFolderRef.current === folder) {
+        setSearchError(errorMessage(e, 'Search failed'));
+      }
+    }
+    finally {
+      if (requestId === searchRequestIdRef.current) setSearchLoading(false);
+    }
+  }, [activeFolder, fetchMessages, invalidateOlderMessageRequest, setMessages]);
 
   // ---- Real-time events ----
   useEffect(() => {
@@ -371,7 +463,7 @@ export function useMail(_opts: UseMailOptions) {
   // Refetch messages when folder changes
   useEffect(() => {
     activeFolderRef.current = activeFolder;
-    const messageTimer = window.setTimeout(() => { void fetchMessages(); }, 0);
+    const messageTimer = window.setTimeout(() => { void fetchMessages('reset'); }, 0);
     return () => window.clearTimeout(messageTimer);
   }, [activeFolder, fetchMessages]);
 
@@ -422,7 +514,7 @@ export function useMail(_opts: UseMailOptions) {
     messages, setMessages, selectedMessages, setSelectedMessages,
     viewingThread, setViewingThread,
     mailLowestUid, mailMoreAvailable,
-    mailLoading, isRefreshing, loadingOlderMessages,
+    mailLoading, isRefreshing, loadingOlderMessages, mailPaginationError,
     mailUndo, setMailUndo, undoSendId, cancelSendUndo,
     searchQuery, setSearchQuery, searchField, setSearchField,
     searchScope, setSearchScope, isSearchActive, setIsSearchActive,

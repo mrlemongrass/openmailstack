@@ -5941,3 +5941,38 @@ Complete physical iOS ActiveSync Calendar single-event CRUD and a DST-crossing r
 ### Remaining risk / next task
 
 Track T remains open for recurrence exceptions/reminders and custom or invalid `VTIMEZONE`. The next bounded task is to add exception/reminder golden fixtures at the iCalendar/EAS boundaries, then run the matching physical edit-one-occurrence and reminder round trip before beginning Calendar migration work.
+
+## 2026-07-20 — Track T recurrence exceptions, reminders, and custom zones
+
+### Goal
+
+Complete the remaining automated Track T protocol gates without guessing unsupported timezone rules or mutating production calendar data.
+
+### Acceptance criteria
+
+- [x] Preserve master identity, `EXDATE`, cancelled/modified `RECURRENCE-ID` exceptions, explicit exception zones, and exception-specific all-day state through parsing and expansion.
+- [x] Round-trip series and exception reminders through iCalendar, OMS Web, ActiveSync, and the real WBXML writer/parser; distinguish omitted/inherited, empty/disabled, no reminder, and at-start.
+- [x] Canonicalize custom aliases only when supported recurrence behavior matches the claimed IANA zone; keep invalid/unsupported definitions floating with a visible repair path.
+- [x] Preserve raw timezone and exception components during whole-series OMS Web edits.
+- [x] Pass complete repository gates and independent Standards/Spec review.
+- [ ] Deploy behind a root-only rollback snapshot and pass live artifact/service/protocol checks.
+- [ ] Complete physical macOS CalDAV and iOS ActiveSync exception/reminder round trips.
+
+### Implementation
+
+- `calendar-format.ts` now isolates nested components, expands deleted and modified instances deterministically, carries original occurrence identity, reads display alarms including RFC week and zero forms, and lets an explicit exception `TZID` override master fallback semantics.
+- Custom aliases use only bounded YEARLY rules and must match canonical transitions over a 28-year Gregorian weekday cycle plus every event-referenced year. `COUNT`/`UNTIL`, contradictory/future rules, malformed offsets, second-bearing offsets, and `-0000` remain floating rather than being silently shifted.
+- `eas-calendar.ts` maps `Reminder`, `Exceptions`, `Deleted`, `ExceptionStartTime`, and exception `AllDayEvent`; partial changes preserve stored state and duplicate deleted identities collapse.
+- OMS Web exposes reminder selection and invalid-zone repair guidance. Whole-series editing restores master metadata, time kind, zone, and all-day state while preserving raw `VTIMEZONE`, `EXDATE`, and exception VEVENT blocks.
+
+### Proof
+
+- Backend: 160 total, 157 passed, zero failed, three expected optional database skips.
+- Frontend: 37/37 tests, ESLint, and TypeScript/Vite production build pass.
+- Full integration, shell syntax checks, focused Calendar/EAS/WBXML conversions, and `git diff --check` pass.
+- Mocked Chromium proved invalid-zone warning display and recovery, at-start reminder selection, Home Baghdad projection, and no application exception. Its sole console error was the intentionally unmocked preview Socket.IO endpoint.
+- Independent Standards and Spec reviews found and closed transition-coincidence, bounded-rule, explicit-exception-zone, exception-all-day, zero/week-alarm, second-offset, and negative-zero defects.
+
+### Remaining risk / next task
+
+This is not a Track T completion claim. Deploy the tested commit reversibly, validate exact live artifacts and service/protocol health, then ask the user to perform the macOS/iOS exception/reminder matrix. Unsupported arbitrary custom timezone rules remain deliberately floating; OMS preserves their wall time and raw definition but does not execute them.

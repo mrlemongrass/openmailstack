@@ -60,6 +60,42 @@ function formatIcalDateOnly(date: Date): string {
     return date.toISOString().slice(0, 10).replace(/-/g, '');
 }
 
+function reminderMinutes(node: any): number | null {
+    if (!node || node.content === undefined || node.content === null || nodeText(node).trim() === '') return null;
+    const parsed = Number(nodeText(node));
+    if (!Number.isFinite(parsed) || parsed < 0) return null;
+    return Math.min(525_600, Math.floor(parsed));
+}
+
+function appendDisplayAlarm(lines: string[], subject: string, minutes: number | null | undefined): void {
+    if (minutes === null || minutes === undefined) return;
+    lines.push(
+        'BEGIN:VALARM',
+        'ACTION:DISPLAY',
+        `TRIGGER:-PT${Math.max(0, Math.floor(minutes))}M`,
+        `DESCRIPTION:${icalEscape(subject)}`,
+        'END:VALARM'
+    );
+}
+
+function appendParsedException(lines: string[], uid: string, recurrenceId: Date, event: ParsedIcalEvent): void {
+    lines.push('BEGIN:VEVENT', `UID:${icalEscape(uid)}`, `RECURRENCE-ID:${formatActiveSyncDate(recurrenceId)}`);
+    if (event.isAllDay) {
+        lines.push(`DTSTART;VALUE=DATE:${formatIcalDateOnly(event.start)}`);
+        lines.push(`DTEND;VALUE=DATE:${formatIcalDateOnly(event.end)}`);
+    } else if (event.timeKind === 'zoned' && event.timeZone) {
+        lines.push(`DTSTART;TZID=${event.timeZone}:${formatIcalWallTime(event.start, event.timeZone)}`);
+        lines.push(`DTEND;TZID=${event.timeZone}:${formatIcalWallTime(event.end, event.timeZone)}`);
+    } else {
+        lines.push(`DTSTART:${formatActiveSyncDate(event.start)}`, `DTEND:${formatActiveSyncDate(event.end)}`);
+    }
+    lines.push(`SUMMARY:${icalEscape(event.title)}`);
+    if (event.location) lines.push(`LOCATION:${icalEscape(event.location)}`);
+    if (event.description) lines.push(`DESCRIPTION:${icalEscape(event.description)}`);
+    appendDisplayAlarm(lines, event.title, event.notifications?.[0]?.time);
+    lines.push('END:VEVENT');
+}
+
 export function activeSyncCalendarApplicationDataToIcal(uid: string, applicationData: any, existingIcal = ''): string {
     const existing = existingIcal ? parseIcalEvent(uid, existingIcal) : null;
     const body = childNode(applicationData, 'Body');
@@ -79,7 +115,11 @@ export function activeSyncCalendarApplicationDataToIcal(uid: string, application
         ? null
         : timeZoneValue
             ? resolveActiveSyncTimeZone(timeZoneValue, start)
-            : existing?.timeZone || null;
+            : existing?.timeKind === 'zoned' ? existing.timeZone : null;
+    const incomingReminder = childNode(applicationData, 'Reminder');
+    const reminder = incomingReminder
+        ? reminderMinutes(incomingReminder)
+        : existing?.notifications?.[0]?.time ?? null;
 
     let rruleLine = existing?.recurrence?.raw ? `RRULE:${existing.recurrence.raw}` : '';
     const recurrenceNode = childNode(applicationData, 'Recurrence');
@@ -121,8 +161,78 @@ export function activeSyncCalendarApplicationDataToIcal(uid: string, application
     if (location) lines.push(`LOCATION:${icalEscape(location)}`);
     if (description) lines.push(`DESCRIPTION:${icalEscape(description)}`);
     if (rruleLine) lines.push(rruleLine);
+    const incomingExceptions = childNode(applicationData, 'Exceptions');
+    const deletedOccurrenceCandidates = incomingExceptions
+        ? incomingExceptions.children
+            ?.filter((exception: any) => childText(exception, 'Deleted') === '1')
+            .map((exception: any) => parseActiveSyncCalendarDate(childText(exception, 'ExceptionStartTime')))
+            .filter((date: Date | null): date is Date => Boolean(date)) || []
+        : [
+            ...Array.from(existing?.excludedOccurrenceIds || [], value => parseActiveSyncCalendarDate(value)),
+            ...(existing?.recurrenceExceptions || [])
+                .filter(exception => exception.deleted)
+                .map(exception => exception.recurrenceId),
+        ].filter((date: Date | null): date is Date => Boolean(date));
+    const deletedOccurrenceIds = Array.from(new Map(
+        deletedOccurrenceCandidates.map(date => [formatActiveSyncDate(date), date])
+    ).values());
+    if (deletedOccurrenceIds.length > 0) {
+        if (isAllDay) lines.push(`EXDATE;VALUE=DATE:${deletedOccurrenceIds.map(formatIcalDateOnly).join(',')}`);
+        else lines.push(`EXDATE:${deletedOccurrenceIds.map(formatActiveSyncDate).join(',')}`);
+    }
     lines.push('TRANSP:OPAQUE');
+    appendDisplayAlarm(lines, subject, reminder);
     lines.push('END:VEVENT');
+
+    if (incomingExceptions) {
+        for (const exception of incomingExceptions.children || []) {
+            if (childText(exception, 'Deleted') === '1') continue;
+            const recurrenceId = parseActiveSyncCalendarDate(childText(exception, 'ExceptionStartTime'));
+            if (!recurrenceId) continue;
+            const existingException = existing?.recurrenceExceptions?.find(candidate =>
+                formatActiveSyncDate(candidate.recurrenceId) === formatActiveSyncDate(recurrenceId)
+            )?.event;
+            const exceptionAllDayText = childText(exception, 'AllDayEvent');
+            const exceptionIsAllDay = exceptionAllDayText
+                ? exceptionAllDayText === '1'
+                : existingException?.isAllDay ?? isAllDay;
+            const exceptionStart = parseActiveSyncCalendarDate(childText(exception, 'StartTime'))
+                || existingException?.start
+                || recurrenceId;
+            const exceptionEnd = parseActiveSyncCalendarDate(childText(exception, 'EndTime'))
+                || existingException?.end
+                || new Date(exceptionStart.getTime() + (end.getTime() - start.getTime()));
+            const exceptionSubject = firstNonEmpty(childText(exception, 'Subject'), existingException?.title || '', subject);
+            const exceptionReminderNode = childNode(exception, 'Reminder');
+            const exceptionReminder = exceptionReminderNode
+                ? reminderMinutes(exceptionReminderNode)
+                : existingException?.notifications?.[0]?.time ?? reminder;
+            lines.push('BEGIN:VEVENT', `UID:${icalEscape(uid)}`);
+            if (isAllDay) {
+                lines.push(`RECURRENCE-ID;VALUE=DATE:${formatIcalDateOnly(recurrenceId)}`);
+            } else {
+                lines.push(`RECURRENCE-ID:${formatActiveSyncDate(recurrenceId)}`);
+            }
+            if (exceptionIsAllDay) {
+                lines.push(`DTSTART;VALUE=DATE:${formatIcalDateOnly(exceptionStart)}`);
+                lines.push(`DTEND;VALUE=DATE:${formatIcalDateOnly(exceptionEnd)}`);
+            } else {
+                lines.push(`DTSTART:${formatActiveSyncDate(exceptionStart)}`);
+                lines.push(`DTEND:${formatActiveSyncDate(exceptionEnd)}`);
+            }
+            lines.push(`SUMMARY:${icalEscape(exceptionSubject)}`);
+            const exceptionLocation = childText(exception, 'Location');
+            if (exceptionLocation) lines.push(`LOCATION:${icalEscape(exceptionLocation)}`);
+            appendDisplayAlarm(lines, exceptionSubject, exceptionReminder);
+            lines.push('END:VEVENT');
+        }
+    } else {
+        for (const exception of existing?.recurrenceExceptions || []) {
+            if (!exception.deleted && exception.event) {
+                appendParsedException(lines, uid, exception.recurrenceId, exception.event as ParsedIcalEvent);
+            }
+        }
+    }
     lines.push('END:VCALENDAR');
 
     return `${lines.join('\r\n')}\r\n`;
@@ -186,6 +296,9 @@ export function calendarEventToActiveSyncApplicationData(event: ParsedIcalEvent)
     }
 
     if (event.location) applicationData.push({ tag: 'Location', page: 4, content: event.location });
+    if (event.notifications?.[0]) {
+        applicationData.push({ tag: 'Reminder', page: 4, content: String(Math.max(0, Math.floor(event.notifications[0].time))) });
+    }
     if (event.description) {
         applicationData.push({
             tag: 'Body',
@@ -199,5 +312,48 @@ export function calendarEventToActiveSyncApplicationData(event: ParsedIcalEvent)
     }
     const recurrence = activeSyncRecurrence(event);
     if (recurrence) applicationData.push(recurrence);
+    const exceptionNodes: ActiveSyncCalendarNode[] = [];
+    const seenDeleted = new Set<string>();
+    for (const occurrenceId of event.excludedOccurrenceIds || []) {
+        seenDeleted.add(occurrenceId);
+        exceptionNodes.push({
+            tag: 'Exception', page: 4, children: [
+                { tag: 'Deleted', page: 4, content: '1' },
+                { tag: 'ExceptionStartTime', page: 4, content: occurrenceId },
+            ],
+        });
+    }
+    for (const exception of event.recurrenceExceptions || []) {
+        const occurrenceId = formatActiveSyncDate(exception.recurrenceId);
+        if (exception.deleted) {
+            if (!seenDeleted.has(occurrenceId)) {
+                exceptionNodes.push({
+                    tag: 'Exception', page: 4, children: [
+                        { tag: 'Deleted', page: 4, content: '1' },
+                        { tag: 'ExceptionStartTime', page: 4, content: occurrenceId },
+                    ],
+                });
+            }
+            continue;
+        }
+        if (!exception.event) continue;
+        const exceptionEvent = exception.event;
+        const children: ActiveSyncCalendarNode[] = [
+            { tag: 'ExceptionStartTime', page: 4, content: occurrenceId },
+            { tag: 'AllDayEvent', page: 4, content: exceptionEvent.isAllDay ? '1' : '0' },
+            { tag: 'StartTime', page: 4, content: formatActiveSyncDate(exceptionEvent.start) },
+            { tag: 'EndTime', page: 4, content: formatActiveSyncDate(exceptionEvent.end) },
+            { tag: 'Subject', page: 4, content: exceptionEvent.title },
+        ];
+        if (exceptionEvent.location) children.push({ tag: 'Location', page: 4, content: exceptionEvent.location });
+        const exceptionReminder = exceptionEvent.notifications?.[0]?.time;
+        if (exceptionReminder === undefined && event.notifications?.[0]) {
+            children.push({ tag: 'Reminder', page: 4, content: '' });
+        } else if (exceptionReminder !== undefined && exceptionReminder !== event.notifications?.[0]?.time) {
+            children.push({ tag: 'Reminder', page: 4, content: String(Math.max(0, Math.floor(exceptionReminder))) });
+        }
+        exceptionNodes.push({ tag: 'Exception', page: 4, children });
+    }
+    if (exceptionNodes.length > 0) applicationData.push({ tag: 'Exceptions', page: 4, children: exceptionNodes });
     return applicationData;
 }

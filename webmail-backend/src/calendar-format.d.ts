@@ -8,11 +8,15 @@ export interface ParsedIcalEvent {
     isAllDay: boolean;
     timeKind: 'utc' | 'zoned' | 'floating' | 'all-day';
     timeZone: string | null;
+    sourceTimeZone?: string;
+    timeZoneStatus?: 'valid' | 'canonicalized' | 'unsupported' | 'invalid';
     dtstamp: Date;
     recurrence: RecurrenceRule | null;
     recurrenceLabel: string;
     occurrenceId?: string;
     exdates?: Set<string>;
+    excludedOccurrenceIds?: Set<string>;
+    recurrenceExceptions?: ParsedRecurrenceException[];
     attendees?: string;
     busyStatus?: string;
     notifications?: Array<{
@@ -20,6 +24,11 @@ export interface ParsedIcalEvent {
         type: string;
         time: number;
     }>;
+}
+export interface ParsedRecurrenceException {
+    recurrenceId: Date;
+    deleted: boolean;
+    event?: Omit<ParsedIcalEvent, 'recurrenceExceptions' | 'excludedOccurrenceIds' | 'exdates'>;
 }
 export interface RecurrenceRule {
     frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';

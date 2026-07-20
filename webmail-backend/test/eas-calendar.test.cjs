@@ -340,3 +340,263 @@ test('ActiveSync recurrence and AirSyncBase body survive conversion to iCalendar
   assert.equal(parsed.description, 'From iOS');
   assert.equal(parsed.recurrence.raw, 'FREQ=WEEKLY;INTERVAL=2;COUNT=4');
 });
+
+test('display reminders round trip between iCalendar and ActiveSync', () => {
+  const source = parseIcalEvent('reminder-round-trip', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:reminder-round-trip',
+    'SUMMARY:Reminder round trip',
+    'DTSTART:20260724T170000Z',
+    'DTEND:20260724T180000Z',
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    'TRIGGER:-PT15M',
+    'DESCRIPTION:Reminder round trip',
+    'END:VALARM',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+  const outbound = calendarEventToActiveSyncApplicationData(source);
+
+  assert.equal(field(outbound, 'Reminder').content, '15');
+
+  const ical = activeSyncCalendarApplicationDataToIcal('reminder-round-trip', {
+    children: [
+      { tag: 'Subject', content: 'Reminder round trip' },
+      { tag: 'StartTime', content: '20260724T170000Z' },
+      { tag: 'EndTime', content: '20260724T180000Z' },
+      { tag: 'Reminder', content: '15' },
+    ],
+  });
+  assert.match(ical, /BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Reminder round trip\r\nEND:VALARM/);
+  assert.deepEqual(parseIcalEvent('reminder-round-trip', ical).notifications, [
+    { id: 1, type: 'notification', time: 15 },
+  ]);
+});
+
+test('deleted and modified recurrence exceptions round trip through ActiveSync', () => {
+  const source = parseIcalEvent('exceptions-round-trip', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:exceptions-round-trip',
+    'SUMMARY:Weekly planning',
+    'DTSTART:20260703T170000Z',
+    'DTEND:20260703T180000Z',
+    'RRULE:FREQ=WEEKLY;COUNT=4',
+    'EXDATE:20260710T170000Z',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:exceptions-round-trip',
+    'RECURRENCE-ID:20260717T170000Z',
+    'SUMMARY:Moved planning',
+    'DTSTART:20260717T190000Z',
+    'DTEND:20260717T200000Z',
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    'TRIGGER:-PT5M',
+    'DESCRIPTION:Moved planning',
+    'END:VALARM',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+  const outbound = calendarEventToActiveSyncApplicationData(source);
+  const exceptions = field(outbound, 'Exceptions');
+
+  assert.equal(exceptions.children.length, 2);
+  assert.equal(child(exceptions.children[0], 'ExceptionStartTime').content, '20260710T170000Z');
+  assert.equal(child(exceptions.children[0], 'Deleted').content, '1');
+  assert.equal(child(exceptions.children[1], 'ExceptionStartTime').content, '20260717T170000Z');
+  assert.equal(child(exceptions.children[1], 'StartTime').content, '20260717T190000Z');
+  assert.equal(child(exceptions.children[1], 'Reminder').content, '5');
+
+  const ical = activeSyncCalendarApplicationDataToIcal('exceptions-round-trip', {
+    children: [
+      { tag: 'Subject', content: 'Weekly planning' },
+      { tag: 'StartTime', content: '20260703T170000Z' },
+      { tag: 'EndTime', content: '20260703T180000Z' },
+      { tag: 'Recurrence', children: [
+        { tag: 'Type', content: '1' },
+        { tag: 'Occurrences', content: '4' },
+      ] },
+      exceptions,
+    ],
+  });
+  const expanded = expandRecurringEvent(
+    parseIcalEvent('exceptions-round-trip', ical),
+    new Date('2026-07-01T00:00:00Z'),
+    new Date('2026-07-31T23:59:59Z'),
+  );
+
+  assert.match(ical, /EXDATE:20260710T170000Z/);
+  assert.match(ical, /RECURRENCE-ID:20260717T170000Z/);
+  assert.deepEqual(expanded.map(event => [event.start.toISOString(), event.title]), [
+    ['2026-07-03T17:00:00.000Z', 'Weekly planning'],
+    ['2026-07-17T19:00:00.000Z', 'Moved planning'],
+    ['2026-07-24T17:00:00.000Z', 'Weekly planning'],
+  ]);
+});
+
+test('exception-specific all-day state round trips independently of the master', () => {
+  const timedMaster = parseIcalEvent('timed-to-all-day', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:timed-to-all-day',
+    'SUMMARY:Timed master',
+    'DTSTART:20260703T170000Z',
+    'DTEND:20260703T180000Z',
+    'RRULE:FREQ=WEEKLY;COUNT=2',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:timed-to-all-day',
+    'RECURRENCE-ID:20260710T170000Z',
+    'SUMMARY:All-day exception',
+    'DTSTART;VALUE=DATE:20260710',
+    'DTEND;VALUE=DATE:20260711',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+  const timedOutboundException = child(field(
+    calendarEventToActiveSyncApplicationData(timedMaster),
+    'Exceptions',
+  ), 'Exception');
+  assert.equal(child(timedOutboundException, 'AllDayEvent').content, '1');
+
+  const timedRoundTrip = parseIcalEvent('timed-to-all-day', activeSyncCalendarApplicationDataToIcal(
+    'timed-to-all-day',
+    { children: [
+      { tag: 'Subject', content: 'Timed master' },
+      { tag: 'StartTime', content: '20260703T170000Z' },
+      { tag: 'EndTime', content: '20260703T180000Z' },
+      { tag: 'Recurrence', children: [
+        { tag: 'Type', content: '1' },
+        { tag: 'Occurrences', content: '2' },
+      ] },
+      field(calendarEventToActiveSyncApplicationData(timedMaster), 'Exceptions'),
+    ] },
+  ));
+  assert.equal(timedRoundTrip.recurrenceExceptions[0].event.isAllDay, true);
+  assert.equal(timedRoundTrip.recurrenceExceptions[0].event.start.toISOString(), '2026-07-10T00:00:00.000Z');
+
+  const allDayMaster = parseIcalEvent('all-day-to-timed', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:all-day-to-timed',
+    'SUMMARY:All-day master',
+    'DTSTART;VALUE=DATE:20260703',
+    'DTEND;VALUE=DATE:20260704',
+    'RRULE:FREQ=WEEKLY;COUNT=2',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:all-day-to-timed',
+    'RECURRENCE-ID;VALUE=DATE:20260710',
+    'SUMMARY:Timed exception',
+    'DTSTART:20260710T170000Z',
+    'DTEND:20260710T180000Z',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+  const allDayOutbound = calendarEventToActiveSyncApplicationData(allDayMaster);
+  const allDayOutboundException = child(field(allDayOutbound, 'Exceptions'), 'Exception');
+  assert.equal(child(allDayOutboundException, 'AllDayEvent').content, '0');
+
+  const allDayRoundTrip = parseIcalEvent('all-day-to-timed', activeSyncCalendarApplicationDataToIcal(
+    'all-day-to-timed',
+    { children: [
+      { tag: 'Subject', content: 'All-day master' },
+      { tag: 'AllDayEvent', content: '1' },
+      { tag: 'StartTime', content: '20260703T000000Z' },
+      { tag: 'EndTime', content: '20260704T000000Z' },
+      { tag: 'Recurrence', children: [
+        { tag: 'Type', content: '1' },
+        { tag: 'Occurrences', content: '2' },
+      ] },
+      field(allDayOutbound, 'Exceptions'),
+    ] },
+  ));
+  assert.equal(allDayRoundTrip.recurrenceExceptions[0].event.isAllDay, false);
+  assert.equal(allDayRoundTrip.recurrenceExceptions[0].event.start.toISOString(), '2026-07-10T17:00:00.000Z');
+});
+
+test('partial ActiveSync changes preserve existing reminders and exceptions', () => {
+  const existing = [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:partial-with-exception',
+    'SUMMARY:Before edit',
+    'DTSTART:20260703T170000Z',
+    'DTEND:20260703T180000Z',
+    'RRULE:FREQ=WEEKLY;COUNT=3',
+    'EXDATE:20260710T170000Z',
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    'TRIGGER:-PT10M',
+    'DESCRIPTION:Before edit',
+    'END:VALARM',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const ical = activeSyncCalendarApplicationDataToIcal('partial-with-exception', {
+    children: [{ tag: 'Subject', content: 'After edit' }],
+  }, existing);
+
+  assert.match(ical, /EXDATE:20260710T170000Z/);
+  assert.match(ical, /TRIGGER:-PT10M/);
+});
+
+test('partial ActiveSync changes preserve cancelled RECURRENCE-ID exceptions', () => {
+  const existing = [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:cancelled-partial',
+    'SUMMARY:Before edit',
+    'DTSTART:20260703T170000Z',
+    'DTEND:20260703T180000Z',
+    'RRULE:FREQ=WEEKLY;COUNT=3',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:cancelled-partial',
+    'RECURRENCE-ID:20260710T170000Z',
+    'STATUS:CANCELLED',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  const ical = activeSyncCalendarApplicationDataToIcal('cancelled-partial', {
+    children: [{ tag: 'Subject', content: 'After edit' }],
+  }, existing);
+
+  assert.match(ical, /EXDATE:20260710T170000Z/);
+  assert.equal(expandRecurringEvent(
+    parseIcalEvent('cancelled-partial', ical),
+    new Date('2026-07-01T00:00:00Z'),
+    new Date('2026-07-31T23:59:59Z'),
+  ).length, 2);
+});
+
+test('an empty exception Reminder disables the inherited series alarm', () => {
+  const ical = activeSyncCalendarApplicationDataToIcal('exception-no-reminder', {
+    children: [
+      { tag: 'Subject', content: 'Weekly reminder' },
+      { tag: 'StartTime', content: '20260703T170000Z' },
+      { tag: 'EndTime', content: '20260703T180000Z' },
+      { tag: 'Reminder', content: '15' },
+      { tag: 'Recurrence', children: [
+        { tag: 'Type', content: '1' },
+        { tag: 'Occurrences', content: '2' },
+      ] },
+      { tag: 'Exceptions', children: [{ tag: 'Exception', children: [
+        { tag: 'ExceptionStartTime', content: '20260710T170000Z' },
+        { tag: 'StartTime', content: '20260710T180000Z' },
+        { tag: 'EndTime', content: '20260710T190000Z' },
+        { tag: 'Reminder' },
+      ] }] },
+    ],
+  });
+  const parsed = parseIcalEvent('exception-no-reminder', ical);
+
+  assert.equal(parsed.notifications[0].time, 15);
+  assert.equal(parsed.recurrenceExceptions[0].event.notifications, undefined);
+  const outboundException = child(field(calendarEventToActiveSyncApplicationData(parsed), 'Exceptions'), 'Exception');
+  assert.equal(child(outboundException, 'Reminder').content, '');
+});

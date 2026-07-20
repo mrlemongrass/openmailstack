@@ -75,6 +75,58 @@ function firstComponentPropertyLines(lines, componentName) {
     }
     return componentLines.length > 0 ? componentLines : lines;
 }
+function componentBodies(lines, componentName) {
+    const target = componentName.toUpperCase();
+    const bodies = [];
+    let current = null;
+    let depth = 0;
+    for (const line of lines) {
+        const normalized = line.trim().toUpperCase();
+        if (!current) {
+            if (normalized === `BEGIN:${target}`) {
+                current = [];
+                depth = 1;
+            }
+            continue;
+        }
+        if (normalized.startsWith('BEGIN:')) {
+            depth += 1;
+            current.push(line);
+            continue;
+        }
+        if (normalized.startsWith('END:')) {
+            if (depth === 1 && normalized === `END:${target}`) {
+                bodies.push(current);
+                current = null;
+                depth = 0;
+                continue;
+            }
+            depth = Math.max(1, depth - 1);
+            current.push(line);
+            continue;
+        }
+        current.push(line);
+    }
+    return bodies;
+}
+function directPropertyLines(componentBody) {
+    const direct = [];
+    let depth = 0;
+    for (const line of componentBody) {
+        const normalized = line.trim().toUpperCase();
+        if (normalized.startsWith('BEGIN:')) {
+            depth += 1;
+            continue;
+        }
+        if (normalized.startsWith('END:')) {
+            depth = Math.max(0, depth - 1);
+            continue;
+        }
+        if (depth === 0)
+            direct.push(line);
+    }
+    return direct;
+}
 function extractIcalEventUid(ical) {
     const eventLines = firstComponentPropertyLines(unfoldIcal(ical), 'VEVENT');
     const uid = firstIcalValue(eventLines, 'UID')?.value;
@@ -165,7 +217,243 @@ function isValidTimeZone(value) {
         return false;
     }
 }
-function parseIcalDate(field, allDay, fallback) {
+function validUtcOffset(value) {
+    const normalized = value?.trim();
+    return Boolean(normalized && normalized !== '-0000' && /^[+-](?:0\d|1\d|2[0-3])[0-5]\d$/.test(normalized));
+}
+function utcOffsetMinutes(value) {
+    const sign = value.startsWith('-') ? -1 : 1;
+    const compact = value.slice(1);
+    return sign * (Number(compact.slice(0, 2)) * 60 + Number(compact.slice(2, 4)));
+}
+function canonicalOffsets(timeZone) {
+    const offsets = new Set();
+    const year = new Date().getUTCFullYear();
+    for (let month = 0; month < 12; month += 1) {
+        offsets.add(Math.round(offsetAt(new Date(Date.UTC(year, month, 15, 12)), timeZone) / 60_000));
+    }
+    return offsets;
+}
+function compactWallParts(value) {
+    const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/.exec(value?.trim() || '');
+    if (!match)
+        return null;
+    const parts = {
+        year: Number(match[1]), month: Number(match[2]), day: Number(match[3]),
+        hour: Number(match[4]), minute: Number(match[5]), second: Number(match[6]),
+    };
+    const check = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second));
+    return check.getUTCFullYear() === parts.year
+        && check.getUTCMonth() + 1 === parts.month
+        && check.getUTCDate() === parts.day
+        && check.getUTCHours() === parts.hour
+        && check.getUTCMinutes() === parts.minute
+        && check.getUTCSeconds() === parts.second
+        ? parts
+        : null;
+}
+function rruleParts(value) {
+    return new Map((value || '').split(';').map(part => {
+        const [key, ...rest] = part.split('=');
+        return [key?.toUpperCase(), rest.join('=')];
+    }).filter(([key, val]) => Boolean(key && val)));
+}
+function nthWeekdayOfMonth(year, month, weekday, ordinal) {
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (ordinal > 0) {
+        const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+        const day = 1 + (weekday - firstWeekday + 7) % 7 + (ordinal - 1) * 7;
+        return day <= daysInMonth ? day : null;
+    }
+    const lastWeekday = new Date(Date.UTC(year, month - 1, daysInMonth)).getUTCDay();
+    const day = daysInMonth - (lastWeekday - weekday + 7) % 7 + (ordinal + 1) * 7;
+    return day > 0 ? day : null;
+}
+function definitionTransition(observance, year) {
+    const fields = directPropertyLines(observance);
+    const start = compactWallParts(firstIcalValue(fields, 'DTSTART')?.value);
+    const from = firstIcalValue(fields, 'TZOFFSETFROM')?.value?.trim();
+    const to = firstIcalValue(fields, 'TZOFFSETTO')?.value?.trim();
+    if (!start || !from || !to || !validUtcOffset(from) || !validUtcOffset(to))
+        return null;
+    if (from === to)
+        return null;
+    const rrule = rruleParts(firstIcalValue(fields, 'RRULE')?.value);
+    if (rrule.size === 0)
+        return start.year === year ? { ...start, offsetFrom: utcOffsetMinutes(from), offsetTo: utcOffsetMinutes(to) } : null;
+    const supportedKeys = new Set(['FREQ', 'INTERVAL', 'BYMONTH', 'BYDAY', 'BYMONTHDAY']);
+    if (Array.from(rrule.keys()).some(key => !supportedKeys.has(key)))
+        return null;
+    if (rrule.get('FREQ')?.toUpperCase() !== 'YEARLY')
+        return null;
+    if ((rrule.get('INTERVAL') || '1') !== '1' || year < start.year)
+        return null;
+    const month = Number(rrule.get('BYMONTH') || start.month);
+    if (!Number.isInteger(month) || month < 1 || month > 12)
+        return null;
+    let day = null;
+    const rawMonthDay = rrule.get('BYMONTHDAY');
+    const rawByDay = rrule.get('BYDAY');
+    if (rawMonthDay && rawByDay)
+        return null;
+    if (rawMonthDay) {
+        if (!/^[+-]?\d{1,2}$/.test(rawMonthDay))
+            return null;
+        const monthDay = Number(rawMonthDay);
+        if (monthDay === 0)
+            return null;
+        const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+        day = monthDay > 0 ? monthDay : daysInMonth + monthDay + 1;
+    }
+    else if (rawByDay) {
+        const byDay = /^([+-]?\d)(SU|MO|TU|WE|TH|FR|SA)$/.exec(rawByDay.toUpperCase());
+        if (!byDay)
+            return null;
+        const weekday = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'].indexOf(byDay[2]);
+        day = nthWeekdayOfMonth(year, month, weekday, Number(byDay[1]));
+    }
+    else {
+        day = start.day;
+    }
+    if (!day)
+        return null;
+    if (year === start.year) {
+        const transition = Date.UTC(year, month - 1, day, start.hour, start.minute, start.second);
+        const firstOccurrence = Date.UTC(start.year, start.month - 1, start.day, start.hour, start.minute, start.second);
+        if (transition < firstOccurrence)
+            return null;
+    }
+    return { month, day, hour: start.hour, minute: start.minute, second: start.second,
+        offsetFrom: utcOffsetMinutes(from), offsetTo: utcOffsetMinutes(to) };
+}
+const canonicalTransitionCache = new Map();
+function canonicalTransitions(timeZone, year) {
+    const cacheKey = `${timeZone}:${year}`;
+    const cached = canonicalTransitionCache.get(cacheKey);
+    if (cached)
+        return cached;
+    const transitions = [];
+    const start = Date.UTC(year, 0, 1);
+    const end = Date.UTC(year + 1, 0, 1);
+    let previousInstant = start;
+    let previousOffset = Math.round(offsetAt(new Date(start), timeZone) / 60_000);
+    for (let instant = start + 86_400_000; instant <= end; instant += 86_400_000) {
+        const nextOffset = Math.round(offsetAt(new Date(instant), timeZone) / 60_000);
+        if (nextOffset !== previousOffset) {
+            let low = Math.floor(previousInstant / 60_000);
+            let high = Math.floor(instant / 60_000);
+            while (high - low > 1) {
+                const middle = Math.floor((low + high) / 2);
+                const middleOffset = Math.round(offsetAt(new Date(middle * 60_000), timeZone) / 60_000);
+                if (middleOffset === previousOffset)
+                    low = middle;
+                else
+                    high = middle;
+            }
+            const local = new Date(high * 60_000 + previousOffset * 60_000);
+            transitions.push({
+                month: local.getUTCMonth() + 1, day: local.getUTCDate(), hour: local.getUTCHours(),
+                minute: local.getUTCMinutes(), second: local.getUTCSeconds(),
+                offsetFrom: previousOffset, offsetTo: nextOffset,
+            });
+        }
+        previousInstant = instant;
+        previousOffset = nextOffset;
+    }
+    if (canonicalTransitionCache.size >= 256)
+        canonicalTransitionCache.clear();
+    canonicalTransitionCache.set(cacheKey, transitions);
+    return transitions;
+}
+function sameTransition(left, right) {
+    return left.month === right.month && left.day === right.day && left.hour === right.hour
+        && left.minute === right.minute && left.second === right.second
+        && left.offsetFrom === right.offsetFrom && left.offsetTo === right.offsetTo;
+}
+function parseIcalTimeZones(lines) {
+    const resolutions = new Map();
+    const currentYear = new Date().getUTCFullYear();
+    const validationYears = new Set(Array.from({ length: 28 }, (_, index) => currentYear + index));
+    for (const eventBody of [
+        ...componentBodies(lines, 'VEVENT'),
+        ...componentBodies(lines, 'VTODO'),
+    ].slice(0, 257)) {
+        for (const field of directPropertyLines(eventBody).slice(0, 512)) {
+            const separator = field.indexOf(':');
+            if (separator < 0)
+                continue;
+            const property = field.slice(0, separator).split(';')[0].toUpperCase();
+            if (!['DTSTART', 'DTEND', 'RECURRENCE-ID', 'EXDATE', 'RDATE'].includes(property))
+                continue;
+            for (const value of field.slice(separator + 1).split(',').slice(0, 64)) {
+                const year = Number(value.trim().slice(0, 4));
+                if (Number.isInteger(year) && year >= 1 && year <= 9999)
+                    validationYears.add(year);
+            }
+        }
+    }
+    const years = Array.from(validationYears).sort((left, right) => left - right);
+    for (const body of componentBodies(lines, 'VTIMEZONE').slice(0, 32)) {
+        const properties = directPropertyLines(body);
+        const tzid = firstIcalValue(properties, 'TZID')?.value?.trim();
+        if (!tzid)
+            continue;
+        const observances = [
+            ...componentBodies(body, 'STANDARD'),
+            ...componentBodies(body, 'DAYLIGHT'),
+        ];
+        const validDefinition = observances.length > 0 && observances.length <= 8 && observances.every(observance => {
+            const fields = directPropertyLines(observance);
+            return Boolean(compactWallParts(firstIcalValue(fields, 'DTSTART')?.value))
+                && validUtcOffset(firstIcalValue(fields, 'TZOFFSETFROM')?.value)
+                && validUtcOffset(firstIcalValue(fields, 'TZOFFSETTO')?.value);
+        });
+        const canonical = firstIcalValue(properties, 'X-LIC-LOCATION')?.value?.trim() || '';
+        const definitionOffsets = new Set(observances
+            .map(observance => firstIcalValue(directPropertyLines(observance), 'TZOFFSETTO')?.value?.trim())
+            .filter((value) => Boolean(value && validUtcOffset(value)))
+            .map(utcOffsetMinutes));
+        const canonicalCandidate = isValidTimeZone(tzid) ? tzid : canonical;
+        const transitionRulesSupported = observances.every(observance => {
+            const fields = directPropertyLines(observance);
+            const rule = firstIcalValue(fields, 'RRULE')?.value;
+            if (!rule)
+                return true;
+            const parts = rruleParts(rule);
+            return !parts.has('UNTIL') && !parts.has('COUNT')
+                && Array.from(parts.keys()).every(key => ['FREQ', 'INTERVAL', 'BYMONTH', 'BYDAY', 'BYMONTHDAY'].includes(key))
+                && Boolean(definitionTransition(observance, Math.max(currentYear, compactWallParts(firstIcalValue(fields, 'DTSTART')?.value)?.year || currentYear)));
+        });
+        const transitionsMatch = Boolean(canonicalCandidate) && isValidTimeZone(canonicalCandidate)
+            && years.every(year => {
+                const definitionTransitions = observances
+                    .map(observance => definitionTransition(observance, year))
+                    .filter((transition) => Boolean(transition))
+                    .sort((left, right) => left.month - right.month || left.day - right.day);
+                const expectedTransitions = canonicalTransitions(canonicalCandidate, year);
+                return definitionTransitions.length === expectedTransitions.length
+                    && definitionTransitions.every((transition, index) => sameTransition(transition, expectedTransitions[index]));
+            });
+        const canonicalRuleMatch = validDefinition && Boolean(canonicalCandidate) && isValidTimeZone(canonicalCandidate)
+            && transitionRulesSupported
+            && Array.from(canonicalOffsets(canonicalCandidate)).every(offset => definitionOffsets.has(offset))
+            && transitionsMatch;
+        if (canonicalRuleMatch) {
+            resolutions.set(tzid, {
+                canonicalTimeZone: canonicalCandidate,
+                status: canonicalCandidate === tzid ? 'valid' : 'canonicalized',
+            });
+        }
+        else {
+            resolutions.set(tzid, {
+                canonicalTimeZone: null,
+                status: validDefinition && !canonical ? 'unsupported' : 'invalid',
+            });
+        }
+    }
+    return resolutions;
+}
+function parseIcalDate(field, allDay, fallback, timeZones = new Map()) {
     if (!field?.value)
         return { date: new Date(), timeKind: 'utc', timeZone: 'UTC' };
     const value = field.value;
@@ -184,16 +472,39 @@ function parseIcalDate(field, allDay, fallback) {
     const minute = Number(compact.slice(11, 13)) || 0;
     const second = Number(compact.slice(13, 15)) || 0;
     const wallTime = { year, month, day, hour, minute, second };
-    const timeZone = parameterValue(field.params, 'TZID') || (fallback?.timeKind === 'zoned' ? fallback.timeZone : null);
-    if (compact.toUpperCase().endsWith('Z') || fallback?.timeKind === 'utc') {
+    const explicitTimeZone = parameterValue(field.params, 'TZID');
+    const sourceTimeZone = explicitTimeZone
+        || (fallback?.timeKind === 'zoned' ? fallback.sourceTimeZone || fallback.timeZone : null);
+    if (compact.toUpperCase().endsWith('Z') || (!explicitTimeZone && fallback?.timeKind === 'utc')) {
         return {
             date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
             timeKind: 'utc',
             timeZone: 'UTC',
         };
     }
-    if (timeZone && isValidTimeZone(timeZone)) {
-        return { date: wallTimeToInstant(wallTime, timeZone), timeKind: 'zoned', timeZone };
+    if (sourceTimeZone) {
+        const resolution = timeZones.get(sourceTimeZone);
+        const timeZone = resolution
+            ? resolution.canonicalTimeZone
+            : isValidTimeZone(sourceTimeZone) ? sourceTimeZone : null;
+        if (timeZone) {
+            return {
+                date: wallTimeToInstant(wallTime, timeZone),
+                timeKind: 'zoned',
+                timeZone,
+                sourceTimeZone: sourceTimeZone !== timeZone || resolution?.status === 'invalid'
+                    ? sourceTimeZone
+                    : undefined,
+                timeZoneStatus: resolution?.status || 'valid',
+            };
+        }
+        return {
+            date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
+            timeKind: 'floating',
+            timeZone: null,
+            sourceTimeZone,
+            timeZoneStatus: resolution?.status || 'unsupported',
+        };
     }
     return {
         date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
@@ -238,83 +549,156 @@ function recurrenceLabel(rule) {
     }[rule.frequency];
     return rule.interval === 1 ? `Every ${unit}` : `Every ${rule.interval} ${unit}s`;
 }
-function parseIcalEvent(uid, ical) {
-    const lines = unfoldIcal(ical);
-    let isTask = false;
-    let eventLines = firstComponentPropertyLines(lines, 'VEVENT');
-    if (eventLines === lines) {
-        const todoLines = firstComponentPropertyLines(lines, 'VTODO');
-        if (todoLines !== lines) {
-            eventLines = todoLines;
-            isTask = true;
+function parseDisplayAlarm(componentBody) {
+    for (const alarmBody of componentBodies(componentBody, 'VALARM').slice(0, 16)) {
+        const alarmLines = directPropertyLines(alarmBody);
+        if (firstIcalValue(alarmLines, 'ACTION')?.value?.toUpperCase() !== 'DISPLAY')
+            continue;
+        const trigger = firstIcalValue(alarmLines, 'TRIGGER')?.value?.trim().toUpperCase() || '';
+        const weekMatch = /^(-?)P(\d+)W$/.exec(trigger);
+        if (weekMatch) {
+            const minutes = Number(weekMatch[2]) * 10_080;
+            if (weekMatch[1] !== '-' && minutes !== 0)
+                continue;
+            return [{ id: 1, type: 'notification', time: Math.min(525_600, minutes) }];
         }
+        const match = /^(-?)P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(trigger);
+        if (!match)
+            continue;
+        if (!match.slice(2).some(value => value !== undefined))
+            continue;
+        const seconds = Number(match[2] || 0) * 86_400
+            + Number(match[3] || 0) * 3_600
+            + Number(match[4] || 0) * 60
+            + Number(match[5] || 0);
+        if (match[1] !== '-' && seconds !== 0)
+            continue;
+        const minutes = Math.ceil(seconds / 60);
+        return [{ id: 1, type: 'notification', time: Math.min(525_600, minutes) }];
     }
+    return undefined;
+}
+function parseEventComponent(uid, componentBody, timeZones, fallback, isTask = false) {
+    const eventLines = directPropertyLines(componentBody);
     const startField = firstIcalValue(eventLines, 'DTSTART');
     const endField = firstIcalValue(eventLines, 'DTEND');
-    const allDay = Boolean(startField?.params.toUpperCase().includes('VALUE=DATE') || startField?.value.length === 8);
-    const parsedStart = parseIcalDate(startField, allDay);
+    const allDay = startField
+        ? Boolean(startField.params.toUpperCase().includes('VALUE=DATE') || startField.value.length === 8)
+        : Boolean(fallback?.isAllDay);
+    const fallbackTime = fallback ? {
+        timeKind: fallback.timeKind,
+        timeZone: fallback.timeZone,
+        sourceTimeZone: fallback.sourceTimeZone,
+        timeZoneStatus: fallback.timeZoneStatus,
+    } : undefined;
+    const parsedStart = startField
+        ? parseIcalDate(startField, allDay, fallbackTime, timeZones)
+        : fallback
+            ? { date: new Date(fallback.start), ...fallbackTime }
+            : parseIcalDate(null, allDay, undefined, timeZones);
     const start = parsedStart.date;
-    const fallbackEnd = new Date(start.getTime() + (allDay ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000));
-    const parsedEnd = endField?.value ? parseIcalDate(endField, allDay, parsedStart).date : fallbackEnd;
+    const fallbackDuration = fallback ? fallback.end.getTime() - fallback.start.getTime() : 0;
+    const fallbackEnd = new Date(start.getTime() + (fallbackDuration > 0
+        ? fallbackDuration
+        : allDay ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000));
+    const parsedEnd = endField?.value ? parseIcalDate(endField, allDay, parsedStart, timeZones).date : fallbackEnd;
     const recurrence = parseRrule(firstIcalValue(eventLines, 'RRULE')?.value, parsedStart);
-    const exdates = parseExdates(eventLines);
-    // Parse TRANSP
-    const transpValue = firstIcalValue(eventLines, 'TRANSP')?.value?.toUpperCase() || '';
-    const busyStatus = transpValue === 'TRANSPARENT' ? 'free' : 'busy';
-    // Parse ATTENDEE
+    const transpValue = firstIcalValue(eventLines, 'TRANSP')?.value?.toUpperCase();
+    const busyStatus = transpValue ? (transpValue === 'TRANSPARENT' ? 'free' : 'busy') : fallback?.busyStatus || 'busy';
     const attendeeLines = eventLines.filter(l => l.split(':')[0].split(';')[0].toUpperCase() === 'ATTENDEE');
     const attendees = attendeeLines.map(l => {
         const mailto = l.match(/mailto:([^\s]+)/i);
         return mailto ? mailto[1] : '';
     }).filter(Boolean).join(', ');
-    // Parse VALARM trigger
-    let notifications;
-    const valarmStart = eventLines.findIndex(l => l.toUpperCase().trim() === 'BEGIN:VALARM');
-    if (valarmStart >= 0) {
-        const triggerLine = eventLines.slice(valarmStart).find(l => l.split(':')[0].split(';')[0].toUpperCase() === 'TRIGGER');
-        if (triggerLine) {
-            const triggerVal = triggerLine.slice(triggerLine.indexOf(':') + 1).trim();
-            const minutesMatch = triggerVal.match(/^-PT(\d+)M/i) || triggerVal.match(/^-P(\d+)D/i);
-            if (minutesMatch) {
-                const minutes = triggerVal.includes('D') ? parseInt(minutesMatch[1]) * 1440 : parseInt(minutesMatch[1]);
-                notifications = [{ id: 1, type: 'notification', time: minutes }];
-            }
-        }
-    }
+    const titleField = firstIcalValue(eventLines, 'SUMMARY');
+    const locationField = firstIcalValue(eventLines, 'LOCATION');
+    const descriptionField = firstIcalValue(eventLines, 'DESCRIPTION');
+    const alarm = parseDisplayAlarm(componentBody);
     return {
         uid: firstIcalValue(eventLines, 'UID')?.value || uid,
-        title: unescapeIcalText(firstIcalValue(eventLines, 'SUMMARY')?.value || 'Untitled'),
-        location: unescapeIcalText(firstIcalValue(eventLines, 'LOCATION')?.value || ''),
-        description: unescapeIcalText(firstIcalValue(eventLines, 'DESCRIPTION')?.value || ''),
+        title: titleField ? unescapeIcalText(titleField.value) : fallback?.title || 'Untitled',
+        location: locationField ? unescapeIcalText(locationField.value) : fallback?.location || '',
+        description: descriptionField ? unescapeIcalText(descriptionField.value) : fallback?.description || '',
         start,
         end: parsedEnd.getTime() > start.getTime() ? parsedEnd : fallbackEnd,
         isAllDay: allDay,
         timeKind: parsedStart.timeKind,
         timeZone: parsedStart.timeZone,
-        dtstamp: parseIcalDate(firstIcalValue(eventLines, 'DTSTAMP'), false).date,
+        sourceTimeZone: parsedStart.sourceTimeZone,
+        timeZoneStatus: parsedStart.timeZoneStatus,
+        dtstamp: firstIcalValue(eventLines, 'DTSTAMP')
+            ? parseIcalDate(firstIcalValue(eventLines, 'DTSTAMP'), false, undefined, timeZones).date
+            : fallback?.dtstamp || new Date(),
         recurrence,
         recurrenceLabel: recurrenceLabel(recurrence),
         type: isTask ? 'task' : 'event',
-        exdates,
-        attendees: attendees || undefined,
+        attendees: attendees || fallback?.attendees || undefined,
         busyStatus,
-        notifications,
+        notifications: alarm,
     };
 }
-function parseExdates(lines) {
+function parseExdates(lines, fallback, timeZones) {
     const excluded = new Set();
+    const occurrenceIds = new Set();
     for (const line of lines) {
-        const propUpper = line.split(':')[0].split(';')[0].toUpperCase();
+        const separator = line.indexOf(':');
+        const left = separator >= 0 ? line.slice(0, separator) : line;
+        const propUpper = left.split(';')[0].toUpperCase();
         if (propUpper !== 'EXDATE')
             continue;
-        const val = line.slice(line.indexOf(':') + 1).trim();
+        const val = line.slice(separator + 1).trim();
+        const params = left.slice(propUpper.length);
         for (const dateStr of val.split(',')) {
             const clean = dateStr.trim().replace(/[^0-9TZ]/g, '');
-            if (clean.length >= 8)
-                excluded.add(clean);
+            if (clean.length < 8)
+                continue;
+            excluded.add(clean);
+            const parsed = parseIcalDate({ value: dateStr.trim(), params }, fallback.isAllDay, fallback, timeZones);
+            occurrenceIds.add(formatActiveSyncDate(parsed.date));
         }
     }
-    return excluded;
+    return { raw: excluded, occurrenceIds };
+}
+function parseIcalEvent(uid, ical) {
+    const lines = unfoldIcal(ical);
+    const timeZones = parseIcalTimeZones(lines);
+    let eventBodies = componentBodies(lines, 'VEVENT');
+    let isTask = false;
+    if (eventBodies.length === 0) {
+        eventBodies = componentBodies(lines, 'VTODO');
+        isTask = eventBodies.length > 0;
+    }
+    if (eventBodies.length === 0)
+        eventBodies = [lines];
+    const masterBody = eventBodies.find(body => !firstIcalValue(directPropertyLines(body), 'RECURRENCE-ID')) || eventBodies[0];
+    const master = parseEventComponent(uid, masterBody, timeZones, undefined, isTask);
+    const masterLines = directPropertyLines(masterBody);
+    const exdates = parseExdates(masterLines, master, timeZones);
+    const recurrenceExceptions = new Map();
+    for (const body of eventBodies.slice(0, 257)) {
+        if (body === masterBody)
+            continue;
+        const properties = directPropertyLines(body);
+        const recurrenceIdField = firstIcalValue(properties, 'RECURRENCE-ID');
+        if (!recurrenceIdField)
+            continue;
+        const exceptionUid = firstIcalValue(properties, 'UID')?.value || master.uid;
+        if (exceptionUid !== master.uid)
+            continue;
+        const recurrenceId = parseIcalDate(recurrenceIdField, master.isAllDay, master, timeZones).date;
+        const deleted = firstIcalValue(properties, 'STATUS')?.value?.toUpperCase() === 'CANCELLED';
+        recurrenceExceptions.set(formatActiveSyncDate(recurrenceId), {
+            recurrenceId,
+            deleted,
+            event: deleted ? undefined : parseEventComponent(uid, body, timeZones, master),
+        });
+    }
+    return {
+        ...master,
+        exdates: exdates.raw,
+        excludedOccurrenceIds: exdates.occurrenceIds,
+        recurrenceExceptions: Array.from(recurrenceExceptions.values()),
+    };
 }
 function addRecurrenceInterval(date, frequency, interval, timeZone) {
     if (timeZone) {
@@ -352,6 +736,7 @@ function expandRecurringEvent(event, rangeStart, rangeEnd, maxOccurrences = 400)
     if (!event.recurrence)
         return [event];
     const occurrences = [];
+    const exceptionByOccurrence = new Map((event.recurrenceExceptions || []).map(exception => [formatActiveSyncDate(exception.recurrenceId), exception]));
     const durationMs = event.end.getTime() - event.start.getTime();
     let occurrenceStart = new Date(event.start);
     let generated = 0;
@@ -365,8 +750,10 @@ function expandRecurringEvent(event, rangeStart, rangeEnd, maxOccurrences = 400)
         const occurrenceEnd = new Date(occurrenceStart.getTime() + durationMs);
         if (occurrenceEnd >= rangeStart && occurrenceStart <= rangeEnd) {
             const occurrenceKey = formatActiveSyncDate(occurrenceStart);
-            const isExcluded = event.exdates && event.exdates.has(occurrenceKey.replace(/Z$/, ''));
-            if (!isExcluded) {
+            const isExcluded = event.excludedOccurrenceIds?.has(occurrenceKey)
+                || event.exdates?.has(occurrenceKey)
+                || event.exdates?.has(occurrenceKey.replace(/Z$/, ''));
+            if (!isExcluded && !exceptionByOccurrence.has(occurrenceKey)) {
                 occurrences.push({
                     ...event,
                     start: new Date(occurrenceStart),
@@ -381,6 +768,20 @@ function expandRecurringEvent(event, rangeStart, rangeEnd, maxOccurrences = 400)
         occurrenceStart = addRecurrenceInterval(occurrenceStart, event.recurrence.frequency, event.recurrence.interval, event.timeKind === 'zoned' ? event.timeZone : null);
         generated += 1;
     }
+    for (const exception of exceptionByOccurrence.values()) {
+        if (exception.deleted || !exception.event)
+            continue;
+        if (exception.event.end < rangeStart || exception.event.start > rangeEnd)
+            continue;
+        occurrences.push({
+            ...exception.event,
+            uid: event.uid,
+            recurrence: event.recurrence,
+            recurrenceLabel: event.recurrenceLabel,
+            occurrenceId: formatActiveSyncDate(exception.recurrenceId),
+        });
+    }
+    occurrences.sort((left, right) => left.start.getTime() - right.start.getTime());
     return occurrences;
 }
 function formatActiveSyncDate(date) {

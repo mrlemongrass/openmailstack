@@ -7,6 +7,7 @@ import { useCalendarTimeZone } from '../../shared/hooks/useCalendarTimeZone';
 import {
   addWallDays,
   buildCalendarEventIcal,
+  calendarEventDraftForEdit,
   eventTimeKind,
   projectInstantToWallDate,
   wallDateToInstant,
@@ -75,6 +76,9 @@ export function useCalendar() {
     title: '', start: displayNow, end: new Date(displayNow.getTime() + 3600000),
     isAllDay: false, timeKind: 'zoned', timeZone: displayTimeZone,
     location: '', description: '', calendarId: 0,
+    notifications: calendarSettings.defaultReminderMinutes > 0
+      ? [{ id: 1, type: 'notification', time: calendarSettings.defaultReminderMinutes }]
+      : undefined,
   });
 
   const events = useMemo(() => sourceEvents.map(event => {
@@ -98,7 +102,11 @@ export function useCalendar() {
       if (data.calendars) {
         const normalized: Calendar[] = data.calendars.map((raw) => ({
           ...raw, events: (raw.events || []).map((e) => ({
-            ...e, start: new Date(e.start), end: new Date(e.end),
+            ...e,
+            start: new Date(e.start),
+            end: new Date(e.end),
+            seriesStart: e.seriesStart ? new Date(e.seriesStart) : undefined,
+            seriesEnd: e.seriesEnd ? new Date(e.seriesEnd) : undefined,
           })),
         }));
         setCalendarError('');
@@ -184,12 +192,15 @@ export function useCalendar() {
         title: '', start: nextStart, end: new Date(nextStart.getTime() + calendarSettings.defaultEventDurationMinutes * 60000),
         isAllDay: false, timeKind: 'zoned', timeZone: displayTimeZone,
         location: '', description: '', calendarId: 0,
+        notifications: calendarSettings.defaultReminderMinutes > 0
+          ? [{ id: 1, type: 'notification', time: calendarSettings.defaultReminderMinutes }]
+          : undefined,
       });
       await refreshCalendars();
       setEventSaving(false);
       return true;
     } catch (e: unknown) { setEventError(errorMessage(e, 'Failed to save')); setEventSaving(false); return false; }
-  }, [newEvent, editingEvent, refreshCalendars, displayTimeZone, calendarSettings.defaultEventDurationMinutes]);
+  }, [newEvent, editingEvent, refreshCalendars, displayTimeZone, calendarSettings.defaultEventDurationMinutes, calendarSettings.defaultReminderMinutes]);
 
   const deleteEvent = useCallback(async (eventId: string, calendarId: number, excludeDate?: string) => {
     try {
@@ -205,21 +216,16 @@ export function useCalendar() {
       title: '', start: eventStart, end: isAllDay ? addWallDays(eventStart, 1) : new Date(eventStart.getTime() + calendarSettings.defaultEventDurationMinutes * 60000),
       isAllDay, timeKind: isAllDay ? 'all-day' : 'zoned', timeZone: isAllDay ? null : displayTimeZone,
       location: '', description: '', calendarId: calendarSettings.defaultCalendarId || calendars[0]?.id || 0,
+      notifications: calendarSettings.defaultReminderMinutes > 0
+        ? [{ id: 1, type: 'notification', time: calendarSettings.defaultReminderMinutes }]
+        : undefined,
     });
     setIsEventModalOpen(true);
-  }, [calendars, calendarSettings.defaultCalendarId, calendarSettings.defaultEventDurationMinutes, displayTimeZone]);
+  }, [calendars, calendarSettings.defaultCalendarId, calendarSettings.defaultEventDurationMinutes, calendarSettings.defaultReminderMinutes, displayTimeZone]);
 
   const editExistingEvent = useCallback((event: CalendarEvent) => {
     setEditingEvent(event);
-    const timeKind = eventTimeKind(event);
-    const editTimeZone = timeKind === 'zoned' ? event.timeZone : timeKind === 'utc' ? 'UTC' : displayTimeZone;
-    setNewEvent({
-      ...event,
-      start: projectInstantToWallDate(event.sourceStart || event.start, timeKind, editTimeZone || displayTimeZone),
-      end: projectInstantToWallDate(event.sourceEnd || event.end, timeKind, editTimeZone || displayTimeZone),
-      timeKind,
-      timeZone: timeKind === 'zoned' ? event.timeZone : timeKind === 'utc' ? 'UTC' : null,
-    });
+    setNewEvent(calendarEventDraftForEdit(event, displayTimeZone));
     setIsEventModalOpen(true);
   }, [displayTimeZone]);
 

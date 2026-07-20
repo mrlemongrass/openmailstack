@@ -187,6 +187,33 @@ export function addWallDays(wallDate: Date, days: number): Date {
   );
 }
 
+export function calendarEventDraftForEdit(
+  event: CalendarEvent,
+  displayTimeZone: string,
+): Partial<CalendarEvent> {
+  const timeKind = event.seriesTimeKind || eventTimeKind(event);
+  const sourceTimeZone = event.seriesSourceTimeZone ?? event.sourceTimeZone;
+  const timeZoneStatus = event.seriesTimeZoneStatus ?? event.timeZoneStatus;
+  const eventTimeZone = event.seriesTimeZone !== undefined ? event.seriesTimeZone : event.timeZone;
+  const editTimeZone = timeKind === 'zoned' ? eventTimeZone : timeKind === 'utc' ? 'UTC' : displayTimeZone;
+  const seriesStart = event.seriesStart || event.sourceStart || event.start;
+  const seriesEnd = event.seriesEnd || event.sourceEnd || event.end;
+  return {
+    ...event,
+    title: event.seriesTitle || event.title,
+    location: event.seriesLocation ?? event.location,
+    description: event.seriesDescription ?? event.description,
+    notifications: event.seriesNotifications ?? event.notifications,
+    isAllDay: event.seriesIsAllDay ?? event.isAllDay,
+    sourceTimeZone,
+    timeZoneStatus,
+    start: projectInstantToWallDate(seriesStart, timeKind, editTimeZone || displayTimeZone),
+    end: projectInstantToWallDate(seriesEnd, timeKind, editTimeZone || displayTimeZone),
+    timeKind,
+    timeZone: timeKind === 'zoned' ? eventTimeZone : timeKind === 'utc' ? 'UTC' : null,
+  };
+}
+
 const pad = (value: number): string => String(value).padStart(2, '0');
 
 function compactWallDate(date: Date, includeTime: boolean): string {
@@ -206,13 +233,59 @@ export function formatIcalDateProperty(
   name: 'DTSTART' | 'DTEND',
   wallDate: Date,
   timeKind: CalendarTimeKind,
-  timeZone: string | null
+  timeZone: string | null,
+  allowExternalTimeZone = false,
 ): string {
   if (timeKind === 'all-day') return `${name};VALUE=DATE:${compactWallDate(wallDate, false)}`;
   const value = compactWallDate(wallDate, true);
   if (timeKind === 'utc') return `${name}:${value}Z`;
-  if (timeKind === 'zoned' && isValidTimeZone(timeZone)) return `${name};TZID=${timeZone}:${value}`;
+  if (timeKind === 'zoned' && timeZone && (allowExternalTimeZone || isValidTimeZone(timeZone))) {
+    return `${name};TZID=${timeZone}:${value}`;
+  }
   return `${name}:${value}`;
+}
+
+function icalComponentBlocks(ical: string, component: string): string[][] {
+  const lines = ical.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const blocks: string[][] = [];
+  let current: string[] | null = null;
+  let depth = 0;
+  for (const line of lines) {
+    const normalized = line.trim().toUpperCase();
+    if (!current) {
+      if (normalized === `BEGIN:${component}`) {
+        current = [line];
+        depth = 1;
+      }
+      continue;
+    }
+    current.push(line);
+    if (normalized.startsWith('BEGIN:')) depth += 1;
+    if (normalized.startsWith('END:')) depth -= 1;
+    if (depth === 0) {
+      blocks.push(current);
+      current = null;
+    }
+  }
+  return blocks;
+}
+
+function directIcalProperties(componentBlock: string[]): string[] {
+  const properties: string[] = [];
+  let depth = 0;
+  for (const line of componentBlock.slice(1, -1)) {
+    const normalized = line.trim().toUpperCase();
+    if (normalized.startsWith('BEGIN:')) {
+      depth += 1;
+      continue;
+    }
+    if (normalized.startsWith('END:')) {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (depth === 0) properties.push(line);
+  }
+  return properties;
 }
 
 export function buildCalendarEventIcal(
@@ -227,13 +300,28 @@ export function buildCalendarEventIcal(
   const timeZone = timeKind === 'zoned'
     ? (draft.timeZone || displayTimeZone)
     : (timeKind === 'utc' ? 'UTC' : null);
+  const rawIcal = draft.rawIcal || '';
+  const sourceTimeZone = draft.sourceTimeZone?.trim() || '';
+  const preserveSourceTimeZone = Boolean(sourceTimeZone && rawIcal);
+  const serializedTimeKind = preserveSourceTimeZone && timeKind === 'floating' ? 'zoned' : timeKind;
+  const serializedTimeZone = preserveSourceTimeZone ? sourceTimeZone : timeZone;
+  const timeZoneBlocks = rawIcal ? icalComponentBlocks(rawIcal, 'VTIMEZONE') : [];
+  const eventBlocks = rawIcal ? icalComponentBlocks(rawIcal, 'VEVENT') : [];
+  const masterBlock = eventBlocks.find(block => !directIcalProperties(block)
+    .some(line => line.split(':')[0].split(';')[0].toUpperCase() === 'RECURRENCE-ID'));
+  const preservedExdates = masterBlock
+    ? directIcalProperties(masterBlock).filter(line => line.split(':')[0].split(';')[0].toUpperCase() === 'EXDATE')
+    : [];
+  const preservedExceptions = eventBlocks.filter(block => directIcalProperties(block)
+    .some(line => line.split(':')[0].split(';')[0].toUpperCase() === 'RECURRENCE-ID'));
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
+    ...timeZoneBlocks.flat(),
     'BEGIN:VEVENT',
     `UID:${eventUidForSave(existingUid, createUid)}`,
-    formatIcalDateProperty('DTSTART', start, timeKind, timeZone),
-    formatIcalDateProperty('DTEND', end, timeKind, timeZone),
+    formatIcalDateProperty('DTSTART', start, serializedTimeKind, serializedTimeZone, preserveSourceTimeZone),
+    formatIcalDateProperty('DTEND', end, serializedTimeKind, serializedTimeZone, preserveSourceTimeZone),
     `SUMMARY:${draft.title || ''}`,
   ];
   if (draft.location) lines.push(`LOCATION:${draft.location}`);
@@ -244,8 +332,19 @@ export function buildCalendarEventIcal(
       : `FREQ=${draft.recurrence.toUpperCase()}`;
     lines.push(`RRULE:${recurrence}`);
   }
+  lines.push(...preservedExdates);
   draft.guests?.forEach(guest => lines.push(`ATTENDEE:mailto:${guest}`));
-  lines.push('END:VEVENT', 'END:VCALENDAR');
+  const reminderMinutes = draft.notifications?.[0]?.time;
+  if (reminderMinutes !== undefined && reminderMinutes >= 0) {
+    lines.push(
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      `TRIGGER:-PT${Math.floor(reminderMinutes)}M`,
+      `DESCRIPTION:${draft.title || ''}`,
+      'END:VALARM',
+    );
+  }
+  lines.push('END:VEVENT', ...preservedExceptions.flat(), 'END:VCALENDAR');
   return lines.join('\r\n');
 }
 

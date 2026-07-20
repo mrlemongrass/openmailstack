@@ -1283,6 +1283,20 @@ appsApiRouter.get('/calendars', async (req: Request, res: Response) => {
                     description: occurrence.description,
                     recurrence: occurrence.recurrence?.raw || '',
                     recurrenceLabel: occurrence.recurrenceLabel,
+                    notifications: occurrence.notifications,
+                    sourceTimeZone: occurrence.sourceTimeZone,
+                    timeZoneStatus: occurrence.timeZoneStatus,
+                    seriesStart: parsed.start,
+                    seriesEnd: parsed.end,
+                    seriesTitle: parsed.title,
+                    seriesLocation: parsed.location,
+                    seriesDescription: parsed.description,
+                    seriesNotifications: parsed.notifications,
+                    seriesIsAllDay: parsed.isAllDay,
+                    seriesTimeKind: parsed.timeKind,
+                    seriesTimeZone: parsed.timeZone,
+                    seriesSourceTimeZone: parsed.sourceTimeZone,
+                    seriesTimeZoneStatus: parsed.timeZoneStatus,
                     rawIcal: ev.ical_data || ''
                 }));
             });

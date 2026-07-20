@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { WbxmlWriter } = require('../src/wbxml/writer.js');
+const { WbxmlParser } = require('../src/wbxml/parser.js');
 const { parseIcalEvent } = require('../src/calendar-format.js');
 const { calendarEventToActiveSyncApplicationData } = require('../src/eas-calendar.js');
 
@@ -93,4 +94,35 @@ test('ActiveSync Calendar Sync encodes the protocol TimeZone tag for zoned recur
       }],
     }],
   }));
+});
+
+test('ActiveSync Calendar reminder and exception nodes survive the real WBXML writer and parser', () => {
+  const event = parseIcalEvent('ios-exception-writer', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:ios-exception-writer',
+    'SUMMARY:Weekly planning',
+    'DTSTART:20260703T170000Z',
+    'DTEND:20260703T180000Z',
+    'RRULE:FREQ=WEEKLY;COUNT=3',
+    'EXDATE:20260710T170000Z',
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    'TRIGGER:-PT15M',
+    'DESCRIPTION:Weekly planning',
+    'END:VALARM',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+  const writer = new WbxmlWriter();
+  writer.writeNode({ tag: 'ApplicationData', page: 0, children: calendarEventToActiveSyncApplicationData(event) });
+
+  const parsed = new WbxmlParser(writer.getBuffer()).parse();
+  const reminder = parsed.children.find(node => node.tag === 'Reminder');
+  const exceptions = parsed.children.find(node => node.tag === 'Exceptions');
+
+  assert.equal(reminder.content, '15');
+  assert.equal(exceptions.children[0].tag, 'Exception');
+  assert.equal(exceptions.children[0].children.find(node => node.tag === 'Deleted').content, '1');
+  assert.equal(exceptions.children[0].children.find(node => node.tag === 'ExceptionStartTime').content, '20260710T170000Z');
 });

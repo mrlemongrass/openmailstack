@@ -1076,3 +1076,12 @@ Future entry template:
 - Verified: final backend 137/140 with three expected optional database skips, focused EAS 14/14, full integration, exact production artifact hashes, direct/public EAS 14.1 `OPTIONS`, zero backend restarts, empty warning journal, and full staging smoke pass.
 - Safety: the user created/deleted all physical test objects; the agent did not directly mutate production calendar rows. Root-only rollback archives are `/var/backups/openmailstack/eas-timezone-tag-52033bf8-20260720T185910Z` and `/var/backups/openmailstack/eas-recurrence-preservation-bbbd49ed-20260720T191354Z`.
 - Remaining: recurrence exceptions/reminders and custom or invalid `VTIMEZONE` stay open under Track T.
+
+## 2026-07-20 Track T Recurrence Exceptions, Reminders, And Custom Zones
+
+- Added: iCalendar parsing/expansion now preserves `EXDATE`, cancelled and modified `RECURRENCE-ID` instances, explicit exception timezone/all-day state, and nested display alarms including at-start and week-form triggers.
+- Added: ActiveSync Calendar maps deleted/modified exceptions, exception-specific all-day state, and reminders through real WBXML. Omitted exception reminders inherit the master; an empty reminder disables inheritance; partial changes preserve stored exception state.
+- Hardened: custom timezone aliases are canonicalized only when supported yearly transition behavior matches the IANA candidate across a 28-year weekday cycle and every referenced event year. Contradictory, bounded/future, malformed, second-precision, and RFC-invalid negative-zero definitions retain wall time as floating and surface an OMS Web warning.
+- Preserved: whole-series OMS Web edits use master time/all-day/metadata and retain raw `VTIMEZONE`, `EXDATE`, and exception VEVENT blocks. Reminder UI distinguishes no reminder from at-start.
+- Verified locally: backend 157/160 with three expected optional database skips, frontend 37/37, ESLint, production build, integration, shell syntax, focused WBXML, mocked Chromium warning/reminder recovery, `git diff --check`, and independent Standards/Spec reviews pass.
+- Remaining: deploy the tested commit behind a root-only rollback snapshot, re-run live service/artifact/protocol gates, then complete physical macOS CalDAV and iOS ActiveSync edit-one-occurrence/delete-one-occurrence/reminder round trips. No production calendar row was changed by this implementation pass.

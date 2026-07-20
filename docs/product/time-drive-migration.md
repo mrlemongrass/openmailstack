@@ -1,6 +1,6 @@
 # OpenMailStack Time, Drive, And Migration Roadmap
 
-Status: `Track T deployed - macOS CalDAV and iOS ActiveSync CRUD/DST passed; exception/reminder/custom-VTIMEZONE gates pending`
+Status: `Track T automated exception/reminder/custom-VTIMEZONE gates passed; physical exception/reminder matrix pending`
 
 Research date: 2026-07-20
 
@@ -50,7 +50,7 @@ Unless the owner decides otherwise, implementation should use these defaults:
 
 ## 4. Track T — Time Correctness And Clock
 
-Implementation status (2026-07-20): T0-T2 plus most of T3 are implemented and deployed. Apple-shaped CalDAV lifecycle tests, EAS `TIME_ZONE_INFORMATION`, Scheduler availability, deterministic DST vectors, and real Chromium/WebKit pass. Physical macOS 26.5.2 CalDAV and iOS 26.5.2 ActiveSync single-event create/edit/delete plus four-occurrence New York weekly series across DST also pass in OMS Web. T3 remains open for recurrence exceptions/reminders and custom or invalid `VTIMEZONE`.
+Implementation status (2026-07-20): T0-T2 plus most of T3 are implemented. Apple-shaped CalDAV lifecycle tests, EAS `TIME_ZONE_INFORMATION`, recurrence exceptions, display reminders, conservative custom/invalid `VTIMEZONE` handling, Scheduler availability, deterministic DST vectors, and real Chromium/WebKit pass. Physical macOS 26.5.2 CalDAV and iOS 26.5.2 ActiveSync single-event create/edit/delete plus four-occurrence New York weekly series across DST also pass in OMS Web. T3 remains open only for the physical recurrence-exception/reminder matrix and its post-deployment evidence.
 
 ### 4.1 Required time model
 
@@ -122,7 +122,8 @@ UX requirements:
 
 Local preflight status, 2026-07-20:
 
-- Passed: UTC, Baghdad, Phoenix, New York DST gap/overlap, floating, all-day, and simple recurrence fixtures in backend/frontend tests. Exception and reminder fixtures remain open.
+- Passed: UTC, Baghdad, Phoenix, New York DST gap/overlap, floating, all-day, recurrence exceptions, deleted occurrences, explicit exception zones/all-day state, and display reminders including at-start/week forms in backend/frontend tests.
+- Passed: custom aliases are canonicalized only when their supported yearly transition behavior matches the IANA candidate across a 28-year calendar cycle and every referenced event year. Contradictory, bounded, not-yet-applicable, malformed, second-precision, and negative-zero definitions preserve wall time as explicit floating semantics with an OMS Web warning; whole-series saves retain the original `VTIMEZONE`, `EXDATE`, and exception components.
 - Passed: real Chromium and WebKit desktop/mobile Calendar and Settings flows, including `17:00Z` displayed as `20:00 Asia/Baghdad`, Home/System selection, optional clock, current-day-only time line, and instant-preserving event-zone conversion.
 - Passed: an in-memory reversible CalDAV lifecycle using an Apple-style Baghdad event and strong conditional requests; the test creates, HEADs, reads byte-for-byte, rejects a stale ETag, updates, and deletes the event.
 - Passed: iOS-shaped ActiveSync single/all-day conversions plus simple recurrence mapping, and Scheduler DST/Baghdad/Phoenix/Tokyo availability projection.

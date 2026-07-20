@@ -163,6 +163,8 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
         end: prev.end ? convertWallDateTimeZone(prev.end as Date, currentKind, currentTimeZone, nextKind, nextTimeZone) : prev.end,
         timeKind: nextKind,
         timeZone: nextTimeZone,
+        sourceTimeZone: undefined,
+        timeZoneStatus: nextKind === 'zoned' ? 'valid' : undefined,
       };
     });
   };
@@ -216,6 +218,20 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
             <div role="note" style={{ display: 'flex', alignItems: 'center', gap: 6,
               color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
               <Repeat2 size={14} /> {repeatSummary}
+            </div>
+          )}
+
+          {(evt.timeZoneStatus === 'invalid' || evt.timeZoneStatus === 'unsupported') && (
+            <div role="alert" style={{ color: 'var(--warning)', fontSize: '0.8rem' }}>
+              The source time zone {evt.sourceTimeZone || 'definition'} is {evt.timeZoneStatus}.
+              {eventTimeKind === 'floating'
+                ? ' Its wall time is preserved as floating time until you choose a supported zone.'
+                : ` OMS is using ${evt.timeZone} rules until you choose another supported zone.`}
+            </div>
+          )}
+          {evt.timeZoneStatus === 'canonicalized' && evt.sourceTimeZone && (
+            <div role="note" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+              Source zone {evt.sourceTimeZone} is using {evt.timeZone} rules.
             </div>
           )}
 
@@ -381,6 +397,26 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                 <option value="weekly">Weekly</option>
                 <option value="monthly">Monthly</option>
                 <option value="yearly">Yearly</option>
+              </select>
+
+              <select className="glass-select glass-input" aria-label="Reminder"
+                value={evt.notifications?.[0]?.time ?? -1}
+                onChange={(e) => {
+                  const minutes = Number(e.target.value);
+                  cal.setNewEvent((prev) => ({
+                    ...prev,
+                    notifications: minutes >= 0 ? [{ id: 1, type: 'notification', time: minutes }] : undefined,
+                  }));
+                }}
+                style={{ fontSize: '0.85rem' }}>
+                <option value={-1}>No reminder</option>
+                <option value={0}>At start time</option>
+                <option value={5}>5 minutes before</option>
+                <option value={10}>10 minutes before</option>
+                <option value={15}>15 minutes before</option>
+                <option value={30}>30 minutes before</option>
+                <option value={60}>1 hour before</option>
+                <option value={1440}>1 day before</option>
               </select>
             </>
           )}

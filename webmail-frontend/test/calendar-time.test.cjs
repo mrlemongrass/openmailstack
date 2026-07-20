@@ -15,6 +15,7 @@ new Function('module', 'exports', 'require', compiled)(moduleUnderTest, moduleUn
 const {
   addWallDays,
   buildCalendarEventIcal,
+  calendarEventDraftForEdit,
   calendarEventPresentation,
   eventUidForSave,
   convertWallDateTimeZone,
@@ -25,6 +26,29 @@ const {
   resolveDisplayTimeZone,
   wallDateToInstant,
 } = moduleUnderTest.exports;
+
+test('whole-series edit restores the master all-day state', () => {
+  const draft = calendarEventDraftForEdit({
+    id: 'series',
+    calendarId: 1,
+    title: 'All-day exception',
+    start: new Date('2027-03-12T00:00:00Z'),
+    end: new Date('2027-03-13T00:00:00Z'),
+    isAllDay: true,
+    timeKind: 'all-day',
+    seriesStart: new Date('2027-03-05T14:00:00Z'),
+    seriesEnd: new Date('2027-03-05T15:00:00Z'),
+    seriesTitle: 'Timed master',
+    seriesIsAllDay: false,
+    seriesTimeKind: 'zoned',
+    seriesTimeZone: 'America/New_York',
+  }, 'Asia/Baghdad');
+
+  assert.equal(draft.title, 'Timed master');
+  assert.equal(draft.isAllDay, false);
+  assert.equal(draft.timeKind, 'zoned');
+  assert.equal(draft.timeZone, 'America/New_York');
+});
 
 test('recurring events use human labels without leaking raw RRULE text', () => {
   const recurrence = 'FREQ=WEEKLY;UNTIL=20260323T045959Z';
@@ -88,6 +112,131 @@ test('editing preserves a raw recurrence rule when FREQ is not the first part', 
 
   assert.match(ical, new RegExp(`\\r\\nRRULE:${recurrence}\\r\\n`));
   assert.doesNotMatch(ical, /FREQ=UNTIL=/);
+});
+
+test('calendar serialization emits the selected display reminder', () => {
+  const ical = buildCalendarEventIcal({
+    title: 'Reminder event',
+    start: new Date(2026, 6, 24, 20, 0, 0),
+    end: new Date(2026, 6, 24, 21, 0, 0),
+    timeKind: 'zoned',
+    timeZone: 'Asia/Baghdad',
+    notifications: [{ id: 1, type: 'notification', time: 10 }],
+  }, 'Asia/Baghdad', 'reminder@openmailstack');
+
+  assert.match(ical, /BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT10M\r\nDESCRIPTION:Reminder event\r\nEND:VALARM/);
+});
+
+test('calendar serialization distinguishes an at-start reminder from no reminder', () => {
+  const withReminder = buildCalendarEventIcal({
+    title: 'Starts now',
+    start: new Date(2026, 6, 24, 20, 0, 0),
+    end: new Date(2026, 6, 24, 21, 0, 0),
+    timeKind: 'zoned',
+    timeZone: 'Asia/Baghdad',
+    notifications: [{ id: 1, type: 'notification', time: 0 }],
+  }, 'Asia/Baghdad', 'starts-now');
+  const withoutReminder = buildCalendarEventIcal({
+    title: 'No alarm',
+    start: new Date(2026, 6, 24, 20, 0, 0),
+    end: new Date(2026, 6, 24, 21, 0, 0),
+    timeKind: 'zoned',
+    timeZone: 'Asia/Baghdad',
+  }, 'Asia/Baghdad', 'no-alarm');
+
+  assert.match(withReminder, /TRIGGER:-PT0M/);
+  assert.doesNotMatch(withoutReminder, /BEGIN:VALARM/);
+});
+
+test('whole-series edits preserve VTIMEZONE, EXDATE, and RECURRENCE-ID components', () => {
+  const rawIcal = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VTIMEZONE',
+    'TZID:OMS-Eastern',
+    'X-LIC-LOCATION:America/New_York',
+    'BEGIN:STANDARD',
+    'DTSTART:19701101T020000',
+    'TZOFFSETFROM:-0400',
+    'TZOFFSETTO:-0500',
+    'END:STANDARD',
+    'END:VTIMEZONE',
+    'BEGIN:VEVENT',
+    'UID:preserve-series',
+    'DTSTART;TZID=OMS-Eastern:20260703T090000',
+    'DTEND;TZID=OMS-Eastern:20260703T100000',
+    'SUMMARY:Before edit',
+    'RRULE:FREQ=WEEKLY;COUNT=3',
+    'EXDATE;TZID=OMS-Eastern:20260710T090000',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:preserve-series',
+    'RECURRENCE-ID;TZID=OMS-Eastern:20260717T090000',
+    'DTSTART;TZID=OMS-Eastern:20260717T110000',
+    'DTEND;TZID=OMS-Eastern:20260717T120000',
+    'SUMMARY:Moved occurrence',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const ical = buildCalendarEventIcal({
+    title: 'After edit',
+    start: new Date(2026, 6, 3, 9, 0, 0),
+    end: new Date(2026, 6, 3, 10, 0, 0),
+    timeKind: 'zoned',
+    timeZone: 'America/New_York',
+    sourceTimeZone: 'OMS-Eastern',
+    timeZoneStatus: 'canonicalized',
+    recurrence: 'FREQ=WEEKLY;COUNT=3',
+    rawIcal,
+  }, 'America/New_York', 'preserve-series');
+
+  assert.match(ical, /BEGIN:VTIMEZONE\r\nTZID:OMS-Eastern/);
+  assert.match(ical, /DTSTART;TZID=OMS-Eastern:20260703T090000/);
+  assert.match(ical, /EXDATE;TZID=OMS-Eastern:20260710T090000/);
+  assert.match(ical, /RECURRENCE-ID;TZID=OMS-Eastern:20260717T090000/);
+  assert.match(ical, /SUMMARY:Moved occurrence/);
+});
+
+test('changing a master zone retains VTIMEZONE definitions used by preserved exceptions', () => {
+  const rawIcal = [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VTIMEZONE',
+    'TZID:OMS-Eastern',
+    'BEGIN:STANDARD',
+    'DTSTART:19701101T020000',
+    'TZOFFSETFROM:-0400',
+    'TZOFFSETTO:-0500',
+    'END:STANDARD',
+    'END:VTIMEZONE',
+    'BEGIN:VEVENT',
+    'UID:zone-change',
+    'DTSTART;TZID=OMS-Eastern:20260703T090000',
+    'DTEND;TZID=OMS-Eastern:20260703T100000',
+    'SUMMARY:Before',
+    'RRULE:FREQ=WEEKLY;COUNT=2',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:zone-change',
+    'RECURRENCE-ID;TZID=OMS-Eastern:20260710T090000',
+    'DTSTART;TZID=OMS-Eastern:20260710T110000',
+    'DTEND;TZID=OMS-Eastern:20260710T120000',
+    'SUMMARY:Exception',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const ical = buildCalendarEventIcal({
+    title: 'After',
+    start: new Date(2026, 6, 3, 20, 0, 0),
+    end: new Date(2026, 6, 3, 21, 0, 0),
+    timeKind: 'zoned',
+    timeZone: 'Asia/Baghdad',
+    recurrence: 'FREQ=WEEKLY;COUNT=2',
+    rawIcal,
+  }, 'Asia/Baghdad', 'zone-change');
+
+  assert.match(ical, /DTSTART;TZID=Asia\/Baghdad:20260703T200000/);
+  assert.match(ical, /BEGIN:VTIMEZONE\r\nTZID:OMS-Eastern/);
+  assert.match(ical, /RECURRENCE-ID;TZID=OMS-Eastern:20260710T090000/);
 });
 
 test('resolveDisplayTimeZone chooses the browser system zone or saved home zone', () => {

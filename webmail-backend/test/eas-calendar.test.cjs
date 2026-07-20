@@ -166,6 +166,50 @@ test('Microsoft Pacific EAS timezone decodes to a DST-safe zoned iCalendar recur
   assert.equal(occurrences.at(-1).start.toISOString(), '2011-11-29T18:00:00.000Z');
 });
 
+test('Windows Central timezone names preserve recurrence semantics across DST', () => {
+  const source = parseIcalEvent('central-source', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:central-source',
+    'SUMMARY:Central planning',
+    'DTSTART;TZID=America/Chicago:20270226T090000',
+    'DTEND;TZID=America/Chicago:20270226T100000',
+    'RRULE:FREQ=WEEKLY;COUNT=6',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+  const outbound = calendarEventToActiveSyncApplicationData(source);
+  const timezone = Buffer.from(field(outbound, 'Timezone').content, 'base64');
+  timezone.fill(0, 4, 68);
+  timezone.write('Central Standard Time', 4, 62, 'utf16le');
+  timezone.fill(0, 88, 152);
+  timezone.write('Central Daylight Time', 88, 62, 'utf16le');
+
+  const ical = activeSyncCalendarApplicationDataToIcal('central-recurring', {
+    children: [
+      { tag: 'Subject', content: 'Central planning' },
+      { tag: 'Timezone', content: timezone.toString('base64') },
+      { tag: 'StartTime', content: '20270226T150000Z' },
+      { tag: 'EndTime', content: '20270226T160000Z' },
+      { tag: 'Recurrence', children: [
+        { tag: 'Type', content: '1' },
+        { tag: 'Interval', content: '1' },
+        { tag: 'Occurrences', content: '6' },
+      ] },
+    ],
+  });
+  const parsed = parseIcalEvent('central-recurring', ical);
+  const occurrences = expandRecurringEvent(
+    parsed,
+    new Date('2027-02-01T00:00:00Z'),
+    new Date('2027-05-01T00:00:00Z'),
+  );
+
+  assert.match(ical, /DTSTART;TZID=America\/Chicago:20270226T090000/);
+  assert.equal(occurrences[0].start.toISOString(), '2027-02-26T15:00:00.000Z');
+  assert.equal(occurrences.at(-1).start.toISOString(), '2027-04-02T14:00:00.000Z');
+});
+
 test('malformed EAS timezone falls back to UTC without rejecting the event', () => {
   const ical = activeSyncCalendarApplicationDataToIcal('bad-timezone', {
     children: [

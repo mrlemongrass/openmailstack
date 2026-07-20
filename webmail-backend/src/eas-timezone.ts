@@ -1,4 +1,5 @@
 import { wallTimeAt } from './calendar-format';
+import { windowsTimeZoneToIana } from './windows-timezones';
 
 interface SystemTimeRule {
     year: number;
@@ -239,10 +240,12 @@ function namedTimeZone(information: ActiveSyncTimeZone): string | null {
     for (const name of [information.standardName, information.daylightName]) {
         if (validTimeZone(name)) return name;
         const normalized = name.toLowerCase();
-        if (normalized === 'pacific standard time' || normalized.startsWith('(gmt-08:00) pacific time')) return 'America/Los_Angeles';
-        if (normalized === 'eastern standard time' || normalized.startsWith('(gmt-05:00) eastern time')) return 'America/New_York';
-        if (normalized === 'us mountain standard time' || normalized.includes('arizona')) return 'America/Phoenix';
-        if (normalized === 'arabic standard time' || normalized.includes('baghdad')) return 'Asia/Baghdad';
+        const windowsZone = windowsTimeZoneToIana(name);
+        if (windowsZone) return windowsZone;
+        if (normalized.startsWith('(gmt-08:00) pacific time')) return 'America/Los_Angeles';
+        if (normalized.startsWith('(gmt-05:00) eastern time')) return 'America/New_York';
+        if (normalized.includes('arizona')) return 'America/Phoenix';
+        if (normalized.includes('baghdad')) return 'Asia/Baghdad';
     }
     return null;
 }

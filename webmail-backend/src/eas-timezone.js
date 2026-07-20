@@ -5,6 +5,7 @@ exports.decodeActiveSyncTimeZone = decodeActiveSyncTimeZone;
 exports.resolveActiveSyncTimeZone = resolveActiveSyncTimeZone;
 exports.formatIcalWallTime = formatIcalWallTime;
 const calendar_format_1 = require("./calendar-format");
+const windows_timezones_1 = require("./windows-timezones");
 const TIME_ZONE_BYTES = 172;
 const EMPTY_SYSTEM_TIME = {
     year: 0,
@@ -203,13 +204,16 @@ function namedTimeZone(information) {
         if (validTimeZone(name))
             return name;
         const normalized = name.toLowerCase();
-        if (normalized === 'pacific standard time' || normalized.startsWith('(gmt-08:00) pacific time'))
+        const windowsZone = (0, windows_timezones_1.windowsTimeZoneToIana)(name);
+        if (windowsZone)
+            return windowsZone;
+        if (normalized.startsWith('(gmt-08:00) pacific time'))
             return 'America/Los_Angeles';
-        if (normalized === 'eastern standard time' || normalized.startsWith('(gmt-05:00) eastern time'))
+        if (normalized.startsWith('(gmt-05:00) eastern time'))
             return 'America/New_York';
-        if (normalized === 'us mountain standard time' || normalized.includes('arizona'))
+        if (normalized.includes('arizona'))
             return 'America/Phoenix';
-        if (normalized === 'arabic standard time' || normalized.includes('baghdad'))
+        if (normalized.includes('baghdad'))
             return 'Asia/Baghdad';
     }
     return null;

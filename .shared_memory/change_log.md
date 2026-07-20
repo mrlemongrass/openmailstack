@@ -1087,3 +1087,10 @@ Future entry template:
 - Deployed: commit `8469e90` under root-only rollback `/var/backups/openmailstack/calendar-track-t-8469e90-20260720T203554Z`. Exact backend/frontend contents, direct/public EAS `200`, public web/auth `200/401`, Nginx, active zero-restart services after the stable restart, empty post-stable-start warning journal, and full staging smoke pass.
 - Incident: the first manual restart copied `eas-calendar.js` as `0600 root:root` via `rsync -a`, producing a short EACCES restart loop. The bounded deployed backend files were normalized to `0644` and one explicit restart restored stable `NRestarts=0`; no data or schema was touched.
 - Remaining: complete physical macOS CalDAV and iOS ActiveSync edit-one-occurrence/delete-one-occurrence/reminder round trips. No production calendar row was changed by this implementation or deployment pass.
+
+## 2026-07-20 Track T Physical Exception/Reminder Closure
+
+- Physical pass: macOS 26.5.2 CalDAV created an August 2026 weekly series with a 15-minute alert, edited only August 14 to 20:30 with a new title, and deleted only August 21. OMS Web and iOS showed exactly August 7, edited August 14, and August 28 with the reminder intact.
+- Physical reverse pass: iOS 26.5.2 ActiveSync created a September 2026 weekly series with a 30-minute alert, edited only September 11 to 20:30 with a new title and 5-minute alert, and deleted only September 18. OMS Web and macOS showed exactly September 4, edited September 11, and September 25; macOS retained the master 30-minute alerts and exception 5-minute alert.
+- Cleanup: the user intentionally deleted both series from iOS. Read-only validation observed two distinct UID-specific EAS `Delete` commands 12 seconds apart, no active row, and one tombstone per UID. No cross-series cascade occurred, and the agent did not mutate production calendar data.
+- Closed: Track T is complete for the deployed scope. Next program-order slice: F0 no-storage file-tray/provider interaction prototype.

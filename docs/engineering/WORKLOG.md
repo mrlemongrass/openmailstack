@@ -5956,7 +5956,7 @@ Complete the remaining automated Track T protocol gates without guessing unsuppo
 - [x] Preserve raw timezone and exception components during whole-series OMS Web edits.
 - [x] Pass complete repository gates and independent Standards/Spec review.
 - [x] Deploy behind a root-only rollback snapshot and pass live artifact/service/protocol checks.
-- [ ] Complete physical macOS CalDAV and iOS ActiveSync exception/reminder round trips.
+- [x] Complete physical macOS CalDAV and iOS ActiveSync exception/reminder round trips.
 
 ### Implementation
 
@@ -5978,4 +5978,28 @@ Complete the remaining automated Track T protocol gates without guessing unsuppo
 
 ### Remaining risk / next task
 
-This is not a Track T completion claim. The guarded live gate passes; ask the user to perform the macOS/iOS exception/reminder matrix. Unsupported arbitrary custom timezone rules remain deliberately floating; OMS preserves their wall time and raw definition but does not execute them.
+The physical closure is recorded in the following entry. Unsupported arbitrary custom timezone rules remain deliberately floating; OMS preserves their wall time and raw definition but does not execute them.
+
+## 2026-07-20 — Track T physical exception/reminder closure
+
+Agent/tool: Codex with user-operated macOS and iOS devices
+Branch: `main`
+Implementation commit: `8469e90`
+
+### Acceptance result
+
+- [x] macOS 26.5.2 CalDAV master reminder, edited occurrence, deleted occurrence, and opposite-client projection pass.
+- [x] iOS 26.5.2 ActiveSync master reminder, exception reminder override, edited occurrence, deleted occurrence, and opposite-client projection pass.
+- [x] OMS Web shows exactly the surviving occurrences with the edited titles/times and no duplicates.
+- [x] Deliberate cleanup removes both series independently and leaves one tombstone per UID.
+
+### Physical evidence
+
+- macOS created a weekly August 7/14/21/28, 2026 series at 20:00 with a 15-minute alert. Editing only August 14 changed its title and time to 20:30; deleting only August 21 removed that occurrence. OMS Web and iOS showed August 7 at 20:00, edited August 14 at 20:30, no August 21, and August 28 at 20:00 with the alert intact.
+- iOS created a weekly September 4/11/18/25, 2026 series at 20:00 with a 30-minute alert. Editing only September 11 changed its title/time to 20:30 and its alert to 5 minutes; deleting only September 18 removed that occurrence. OMS Web and macOS showed September 4 at 20:00, edited September 11 at 20:30, no September 18, and September 25 at 20:00. macOS retained 30-minute alerts on September 4/25 and the 5-minute exception alert on September 11.
+- The user deliberately deleted both temporary series from iOS. Read-only server validation observed two distinct ActiveSync `Delete` commands 12 seconds apart, no active row for either UID, and one tombstone per UID. The result is consistent with two intentional deletions, not a cross-series cascade.
+- The agent did not create, edit, or delete production calendar rows. Every physical test mutation was user-operated.
+
+### Track status / next task
+
+Track T is complete for the deployed scope. The next bounded program-order task is F0: define the provider capability/transfer contract and build the no-storage, fake-provider file-tray interaction prototype before committing to OMS Drive storage or OAuth.

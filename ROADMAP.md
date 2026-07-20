@@ -36,7 +36,7 @@ webmail-frontend/src/
 - Validate Thunderbird IMAP/SMTP, CalDAV, and CardDAV. 🟡
 - Record exact setup steps and failures in `docs/webmail-release-validation.md`. ✅
 
-Current note: iOS 26.5.2 Exchange mail/calendar/contacts passed on the live server after the July 2026 protocol fixes. Physical iOS Calendar fixed-zone CRUD and a four-occurrence New York weekly series crossing DST passed against OMS Web. On macOS 26.5.2, Calendar CalDAV single-event CRUD and a New York weekly DST series also passed. Standalone macOS Mail/Contacts, Android/DAVx5, and Thunderbird still need their post-fix runs with exact client versions.
+Current note: iOS 26.5.2 Exchange mail/calendar/contacts passed on the live server after the July 2026 protocol fixes. Physical iOS Calendar fixed-zone CRUD, a four-occurrence New York weekly series crossing DST, and recurrence-exception/reminder projection passed against OMS Web and macOS Calendar. On macOS 26.5.2, Calendar CalDAV single-event CRUD, a New York weekly DST series, and recurrence-exception/reminder projection likewise passed through OMS Web and iOS. Standalone macOS Mail/Contacts, Android/DAVx5, and Thunderbird still need their post-fix runs with exact client versions.
 
 ## 2. Contacts & Notes UI Modernization 🟡
 
@@ -72,13 +72,13 @@ The contacts and notes apps have been extracted into their own directories with 
 - ❌ Undo/redo buttons in editor.
 - ❌ Archive (third state between active and trash).
 
-## 3. Calendar Hardening 🟡 (Reopened 2026-07-20)
+## 3. Calendar Hardening ✅ (Revalidated 2026-07-20)
 
-The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day values; applies System/Home display zones across the current Calendar views/editor; and adds the optional desktop clock. EAS recurring-event `TimeZone` blobs now encode/decode the 172-byte `TIME_ZONE_INFORMATION` structure, validate Windows/IANA names against the binary rule, and preserve wall time across DST. Recurrence exceptions, display reminders, and conservative custom/invalid `VTIMEZONE` handling now pass automated iCalendar, OMS Web, EAS, real-WBXML, and guarded live deployment gates. Physical macOS 26.5.2 CalDAV plus iOS 26.5.2 ActiveSync fixed-zone CRUD and New York weekly DST projection passed; the matching physical exception/reminder matrix is the last Track T gate.
+The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day values; applies System/Home display zones across the current Calendar views/editor; and adds the optional desktop clock. EAS recurring-event `TimeZone` blobs now encode/decode the 172-byte `TIME_ZONE_INFORMATION` structure, validate Windows/IANA names against the binary rule, and preserve wall time across DST. Recurrence exceptions, display reminders, and conservative custom/invalid `VTIMEZONE` handling pass automated iCalendar, OMS Web, EAS, real-WBXML, guarded live deployment, and physical Apple-client gates. Physical macOS 26.5.2 CalDAV and iOS 26.5.2 ActiveSync passed fixed-zone CRUD, New York weekly DST projection, edit-one/delete-one recurrence exceptions, inherited/overridden reminders, and deliberate whole-series cleanup.
 
 - ✅ Replace prompt-based calendar creation with the same dialog quality used for calendar edit/delete.
 - ✅ Improve event creation and editing with move, drag, resize, calendar switching, and clearer validation.
-- 🟡 Harden recurring events, recurrence exceptions, reminders (VALARM), attendees (ATTENDEE), free/busy fields (TRANSP), and timezone conversion. Core UTC/`TZID`/floating/all-day parsing, deterministic DST gap/overlap handling, display projection, EAS origin-timezone recurrence, recurrence exceptions/reminders, conservative custom/invalid `VTIMEZONE` behavior, disposable protocol/browser checks, guarded deployment, and physical macOS CalDAV plus iOS ActiveSync CRUD/DST projection are implemented. Physical exception/reminder interoperability remains before completion.
+- ✅ Harden recurring events, recurrence exceptions, reminders (VALARM), attendees (ATTENDEE), free/busy fields (TRANSP), and timezone conversion. Core UTC/`TZID`/floating/all-day parsing, deterministic DST gap/overlap handling, display projection, EAS origin-timezone recurrence, recurrence exceptions/reminders, conservative custom/invalid `VTIMEZONE` behavior, disposable protocol/browser checks, guarded deployment, and physical macOS CalDAV plus iOS ActiveSync CRUD/DST/exception/reminder projection pass.
 - ✅ Add calendar search, agenda/list view, import/export, and subscribed calendars (background fetch).
 - ✅ Continue hardening CalDAV and ActiveSync sync tokens, tombstones, conflicts, and real-device behavior (sync-collection REPORT, calendar_tombstones, EAS recurrence mapping, EAS Picture/CompanyName/JobTitle).
 
@@ -164,7 +164,7 @@ One-time, reviewed imports now precede continuous synchronization. The Migration
 
 `docs/product/time-drive-migration.md` is the implementation roadmap and decision record for the new suite expansion.
 
-- 🟡 **Track T — Time correctness and clock:** core semantics, System/Home projection, active-zone labeling, the optional desktop clock, EAS recurrence origin-timezone blobs, exception/reminder conversion, conservative custom/invalid `VTIMEZONE` handling, disposable CalDAV/ActiveSync/Scheduler/DST checks, real Chromium/WebKit checks, guarded production rollout, and physical macOS 26.5.2 CalDAV plus iOS 26.5.2 ActiveSync CRUD/DST projection pass. The physical exception/reminder matrix remains before completion.
+- ✅ **Track T — Time correctness and clock:** core semantics, System/Home projection, active-zone labeling, the optional desktop clock, EAS recurrence origin-timezone blobs, exception/reminder conversion, conservative custom/invalid `VTIMEZONE` handling, disposable CalDAV/ActiveSync/Scheduler/DST checks, real Chromium/WebKit checks, guarded production rollout, and physical macOS 26.5.2 CalDAV plus iOS 26.5.2 ActiveSync CRUD/DST/exception/reminder projection pass.
 - ❌ **Track F — OMS Drive and connected files:** add an optional, Admin-entitled native file service; a shared, resizable file tray; safe attach-copy flows into Mail, Notes, Calendar, and Scheduler; and capability-aware Nextcloud/OpenCloud, Google Drive, and OneDrive connectors.
 - ❌ **Track M — Migration Center:** unify reviewed vCard/CSV/ICS import, then add resumable read-only Google and Microsoft migration plus guided iCloud export/import. Continuous two-way sync remains a separate later phase.
 - ⚠️ **iCloud Drive constraint:** keep browser/Apple Files upload available, but do not promise persistent server-side iCloud Drive browsing until a supported Apple integration path is proven.

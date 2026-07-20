@@ -1,6 +1,6 @@
 # OpenMailStack Time, Drive, And Migration Roadmap
 
-Status: `Track T automated exception/reminder/custom-VTIMEZONE gates passed; physical exception/reminder matrix pending`
+Status: `Track T complete; F0 file-tray/provider prototype is next`
 
 Research date: 2026-07-20
 
@@ -14,7 +14,7 @@ OpenMailStack should address this feedback as three connected product tracks:
 2. **OMS Drive and connected files** — add a lean, optional self-hosted file service plus a common provider interface for Google Drive, OneDrive, Nextcloud, and OpenCloud.
 3. **Migration Center** — provide safe, resumable one-time imports from Google, Microsoft 365, and iCloud into OMS Contacts and Calendar before considering continuous two-way synchronization.
 
-The immediate priority is Track T. The reported `16:00` web / `20:00` macOS discrepancy is a correctness and interoperability defect, not a cosmetic preference issue. Calendar migration must build on the corrected time model so imported events do not silently move. The F0 file-tray/provider prototype and non-calendar Drive discovery can proceed independently, but they remain sequenced after the user-visible time repair unless priorities change.
+Track T corrected the reported `16:00` web / `20:00` macOS discrepancy as a correctness and interoperability defect, not a cosmetic preference issue. Calendar migration can now build on the validated time model so imported events do not silently move. Per the program order, the next bounded slice is the F0 file-tray/provider prototype; M0 reviewed file migration follows it.
 
 ## 2. Current Evidence
 
@@ -50,7 +50,7 @@ Unless the owner decides otherwise, implementation should use these defaults:
 
 ## 4. Track T — Time Correctness And Clock
 
-Implementation status (2026-07-20): T0-T2 plus most of T3 are implemented and deployed. Apple-shaped CalDAV lifecycle tests, EAS `TIME_ZONE_INFORMATION`, recurrence exceptions, display reminders, conservative custom/invalid `VTIMEZONE` handling, Scheduler availability, deterministic DST vectors, and real Chromium/WebKit pass. Physical macOS 26.5.2 CalDAV and iOS 26.5.2 ActiveSync single-event create/edit/delete plus four-occurrence New York weekly series across DST also pass in OMS Web. T3 remains open only for the physical recurrence-exception/reminder matrix.
+Implementation status (2026-07-20): T0-T3 are implemented, deployed, and validated. Apple-shaped CalDAV lifecycle tests, EAS `TIME_ZONE_INFORMATION`, recurrence exceptions, display reminders, conservative custom/invalid `VTIMEZONE` handling, Scheduler availability, deterministic DST vectors, and real Chromium/WebKit pass. Physical macOS 26.5.2 CalDAV and iOS 26.5.2 ActiveSync passed single-event CRUD, four-occurrence New York weekly recurrence across DST, edit-one/delete-one recurrence exceptions, inherited/overridden reminders, and deliberate whole-series cleanup.
 
 ### 4.1 Required time model
 
@@ -131,6 +131,9 @@ Local preflight status, 2026-07-20:
 - Passed: the tested Calendar backend/frontend are live behind a root-only rollback snapshot; local/direct/public ActiveSync `OPTIONS`, public web/auth boundaries, exact backend artifacts, Nginx, services, journal audit, and full staging smoke pass without production calendar mutation.
 - Passed named-client gate: macOS 26.5.2 CalDAV created, edited, and deleted one zoned event without duplication; OMS Web updated automatically. A New York weekly series on March 1, 8, 15, and 22 retained 09:00 local time, displaying 17:00 Baghdad before US DST and 16:00 afterward. macOS required an End Repeat date of March 23 to include March 22, consistent with its exclusive end-date UI behavior.
 - Passed named-client gate: iOS 26.5.2 ActiveSync created, edited, and deleted one Baghdad event under one UID with automatic OMS Web reconciliation. A 09:00 America/New_York weekly series on March 5, 12, 19, and 26, 2027 displayed at 17:00 Baghdad before US DST and 16:00 afterward; the whole-series 09:30 edit displayed at 17:30/16:30 under the same UID, and deletion produced one tombstone with automatic OMS Web removal.
+- Passed named-client exception/reminder gate: macOS CalDAV created a weekly August 7/14/21/28, 2026 series at 20:00 with a 15-minute alert. Editing only August 14 changed its title and time to 20:30, deleting only August 21 removed that occurrence, and iOS showed the three expected instances with the alert intact.
+- Passed named-client reverse gate: iOS ActiveSync created a weekly September 4/11/18/25, 2026 series at 20:00 with a 30-minute alert. Editing only September 11 changed its title/time to 20:30 and its alert to 5 minutes; deleting only September 18 removed that occurrence. OMS Web and macOS showed the three expected instances, with 30-minute alerts on the master-derived September 4/25 instances and a 5-minute alert on the modified September 11 instance.
+- Passed cleanup: the user deliberately deleted both temporary series from iOS. The server received two UID-specific ActiveSync `Delete` commands 12 seconds apart, left one tombstone per series, and retained no active test row; this was not a cross-series cascade.
 
 ## 5. Track F — OMS Drive And Connected Files
 

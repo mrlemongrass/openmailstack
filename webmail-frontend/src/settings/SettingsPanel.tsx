@@ -7,6 +7,7 @@ import { normalizeSettingsTab, type SettingsTab } from './tabs';
 import type { CalendarUserSettings, ContactsUserSettings, MailUserSettings } from './settingsApi';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
+import { supportedTimeZones } from '../calendar/calendarTime';
 
 interface Rule {
   id: string;
@@ -62,13 +63,6 @@ interface AccountMutationResponse {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
-}
-
-function supportedTimeZones(): string[] {
-  const intlWithValues = Intl as typeof Intl & { supportedValuesOf?: (key: 'timeZone') => string[] };
-  return intlWithValues.supportedValuesOf
-    ? intlWithValues.supportedValuesOf('timeZone')
-    : [Intl.DateTimeFormat().resolvedOptions().timeZone];
 }
 
 interface SettingsSidebarProps {
@@ -1043,11 +1037,38 @@ function CalendarPane({ setupValues, calendarSettings, calendars, onCalendarSett
           </label>
           <label className="settings-field">
             <span>Time Zone</span>
-            <select className="glass-input glass-select" value={calendarSettings.timeZone} onChange={event => updateCalendar({ timeZone: event.target.value })}>
+            <select className="glass-input glass-select" value={calendarSettings.timeZoneMode} onChange={event => updateCalendar({ timeZoneMode: event.target.value as CalendarUserSettings['timeZoneMode'] })}>
+              <option value="system">System time zone</option>
+              <option value="home">Home time zone</option>
+            </select>
+          </label>
+          <label className="settings-field">
+            <span>Home Time Zone</span>
+            <input
+              key={calendarSettings.timeZone}
+              className="glass-input"
+              type="search"
+              list="oms-home-time-zones"
+              defaultValue={calendarSettings.timeZone}
+              disabled={calendarSettings.timeZoneMode !== 'home'}
+              placeholder="Search IANA time zones"
+              onInput={event => {
+                if (supportedTimeZones().includes(event.currentTarget.value)) updateCalendar({ timeZone: event.currentTarget.value });
+              }}
+              onBlur={event => {
+                if (!supportedTimeZones().includes(event.currentTarget.value)) event.currentTarget.value = calendarSettings.timeZone;
+              }}
+            />
+            <datalist id="oms-home-time-zones">
               {supportedTimeZones().map((tz: string) => (
                 <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
               ))}
-            </select>
+            </datalist>
+            <small>{calendarSettings.timeZoneMode === 'system' ? `Using ${Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'} from this device.` : 'Calendar and the optional clock use this zone on every device.'}</small>
+          </label>
+          <label className="settings-toggle-row">
+            <span>Show current time in the desktop header</span>
+            <input type="checkbox" checked={calendarSettings.showHeaderClock} onChange={event => updateCalendar({ showHeaderClock: event.target.checked })} />
           </label>
           <label className="settings-field">
             <span>Default Reminder</span>

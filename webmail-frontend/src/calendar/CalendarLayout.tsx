@@ -28,7 +28,7 @@ function renderCalendarContent(cal: ReturnType<typeof useCalendar>) {
     return (
       <ErrorBanner
         error={cal.calendarError}
-        onRetry={() => { cal.refreshCalendars(); }}
+        onRetry={() => { void cal.retryCalendar(); }}
       />
     );
   }

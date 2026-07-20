@@ -1,6 +1,6 @@
 # OpenMailStack Time, Drive, And Migration Roadmap
 
-Status: `Proposed - Product Decisions Pending`
+Status: `Track T core implemented locally - interoperability validation and deployment pending`
 
 Research date: 2026-07-20
 
@@ -18,12 +18,13 @@ The immediate priority is Track T. The reported `16:00` web / `20:00` macOS disc
 
 ## 2. Current Evidence
 
-Repository inspection on 2026-07-20 found:
+Repository inspection on 2026-07-20 originally found the timezone defect. The first implementation slice now provides:
 
-- Calendar settings already persist an IANA `timeZone` and `clockFormat`, but the Calendar application does not load or apply that timezone when parsing, positioning, formatting, editing, or creating events.
-- The backend iCalendar parser currently converts every timed `DATE-TIME` with `Date.UTC(...)`. It does not distinguish UTC values ending in `Z`, values carrying `TZID`, or floating local times.
-- Calendar Day and Week views already draw a current-time line, but calculate it from the browser timezone. They do not show which timezone the grid uses.
-- The event editor uses `datetime-local` and browser-local `Date` construction, and newly-created iCalendar values have neither `Z` nor `TZID`.
+- Calendar settings persist explicit `System` or fixed `Home` timezone mode, IANA home zone, 12/24-hour format, and the optional desktop-header clock setting.
+- The backend iCalendar boundary distinguishes UTC values ending in `Z`, IANA `TZID` values, floating local times, and all-day dates; event kind and original zone travel through the Calendar API.
+- Month, Week, Day, the mini-calendar, current-time marker, event editor, and free/busy query projection use the selected display/event timezone. Calendar labels the active zone and offset.
+- New timed events serialize with the active display zone as explicit `TZID`; existing UTC, zoned, floating, and all-day forms retain their meaning when edited.
+- Focused tests cover UTC, Baghdad, floating, all-day, legacy settings, all-day date arithmetic, explicit event-zone conversion, and weekly New York recurrence across DST. Mocked Chromium flows prove the reported Baghdad rendering, searchable settings/clock keyboard behavior, mobile layout, and visible recovery from a settings failure.
 - `AppShell` owns cross-suite navigation and header controls.
 - Calendar and Notes already use `react-resizable-panels`.
 - Mail, Calendar, and Notes each have attachment entry points. Notes already has persisted file attachments despite the older roadmap saying otherwise.
@@ -36,6 +37,7 @@ This means the suite has useful seams, but the older “timezone conversion comp
 Unless the owner decides otherwise, implementation should use these defaults:
 
 - **Calendar display timezone:** `Use system timezone` by default, with `Use a fixed home timezone` as the second mode.
+- **Existing saved timezone:** treat a pre-mode saved timezone as an intentional fixed Home preference so upgrades do not silently change an existing user's selection; accounts without a saved preference still default to System.
 - **Clock:** optional in the desktop header; Calendar always shows its active timezone and current-time marker. The clock uses the selected display timezone and the existing 12/24-hour preference.
 - **Event semantics:** preserve whether a value is all-day, UTC, explicitly zoned, or floating. Never reduce all four kinds to one browser-local `Date` during parsing.
 - **New timed events:** use the active System/Home display zone as an explicit `TZID`, not an accidental floating value. Edit an existing zoned event in its original event timezone and preserve that `TZID` unless the user explicitly changes the event timezone. Changing only the display timezone never reinterprets the event.
@@ -47,6 +49,8 @@ Unless the owner decides otherwise, implementation should use these defaults:
 - **iCloud Drive:** do not promise a persistent server-side connector until a feasibility spike identifies a supported Apple interface. Apple-platform file selection through the browser remains available as a normal upload path.
 
 ## 4. Track T — Time Correctness And Clock
+
+Implementation status (2026-07-20): the core T0-T2 browser/backend slice is implemented and locally verified. T3 remains open for real macOS CalDAV, iOS ActiveSync, Scheduler, exception/reminder, WebKit, DST gap/overlap, and deployed-artifact validation. This status deliberately does not claim protocol-matrix or production completion.
 
 ### 4.1 Required time model
 
@@ -72,7 +76,7 @@ Acceptance criteria:
 
 Work:
 
-- Introduce one bounded calendar time module used by parse, serialize, recurrence, import, and API projection.
+- Keep timezone math inside one bounded module at each deployable runtime boundary: backend parse/recurrence and browser projection/serialization. Lock both to the same golden conversion vectors; consolidate them into a shared package only when the installer can ship that package atomically with both applications.
 - Parse RFC 5545 `Z`, `TZID`, floating, and `VALUE=DATE` forms distinctly.
 - Preserve original `TZID` when editing an existing zoned event.
 - Serialize new timed events with the active display zone as explicit `TZID`; never emit an ambiguous floating value accidentally.

@@ -44,8 +44,10 @@ export interface CalendarUserSettings {
   defaultEventDurationMinutes: number;
   defaultReminderMinutes: 0 | 5 | 10 | 15 | 30 | 60 | 1440;
   weekStartsOn: 0 | 1 | 6;
+  timeZoneMode: 'system' | 'home';
   timeZone: string;
   clockFormat: '12h' | '24h';
+  showHeaderClock: boolean;
   workingHoursStart: string;
   workingHoursEnd: string;
   visibleDays: number[];
@@ -100,8 +102,10 @@ export const defaultCalendarSettings: CalendarUserSettings = {
   defaultEventDurationMinutes: 60,
   defaultReminderMinutes: 10,
   weekStartsOn: 0,
+  timeZoneMode: 'system',
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   clockFormat: '12h',
+  showHeaderClock: true,
   workingHoursStart: '09:00',
   workingHoursEnd: '17:00',
   visibleDays: [0, 1, 2, 3, 4, 5, 6],
@@ -120,6 +124,12 @@ export interface NamespaceSettings {
   contacts: ContactsUserSettings;
   appearance: AppearancePreferences;
   templates: TemplateUserSettings;
+}
+
+export const CALENDAR_SETTINGS_CHANGED = 'oms:calendar-settings-changed';
+
+export function notifyCalendarSettingsChanged(settings: CalendarUserSettings): void {
+  window.dispatchEvent(new CustomEvent<CalendarUserSettings>(CALENDAR_SETTINGS_CHANGED, { detail: settings }));
 }
 
 interface SettingsResponse<T extends SettingsNamespace> {

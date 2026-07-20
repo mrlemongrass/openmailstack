@@ -6,6 +6,8 @@ export interface ParsedIcalEvent {
     start: Date;
     end: Date;
     isAllDay: boolean;
+    timeKind: 'utc' | 'zoned' | 'floating' | 'all-day';
+    timeZone: string | null;
     dtstamp: Date;
     recurrence: RecurrenceRule | null;
     recurrenceLabel: string;

@@ -275,7 +275,7 @@ Exit criteria before moving on:
 
 ## Milestone 4: Calendar Settings Product Pass 🟡
 
-Status: reopened 2026-07-20 after user-reported web/macOS timezone disagreement and source inspection.
+Status: core timezone/settings slice implemented locally 2026-07-20; real-client interoperability and deployment validation remain.
 
 Purpose: make Calendar settings affect the actual calendar experience instead of only existing as standalone preferences.
 

@@ -74,11 +74,11 @@ The contacts and notes apps have been extracted into their own directories with 
 
 ## 3. Calendar Hardening 🟡 (Reopened 2026-07-20)
 
-The earlier hardening pass remains valuable, but user feedback and source inspection reopened timezone correctness. The saved Calendar timezone is not currently applied by the Calendar UI, and the backend parser collapses UTC, `TZID`, and floating values into UTC. Track T in `docs/product/time-drive-migration.md` is now the highest-priority Calendar work.
+The first reopened-timezone slice now distinguishes UTC, `TZID`, floating, and all-day values; applies System/Home display zones across the current Calendar views/editor; and adds the optional desktop clock. Track T in `docs/product/time-drive-migration.md` remains open until the real CalDAV/ActiveSync/Scheduler/WebKit interoperability matrix passes and the change is deployed.
 
 - ✅ Replace prompt-based calendar creation with the same dialog quality used for calendar edit/delete.
 - ✅ Improve event creation and editing with move, drag, resize, calendar switching, and clearer validation.
-- 🟡 Harden recurring events, recurrence exceptions, reminders (VALARM), attendees (ATTENDEE), free/busy fields (TRANSP), and timezone conversion. General behavior exists, but RFC 5545 UTC/`TZID`/floating/all-day distinctions and display-timezone projection need regression repair.
+- 🟡 Harden recurring events, recurrence exceptions, reminders (VALARM), attendees (ATTENDEE), free/busy fields (TRANSP), and timezone conversion. Core UTC/`TZID`/floating/all-day parsing, DST-aware zoned recurrence, and display projection are implemented locally; exception/reminder and real-client protocol validation remain.
 - ✅ Add calendar search, agenda/list view, import/export, and subscribed calendars (background fetch).
 - ✅ Continue hardening CalDAV and ActiveSync sync tokens, tombstones, conflicts, and real-device behavior (sync-collection REPORT, calendar_tombstones, EAS recurrence mapping, EAS Picture/CompanyName/JobTitle).
 
@@ -104,7 +104,7 @@ The earlier hardening pass remains valuable, but user feedback and source inspec
 - ✅ M2: Server-Backed Settings Foundation
 - ✅ M2A: Admin Branding Settings (site-wide persistence and automatic image fitting hardened and deployed 2026-07-12)
 - ✅ M3: Mail Settings Product Pass
-- 🟡 M4: Calendar Settings Product Pass — persistence exists, but the selected timezone must be applied throughout Calendar before this returns to complete.
+- 🟡 M4: Calendar Settings Product Pass — System/Home timezone projection and the optional clock are implemented locally; real-client interoperability and deployment validation remain before this returns to complete.
 - ✅ M5: Contacts Settings Product Pass
 - ✅ M6: Account, Security, And Release Hardening
 
@@ -160,11 +160,11 @@ One-time, reviewed imports now precede continuous synchronization. The Migration
 - ❌ Add payments, external calendars/conferencing, CRM/automation adapters, analytics, public APIs, OAuth, CLI, embeds, and MCP/agent support. Phase 3 workflow webhooks are implemented; broader public integration webhooks remain in this later scope.
 - ❌ Add enterprise organization controls, SSO/SCIM reuse, audit/export/deletion/retention, operational recovery, and continuous competitor-parity review.
 
-## 11. Time, OMS Drive, And Migration Center ❌
+## 11. Time, OMS Drive, And Migration Center 🟡
 
 `docs/product/time-drive-migration.md` is the implementation roadmap and decision record for the new suite expansion.
 
-- 🚨 **Track T — Time correctness and clock:** reproduce and fix the reported web/macOS timezone mismatch, preserve UTC/`TZID`/floating/all-day semantics, apply system or home timezone preferences across Calendar, and add an optional live header clock.
+- 🟡 **Track T — Time correctness and clock:** core semantics, System/Home projection, active-zone labeling, and the optional desktop clock are implemented locally. Real macOS CalDAV, iOS ActiveSync, Scheduler, WebKit, exceptions/reminders, DST edge cases, and deployment validation remain before completion.
 - ❌ **Track F — OMS Drive and connected files:** add an optional, Admin-entitled native file service; a shared, resizable file tray; safe attach-copy flows into Mail, Notes, Calendar, and Scheduler; and capability-aware Nextcloud/OpenCloud, Google Drive, and OneDrive connectors.
 - ❌ **Track M — Migration Center:** unify reviewed vCard/CSV/ICS import, then add resumable read-only Google and Microsoft migration plus guided iCloud export/import. Continuous two-way sync remains a separate later phase.
 - ⚠️ **iCloud Drive constraint:** keep browser/Apple Files upload available, but do not promise persistent server-side iCloud Drive browsing until a supported Apple integration path is proven.

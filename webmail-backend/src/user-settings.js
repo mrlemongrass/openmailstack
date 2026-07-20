@@ -40,8 +40,10 @@ exports.settingsDefaults = {
         defaultEventDurationMinutes: 60,
         defaultReminderMinutes: 10,
         weekStartsOn: 0,
+        timeZoneMode: 'system',
         timeZone: 'UTC',
         clockFormat: '12h',
+        showHeaderClock: true,
         workingHoursStart: '09:00',
         workingHoursEnd: '17:00',
         visibleDays: [0, 1, 2, 3, 4, 5, 6],
@@ -109,6 +111,18 @@ const optionalPositiveInteger = (value) => {
     return Math.round(value);
 };
 const textValue = (value, maxLength) => (typeof value === 'string' ? value.trim().slice(0, maxLength) : '');
+const timeZoneValue = (value, fallback) => {
+    if (typeof value !== 'string' || !value.trim())
+        return fallback;
+    const normalized = value.trim().slice(0, 80);
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: normalized }).format(new Date());
+        return normalized;
+    }
+    catch {
+        return fallback;
+    }
+};
 const stringArray = (value, maxItems, maxLength) => {
     if (!Array.isArray(value))
         return [];
@@ -195,14 +209,20 @@ function normalizeSettings(namespace, value) {
         };
     }
     if (namespace === 'calendar') {
+        const normalizedTimeZone = timeZoneValue(source.timeZone, exports.settingsDefaults.calendar.timeZone);
+        const hasLegacyTimeZone = typeof source.timeZone === 'string'
+            && source.timeZone.trim() !== ''
+            && normalizedTimeZone === source.timeZone.trim().slice(0, 80);
         return {
             defaultCalendarId: optionalPositiveInteger(source.defaultCalendarId),
             defaultView: stringOption(source.defaultView, ['day', 'week', 'month', 'year', 'agenda'], exports.settingsDefaults.calendar.defaultView),
             defaultEventDurationMinutes: boundedNumber(source.defaultEventDurationMinutes, exports.settingsDefaults.calendar.defaultEventDurationMinutes, 5, 480),
             defaultReminderMinutes: numberOption(source.defaultReminderMinutes, [0, 5, 10, 15, 30, 60, 1440], exports.settingsDefaults.calendar.defaultReminderMinutes),
             weekStartsOn: weekStartValue(source.weekStartsOn, exports.settingsDefaults.calendar.weekStartsOn),
-            timeZone: typeof source.timeZone === 'string' && source.timeZone.trim() ? source.timeZone.trim().slice(0, 80) : exports.settingsDefaults.calendar.timeZone,
+            timeZoneMode: stringOption(source.timeZoneMode, ['system', 'home'], hasLegacyTimeZone ? 'home' : exports.settingsDefaults.calendar.timeZoneMode),
+            timeZone: normalizedTimeZone,
             clockFormat: stringOption(source.clockFormat, ['12h', '24h'], exports.settingsDefaults.calendar.clockFormat),
+            showHeaderClock: booleanValue(source.showHeaderClock, exports.settingsDefaults.calendar.showHeaderClock),
             workingHoursStart: typeof source.workingHoursStart === 'string' && /^\d{2}:\d{2}$/.test(source.workingHoursStart) ? source.workingHoursStart : exports.settingsDefaults.calendar.workingHoursStart,
             workingHoursEnd: typeof source.workingHoursEnd === 'string' && /^\d{2}:\d{2}$/.test(source.workingHoursEnd) ? source.workingHoursEnd : exports.settingsDefaults.calendar.workingHoursEnd,
             visibleDays: Array.isArray(source.visibleDays) && source.visibleDays.every(d => typeof d === 'number' && d >= 0 && d <= 6) ? Array.from(new Set(source.visibleDays)).sort() : exports.settingsDefaults.calendar.visibleDays,

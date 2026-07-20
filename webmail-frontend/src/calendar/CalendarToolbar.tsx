@@ -2,11 +2,13 @@ import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { format, addMonths, subMonths, addWeeks, subWeeks, addDays, subDays } from 'date-fns';
 import type { useCalendar } from './hooks/useCalendar';
 import { useToast } from '../shared/components/Toast';
+import { useMediaQuery } from '../shared/hooks/useMediaQuery';
+import { formatWallTime, shortTimeZoneName } from './calendarTime';
 
 // #7 Natural language event parsing
-function parseQuickCreate(text: string): { title: string; start: Date; duration: number } | null {
+function parseQuickCreate(text: string, currentWallTime: Date): { title: string; start: Date; duration: number } | null {
   if (!text.trim()) return null;
-  const now = new Date();
+  const now = currentWallTime;
   let title = text;
   let start = new Date(now);
   let duration = 60; // default 1 hour
@@ -66,8 +68,9 @@ function parseQuickCreate(text: string): { title: string; start: Date; duration:
 
 export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const { showToast } = useToast();
+  const isMobile = useMediaQuery('(max-width: 767px)');
   const handleQuickCreate = () => {
-    const parsed = parseQuickCreate(cal.quickCreateText);
+    const parsed = parseQuickCreate(cal.quickCreateText, cal.displayNow);
     if (parsed) {
       cal.setNewEvent({
         title: parsed.title,
@@ -91,7 +94,7 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
       borderBottom: '1px solid var(--border-glass)', flexWrap: 'wrap' }}>
-      <button className="btn btn-ghost" onClick={() => { cal.setCurrentDate(new Date()); showToast({ type: 'info', message: 'Jumped to today' }); }}
+      <button className="btn btn-ghost" onClick={() => { cal.setCurrentDate(cal.displayNow); showToast({ type: 'info', message: 'Jumped to today' }); }}
         style={{ fontSize: '0.85rem' }}>Today</button>
       <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={nav.prev}><ChevronLeft size={16} /></button>
       <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={nav.next}><ChevronRight size={16} /></button>
@@ -99,6 +102,19 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
       <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
         · {cal.events.filter((e) => cal.calendarVisibility[e.calendarId] !== false).length} events
       </span>
+      <span title={`Calendar times shown in ${cal.displayTimeZone}`} style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+        {cal.calendarSettings.timeZoneMode === 'system' ? 'System' : 'Home'} · {cal.displayTimeZone.replace(/_/g, ' ')} ({shortTimeZoneName(new Date(), cal.displayTimeZone)})
+      </span>
+      {isMobile && !cal.isLoading && !cal.calendarError && cal.calendarSettings.showHeaderClock && (
+        <time
+          dateTime={new Date().toISOString()}
+          title={`Current time in ${cal.displayTimeZone}`}
+          aria-label={`Current time in ${cal.displayTimeZone}: ${formatWallTime(cal.displayNow, cal.calendarSettings.clockFormat)}`}
+          style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}
+        >
+          {formatWallTime(cal.displayNow, cal.calendarSettings.clockFormat)} {shortTimeZoneName(new Date(), cal.displayTimeZone)}
+        </time>
+      )}
 
       {/* #7 Quick create */}
       <div style={{ display: 'flex', flex: 1, gap: 6, alignItems: 'center' }}>

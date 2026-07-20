@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameMonth, isSameDay, getWeek } from 'date-fns';
 import type { useCalendar } from '../hooks/useCalendar';
 import type { CalendarEvent } from '../../shared/types';
+import { formatWallTime } from '../calendarTime';
 
 export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const monthStart = startOfMonth(cal.currentDate);
@@ -47,7 +48,7 @@ export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
               {weekDays.map((day) => {
                 const dayEvents = cal.events.filter((e) => isSameDay(e.start, day) && isVisible(e));
                 const isCurrentMonth = isSameMonth(day, cal.currentDate);
-                const isToday = isSameDay(day, new Date());
+                const isToday = isSameDay(day, cal.displayNow);
                 return (
                   <div key={day.toISOString()} style={{
                     border: '1px solid var(--border-glass)', padding: 2,
@@ -75,7 +76,7 @@ export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                       {format(day, 'd')}
                     </div>
                     {dayEvents.slice(0, 3).map((evt) => {
-                      const fullText = (!evt.isAllDay ? format(new Date(evt.start), 'HH:mm') + ' ' : '') + evt.title + (evt.location ? ' — ' + evt.location : '') + (evt.recurrence && evt.recurrence !== 'none' ? ` (repeats ${evt.recurrence})` : '');
+                      const fullText = (!evt.isAllDay ? formatWallTime(evt.start, cal.calendarSettings.clockFormat) + ' ' : '') + evt.title + (evt.location ? ' — ' + evt.location : '') + (evt.recurrence && evt.recurrence !== 'none' ? ` (repeats ${evt.recurrence})` : '');
                       return (
                       <div key={evt.id + (evt.occurrenceId || '')} draggable
                         onDragStart={() => setDragEvent(evt)}

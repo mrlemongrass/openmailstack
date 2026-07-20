@@ -1228,6 +1228,8 @@ exports.appsApiRouter.get('/calendars', async (req, res) => {
                     start: occurrence.start,
                     end: occurrence.end,
                     isAllDay: occurrence.isAllDay,
+                    timeKind: occurrence.timeKind,
+                    timeZone: occurrence.timeZone,
                     location: occurrence.location,
                     description: occurrence.description,
                     recurrence: occurrence.recurrence?.raw || '',

@@ -3,7 +3,7 @@ import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSa
 import type { useCalendar } from './hooks/useCalendar';
 
 export function CalendarSidebar({ cal }: { cal: ReturnType<typeof useCalendar> }) {
-  const today = new Date();
+  const today = cal.displayNow;
   const miniStart = startOfWeek(startOfMonth(cal.currentDate));
   const miniEnd = endOfWeek(endOfMonth(cal.currentDate));
   const miniDays: Date[] = [];

@@ -126,6 +126,8 @@ test('the real authenticated header renders the saved site name', () => {
     'react-router': routerMocks,
     '../hooks/useAuth': { useAuth: () => ({ user: { email: 'admin@example.test' }, logout: () => undefined }) },
     '../hooks/useMediaQuery': { useMediaQuery: () => false },
+    '../hooks/useCalendarSettings': { useCalendarSettings: () => ({ settings: { showHeaderClock: false, clockFormat: '12h', timeZoneMode: 'system', timeZone: 'UTC' }, isLoading: false, error: '', refresh: async () => undefined }) },
+    '../hooks/useCalendarTimeZone': { useCalendarTimeZone: () => 'UTC' },
     'lucide-react': iconComponents,
     '../../scheduler/entitlement': { SCHEDULER_ENTITLEMENT_CHANGED: 'scheduler-entitlement-changed' },
     '../../branding': testModule.exports,

@@ -80,22 +80,98 @@ function unescapeIcalText(value) {
         .replace(/\\;/g, ';')
         .replace(/\\\\/g, '\\');
 }
-function parseIcalDate(value, allDay) {
-    if (!value)
-        return new Date();
+const timeZoneFormatters = new Map();
+function formatterForTimeZone(timeZone) {
+    let formatter = timeZoneFormatters.get(timeZone);
+    if (!formatter) {
+        formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hourCycle: 'h23',
+        });
+        timeZoneFormatters.set(timeZone, formatter);
+    }
+    return formatter;
+}
+function wallTimeAt(instant, timeZone) {
+    const values = new Map(formatterForTimeZone(timeZone).formatToParts(instant).map(part => [part.type, part.value]));
+    return {
+        year: Number(values.get('year')),
+        month: Number(values.get('month')),
+        day: Number(values.get('day')),
+        hour: Number(values.get('hour')),
+        minute: Number(values.get('minute')),
+        second: Number(values.get('second')),
+    };
+}
+function wallTimeToInstant(parts, timeZone) {
+    const target = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+    let instant = new Date(target);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const rendered = wallTimeAt(instant, timeZone);
+        const renderedAsUtc = Date.UTC(rendered.year, rendered.month - 1, rendered.day, rendered.hour, rendered.minute, rendered.second);
+        const correction = target - renderedAsUtc;
+        if (correction === 0)
+            break;
+        instant = new Date(instant.getTime() + correction);
+    }
+    return instant;
+}
+function parameterValue(params, name) {
+    const match = new RegExp(`(?:^|;)${name}=([^;]+)`, 'i').exec(params);
+    return match?.[1]?.replace(/^"|"$/g, '').trim() || null;
+}
+function isValidTimeZone(value) {
+    try {
+        formatterForTimeZone(value);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function parseIcalDate(field, allDay, fallback) {
+    if (!field?.value)
+        return { date: new Date(), timeKind: 'utc', timeZone: 'UTC' };
+    const value = field.value;
     const compact = value.trim();
     const year = Number(compact.slice(0, 4));
-    const month = Number(compact.slice(4, 6)) - 1;
+    const month = Number(compact.slice(4, 6));
     const day = Number(compact.slice(6, 8));
     if (allDay || compact.length === 8) {
-        return new Date(Date.UTC(year, month, day, 0, 0, 0));
+        return {
+            date: new Date(Date.UTC(year, month - 1, day, 0, 0, 0)),
+            timeKind: 'all-day',
+            timeZone: null,
+        };
     }
     const hour = Number(compact.slice(9, 11)) || 0;
     const minute = Number(compact.slice(11, 13)) || 0;
     const second = Number(compact.slice(13, 15)) || 0;
-    return new Date(Date.UTC(year, month, day, hour, minute, second));
+    const wallTime = { year, month, day, hour, minute, second };
+    const timeZone = parameterValue(field.params, 'TZID') || (fallback?.timeKind === 'zoned' ? fallback.timeZone : null);
+    if (compact.toUpperCase().endsWith('Z') || fallback?.timeKind === 'utc') {
+        return {
+            date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
+            timeKind: 'utc',
+            timeZone: 'UTC',
+        };
+    }
+    if (timeZone && isValidTimeZone(timeZone)) {
+        return { date: wallTimeToInstant(wallTime, timeZone), timeKind: 'zoned', timeZone };
+    }
+    return {
+        date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
+        timeKind: 'floating',
+        timeZone: null,
+    };
 }
-function parseRrule(value) {
+function parseRrule(value, start) {
     if (!value)
         return null;
     const parts = new Map();
@@ -117,7 +193,7 @@ function parseRrule(value) {
         frequency: frequency,
         interval,
         count,
-        until: untilValue ? parseIcalDate(untilValue, untilValue.length === 8) : null,
+        until: untilValue ? parseIcalDate({ value: untilValue, params: '' }, untilValue.length === 8, start).date : null,
         raw: value,
     };
 }
@@ -146,9 +222,10 @@ function parseIcalEvent(uid, ical) {
     const startField = firstIcalValue(eventLines, 'DTSTART');
     const endField = firstIcalValue(eventLines, 'DTEND');
     const allDay = Boolean(startField?.params.toUpperCase().includes('VALUE=DATE') || startField?.value.length === 8);
-    const start = parseIcalDate(startField?.value || '', allDay);
+    const parsedStart = parseIcalDate(startField, allDay);
+    const start = parsedStart.date;
     const fallbackEnd = new Date(start.getTime() + (allDay ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000));
-    const recurrence = parseRrule(firstIcalValue(eventLines, 'RRULE')?.value);
+    const recurrence = parseRrule(firstIcalValue(eventLines, 'RRULE')?.value, parsedStart);
     const exdates = parseExdates(eventLines);
     // Parse TRANSP
     const transpValue = firstIcalValue(eventLines, 'TRANSP')?.value?.toUpperCase() || '';
@@ -179,9 +256,11 @@ function parseIcalEvent(uid, ical) {
         location: unescapeIcalText(firstIcalValue(eventLines, 'LOCATION')?.value || ''),
         description: unescapeIcalText(firstIcalValue(eventLines, 'DESCRIPTION')?.value || ''),
         start,
-        end: endField?.value ? parseIcalDate(endField.value, allDay) : fallbackEnd,
+        end: endField?.value ? parseIcalDate(endField, allDay, parsedStart).date : fallbackEnd,
         isAllDay: allDay,
-        dtstamp: parseIcalDate(firstIcalValue(eventLines, 'DTSTAMP')?.value || '', false),
+        timeKind: parsedStart.timeKind,
+        timeZone: parsedStart.timeZone,
+        dtstamp: parseIcalDate(firstIcalValue(eventLines, 'DTSTAMP'), false).date,
         recurrence,
         recurrenceLabel: recurrenceLabel(recurrence),
         type: isTask ? 'task' : 'event',
@@ -206,7 +285,27 @@ function parseExdates(lines) {
     }
     return excluded;
 }
-function addRecurrenceInterval(date, frequency, interval) {
+function addRecurrenceInterval(date, frequency, interval, timeZone) {
+    if (timeZone) {
+        const wallTime = wallTimeAt(date, timeZone);
+        const surrogate = new Date(Date.UTC(wallTime.year, wallTime.month - 1, wallTime.day, wallTime.hour, wallTime.minute, wallTime.second));
+        if (frequency === 'DAILY')
+            surrogate.setUTCDate(surrogate.getUTCDate() + interval);
+        if (frequency === 'WEEKLY')
+            surrogate.setUTCDate(surrogate.getUTCDate() + interval * 7);
+        if (frequency === 'MONTHLY')
+            surrogate.setUTCMonth(surrogate.getUTCMonth() + interval);
+        if (frequency === 'YEARLY')
+            surrogate.setUTCFullYear(surrogate.getUTCFullYear() + interval);
+        return wallTimeToInstant({
+            year: surrogate.getUTCFullYear(),
+            month: surrogate.getUTCMonth() + 1,
+            day: surrogate.getUTCDate(),
+            hour: surrogate.getUTCHours(),
+            minute: surrogate.getUTCMinutes(),
+            second: surrogate.getUTCSeconds(),
+        }, timeZone);
+    }
     const next = new Date(date);
     if (frequency === 'DAILY')
         next.setUTCDate(next.getUTCDate() + interval);
@@ -248,7 +347,7 @@ function expandRecurringEvent(event, rangeStart, rangeEnd, maxOccurrences = 400)
                 });
             }
         }
-        occurrenceStart = addRecurrenceInterval(occurrenceStart, event.recurrence.frequency, event.recurrence.interval);
+        occurrenceStart = addRecurrenceInterval(occurrenceStart, event.recurrence.frequency, event.recurrence.interval, event.timeKind === 'zoned' ? event.timeZone : null);
         generated += 1;
     }
     return occurrences;

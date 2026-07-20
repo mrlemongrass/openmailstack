@@ -31,6 +31,25 @@ test('parseIcalEvent unfolds and unescapes event fields', () => {
   assert.equal(parsed.start.toISOString(), '2026-07-04T19:00:00.000Z');
   assert.equal(parsed.end.toISOString(), '2026-07-04T20:00:00.000Z');
   assert.equal(parsed.isAllDay, false);
+  assert.equal(parsed.timeKind, 'utc');
+  assert.equal(parsed.timeZone, 'UTC');
+});
+
+test('parseIcalEvent preserves floating wall time without treating it as UTC', () => {
+  const parsed = parseIcalEvent('floating', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'SUMMARY:Floating appointment',
+    'DTSTART:20260724T160000',
+    'DTEND:20260724T170000',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+
+  assert.equal(parsed.start.toISOString(), '2026-07-24T16:00:00.000Z');
+  assert.equal(parsed.end.toISOString(), '2026-07-24T17:00:00.000Z');
+  assert.equal(parsed.timeKind, 'floating');
+  assert.equal(parsed.timeZone, null);
 });
 
 test('parseIcalEvent handles all-day events', () => {
@@ -47,6 +66,8 @@ test('parseIcalEvent handles all-day events', () => {
   assert.equal(parsed.start.toISOString(), '2026-12-25T00:00:00.000Z');
   assert.equal(parsed.end.toISOString(), '2026-12-26T00:00:00.000Z');
   assert.equal(parsed.isAllDay, true);
+  assert.equal(parsed.timeKind, 'all-day');
+  assert.equal(parsed.timeZone, null);
 });
 
 test('parseIcalEvent reads simple recurrence rules', () => {
@@ -99,6 +120,34 @@ test('expandRecurringEvent expands bounded recurring occurrences', () => {
   assert.equal(occurrences[0].occurrenceId, '20260706T160000Z');
 });
 
+test('expandRecurringEvent keeps zoned weekly events at the same wall time across DST', () => {
+  const parsed = parseIcalEvent('dst-recurring', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'SUMMARY:Weekly review',
+    'DTSTART;TZID=America/New_York:20260301T090000',
+    'DTEND;TZID=America/New_York:20260301T100000',
+    'RRULE:FREQ=WEEKLY;COUNT=3',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+
+  const occurrences = expandRecurringEvent(
+    parsed,
+    new Date('2026-03-01T00:00:00Z'),
+    new Date('2026-03-31T23:59:59Z')
+  );
+
+  assert.deepEqual(
+    occurrences.map((event) => event.start.toISOString()),
+    [
+      '2026-03-01T14:00:00.000Z',
+      '2026-03-08T13:00:00.000Z',
+      '2026-03-15T13:00:00.000Z',
+    ]
+  );
+});
+
 test('parseIcalEvent ignores VTIMEZONE fields before VEVENT', () => {
   const parsed = parseIcalEvent('apple-event', [
     'BEGIN:VCALENDAR',
@@ -131,8 +180,10 @@ test('parseIcalEvent ignores VTIMEZONE fields before VEVENT', () => {
 
   assert.equal(parsed.uid, 'A0A0BEE8-BD0B-4F7E-8E2B-AA2A3EA5DB78');
   assert.equal(parsed.title, 'iCAL Test');
-  assert.equal(parsed.start.toISOString(), '2026-06-24T09:00:00.000Z');
-  assert.equal(parsed.end.toISOString(), '2026-06-24T10:00:00.000Z');
+  assert.equal(parsed.start.toISOString(), '2026-06-24T06:00:00.000Z');
+  assert.equal(parsed.end.toISOString(), '2026-06-24T07:00:00.000Z');
+  assert.equal(parsed.timeKind, 'zoned');
+  assert.equal(parsed.timeZone, 'Asia/Baghdad');
   assert.equal(parsed.description, '');
 });
 

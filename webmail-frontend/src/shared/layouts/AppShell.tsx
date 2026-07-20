@@ -6,6 +6,32 @@ import { Settings, ShieldAlert, Activity, Mail, CalendarDays, Users, StickyNote,
 import { SCHEDULER_ENTITLEMENT_CHANGED } from '../../scheduler/entitlement';
 import { resolveBrandingPresentation } from '../../branding';
 import { useBranding } from '../../branding-context';
+import { useCalendarSettings } from '../hooks/useCalendarSettings';
+import { useCalendarTimeZone } from '../hooks/useCalendarTimeZone';
+
+function HeaderClock({ timeZone, clockFormat }: { timeZone: string; clockFormat: '12h' | '24h' }) {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const label = new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: clockFormat === '12h',
+    timeZoneName: 'short',
+  }).format(now);
+
+  return (
+    <time dateTime={now.toISOString()} title={`Current time in ${timeZone}`} aria-label={`Current time in ${timeZone}: ${label}`}
+      style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+      {label}
+    </time>
+  );
+}
 
 function useActiveApp(): string {
   const { pathname } = useLocation();
@@ -28,6 +54,13 @@ export function AppShell() {
   const activeApp = useActiveApp();
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const {
+    settings: calendarSettings,
+    isLoading: calendarSettingsLoading,
+    error: calendarSettingsError,
+    refresh: refreshCalendarSettings,
+  } = useCalendarSettings();
+  const displayTimeZone = useCalendarTimeZone(calendarSettings);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,6 +134,20 @@ export function AppShell() {
             ))}
           </nav>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {!calendarSettingsLoading && !calendarSettingsError && calendarSettings.showHeaderClock && (
+              <HeaderClock timeZone={displayTimeZone} clockFormat={calendarSettings.clockFormat} />
+            )}
+            {!calendarSettingsLoading && calendarSettingsError && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => { void refreshCalendarSettings(); }}
+                title="Calendar clock settings are unavailable"
+                style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', padding: '4px 8px' }}
+              >
+                Clock unavailable · Retry
+              </button>
+            )}
             <Link to="/sync" style={{
               padding: '8px 12px', borderRadius: 'var(--radius-md)',
               color: activeApp === 'sync' ? 'var(--accent-primary)' : 'var(--text-secondary)',

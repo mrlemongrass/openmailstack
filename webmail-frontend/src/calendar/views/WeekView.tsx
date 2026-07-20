@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import {
-  format, startOfWeek, endOfWeek, addDays, isSameDay, isToday,
+  format, startOfWeek, endOfWeek, addDays, isSameDay,
   setHours, setMinutes, differenceInMinutes,
 } from 'date-fns';
 import type { useCalendar } from '../hooks/useCalendar';
 import type { CalendarEvent } from '../../shared/types';
+import { formatHourLabel, formatWallTime } from '../calendarTime';
 
 const HOUR_HEIGHT = 56;
 const HOURS = Array.from({ length: 24 }, (_, i) => i); // 0..23
@@ -71,8 +72,9 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
   const allDayEvents = visibleEvents.filter((e) => e.isAllDay || (differenceInMinutes(e.end, e.start) >= 1440));
 
-  const now = new Date();
+  const now = cal.displayNow;
   const currentTimeTop = (now.getHours() * 60 + now.getMinutes()) / 60 * HOUR_HEIGHT;
+  const currentDayIndex = days.findIndex((day) => isSameDay(day, cal.displayNow));
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -83,9 +85,9 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
         {days.map((day) => (
           <div key={day.toISOString()} style={{
             textAlign: 'center', padding: '6px 2px', fontSize: '0.7rem',
-            fontWeight: isToday(day) ? 700 : 400,
-            color: isToday(day) ? 'var(--accent-primary)' : 'var(--text-secondary)',
-            background: isToday(day) ? 'rgba(59,130,246,0.08)' : 'transparent',
+            fontWeight: isSameDay(day, cal.displayNow) ? 700 : 400,
+            color: isSameDay(day, cal.displayNow) ? 'var(--accent-primary)' : 'var(--text-secondary)',
+            background: isSameDay(day, cal.displayNow) ? 'rgba(59,130,246,0.08)' : 'transparent',
           }}>
             <div style={{ fontSize: '0.6rem', textTransform: 'uppercase' }}>{format(day, 'EEE')}</div>
             <div style={{ fontSize: '1rem' }}>{format(day, 'd')}</div>
@@ -132,7 +134,7 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
               textAlign: 'right', paddingRight: 6,
               transform: 'translateY(-8px)',
             }}>
-              {h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`}
+              {formatHourLabel(h, cal.calendarSettings.clockFormat)}
             </div>
           ))}
 
@@ -142,7 +144,7 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
               gridColumn: colIdx + 2, gridRow: '1 / 25',
               display: 'grid', gridTemplateRows: `repeat(${HOURS.length}, ${HOUR_HEIGHT}px)`,
               borderLeft: '1px solid var(--border-glass)',
-              background: isToday(day) ? 'rgba(59,130,246,0.03)' : 'transparent',
+              background: isSameDay(day, cal.displayNow) ? 'rgba(59,130,246,0.03)' : 'transparent',
             }}>
               {HOURS.map((h) => (
                 <div key={h} style={{
@@ -181,14 +183,14 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                   gridRow: '1 / 25',
                 }}
                 onClick={(e) => { e.stopPropagation(); cal.editExistingEvent(evt); }}
-                title={`${evt.title}\n${format(evt.start, 'h:mm a')} – ${format(evt.end, 'h:mm a')}`}
+                title={`${evt.title}\n${formatWallTime(evt.start, cal.calendarSettings.clockFormat)} – ${formatWallTime(evt.end, cal.calendarSettings.clockFormat)}`}
               >
                 <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {evt.title || '(Untitled)'}
                 </div>
                 {height(evt) > 36 && (
                   <div style={{ fontSize: '0.6rem', opacity: 0.85 }}>
-                    {format(evt.start, 'h:mm a')}
+                    {formatWallTime(evt.start, cal.calendarSettings.clockFormat)}
                   </div>
                 )}
               </div>
@@ -196,19 +198,19 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
           })}
 
           {/* Current time indicator */}
-          {days.some((day) => isToday(day)) && (
-            <div style={{
-              position: 'absolute', top: currentTimeTop, left: 52,
-              right: 0, zIndex: 3, pointerEvents: 'none',
+          {currentDayIndex >= 0 && (
+            <div data-testid="current-time-indicator" style={{
+              gridColumn: currentDayIndex + 2, gridRow: '1 / 25',
+              position: 'relative', zIndex: 3, pointerEvents: 'none',
             }}>
               <div style={{
-                height: 2, background: 'var(--danger)',
-                borderRadius: 1, width: '100%',
+                position: 'absolute', top: currentTimeTop, left: 0, right: 0,
+                height: 2, background: 'var(--danger)', borderRadius: 1,
               }} />
               <div style={{
                 width: 8, height: 8, borderRadius: '50%',
                 background: 'var(--danger)', position: 'absolute',
-                top: -3, left: -4,
+                top: currentTimeTop - 3, left: -4,
               }} />
             </div>
           )}

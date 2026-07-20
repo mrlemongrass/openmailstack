@@ -262,6 +262,10 @@ export interface CalendarEvent {
   start: Date;
   end: Date;
   isAllDay?: boolean;
+  timeKind?: 'utc' | 'zoned' | 'floating' | 'all-day';
+  timeZone?: string | null;
+  sourceStart?: Date;
+  sourceEnd?: Date;
   location?: string;
   description?: string;
   recurrence?: string;

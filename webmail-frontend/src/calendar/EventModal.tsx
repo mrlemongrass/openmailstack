@@ -5,12 +5,32 @@ import { format } from 'date-fns';
 import * as api from '../shared/api';
 import { useToast } from '../shared/components/Toast';
 import type { Contact } from '../shared/types';
+import {
+  addWallDays,
+  convertWallDateTimeZone,
+  supportedTimeZones,
+  wallDateToInstant,
+  type CalendarTimeKind,
+} from './calendarTime';
 
 const VIDEO_PROVIDERS = [
   { name: 'Google Meet', prefix: 'https://meet.google.com/' },
   { name: 'Zoom', prefix: 'https://zoom.us/j/' },
   { name: 'Microsoft Teams', prefix: 'https://teams.microsoft.com/l/meetup-join/' },
 ];
+
+function parseWallInput(value: string, allDay: boolean): Date {
+  if (!allDay) return new Date(value);
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day, 0, 0, 0);
+}
+
+function allDaySpan(start: Date | undefined, end: Date | undefined): number {
+  if (!start || !end) return 1;
+  const startDay = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const endDay = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.max(1, Math.round((endDay - startDay) / 86400000));
+}
 
 function generateVideoId(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -120,6 +140,29 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
   const evt = cal.newEvent;
   const isEditing = !!cal.editingEvent;
+  const eventTimeKind = (evt.timeKind || 'zoned') as CalendarTimeKind;
+  const eventTimeZoneValue = eventTimeKind === 'floating'
+    ? '__floating__'
+    : eventTimeKind === 'utc' ? '__utc__' : (evt.timeZone || cal.displayTimeZone);
+  const eventInstantPreview = !evt.isAllDay && eventTimeKind !== 'floating' && evt.start
+    ? wallDateToInstant(evt.start as Date, eventTimeKind, eventTimeKind === 'utc' ? 'UTC' : (evt.timeZone || cal.displayTimeZone)).toISOString()
+    : null;
+
+  const handleEventTimeZoneChange = (value: string) => {
+    const nextKind: CalendarTimeKind = value === '__floating__' ? 'floating' : value === '__utc__' ? 'utc' : 'zoned';
+    const nextTimeZone = nextKind === 'floating' ? null : nextKind === 'utc' ? 'UTC' : value;
+    cal.setNewEvent(prev => {
+      const currentKind = (prev.timeKind || 'zoned') as CalendarTimeKind;
+      const currentTimeZone = currentKind === 'utc' ? 'UTC' : (prev.timeZone || cal.displayTimeZone);
+      return {
+        ...prev,
+        start: prev.start ? convertWallDateTimeZone(prev.start as Date, currentKind, currentTimeZone, nextKind, nextTimeZone) : prev.start,
+        end: prev.end ? convertWallDateTimeZone(prev.end as Date, currentKind, currentTimeZone, nextKind, nextTimeZone) : prev.end,
+        timeKind: nextKind,
+        timeZone: nextTimeZone,
+      };
+    });
+  };
 
   const handleSave = async () => {
     const ok = await cal.saveEvent();
@@ -168,8 +211,15 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
           <div style={{ display: 'flex', gap: 8 }}>
             <input type={evt.isAllDay ? 'date' : 'datetime-local'} className="glass-input"
-              value={evt.start ? format(evt.start as Date, "yyyy-MM-dd'T'HH:mm") : ''}
-              onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, start: new Date(e.target.value) }))}
+              value={evt.start ? format(evt.start as Date, evt.isAllDay ? 'yyyy-MM-dd' : "yyyy-MM-dd'T'HH:mm") : ''}
+              onChange={(e) => cal.setNewEvent((prev) => {
+                const start = parseWallInput(e.target.value, Boolean(evt.isAllDay));
+                return {
+                  ...prev,
+                  start,
+                  end: evt.isAllDay ? addWallDays(start, allDaySpan(prev.start as Date | undefined, prev.end as Date | undefined)) : prev.end,
+                };
+              })}
               style={{ flex: 1, fontSize: '0.85rem' }} />
             {!evt.isAllDay && <input type="datetime-local" className="glass-input"
               value={evt.end ? format(evt.end as Date, "yyyy-MM-dd'T'HH:mm") : ''}
@@ -179,9 +229,34 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
             <input type="checkbox" checked={evt.isAllDay || false}
-              onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, isAllDay: e.target.checked }))} />
+              onChange={(e) => cal.setNewEvent((prev) => {
+                const start = prev.start || cal.displayNow;
+                return {
+                  ...prev,
+                  isAllDay: e.target.checked,
+                  timeKind: e.target.checked ? 'all-day' : (prev.timeKind === 'all-day' ? 'zoned' : prev.timeKind),
+                  timeZone: e.target.checked ? null : (prev.timeZone || cal.displayTimeZone),
+                  end: e.target.checked ? addWallDays(start as Date, 1) : new Date((start as Date).getTime() + cal.calendarSettings.defaultEventDurationMinutes * 60000),
+                };
+              })} />
             All day
           </label>
+
+          {!evt.isAllDay && (
+            <label className="settings-field" style={{ margin: 0 }}>
+              <span>Event Time Zone</span>
+              <select className="glass-input glass-select" value={eventTimeZoneValue} onChange={event => handleEventTimeZoneChange(event.target.value)}>
+                <option value="__floating__">Floating time</option>
+                <option value="__utc__">UTC instant</option>
+                {supportedTimeZones().map(timeZone => <option key={timeZone} value={timeZone}>{timeZone.replace(/_/g, ' ')}</option>)}
+              </select>
+              {eventTimeKind === 'floating' ? (
+                <small role="note">Floating time keeps this wall time everywhere. Assigning a zone keeps the wall time and changes the represented instant.</small>
+              ) : (
+                <small>Changing zones preserves the instant. Stored instant: {eventInstantPreview?.replace('.000Z', 'Z')}</small>
+              )}
+            </label>
+          )}
 
           {/* Calendar selector */}
           {cal.calendars.length > 0 && (
@@ -245,7 +320,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                 <span>{g}</span>
                 {/* #2 Free/busy indicator */}
                 {cal.freeBusyLoading ? <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>checking...</span> :
-                  cal.freeBusy[g] && cal.freeBusy[g].some((b) => new Date(b.start) <= (evt.end as Date) && new Date(b.end) >= (evt.start as Date)) ?
+                  cal.freeBusy[g] && cal.freeBusy[g].some((b) => new Date(b.start) <= cal.draftWallDateToInstant(evt.end as Date) && new Date(b.end) >= cal.draftWallDateToInstant(evt.start as Date)) ?
                     <span style={{ color: '#f59e0b', fontSize: '0.7rem' }}>⚠ Busy</span> :
                     <span style={{ color: '#10b981', fontSize: '0.7rem' }}>Free</span>}
                 <button className="btn btn-ghost" onClick={() => setGuests(guests.filter((x) => x !== g))}

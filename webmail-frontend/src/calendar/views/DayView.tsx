@@ -1,6 +1,7 @@
-import { format, isSameDay, isToday, setHours, setMinutes, differenceInMinutes } from 'date-fns';
+import { format, isSameDay, setHours, setMinutes, differenceInMinutes } from 'date-fns';
 import type { useCalendar } from '../hooks/useCalendar';
 import type { CalendarEvent } from '../../shared/types';
+import { formatHourLabel, formatWallTime } from '../calendarTime';
 
 const HOUR_HEIGHT = 56;
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -29,21 +30,21 @@ export function DayView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const allDay = dayEvents.filter((e) => e.isAllDay || differenceInMinutes(e.end, e.start) >= 1440);
   const timed = dayEvents.filter((e) => !e.isAllDay && differenceInMinutes(e.end, e.start) < 1440);
 
-  const now = new Date();
-  const currentTimeTop = isToday(day) ? (now.getHours() * 60 + now.getMinutes()) / 60 * HOUR_HEIGHT : -1;
+  const now = cal.displayNow;
+  const currentTimeTop = isSameDay(day, cal.displayNow) ? (now.getHours() * 60 + now.getMinutes()) / 60 * HOUR_HEIGHT : -1;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Day header */}
       <div style={{
         textAlign: 'center', padding: '8px', borderBottom: '1px solid var(--border-glass)',
-        background: isToday(day) ? 'rgba(59,130,246,0.06)' : 'transparent',
+        background: isSameDay(day, cal.displayNow) ? 'rgba(59,130,246,0.06)' : 'transparent',
       }}>
         <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
           {format(day, 'EEEE')}
         </div>
-        <div style={{ fontSize: '1.4rem', fontWeight: isToday(day) ? 700 : 400,
-          color: isToday(day) ? 'var(--accent-primary)' : 'var(--text-primary)' }}>
+        <div style={{ fontSize: '1.4rem', fontWeight: isSameDay(day, cal.displayNow) ? 700 : 400,
+          color: isSameDay(day, cal.displayNow) ? 'var(--accent-primary)' : 'var(--text-primary)' }}>
           {format(day, 'MMM d, yyyy')}
         </div>
       </div>
@@ -81,14 +82,14 @@ export function DayView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                 height: HOUR_HEIGHT, fontSize: '0.65rem', color: 'var(--text-secondary)',
                 textAlign: 'right', paddingRight: 6, transform: 'translateY(-8px)',
               }}>
-                {h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`}
+                {formatHourLabel(h, cal.calendarSettings.clockFormat)}
               </div>
             ))}
           </div>
 
           {/* Day column */}
           <div style={{ flex: 1, position: 'relative', borderLeft: '1px solid var(--border-glass)',
-            background: isToday(day) ? 'rgba(59,130,246,0.02)' : 'transparent' }}>
+            background: isSameDay(day, cal.displayNow) ? 'rgba(59,130,246,0.02)' : 'transparent' }}>
             {HOURS.map((h) => (
               <div key={h} style={{
                 height: HOUR_HEIGHT, borderBottom: '1px solid var(--border-glass)',
@@ -109,14 +110,14 @@ export function DayView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
               <div key={evt.id || `${evt.title}-${evt.start.getTime()}`}
                 style={eventStyle(evt)}
                 onClick={(e) => { e.stopPropagation(); cal.editExistingEvent(evt); }}
-                title={`${evt.title}\n${format(evt.start, 'h:mm a')} – ${format(evt.end, 'h:mm a')}`}
+                title={`${evt.title}\n${formatWallTime(evt.start, cal.calendarSettings.clockFormat)} – ${formatWallTime(evt.end, cal.calendarSettings.clockFormat)}`}
               >
                 <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {evt.title || '(Untitled)'}
                 </div>
                 {differenceInMinutes(evt.end, evt.start) > 45 && (
                   <div style={{ fontSize: '0.65rem', opacity: 0.85 }}>
-                    {format(evt.start, 'h:mm a')}
+                    {formatWallTime(evt.start, cal.calendarSettings.clockFormat)}
                   </div>
                 )}
               </div>

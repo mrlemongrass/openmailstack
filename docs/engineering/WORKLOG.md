@@ -5574,3 +5574,43 @@ Turn new user feedback about calendar time, self-hosted/connected files, split-p
 ### Next recommended task
 
 Begin Track T0 with failing UTC/Baghdad/floating/all-day/DST fixtures and reproduce the web/macOS event discrepancy before editing the parser.
+
+## 2026-07-20 — Calendar time semantics, preferences, and clock
+
+Agent/tool: Codex
+Branch: `main`
+Starting fixed point: `dc816c1`
+Ending git state: implementation complete locally; interoperability validation and deployment pending
+
+### Selected task
+
+Fix Calendar UTC/`TZID`/floating/all-day semantics, apply System/Home timezone preferences throughout the current Calendar UI, and add the optional desktop header clock.
+
+### Acceptance criteria
+
+- [x] Parse UTC, IANA `TZID`, floating, and all-day values distinctly and carry event kind/original zone through the Calendar API.
+- [x] Resolve the Baghdad fixture to the correct instant and preserve local time for zoned recurrence across a DST boundary.
+- [x] Apply the active System/Home zone to Month, Week, Day, the mini-calendar, current-day/time markers, event display, editor, and free/busy query conversion.
+- [x] Serialize new timed events with explicit `TZID` and preserve existing UTC/zoned/floating/all-day semantics when editing.
+- [x] Make event timezone conversion explicit: zoned/UTC changes preserve the instant, floating assignment preserves wall time, and the draft previews the resulting wall time or instant before save.
+- [x] Persist and expose System/Home mode plus the optional desktop clock, honoring 12/24-hour format and device-zone changes on focus/visibility.
+- [x] Keep the Home-zone picker searchable, preserve exclusive all-day date ranges with calendar arithmetic, and surface settings failures with a retry path.
+- [x] Add focused backend/frontend regression coverage and a browser proof of the reported Baghdad display.
+
+### Proof / checks run
+
+- Backend focused parser/settings tests pass, including UTC, `TZID=Asia/Baghdad`, floating, all-day, legacy settings, invalid zones, and New York weekly recurrence across DST.
+- Backend 117/120 tests pass with three existing optional database skips. Frontend 27/27 tests, ESLint with zero warnings, TypeScript/Vite production build, backend TypeScript build, shell lint, full integration, memory hygiene, and `git diff --check` pass.
+- Mocked Chromium rendered an event stored at `2026-07-24T17:00:00Z` as `8:00 PM - 9:00 PM` under Home `Asia/Baghdad`, displayed the GMT+3 header clock/Calendar label, and preserved the instant while explicitly changing the event zone.
+- Desktop keyboard checks covered searchable Home-zone selection, clock toggling, and System/Home mode. A 390x844 mobile check rendered the optional clock in the Calendar toolbar, outside both the absent desktop header and bottom navigation. A simulated settings `503` surfaced the error and recovered through Retry; no flow produced unexpected console or page errors.
+- Week-view browser geometry confirms the current-time indicator is confined to the active timezone's current-day column rather than spanning the week.
+
+### Risks / decisions
+
+- Core behavior is implemented, but real macOS CalDAV, iOS ActiveSync, Scheduler, WebKit, exception/reminder, DST gap/overlap, custom/invalid `VTIMEZONE`, and deployed-artifact validation remain Track T3 gates.
+- Backend parsing/recurrence and browser projection/serialization remain separate deployable time modules. Matching Baghdad conversion tests guard their shared contract; any future timezone-math change must update both vectors until a safely deployable shared package exists.
+- No production data, mailbox state, settings row, service, configuration, or deployed artifact changed.
+
+### Next recommended task
+
+Run the Track T3 interoperability matrix against reversible test events, starting with macOS CalDAV and iOS ActiveSync, before enabling Calendar import or deploying broadly.

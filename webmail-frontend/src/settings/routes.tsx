@@ -8,6 +8,7 @@ import {
   defaultMailSettings,
   defaultCalendarSettings,
   defaultContactsSettings,
+  notifyCalendarSettingsChanged,
   type MailUserSettings,
   type CalendarUserSettings,
   type ContactsUserSettings,
@@ -122,7 +123,7 @@ function SettingsLoader() {
         if (cancelled) return;
 
         setMailSettings(mail);
-        setCalendarSettings(calendar);
+        setCalendarSettings({ ...defaultCalendarSettings, ...calendar });
         setContactsSettings(contacts);
         setAppearance(appearanceData);
         applyAppearancePreferences(appearanceData);
@@ -178,6 +179,7 @@ function SettingsLoader() {
 
   const handleCalendarSettingsChange = useCallback((settings: CalendarUserSettings) => {
     setCalendarSettings(settings);
+    notifyCalendarSettingsChanged(settings);
     debouncedSave('calendar', () => saveUserSettings('calendar', settings));
   }, [debouncedSave]);
 

@@ -38,8 +38,10 @@ export interface CalendarSettings {
     defaultEventDurationMinutes: number;
     defaultReminderMinutes: 0 | 5 | 10 | 15 | 30 | 60 | 1440;
     weekStartsOn: 0 | 1 | 6;
+    timeZoneMode: 'system' | 'home';
     timeZone: string;
     clockFormat: '12h' | '24h';
+    showHeaderClock: boolean;
     workingHoursStart: string;
     workingHoursEnd: string;
     visibleDays: number[];
@@ -98,8 +100,10 @@ export declare const settingsDefaults: {
         defaultEventDurationMinutes: number;
         defaultReminderMinutes: 10;
         weekStartsOn: 0;
+        timeZoneMode: "system";
         timeZone: string;
         clockFormat: "12h";
+        showHeaderClock: true;
         workingHoursStart: string;
         workingHoursEnd: string;
         visibleDays: number[];

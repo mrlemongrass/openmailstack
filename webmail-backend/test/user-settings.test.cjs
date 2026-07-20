@@ -69,7 +69,9 @@ test('normalizeSettings bounds calendar settings', () => {
     defaultEventDurationMinutes: 9999,
     defaultReminderMinutes: 1440,
     weekStartsOn: 6,
-    timeZone: 'America/Phoenix'
+    timeZoneMode: 'home',
+    timeZone: 'America/Phoenix',
+    showHeaderClock: false
   });
 
   assert.equal(normalized.defaultCalendarId, 42);
@@ -77,7 +79,28 @@ test('normalizeSettings bounds calendar settings', () => {
   assert.equal(normalized.defaultEventDurationMinutes, 480);
   assert.equal(normalized.defaultReminderMinutes, 1440);
   assert.equal(normalized.weekStartsOn, 6);
+  assert.equal(normalized.timeZoneMode, 'home');
   assert.equal(normalized.timeZone, 'America/Phoenix');
+  assert.equal(normalized.showHeaderClock, false);
+});
+
+test('normalizeSettings safely defaults calendar timezone preferences', () => {
+  const normalized = normalizeSettings('calendar', {
+    timeZoneMode: 'invalid',
+    timeZone: 'Not/A_Time_Zone',
+    showHeaderClock: 'yes'
+  });
+
+  assert.equal(normalized.timeZoneMode, 'system');
+  assert.equal(normalized.timeZone, 'UTC');
+  assert.equal(normalized.showHeaderClock, true);
+});
+
+test('normalizeSettings preserves a legacy saved timezone as the home zone', () => {
+  assert.equal(normalizeSettings('calendar', {}).timeZoneMode, 'system');
+  const normalized = normalizeSettings('calendar', { timeZone: 'Asia/Baghdad' });
+  assert.equal(normalized.timeZoneMode, 'home');
+  assert.equal(normalized.timeZone, 'Asia/Baghdad');
 });
 
 test('normalizeSettings accepts firstName and lastName sortBy for contacts', () => {

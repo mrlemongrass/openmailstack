@@ -18,7 +18,12 @@ const testModule = new Module(sourcePath, module);
 testModule.paths = module.paths;
 testModule._compile(compiled, sourcePath);
 
-const { getUserSettings, saveUserSettings } = testModule.exports;
+const { defaultCalendarSettings, getUserSettings, saveUserSettings } = testModule.exports;
+
+test('calendar defaults use the system zone and show the optional desktop clock', () => {
+  assert.equal(defaultCalendarSettings.timeZoneMode, 'system');
+  assert.equal(defaultCalendarSettings.showHeaderClock, true);
+});
 
 test('templates use the shared settings response and write contract', async () => {
   const originalFetch = global.fetch;

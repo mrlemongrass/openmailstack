@@ -1364,15 +1364,15 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     }
                 }
                 if (getChangesRequested) {
-                    const snapshot = await imap.getActiveSyncMailSnapshot(folderPath, (0, eas_mail_sync_1.filterTypeCutoff)(syncOptions.filterType), state?.highestModseq || '0', Object.keys(nextKnownItems).map(Number));
+                    const recoverLegacyAllMailFloor = syncOptions.filterType === 0 && minimumUid > 1;
+                    if (recoverLegacyAllMailFloor)
+                        nextHighestModseq = '0';
+                    const snapshot = await imap.getActiveSyncMailSnapshot(folderPath, (0, eas_mail_sync_1.filterTypeCutoff)(syncOptions.filterType), state?.highestModseq || '0', Object.keys(nextKnownItems).map(Number), recoverLegacyAllMailFloor);
                     if (syncKey !== '0' && state && state.uidValidity !== '0' && state.uidValidity !== snapshot.uidValidity) {
                         return sendMailSyncStatus('3');
                     }
-                    if (syncKey === '0' && !filterTypeSpecified) {
-                        const initialWindow = [...snapshot.eligibleUids].sort((a, b) => b - a).slice(0, syncOptions.windowSize);
-                        minimumUid = initialWindow.length ? Math.min(...initialWindow) : 1;
-                    }
-                    else if (filterTypeSpecified && (!state || state.filterType !== syncOptions.filterType || state.minimumUid > 1)) {
+                    if (syncOptions.filterType === 0
+                        || (filterTypeSpecified && (!state || state.filterType !== syncOptions.filterType || state.minimumUid > 1))) {
                         minimumUid = 1;
                     }
                     const delta = (0, eas_mail_sync_1.computeMailSyncDelta)({
@@ -1380,13 +1380,14 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                         allUids: snapshot.allUids,
                         eligibleUids: snapshot.eligibleUids,
                         changedReadFlags: snapshot.changedReadFlags,
+                        filterType: syncOptions.filterType,
                         windowSize: (0, eas_mail_sync_1.effectiveMailSyncWindow)(syncOptions, fetchServerIds.length),
                         minimumUid,
                     });
                     serverCommands = delta.commands;
                     nextKnownItems = delta.nextKnownItems;
                     moreAvailable = delta.moreAvailable;
-                    nextHighestModseq = delta.moreAvailable ? (state?.highestModseq || '0') : snapshot.highestModseq;
+                    nextHighestModseq = delta.moreAvailable ? nextHighestModseq : snapshot.highestModseq;
                     nextUidValidity = snapshot.uidValidity;
                 }
                 const bodyUids = Array.from(new Set([

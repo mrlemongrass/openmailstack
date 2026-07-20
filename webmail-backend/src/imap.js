@@ -123,11 +123,11 @@ class ImapService {
         await this.client.mailboxClose();
         return { changed, highestModseq };
     }
-    async getActiveSyncMailSnapshot(folderPath, cutoff, sinceModseq, knownUids) {
+    async getActiveSyncMailSnapshot(folderPath, cutoff, sinceModseq, knownUids, forceFullSnapshot = false) {
         const mbx = await this.client.mailboxOpen(folderPath);
         try {
             const parsedModseq = /^\d+$/.test(sinceModseq) ? BigInt(sinceModseq) : 0n;
-            if (!cutoff && mbx.highestModseq && parsedModseq > 0n && parsedModseq === mbx.highestModseq) {
+            if (!forceFullSnapshot && !cutoff && mbx.highestModseq && parsedModseq > 0n && parsedModseq === mbx.highestModseq) {
                 return {
                     uidValidity: mbx.uidValidity.toString(),
                     highestModseq: mbx.highestModseq.toString(),

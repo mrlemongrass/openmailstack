@@ -22,6 +22,7 @@ test('web move from Inbox emits Delete and destination folder emits Add', () => 
     allUids: [],
     eligibleUids: [],
     changedReadFlags: {},
+    filterType: 0,
     windowSize: 25,
   });
   const junk = computeMailSyncDelta({
@@ -29,6 +30,7 @@ test('web move from Inbox emits Delete and destination folder emits Add', () => 
     allUids: [7],
     eligibleUids: [7],
     changedReadFlags: {},
+    filterType: 0,
     windowSize: 25,
   });
 
@@ -44,6 +46,7 @@ test('web move from Inbox to Trash emits Delete from the source folder', () => {
     allUids: [],
     eligibleUids: [],
     changedReadFlags: {},
+    filterType: 0,
     windowSize: 25,
   });
 
@@ -51,12 +54,13 @@ test('web move from Inbox to Trash emits Delete from the source folder', () => {
   assert.equal(delta.moreAvailable, false);
 });
 
-test('ordinary no-change poll emits no commands and never backfills known history', () => {
+test('bounded-filter no-change poll emits no commands outside its stored floor', () => {
   const delta = computeMailSyncDelta({
     knownItems: { '90': 0, '91': 1 },
     allUids: [1, 2, 90, 91],
     eligibleUids: [1, 2, 90, 91],
     changedReadFlags: {},
+    filterType: 3,
     windowSize: 25,
     minimumUid: 90,
   });
@@ -84,6 +88,24 @@ test('ordinary no-change IMAP poll short-circuits before SEARCH ALL', async () =
   assert.deepEqual(snapshot.allUids, [90, 91]);
   assert.deepEqual(snapshot.eligibleUids, [90, 91]);
   assert.deepEqual(snapshot.changedReadFlags, {});
+});
+
+test('legacy all-mail floor forces one complete IMAP snapshot despite unchanged MODSEQ', async () => {
+  const { ImapService } = require('../src/imap.js');
+  const service = Object.create(ImapService.prototype);
+  let searched = false;
+  service.client = {
+    mailboxOpen: async () => ({ uidValidity: 10n, highestModseq: 20n }),
+    search: async () => { searched = true; return [1, 2, 90, 91]; },
+    fetch: async function* () {},
+    mailboxClose: async () => {},
+  };
+
+  const snapshot = await service.getActiveSyncMailSnapshot('INBOX', null, '20', [90, 91], true);
+
+  assert.equal(searched, true);
+  assert.deepEqual(snapshot.allUids, [1, 2, 90, 91]);
+  assert.deepEqual(snapshot.eligibleUids, [1, 2, 90, 91]);
 });
 
 test('hardDelete permanently deletes by UID without attempting a Trash move', async () => {
@@ -128,6 +150,7 @@ test('WindowSize bounds server commands and MoreAvailable exposes real pending w
     allUids: [10, 11, 12],
     eligibleUids: [10, 11, 12],
     changedReadFlags: {},
+    filterType: 0,
     windowSize: 2,
   });
 
@@ -143,11 +166,47 @@ test('WindowSize bounds server commands and MoreAvailable exposes real pending w
     allUids: [10, 11, 12],
     eligibleUids: [10, 11, 12],
     changedReadFlags: {},
+    filterType: 0,
     windowSize: 2,
   });
 
   assert.deepEqual(second.commands, [{ type: 'Add', uid: 10 }]);
   assert.equal(second.moreAvailable, false);
+});
+
+test('FilterType 0 pages past a legacy initial floor until all mail is synchronized', () => {
+  const allUids = Array.from({ length: 100 }, (_, index) => index + 1);
+  let knownItems = Object.fromEntries(
+    Array.from({ length: 25 }, (_, index) => [String(100 - index), 0]),
+  );
+
+  for (const pageEnd of [75, 50, 25]) {
+    const page = computeMailSyncDelta({
+      knownItems,
+      allUids,
+      eligibleUids: allUids,
+      changedReadFlags: {},
+      filterType: 0,
+      windowSize: 25,
+      minimumUid: 76,
+    });
+    assert.deepEqual(page.commands.map(command => command.uid),
+      Array.from({ length: 25 }, (_, index) => pageEnd - index));
+    assert.equal(page.moreAvailable, pageEnd !== 25);
+    knownItems = page.nextKnownItems;
+  }
+
+  const noChange = computeMailSyncDelta({
+    knownItems,
+    allUids,
+    eligibleUids: allUids,
+    changedReadFlags: {},
+    filterType: 0,
+    windowSize: 25,
+    minimumUid: 76,
+  });
+  assert.deepEqual(noChange.commands, []);
+  assert.equal(noChange.moreAvailable, false);
 });
 
 test('flag changes beyond WindowSize remain pending on the next Sync', () => {
@@ -156,6 +215,7 @@ test('flag changes beyond WindowSize remain pending on the next Sync', () => {
     allUids: [1, 2, 3],
     eligibleUids: [1, 2, 3],
     changedReadFlags: { '1': 1, '2': 1, '3': 1 },
+    filterType: 0,
     windowSize: 2,
   });
   assert.deepEqual(first.commands.map(command => command.uid), [1, 2]);
@@ -166,6 +226,7 @@ test('flag changes beyond WindowSize remain pending on the next Sync', () => {
     allUids: [1, 2, 3],
     eligibleUids: [1, 2, 3],
     changedReadFlags: { '1': 1, '2': 1, '3': 1 },
+    filterType: 0,
     windowSize: 2,
   });
   assert.deepEqual(second.commands, [{ type: 'Change', uid: 3, isRead: 1 }]);
@@ -178,6 +239,7 @@ test('FilterType expiry emits SoftDelete while true folder removal emits Delete'
     allUids: [20],
     eligibleUids: [],
     changedReadFlags: {},
+    filterType: 3,
     windowSize: 25,
   });
 
@@ -213,6 +275,7 @@ test('aggregate source budget reduces large pages and leaves pending work availa
     allUids: [1],
     eligibleUids: [1],
     changedReadFlags: {},
+    filterType: 0,
     windowSize: effectiveMailSyncWindow(largeBody, 1),
   });
   assert.deepEqual(delta.commands, []);

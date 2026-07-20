@@ -155,11 +155,12 @@ export class ImapService {
         cutoff: Date | null,
         sinceModseq: string,
         knownUids: number[],
+        forceFullSnapshot = false,
     ): Promise<ActiveSyncMailSnapshot> {
         const mbx = await this.client.mailboxOpen(folderPath);
         try {
             const parsedModseq = /^\d+$/.test(sinceModseq) ? BigInt(sinceModseq) : 0n;
-            if (!cutoff && mbx.highestModseq && parsedModseq > 0n && parsedModseq === mbx.highestModseq) {
+            if (!forceFullSnapshot && !cutoff && mbx.highestModseq && parsedModseq > 0n && parsedModseq === mbx.highestModseq) {
                 return {
                     uidValidity: mbx.uidValidity.toString(),
                     highestModseq: mbx.highestModseq.toString(),

@@ -36,7 +36,7 @@ export declare class ImapService {
         }[];
         highestModseq: string;
     }>;
-    getActiveSyncMailSnapshot(folderPath: string, cutoff: Date | null, sinceModseq: string, knownUids: number[]): Promise<ActiveSyncMailSnapshot>;
+    getActiveSyncMailSnapshot(folderPath: string, cutoff: Date | null, sinceModseq: string, knownUids: number[], forceFullSnapshot?: boolean): Promise<ActiveSyncMailSnapshot>;
     getActiveSyncMessages(folderPath: string, uids: number[], maxSourceBytes: number): Promise<ActiveSyncMailMessage[]>;
     private buildSearchQuery;
     searchMessages(folderPaths: string[], query: string, field?: MailSearchField, limit?: number): Promise<any[]>;

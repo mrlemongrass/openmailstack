@@ -43,6 +43,7 @@ interface ComputeMailSyncDeltaInput {
     allUids: number[];
     eligibleUids: number[];
     changedReadFlags: Record<string, MailReadState>;
+    filterType: number;
     windowSize: number;
     minimumUid?: number;
 }
@@ -181,8 +182,9 @@ export function computeMailSyncDelta(input: ComputeMailSyncDeltaInput): ComputeM
         }
     }
 
+    const minimumUid = input.filterType === 0 ? 1 : (input.minimumUid || 1);
     const additions = input.eligibleUids
-        .filter(uid => uid >= (input.minimumUid || 1) && known[String(uid)] === undefined)
+        .filter(uid => uid >= minimumUid && known[String(uid)] === undefined)
         .sort((a, b) => b - a);
     for (const uid of additions) {
         pending.push({ type: 'Add', uid });

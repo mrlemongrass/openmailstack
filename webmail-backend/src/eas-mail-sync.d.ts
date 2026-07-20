@@ -35,6 +35,7 @@ interface ComputeMailSyncDeltaInput {
     allUids: number[];
     eligibleUids: number[];
     changedReadFlags: Record<string, MailReadState>;
+    filterType: number;
     windowSize: number;
     minimumUid?: number;
 }

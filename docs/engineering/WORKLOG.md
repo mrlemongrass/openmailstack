@@ -5719,3 +5719,44 @@ The missing EAS origin timezone was the last known protocol blocker before a rec
 ### Next recommended task
 
 Run the documented reversible physical macOS Calendar and iOS ActiveSync create/edit/delete plus four-occurrence New York DST-crossing recurrence matrix, recording exact OS versions and observed web/client times.
+
+## 2026-07-20 OMS Web Calendar UID Repair During Physical Preflight
+
+### Task
+
+Diagnose the duplicate 20:00/20:30 event observed during the macOS 26.5.2 interoperability preflight, fix the bounded identity defect without altering live calendar data, deploy with rollback protection, and preserve an honest physical-client result.
+
+### Acceptance criteria
+
+- [x] Identify which client issued each write before assigning the failure to macOS Calendar or CalDAV.
+- [x] Preserve an existing event UID exactly from OMS Web serialization through the backend upsert.
+- [x] Keep complete recurring-event rules valid during edits.
+- [x] Add frontend and authenticated route regressions and pass the full local release gates.
+- [x] Deploy exact tested artifacts behind root-only rollback snapshots and pass production health checks.
+- [ ] Complete physical macOS create/edit/delete; the observed actions were OMS Web writes, so this remains open.
+
+### Findings and changes
+
+- Production access evidence showed both the original save and the 20:30 edit were browser `POST /api/apps/events` requests. macOS synchronized and displayed the event but did not issue either write.
+- The OMS Web serializer appended `@openmailstack` even when `editingEvent.id` already contained the suffix, changing the event identity and causing the backend upsert to insert a second row.
+- `buildCalendarEventIcal` now preserves existing UIDs, generates a suffix only for new events, and distinguishes complete stored `FREQ=...` rules from simple recurrence choices.
+- `extractIcalEventUid` treats VEVENT UIDs as opaque values, and `/api/apps/events` upserts that exact identity instead of trimming it.
+- A route-level regression saves an original and edited payload under the same UID and asserts one stored event with the edited data.
+
+### Proof / checks run
+
+- Backend: 135 total, 132 passed, zero failed, three expected optional database skips.
+- Frontend: 30/30 tests, ESLint, TypeScript, and Vite production build passed.
+- Full static/integration suite and `git diff --check` passed.
+- Independent Standards and Spec reviews reported no release blockers.
+- Production: all 13 targeted backend artifacts and the complete frontend `dist/` tree match the repository build; Nginx and all core services are active; `openmailstack` reports `NRestarts=0`; public web returned `200`, unauthenticated auth returned `401`, ActiveSync `OPTIONS` returned `200`, the post-restart warning journal was empty, and full staging smoke passed.
+
+### Safety / remaining risk
+
+- No production calendar row, mailbox, message, setting, schema, dependency, environment, Nginx, or systemd configuration changed. The two visible test events remain untouched pending deliberate client-side cleanup.
+- Frontend rollback: `/var/backups/openmailstack/calendar-uid-20260720T155807Z/web-root.tar.gz` (SHA-256 `6582e412b7909b2d18085169087deceba10df43d4bb5b8903b39f0fb0b6b53d8`).
+- Backend rollback: `/var/backups/openmailstack/calendar-uid-fcd6e987/backend-modules.tar.gz` (SHA-256 `6c7dde72b6d08c3f2e696543bb2f61f7f47f73e31f0dbdae3c485ea01712e336`).
+
+### Next recommended task
+
+Use macOS Calendar explicitly for every step: delete both current test events, create a fresh event, confirm the CalDAV PUT and OMS Web display, edit it, verify no duplicate, delete it, then run the New York DST-crossing recurrence case.

@@ -1030,3 +1030,13 @@ Future entry template:
 - Deployed: exact Calendar/settings backend artifacts and the current frontend test release are live; direct/public ActiveSync `OPTIONS`, web/auth boundaries, Nginx, services, clean post-restart journal, and complete staging smoke pass.
 - Safety: no production calendar, mailbox, settings row, schema, dependency, or configuration was changed. Root-only rollback snapshot: `/var/backups/openmailstack/calendar-timezone-20260720T150815Z`.
 - Remaining: physical macOS Calendar and iOS ActiveSync create/edit/delete plus DST-crossing recurrence, recurrence exceptions/reminders, and custom/invalid `VTIMEZONE`.
+
+## 2026-07-20 OMS Web Calendar Edit Identity Repair
+
+- Corrected: The physical-test event and its 20:30 edit were both saved by OMS Web, not created/edited by macOS Calendar. macOS only synchronized and displayed the server event, so physical macOS CRUD remains unproven.
+- Fixed: OMS Web no longer appends `@openmailstack` to an existing event UID. The UID remains opaque through frontend serialization and backend extraction/upsert, and editing a stored recurring series keeps its complete `FREQ=...` rule instead of producing `FREQ=FREQ=...`.
+- Regressed: Frontend tests cover existing/new UIDs and recurring serialization; an authenticated route harness proves two saves with one UID leave one stored event containing the edited payload.
+- Verified: Backend 132/135 with three optional database skips, frontend 30/30, ESLint, production builds, full integration, `git diff --check`, and independent Standards/Spec reviews pass.
+- Deployed: Commits `dec7d5d3` and `fcd6e987` are live. The 13 targeted backend artifacts and complete frontend tree match the tested repository; services, Nginx, public/auth/ActiveSync boundaries, clean warning journal, and full staging smoke pass.
+- Safety: No calendar row, mailbox, setting, schema, configuration, or dependency changed during deployment. The two existing test events remain untouched. Rollback snapshots: `/var/backups/openmailstack/calendar-uid-20260720T155807Z/web-root.tar.gz` and `/var/backups/openmailstack/calendar-uid-fcd6e987/backend-modules.tar.gz`.
+- Remaining: Restart the physical matrix with clearly identified macOS actions: delete the two existing test events through macOS, create a fresh macOS event, then edit/delete it and run the DST-crossing recurrence test.

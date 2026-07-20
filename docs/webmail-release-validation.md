@@ -294,3 +294,14 @@ Security:
 - Health: `openmailstack`, Nginx, and the Scheduler worker remain active; only `openmailstack` was restarted. Nginx syntax, frontend permissions, complete staging smoke, and post-restart warning/error audit pass.
 - Safety: No production session, settings row, mailbox, message, migration, dependency, or configuration was created or changed during validation.
 - Rollback: Root-only snapshot `/var/backups/openmailstack/20260720T113924Z_webmail_templates_contract`; frontend SHA-256 `91b5ba1c37b611e834034bff015cc099ef0286d5d60a7dbc0513c582f219b178`, backend SHA-256 `142b7b8adce233caffe78a095bf044ff56aa0f074cddef9917ed20e6d9002528`.
+
+## 2026-07-20 OMS Web Calendar Edit Identity Live Gate
+
+- Attribution: Server access evidence showed both the original event and 20:30 edit were OMS Web `POST /api/apps/events` writes. macOS Calendar only synchronized/displayed the event; physical macOS create/edit/delete remains pending.
+- Regression: Existing UIDs remain unchanged, new UIDs receive one OMS suffix, complete recurrence rules remain parseable, and an authenticated two-save route test retains one stored row with the edited payload.
+- Automated gates: Backend 132/135 with three optional database skips, frontend 30/30, ESLint, backend/frontend builds, full integration, `git diff --check`, and independent Standards/Spec reviews passed.
+- Release: Commits `dec7d5d3` and `fcd6e987` are live. Thirteen targeted backend files and the complete frontend tree exactly match repository artifacts.
+- Health: `openmailstack`, Nginx, and the Scheduler worker are active; backend `NRestarts=0`; Nginx syntax, public root `200`, unauthenticated auth `401`, ActiveSync `OPTIONS` `200`, empty warning journal, and full staging smoke pass.
+- Safety: No calendar event, mailbox, setting, schema, configuration, or dependency was modified by deployment. The two existing test events were not deleted or rewritten.
+- Rollback: Frontend `/var/backups/openmailstack/calendar-uid-20260720T155807Z/web-root.tar.gz`; backend `/var/backups/openmailstack/calendar-uid-fcd6e987/backend-modules.tar.gz`.
+- Remaining gate: perform create/edit/delete from macOS Calendar itself, then run the four-occurrence New York DST-crossing recurrence case.

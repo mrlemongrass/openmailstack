@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.schedulerHostAllowed = exports.schedulerRouter = void 0;
+exports.schedulerHostAllowed = exports.schedulerSlotFailureRecord = exports.schedulerRouter = void 0;
 const express_1 = require("express");
 const db_1 = require("../db");
 const auth_1 = require("../auth");
@@ -30,6 +30,34 @@ const requestHost = (req) => String(req.headers['x-forwarded-host'] || req.heade
     .trim()
     .toLowerCase()
     .replace(/:\d+$/, '');
+const boundedLogText = (value, limit) => String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .slice(0, limit);
+const logDate = (value) => Number.isNaN(value.getTime()) ? null : value.toISOString();
+const schedulerSlotFailureRecord = (error, context) => {
+    const details = error && typeof error === 'object' ? error : {};
+    const message = error instanceof Error
+        ? error.message
+        : typeof error === 'string' ? error : 'Unknown scheduler availability error';
+    return {
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        event: 'scheduler.slot_generation_failed',
+        host: boundedLogText(context.host, 255),
+        handle: boundedLogText(context.handle, 128),
+        slug: boundedLogText(context.slug, 128),
+        start: logDate(context.start),
+        end: logDate(context.end),
+        includeFull: context.includeFull,
+        privateAccess: context.privateAccess,
+        durationMs: Number.isFinite(context.durationMs) ? Math.max(0, Math.round(context.durationMs)) : 0,
+        errorName: boundedLogText(error instanceof Error ? error.name : details.name || 'Error', 80),
+        errorCode: boundedLogText(details.code, 80) || null,
+        sqlState: boundedLogText(details.sqlState, 16) || null,
+        message: boundedLogText(message, 500),
+    };
+};
+exports.schedulerSlotFailureRecord = schedulerSlotFailureRecord;
 const schedulerHostAllowed = (host, allowedHosts = config_1.schedulerConfig.allowedHosts) => (allowedHosts.includes(host.trim().toLowerCase().replace(/:\d+$/, '')));
 exports.schedulerHostAllowed = schedulerHostAllowed;
 const publicBoundary = (req, res, next) => {
@@ -601,11 +629,15 @@ exports.schedulerRouter.get('/public/scheduler/v1/profiles/:handle/events/:slug'
     }
 });
 exports.schedulerRouter.get('/public/scheduler/v1/profiles/:handle/events/:slug/slots', publicLimiter, publicBoundary, async (req, res) => {
+    const startedAt = Date.now();
+    const handle = String(req.params.handle);
+    const slug = String(req.params.slug);
+    const start = new Date(String(req.query.start || ''));
+    const end = new Date(String(req.query.end || ''));
+    const accessToken = privateAccessToken(req);
+    const includeFull = req.query.includeFull === 'true';
     try {
-        const start = new Date(String(req.query.start || ''));
-        const end = new Date(String(req.query.end || ''));
-        const accessToken = privateAccessToken(req);
-        const slots = await store.listSlots(String(req.params.handle), String(req.params.slug), start, end, accessToken, req.query.includeFull === 'true');
+        const slots = await store.listSlots(handle, slug, start, end, accessToken, includeFull);
         if (accessToken)
             res.set('Cache-Control', 'no-store');
         res.json({ success: true, slots });
@@ -615,6 +647,10 @@ exports.schedulerRouter.get('/public/scheduler/v1/profiles/:handle/events/:slug/
         if (/invalid availability range|cannot exceed 62 days/i.test(message)) {
             return res.status(400).json({ success: false, error: message });
         }
+        console.error(JSON.stringify((0, exports.schedulerSlotFailureRecord)(error, {
+            host: requestHost(req), handle, slug, start, end, includeFull,
+            privateAccess: Boolean(accessToken), durationMs: Date.now() - startedAt,
+        })));
         res.status(500).json({ success: false, error: 'Unable to load availability' });
     }
 });

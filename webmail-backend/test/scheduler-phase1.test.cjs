@@ -21,7 +21,7 @@ const {
     schedulerBookingActionPolicy,
     schedulerTokenHash,
 } = require('../src/scheduler/phase1.js');
-const { schedulerHostAllowed } = require('../src/scheduler/router.js');
+const { schedulerHostAllowed, schedulerSlotFailureRecord } = require('../src/scheduler/router.js');
 const { schedulerNotificationMails, schedulerTransportOptions } = require('../src/scheduler/worker.js');
 const {
     exclusionDateKeys,
@@ -231,6 +231,42 @@ test('host allowlist does not trust arbitrary request hosts', () => {
     assert.equal(schedulerHostAllowed('webmail.housevo.us', allowed), true);
     assert.equal(schedulerHostAllowed('mail.housevo.us:443', allowed), true);
     assert.equal(schedulerHostAllowed('attacker.example', allowed), false);
+});
+
+test('Scheduler slot failures produce bounded structured diagnostics without private access tokens', () => {
+    const error = Object.assign(new Error(`Illegal mix of collations\n${'x'.repeat(700)}`), {
+        code: 'ER_CANT_AGGREGATE_2COLLATIONS',
+        sqlState: 'HY000',
+        sql: 'SELECT private data that must not be logged',
+    });
+    const record = schedulerSlotFailureRecord(error, {
+        host: 'webmail.housevo.us',
+        handle: `thang\n${'y'.repeat(200)}`,
+        slug: 'discovery-call',
+        start: new Date('2026-07-20T18:00:00.000Z'),
+        end: new Date('2026-09-20T18:00:00.000Z'),
+        includeFull: false,
+        privateAccess: true,
+        durationMs: 42,
+    });
+
+    assert.equal(record.level, 'error');
+    assert.equal(record.event, 'scheduler.slot_generation_failed');
+    assert.match(record.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(record.host, 'webmail.housevo.us');
+    assert.equal(record.handle.includes('\n'), false);
+    assert.equal(record.handle.length, 128);
+    assert.equal(record.slug, 'discovery-call');
+    assert.equal(record.start, '2026-07-20T18:00:00.000Z');
+    assert.equal(record.end, '2026-09-20T18:00:00.000Z');
+    assert.equal(record.includeFull, false);
+    assert.equal(record.privateAccess, true);
+    assert.equal(record.durationMs, 42);
+    assert.equal(record.errorName, 'Error');
+    assert.equal(record.errorCode, 'ER_CANT_AGGREGATE_2COLLATIONS');
+    assert.equal(record.sqlState, 'HY000');
+    assert.equal(record.message.length, 500);
+    assert.equal(JSON.stringify(record).includes('SELECT private data'), false);
 });
 
 test('calendar projection contains stable UID, attendee, and cancellation state', () => {

@@ -42,11 +42,11 @@ Calendar interoperability preflight and guarded test release, 2026-07-20:
 | --- | --- | --- |
 | RFC 5545 time semantics | Pass locally | Backend and frontend golden vectors cover UTC, `Asia/Baghdad`, floating, all-day, New York spring gap/fall overlap, and zoned recurrence. Gap/overlap resolution is deterministic and a parsed end that would not follow its start falls back to the event duration instead of creating a zero/negative event. |
 | Reversible CalDAV | Pass locally | An in-memory Express lifecycle sends an Apple-style Baghdad VEVENT through create, HEAD, byte-for-byte GET, stale `If-Match` rejection, conditional update, and DELETE. The PUT ETag is stable on immediate HEAD/GET, and the deleted resource returns 404. No real calendar or mailbox is used. |
-| ActiveSync Calendar | Pass automated; physical DST pending | iOS-shaped timed/all-day payloads and simple daily/weekly/monthly/yearly recurrence convert to/from iCalendar. The 172-byte binary origin `Timezone` value round-trips fixed Baghdad plus DST-observing New York, Microsoft Pacific, and Windows Central fixtures while retaining local wall time. |
+| ActiveSync Calendar | Pass automated and physical iOS 26.5.2 | iOS-shaped timed/all-day payloads and simple daily/weekly/monthly/yearly recurrence convert to/from iCalendar. The 172-byte binary origin `TimeZone` value round-trips fixed Baghdad plus DST-observing New York, Microsoft Pacific, and Windows Central fixtures while retaining local wall time. Physical fixed-zone CRUD and DST-series create/edit/delete passed with automatic OMS Web reconciliation. |
 | Scheduler | Pass locally | Existing availability tests skip DST gaps, return both overlap instants, and project the same slots into Baghdad, Phoenix, and Tokyo while preserving buffers, notice, and midnight boundaries. |
 | Chromium/WebKit | Pass locally | Real Chromium and WebKit desktop/mobile runs render `2026-07-24T17:00:00Z` as `8:00 PM - 9:00 PM` in Home `Asia/Baghdad`, preserve the instant when converting to Phoenix, confine the current-time line to the current day, and exercise System/Home plus the keyboard clock toggle with no unexpected page/console errors. Screenshots are under ignored `output/playwright/`. |
 | Full repository gates | Pass | Backend 133 total: 130 pass and three expected optional database skips; frontend 28/28; ESLint; TypeScript/Vite production build; shell syntax; full integration; focused EAS tests; independent Standards/Spec reviews; and `git diff --check` pass. The authenticated Calendar route smoke skipped because no smoke credentials were supplied. |
-| Named Apple clients | Partial pass | macOS 26.5.2 CalDAV single-event create/edit/delete and four-occurrence New York DST projection passed. Physical iOS ActiveSync DST recurrence remains open. |
+| Named Apple clients | Pass for Calendar | macOS 26.5.2 CalDAV and iOS 26.5.2 ActiveSync single-event create/edit/delete plus four-occurrence New York DST projection passed. Standalone macOS Mail/Contacts remain separate rows. |
 
 Production rollout decision: guarded test release deployed; broad completion remains on hold. Root-only rollback snapshot `/var/backups/openmailstack/calendar-timezone-20260720T150815Z` contains the complete pre-release backend source and web root. Deployed backend runtime files match the tested repository, direct/public ActiveSync `OPTIONS` return `200`, public web returns `200`, unauthenticated `/api/auth/me` returns `401`, Nginx and services are healthy, post-restart journal review is clean, and full staging smoke passes. Physical macOS Calendar CRUD and DST projection now pass; complete the physical iOS ActiveSync DST recurrence row before marking Track T complete.
 
@@ -304,7 +304,7 @@ Security:
 - Health: `openmailstack`, Nginx, and the Scheduler worker are active; backend `NRestarts=0`; Nginx syntax, public root `200`, unauthenticated auth `401`, ActiveSync `OPTIONS` `200`, empty warning journal, and full staging smoke pass.
 - Safety: No calendar event, mailbox, setting, schema, configuration, or dependency was modified by deployment. The two existing test events were not deleted or rewritten.
 - Rollback: Frontend `/var/backups/openmailstack/calendar-uid-20260720T155807Z/web-root.tar.gz`; backend `/var/backups/openmailstack/calendar-uid-fcd6e987/backend-modules.tar.gz`.
-- Physical follow-up: the macOS gate described here is completed in the next section; physical iOS ActiveSync DST recurrence remains open.
+- Physical follow-up: the macOS and iOS Calendar gates described here are completed in later sections on the same date.
 
 ## 2026-07-20 macOS Calendar Physical CRUD, DST, And Recurrence UI Gate
 
@@ -325,3 +325,14 @@ Security:
 - ActiveSync preflight: direct and public `OPTIONS /Microsoft-Server-ActiveSync` return `200`, advertise EAS 14.0/14.1, and include `Sync`, `FolderSync`, `Ping`, and `Provision`. The authenticated calendar smoke skipped because credentials were not supplied or retrieved.
 - Safety/rollback: no production row, mailbox, calendar, booking, schema, dependency, or configuration changed. Root-only archive `/var/backups/openmailstack/scheduler-slot-logging-8c9f443-20260720T181559Z/backend-router.tar.gz`, SHA-256 `56d81b33e50ccc5cb373598b96cd49b7c1027fe4e5ffed9fb28a954c117ab672`.
 - Physical gate: record the iOS version and selected Calendar timezone, then run the single Baghdad event create/edit/delete sequence before the New York DST-crossing recurrence sequence.
+
+## 2026-07-20 iOS 26.5.2 ActiveSync Calendar CRUD And DST Live Gate
+
+- Client/setup: physical iOS 26.5.2 Calendar through the existing Exchange account with Calendar Time Zone `Asia/Baghdad`.
+- Fixed-zone lifecycle: iOS created one July 29, 2026 20:00-20:30 Baghdad event, edited the same UID/title to 20:30-21:00, and deleted it. OMS Web showed exactly one current version at each step and removed it automatically; the server ended with zero event rows and one tombstone.
+- DST lifecycle: iOS created one 09:00 America/New_York weekly series for March 5, 12, 19, and 26, 2027. OMS Web displayed 17:00 Baghdad before US DST and 16:00 afterward. A whole-series 09:30 edit retained the UID and displayed 17:30/16:30; one ActiveSync `Delete` removed the row, created one tombstone, and cleared OMS Web automatically.
+- Protocol repair: physical iOS uses the case-sensitive EAS Calendar tag `TimeZone`. Commit `52033bf` corrected the converter's `Timezone` spelling and added captured-payload plus real-WBXML-writer regressions. Commit `bbbd49e` ensures a partial iOS `Change` that omits `Recurrence` preserves the existing rule as `RRULE:...`, not a malformed bare `FREQ=...` line.
+- Automated proof: final backend 137/140 with three expected optional database skips; focused EAS Calendar/WBXML 14/14; full integration and `git diff --check` passed.
+- Live proof: deployed source/runtime hashes matched the repository; direct/public ActiveSync `OPTIONS` returned `200`/EAS 14.1; backend stayed active with `NRestarts=0`; warning journal and full staging smoke passed.
+- Safety: only user-created physical test events were written and deleted. The agent made no direct production calendar mutation. Rollbacks are `/var/backups/openmailstack/eas-timezone-tag-52033bf8-20260720T185910Z` and `/var/backups/openmailstack/eas-recurrence-preservation-bbbd49ed-20260720T191354Z`.
+- Remaining Calendar time gates: recurrence exceptions/reminders and custom or invalid `VTIMEZONE`.

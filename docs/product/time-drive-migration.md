@@ -1,6 +1,6 @@
 # OpenMailStack Time, Drive, And Migration Roadmap
 
-Status: `Track T deployed - macOS CalDAV CRUD/DST passed; physical iOS DST recurrence pending`
+Status: `Track T deployed - macOS CalDAV and iOS ActiveSync CRUD/DST passed; exception/reminder/custom-VTIMEZONE gates pending`
 
 Research date: 2026-07-20
 
@@ -50,7 +50,7 @@ Unless the owner decides otherwise, implementation should use these defaults:
 
 ## 4. Track T — Time Correctness And Clock
 
-Implementation status (2026-07-20): T0-T2 plus most of T3 are implemented and deployed. Apple-shaped CalDAV lifecycle tests, EAS `TIME_ZONE_INFORMATION`, Scheduler availability, deterministic DST vectors, and real Chromium/WebKit pass. Physical macOS 26.5.2 CalDAV single-event create/edit/delete and a four-occurrence New York weekly series across DST also pass in OMS Web. T3 remains open for physical iOS DST recurrence, recurrence exceptions/reminders, and custom or invalid `VTIMEZONE`.
+Implementation status (2026-07-20): T0-T2 plus most of T3 are implemented and deployed. Apple-shaped CalDAV lifecycle tests, EAS `TIME_ZONE_INFORMATION`, Scheduler availability, deterministic DST vectors, and real Chromium/WebKit pass. Physical macOS 26.5.2 CalDAV and iOS 26.5.2 ActiveSync single-event create/edit/delete plus four-occurrence New York weekly series across DST also pass in OMS Web. T3 remains open for recurrence exceptions/reminders and custom or invalid `VTIMEZONE`.
 
 ### 4.1 Required time model
 
@@ -126,10 +126,10 @@ Local preflight status, 2026-07-20:
 - Passed: real Chromium and WebKit desktop/mobile Calendar and Settings flows, including `17:00Z` displayed as `20:00 Asia/Baghdad`, Home/System selection, optional clock, current-day-only time line, and instant-preserving event-zone conversion.
 - Passed: an in-memory reversible CalDAV lifecycle using an Apple-style Baghdad event and strong conditional requests; the test creates, HEADs, reads byte-for-byte, rejects a stale ETag, updates, and deletes the event.
 - Passed: iOS-shaped ActiveSync single/all-day conversions plus simple recurrence mapping, and Scheduler DST/Baghdad/Phoenix/Tokyo availability projection.
-- Passed: EAS recurring meetings encode/decode the 172-byte little-endian origin `Timezone` value; fixed Baghdad, New York, Microsoft Pacific, and Windows Central fixtures preserve local wall time across DST. CLDR Windows-to-IANA names are accepted only when their binary rules match.
+- Passed: EAS recurring meetings encode/decode the 172-byte little-endian origin `TimeZone` value; fixed Baghdad, New York, Microsoft Pacific, and Windows Central fixtures preserve local wall time across DST. CLDR Windows-to-IANA names are accepted only when their binary rules match.
 - Passed: the tested Calendar backend/frontend are live behind a root-only rollback snapshot; local/direct/public ActiveSync `OPTIONS`, public web/auth boundaries, exact backend artifacts, Nginx, services, journal audit, and full staging smoke pass without production calendar mutation.
 - Passed named-client gate: macOS 26.5.2 CalDAV created, edited, and deleted one zoned event without duplication; OMS Web updated automatically. A New York weekly series on March 1, 8, 15, and 22 retained 09:00 local time, displaying 17:00 Baghdad before US DST and 16:00 afterward. macOS required an End Repeat date of March 23 to include March 22, consistent with its exclusive end-date UI behavior.
-- Open named-client gate: physical iOS ActiveSync DST-crossing recurrence still needs create/edit/delete validation against the deployed route.
+- Passed named-client gate: iOS 26.5.2 ActiveSync created, edited, and deleted one Baghdad event under one UID with automatic OMS Web reconciliation. A 09:00 America/New_York weekly series on March 5, 12, 19, and 26, 2027 displayed at 17:00 Baghdad before US DST and 16:00 afterward; the whole-series 09:30 edit displayed at 17:30/16:30 under the same UID, and deletion produced one tombstone with automatic OMS Web removal.
 
 ## 5. Track F — OMS Drive And Connected Files
 

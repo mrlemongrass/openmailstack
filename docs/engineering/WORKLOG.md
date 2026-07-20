@@ -5648,13 +5648,13 @@ Run a reversible pre-production Track T3 matrix for macOS-shaped CalDAV, iOS-sha
 
 ### Risks / decisions
 
-- Do not deploy yet. ActiveSync recurring events still need binary origin `Timezone` encoding/decoding; without it, a series that crosses DST can shift local wall time on iOS.
+- Do not deploy yet. ActiveSync recurring events still need binary origin `TimeZone` encoding/decoding; without it, a series that crosses DST can shift local wall time on iOS.
 - The disposable Apple/iOS-shaped protocol fixtures do not pass the named macOS Calendar or physical iOS rows. Those clients must still run create/edit/delete and DST-crossing recurrence against the deployed route.
 - Recurrence exceptions, reminders, and custom/invalid `VTIMEZONE` remain open Track T3 cases.
 
 ### Next recommended task
 
-Implement and fixture-test the EAS Calendar `Timezone` blob in both directions, then run the reversible physical macOS Calendar/iOS ActiveSync matrix. If that passes, perform a guarded deployment with rollback snapshot and deployed-artifact checks.
+Implement and fixture-test the EAS Calendar `TimeZone` blob in both directions, then run the reversible physical macOS Calendar/iOS ActiveSync matrix. If that passes, perform a guarded deployment with rollback snapshot and deployed-artifact checks.
 
 ## 2026-07-20 — EAS timezone interoperability and guarded test release
 
@@ -5665,7 +5665,7 @@ Ending git state: clean after implementation, review, deployment, and documentat
 
 ### Selected task
 
-Implement EAS Calendar `Timezone` binary encoding/decoding, lock DST-crossing recurrence behavior with regression fixtures, harden the reversible Calendar smoke, and deploy a rollback-protected test release so physical macOS Calendar and iOS ActiveSync can exercise the real route.
+Implement EAS Calendar `TimeZone` binary encoding/decoding, lock DST-crossing recurrence behavior with regression fixtures, harden the reversible Calendar smoke, and deploy a rollback-protected test release so physical macOS Calendar and iOS ActiveSync can exercise the real route.
 
 ### Why this task
 
@@ -5678,7 +5678,7 @@ The missing EAS origin timezone was the last known protocol blocker before a rec
 - `webmail-backend/src/windows-timezones.ts`
   - Added the complete CLDR 48 territory-`001` Windows-to-IANA mapping; mapped names are accepted only when their binary rules match.
 - `webmail-backend/src/eas-calendar.ts`
-  - Added outbound origin `Timezone`, inbound zoned wall-time serialization, all-day omission, and existing-zone preservation on partial changes.
+  - Added outbound origin `TimeZone`, inbound zoned wall-time serialization, all-day omission, and existing-zone preservation on partial changes.
 - `webmail-backend/src/calendar-format.ts`
   - Reused the existing wall-time formatter and bounded its cache.
 - `webmail-backend/test/eas-calendar.test.cjs`
@@ -5807,11 +5807,11 @@ Complete the reversible physical macOS Calendar CalDAV CRUD and DST-crossing rec
 
 - Deployment changed static frontend assets only. No backend restart, production event row, mailbox, setting, schema, dependency, environment, Nginx, or systemd configuration was changed.
 - Root-only rollback archive: `/var/backups/openmailstack/calendar-recurrence-ui-20260720T173444Z/web-root.tar.gz`; SHA-256 `d8a18bca77935ed8f3c5cc102538e075200049c6bbc5d22ee7626d5d9fb9fef5`.
-- The physical iOS ActiveSync DST recurrence gate, recurrence exceptions/reminders, and custom/invalid `VTIMEZONE` remain open. The macOS DST test series remains until the user deliberately edits/deletes it.
+- The physical iOS ActiveSync DST recurrence gate passes in the later entry on this date. Recurrence exceptions/reminders and custom/invalid `VTIMEZONE` remain open. The macOS DST test series remains until the user deliberately edits/deletes it.
 
 ### Next recommended task
 
-After the user confirms the live recurrence presentation, edit the macOS DST series as a whole and verify all four projected times under the same UID, then delete the series and verify automatic OMS Web removal. Continue with physical iOS ActiveSync DST recurrence afterward.
+Complete deliberate macOS DST-series edit/delete cleanup when convenient. The physical iOS ActiveSync DST gate passes in the later entry; next add recurrence-exception/reminder and custom-`VTIMEZONE` fixtures.
 
 ## 2026-07-20 Scheduler Public Availability Recovery
 
@@ -5876,7 +5876,7 @@ Add privacy-bounded structured logging for unexpected public Scheduler slot-gene
 - [x] Cover both the record shape and real Express route behavior with regressions.
 - [x] Deploy only the Scheduler router artifacts behind a root-only rollback snapshot.
 - [x] Pass direct/public ActiveSync route and focused EAS timezone preflights.
-- [ ] Complete the physical iOS ActiveSync single-event create/edit/delete and DST-crossing recurrence matrix.
+- [x] Complete the physical iOS ActiveSync single-event create/edit/delete and DST-crossing recurrence matrix.
 
 ### Changes and proof
 
@@ -5894,3 +5894,50 @@ Add privacy-bounded structured logging for unexpected public Scheduler slot-gene
 ### Next physical action
 
 Record the exact iOS version and active Calendar timezone, then use the existing Exchange account to create one temporary Baghdad event from iOS. Confirm it in OMS Web before editing or deleting it. After single-event CRUD passes, create the four-occurrence New York series when the iOS version exposes an event timezone; otherwise use the documented outbound-EAS fallback.
+
+## 2026-07-20 Physical iOS ActiveSync Calendar CRUD And DST Gate
+
+Agent/tool: Codex with user-operated physical device
+Branch: `main`
+Implementation commits: `52033bf`, `bbbd49e`
+
+### Selected task
+
+Complete physical iOS ActiveSync Calendar single-event CRUD and a DST-crossing recurring-series matrix against production, correcting only protocol defects proven by the live payloads.
+
+### Acceptance criteria
+
+- [x] Create, edit, and delete one fixed-zone event from iOS under one UID with automatic OMS Web reconciliation.
+- [x] Create four weekly 09:00 America/New_York occurrences spanning US DST and verify the Baghdad projection changes without moving New York wall time.
+- [x] Edit the whole series under the same UID and preserve the four-occurrence DST projection.
+- [x] Delete the whole series through ActiveSync and verify one tombstone plus automatic OMS Web removal.
+- [x] Cover every discovered converter defect with a failing-then-passing regression that reaches the real WBXML boundary where applicable.
+- [x] Deploy only tested runtime artifacts behind root-only rollback archives and pass production health gates.
+
+### Physical results
+
+- Client: iOS 26.5.2 Calendar through the existing Exchange/ActiveSync account; Calendar Time Zone was set to `Asia/Baghdad`.
+- Fixed-zone CRUD: iOS created `OMS iOS EAS CRUD 1` for July 29, 2026 at 20:00-20:30 Baghdad. OMS Web displayed one event. iOS renamed/moved the same UID to 20:30-21:00, OMS Web showed one edited event, and iOS deletion removed it automatically with one tombstone.
+- DST series: iOS created `OMS iOS EAS DST Weekly` at 09:00-09:30 America/New_York on March 5, 12, 19, and 26, 2027. One stored zoned VEVENT expanded to 17:00 Baghdad on March 5/12 and 16:00 on March 19/26.
+- Whole-series edit: iOS changed the title to `OMS iOS EAS DST Weekly Edited` and time to 09:30-10:00. The UID remained unchanged, the database retained one row, and OMS Web displayed 17:30 Baghdad on March 5/12 and 16:30 on March 19/26.
+- Whole-series delete: iOS sent one ActiveSync `Delete`; the event count became zero, one tombstone was recorded, and OMS Web removed all four occurrences automatically.
+- An accidental 2026 test series was cleaned up from iOS. Its first post-repair normalization exposed the partial-Change recurrence defect below; the final client delete removed the row and recorded its tombstone. The agent did not rewrite or delete either production test row directly.
+
+### Defects found and fixed
+
+- The EAS Calendar codepage defines the case-sensitive tag `TimeZone`, while `eas-calendar.ts` read and emitted `Timezone`. A physical iOS payload was therefore ignored inbound, and outbound Sync failed in `WbxmlWriter` with `Unknown tag Timezone for page 4`.
+- Commit `52033bf` corrects both tag strings. Tests use the captured physical iOS timezone blob to prove New York wall-time preservation across DST and send the converter output through the real WBXML writer so codepage spelling cannot drift again.
+- On an iOS partial `Change` without a `Recurrence` node, `ParsedIcalEvent.recurrence.raw` was reused as a complete iCalendar line even though it contains only the rule value. This stored bare `FREQ=...` instead of `RRULE:FREQ=...`.
+- Commit `bbbd49e` restores the `RRULE:` property prefix when preserving an existing rule. Its regression failed with the exact malformed line before the one-line correction and proves the rewritten event remains parseable as weekly recurrence.
+
+### Proof / deployment
+
+- Final backend suite: 140 total, 137 passed, zero failed, three expected optional database skips. Focused EAS Calendar/WBXML tests passed 14/14; the full integration suite and `git diff --check` passed.
+- Both releases deployed only `eas-calendar.ts`, generated runtime JavaScript, and the source map where changed; each restarted only `openmailstack`.
+- Repository/live hashes matched after each deployment. Direct and public ActiveSync `OPTIONS` returned `200` with EAS 14.1; `openmailstack` remained active with `NRestarts=0`; post-restart warning journals were empty; full staging smoke passed.
+- TimeZone rollback: `/var/backups/openmailstack/eas-timezone-tag-52033bf8-20260720T185910Z/backend-eas-calendar.tar.gz`, SHA-256 `1edd7c7c1f4deef56019dcaa37610bdd7f94667bb3149545019bd3e36d71b429`.
+- Recurrence-preservation rollback: `/var/backups/openmailstack/eas-recurrence-preservation-bbbd49ed-20260720T191354Z/backend-eas-calendar.tar.gz`, SHA-256 `1b2e5d3933ae0bf7bf6a08e0c3aaa194904f5307767750134a12e4ec88d2d43e`.
+
+### Remaining risk / next task
+
+Track T remains open for recurrence exceptions/reminders and custom or invalid `VTIMEZONE`. The next bounded task is to add exception/reminder golden fixtures at the iCalendar/EAS boundaries, then run the matching physical edit-one-occurrence and reminder round trip before beginning Calendar migration work.

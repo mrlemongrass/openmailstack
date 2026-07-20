@@ -273,9 +273,9 @@ Exit criteria before moving on:
 - Manual smoke: login, open Settings > Mail, edit signature, compose, send draft or test mail, reload, verify values remain.
 - Frontend lint/build and backend test/build pass.
 
-## Milestone 4: Calendar Settings Product Pass 🟡
+## Milestone 4: Calendar Settings Product Pass ✅
 
-Status: core timezone/settings, EAS recurring-event origin-timezone support, disposable CalDAV/ActiveSync/Scheduler/DST, Chromium/WebKit, and guarded production deployment pass as of 2026-07-20; recurrence exceptions/reminders, custom `VTIMEZONE`, and the new physical macOS/iOS matrix remain.
+Status: completed and revalidated 2026-07-20. Core timezone/settings, EAS recurring-event origin-timezone support, disposable CalDAV/ActiveSync/Scheduler/DST, Chromium/WebKit, guarded production deployment, and physical macOS 26.5.2 CalDAV plus iOS 26.5.2 ActiveSync CRUD/DST pass. Recurrence exceptions/reminders and custom `VTIMEZONE` continue under Track T rather than blocking this settings milestone.
 
 Purpose: make Calendar settings affect the actual calendar experience instead of only existing as standalone preferences.
 
@@ -295,7 +295,7 @@ Reopened correction work:
 - Distinguish UTC, `TZID`, floating, and all-day iCalendar values at the protocol boundary.
 - Apply the persisted timezone to every Calendar view, event editor, current-time marker, and current-time clock.
 - Add explicit `System` and fixed `Home` timezone modes instead of treating the saved IANA value as if it already controls rendering.
-- Validate the same event through web Calendar, disposable Apple-shaped CalDAV and iOS-shaped ActiveSync payloads, Scheduler projection, real Chromium/WebKit engines, deployed artifacts, and physical macOS/iOS clients. The disposable, browser, and deployed-artifact rows pass; the new physical-client rows remain open.
+- Validate the same event through web Calendar, disposable Apple-shaped CalDAV and iOS-shaped ActiveSync payloads, Scheduler projection, real Chromium/WebKit engines, deployed artifacts, and physical macOS/iOS clients. All named rows pass as of 2026-07-20.
 - Follow Track T in `docs/product/time-drive-migration.md`; calendar import must wait for its protocol fixtures.
 
 Exit criteria before moving on:

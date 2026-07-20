@@ -1019,12 +1019,12 @@ Future entry template:
 - Changed: Extracted ActiveSync Calendar conversion from `index.ts` into `eas-calendar.ts`, added iOS-shaped timed/all-day round trips, and mapped simple daily/weekly/monthly/yearly recurrence fields in both directions.
 - Verified: Scheduler gap/overlap/cross-zone availability tests pass. Real Chromium and WebKit desktop/mobile runs show `17:00Z` as 20:00 Baghdad, preserve the instant during Phoenix conversion, exercise System/Home plus the keyboard clock toggle, confine the current-time line to the active day, and emit no unexpected page/console errors.
 - Gates: Focused 26/26, backend 123 pass plus three expected optional database skips, frontend 28/28, ESLint, production build, shell syntax, full integration, and `git diff --check` pass. Playwright WebKit runtime dependencies were installed only on the development/test host.
-- Held: Nothing was deployed and no production data, mailbox, calendar, service, or configuration changed. EAS recurring-event origin `Timezone`, recurrence exceptions/reminders, custom `VTIMEZONE`, physical macOS/iOS, and deployed-artifact validation remain before rollout.
+- Held: Nothing was deployed and no production data, mailbox, calendar, service, or configuration changed. EAS recurring-event origin `TimeZone`, recurrence exceptions/reminders, custom `VTIMEZONE`, physical macOS/iOS, and deployed-artifact validation remain before rollout.
 
 ## 2026-07-20 EAS Timezone Codec And Guarded Calendar Test Release
 
 - Added: exact 172-byte EAS `TIME_ZONE_INFORMATION` encoding/decoding, fixed/DST rule derivation, binary-rule validation, bounded caches/fallbacks, and CLDR 48 Windows-to-IANA mapping with the required Unicode notice.
-- Preserved: inbound recurring events become zoned iCalendar wall time, outbound zoned events carry `Timezone`, all-day events omit it, and changes without a timezone retain the existing event zone.
+- Preserved: inbound recurring events become zoned iCalendar wall time, outbound zoned events carry `TimeZone`, all-day events omit it, and changes without a timezone retain the existing event zone.
 - Regressed: fixed Baghdad, New York DST round trip, Microsoft Pacific fixture, Windows Central DST, unnamed rules, malformed/unknown blobs, all-day, recurrence/body, and reversible smoke ownership/cleanup.
 - Verified: backend 130/133 with three optional DB skips, frontend 28/28, ESLint/build, shell/integration, independent Standards/Spec reviews, and `git diff --check` pass. The authenticated calendar smoke skipped without credentials.
 - Deployed: exact Calendar/settings backend artifacts and the current frontend test release are live; direct/public ActiveSync `OPTIONS`, web/auth boundaries, Nginx, services, clean post-restart journal, and complete staging smoke pass.
@@ -1067,3 +1067,12 @@ Future entry template:
 - Verified: Backend 134/137 with three expected optional skips, focused EAS Calendar/Sync 13/13, full integration/Scheduler guards, exact live router hashes, 140 Discovery Call slots, expected range `400`, active zero-restart services, empty warning journal, and staging smoke pass.
 - ActiveSync: Direct/public EAS 14.0/14.1 `OPTIONS` pass. The authenticated Calendar smoke skipped without credentials; the new physical iOS CRUD/DST gate is ready for the user-operated device.
 - Deployed: Commit `8c9f443`; rollback `/var/backups/openmailstack/scheduler-slot-logging-8c9f443-20260720T181559Z/backend-router.tar.gz`, SHA-256 `56d81b33e50ccc5cb373598b96cd49b7c1027fe4e5ffed9fb28a954c117ab672`.
+
+## 2026-07-20 Physical iOS ActiveSync Calendar CRUD And DST
+
+- Physical pass: iOS 26.5.2 with Calendar Time Zone `Asia/Baghdad` created, edited, and deleted one fixed-zone event under one UID with automatic OMS Web updates. A four-occurrence 09:00 America/New_York weekly series rendered at 17:00 Baghdad on March 5/12, 2027 and 16:00 on March 19/26; its whole-series 09:30 edit retained one UID and rendered at 17:30/16:30 before one tombstone-backed delete cleared OMS Web.
+- Fixed: EAS Calendar's case-sensitive protocol tag is `TimeZone`. Commit `52033bf` corrects inbound/outbound converter spelling and adds a captured physical iOS blob regression plus real WBXML writer coverage.
+- Fixed: A partial iOS `Change` that omits `Recurrence` now preserves the existing rule with its required `RRULE:` prefix. Commit `bbbd49e` adds a failing-then-passing regression for the live malformed bare-`FREQ` symptom.
+- Verified: final backend 137/140 with three expected optional database skips, focused EAS 14/14, full integration, exact production artifact hashes, direct/public EAS 14.1 `OPTIONS`, zero backend restarts, empty warning journal, and full staging smoke pass.
+- Safety: the user created/deleted all physical test objects; the agent did not directly mutate production calendar rows. Root-only rollback archives are `/var/backups/openmailstack/eas-timezone-tag-52033bf8-20260720T185910Z` and `/var/backups/openmailstack/eas-recurrence-preservation-bbbd49ed-20260720T191354Z`.
+- Remaining: recurrence exceptions/reminders and custom or invalid `VTIMEZONE` stay open under Track T.

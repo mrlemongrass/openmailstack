@@ -1020,3 +1020,13 @@ Future entry template:
 - Verified: Scheduler gap/overlap/cross-zone availability tests pass. Real Chromium and WebKit desktop/mobile runs show `17:00Z` as 20:00 Baghdad, preserve the instant during Phoenix conversion, exercise System/Home plus the keyboard clock toggle, confine the current-time line to the active day, and emit no unexpected page/console errors.
 - Gates: Focused 26/26, backend 123 pass plus three expected optional database skips, frontend 28/28, ESLint, production build, shell syntax, full integration, and `git diff --check` pass. Playwright WebKit runtime dependencies were installed only on the development/test host.
 - Held: Nothing was deployed and no production data, mailbox, calendar, service, or configuration changed. EAS recurring-event origin `Timezone`, recurrence exceptions/reminders, custom `VTIMEZONE`, physical macOS/iOS, and deployed-artifact validation remain before rollout.
+
+## 2026-07-20 EAS Timezone Codec And Guarded Calendar Test Release
+
+- Added: exact 172-byte EAS `TIME_ZONE_INFORMATION` encoding/decoding, fixed/DST rule derivation, binary-rule validation, bounded caches/fallbacks, and CLDR 48 Windows-to-IANA mapping with the required Unicode notice.
+- Preserved: inbound recurring events become zoned iCalendar wall time, outbound zoned events carry `Timezone`, all-day events omit it, and changes without a timezone retain the existing event zone.
+- Regressed: fixed Baghdad, New York DST round trip, Microsoft Pacific fixture, Windows Central DST, unnamed rules, malformed/unknown blobs, all-day, recurrence/body, and reversible smoke ownership/cleanup.
+- Verified: backend 130/133 with three optional DB skips, frontend 28/28, ESLint/build, shell/integration, independent Standards/Spec reviews, and `git diff --check` pass. The authenticated calendar smoke skipped without credentials.
+- Deployed: exact Calendar/settings backend artifacts and the current frontend test release are live; direct/public ActiveSync `OPTIONS`, web/auth boundaries, Nginx, services, clean post-restart journal, and complete staging smoke pass.
+- Safety: no production calendar, mailbox, settings row, schema, dependency, or configuration was changed. Root-only rollback snapshot: `/var/backups/openmailstack/calendar-timezone-20260720T150815Z`.
+- Remaining: physical macOS Calendar and iOS ActiveSync create/edit/delete plus DST-crossing recurrence, recurrence exceptions/reminders, and custom/invalid `VTIMEZONE`.

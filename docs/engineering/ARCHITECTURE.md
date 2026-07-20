@@ -1067,8 +1067,9 @@ This is a high-importance area and must not be assumed complete.
 Current Calendar interoperability seam, verified locally 2026-07-20:
 
 - `webmail-backend/src/caldav.ts` implements the native CalDAV collection/resource routes. Event resources support GET/HEAD, conditional PUT with stable content ETags, DELETE, PROPFIND, and REPORT against the Calendar event store.
-- `webmail-backend/src/eas-calendar.ts` is the testable ActiveSync Calendar adapter used by the embedded `/Microsoft-Server-ActiveSync` route in `webmail-backend/src/index.ts`. It converts EAS UTC/date-only payloads and simple recurrence fields to and from iCalendar.
-- EAS recurring-event origin-timezone blob encoding/decoding, recurrence exceptions, and reminders are not complete. Treat physical Apple-client behavior and the release matrix as required gates even when disposable protocol tests pass.
+- `webmail-backend/src/eas-calendar.ts` is the testable ActiveSync Calendar adapter used by the embedded `/Microsoft-Server-ActiveSync` route in `webmail-backend/src/index.ts`. It converts EAS UTC/date-only payloads, simple recurrence fields, and recurring-event origin timezones to and from iCalendar.
+- `webmail-backend/src/eas-timezone.ts` encodes and decodes the 172-byte EAS `TIME_ZONE_INFORMATION` value, validates candidate IANA/Windows names against the decoded bias and transition rules, and uses bounded caches/fallbacks. `windows-timezones.ts` carries the CLDR 48 territory-`001` map under the Unicode notice in `THIRD_PARTY_NOTICES.md`.
+- Recurrence exceptions, reminders, and custom/invalid `VTIMEZONE` behavior are not complete. Treat physical Apple-client behavior and the release matrix as required gates even when disposable protocol tests and the deployed route pass.
 
 Agents should locate and document:
 

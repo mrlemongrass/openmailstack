@@ -275,7 +275,7 @@ Exit criteria before moving on:
 
 ## Milestone 4: Calendar Settings Product Pass 🟡
 
-Status: core timezone/settings plus disposable CalDAV/ActiveSync/Scheduler/DST and Chromium/WebKit validation pass locally as of 2026-07-20; ActiveSync recurring-event origin-timezone support, recurrence exceptions/reminders, custom `VTIMEZONE`, physical-client, and deployment validation remain.
+Status: core timezone/settings, EAS recurring-event origin-timezone support, disposable CalDAV/ActiveSync/Scheduler/DST, Chromium/WebKit, and guarded production deployment pass as of 2026-07-20; recurrence exceptions/reminders, custom `VTIMEZONE`, and the new physical macOS/iOS matrix remain.
 
 Purpose: make Calendar settings affect the actual calendar experience instead of only existing as standalone preferences.
 
@@ -295,7 +295,7 @@ Reopened correction work:
 - Distinguish UTC, `TZID`, floating, and all-day iCalendar values at the protocol boundary.
 - Apply the persisted timezone to every Calendar view, event editor, current-time marker, and current-time clock.
 - Add explicit `System` and fixed `Home` timezone modes instead of treating the saved IANA value as if it already controls rendering.
-- Validate the same event through web Calendar, disposable Apple-shaped CalDAV and iOS-shaped ActiveSync payloads, Scheduler projection, and real Chromium/WebKit engines before physical macOS/iOS and deployed-artifact validation. The disposable matrix passes; the physical-client rows remain open.
+- Validate the same event through web Calendar, disposable Apple-shaped CalDAV and iOS-shaped ActiveSync payloads, Scheduler projection, real Chromium/WebKit engines, deployed artifacts, and physical macOS/iOS clients. The disposable, browser, and deployed-artifact rows pass; the new physical-client rows remain open.
 - Follow Track T in `docs/product/time-drive-migration.md`; calendar import must wait for its protocol fixtures.
 
 Exit criteria before moving on:

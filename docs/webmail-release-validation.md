@@ -36,19 +36,19 @@ Rspamd hardening snapshot, 2026-07-14:
 - Pass: Recovery tests cover failures within and between probes, systemd crash restarts, controlled restart baselines, three-failure threshold, 15-minute cooldown, and reset.
 - Pass: Live systemd timer, map timestamp stability, artifact equality, controlled Rspamd restart, empty Postfix queue, and full staging smoke passed.
 
-Calendar interoperability preflight, 2026-07-20 (local and disposable only):
+Calendar interoperability preflight and guarded test release, 2026-07-20:
 
 | Area | Status | Evidence |
 | --- | --- | --- |
 | RFC 5545 time semantics | Pass locally | Backend and frontend golden vectors cover UTC, `Asia/Baghdad`, floating, all-day, New York spring gap/fall overlap, and zoned recurrence. Gap/overlap resolution is deterministic and a parsed end that would not follow its start falls back to the event duration instead of creating a zero/negative event. |
 | Reversible CalDAV | Pass locally | An in-memory Express lifecycle sends an Apple-style Baghdad VEVENT through create, HEAD, byte-for-byte GET, stale `If-Match` rejection, conditional update, and DELETE. The PUT ETag is stable on immediate HEAD/GET, and the deleted resource returns 404. No real calendar or mailbox is used. |
-| ActiveSync Calendar | Partial | iOS-shaped timed/all-day payloads and simple daily/weekly/monthly/yearly recurrence convert to/from iCalendar with UTC instants. Recurring-event binary origin `Timezone` encoding/decoding is not implemented, so a physical iOS series spanning DST remains a rollout blocker. |
+| ActiveSync Calendar | Pass automated; physical pending | iOS-shaped timed/all-day payloads and simple daily/weekly/monthly/yearly recurrence convert to/from iCalendar. The 172-byte binary origin `Timezone` value round-trips fixed Baghdad plus DST-observing New York, Microsoft Pacific, and Windows Central fixtures while retaining local wall time. |
 | Scheduler | Pass locally | Existing availability tests skip DST gaps, return both overlap instants, and project the same slots into Baghdad, Phoenix, and Tokyo while preserving buffers, notice, and midnight boundaries. |
 | Chromium/WebKit | Pass locally | Real Chromium and WebKit desktop/mobile runs render `2026-07-24T17:00:00Z` as `8:00 PM - 9:00 PM` in Home `Asia/Baghdad`, preserve the instant when converting to Phoenix, confine the current-time line to the current day, and exercise System/Home plus the keyboard clock toggle with no unexpected page/console errors. Screenshots are under ignored `output/playwright/`. |
-| Full repository gates | Pass | Backend 126 total: 123 pass and three expected optional database skips; frontend 28/28; ESLint; TypeScript/Vite production build; shell syntax; full integration; and focused 26-test CalDAV/ActiveSync/Calendar/Scheduler suite pass. `shellcheck` is not installed. |
+| Full repository gates | Pass | Backend 133 total: 130 pass and three expected optional database skips; frontend 28/28; ESLint; TypeScript/Vite production build; shell syntax; full integration; focused EAS tests; independent Standards/Spec reviews; and `git diff --check` pass. The authenticated Calendar route smoke skipped because no smoke credentials were supplied. |
 | Named Apple clients | Not run in this preflight | This matrix used Apple/iOS-shaped payloads, not macOS Calendar or a physical iPhone. Keep the real-device rows below unchanged until those clients complete the round trip against the deployed routes. |
 
-Production rollout decision: hold. Complete EAS recurring-event origin-timezone support and the physical macOS Calendar/iOS ActiveSync round trip before deploying this Calendar change.
+Production rollout decision: guarded test release deployed; broad completion remains on hold. Root-only rollback snapshot `/var/backups/openmailstack/calendar-timezone-20260720T150815Z` contains the complete pre-release backend source and web root. Deployed backend runtime files match the tested repository, direct/public ActiveSync `OPTIONS` return `200`, public web returns `200`, unauthenticated `/api/auth/me` returns `401`, Nginx and services are healthy, post-restart journal review is clean, and full staging smoke passes. No production calendar, mailbox, settings row, schema, dependency, or configuration was changed. Complete physical macOS Calendar and iOS ActiveSync create/edit/delete plus DST-crossing recurrence before marking Track T complete.
 
 ## Clean VM Gate
 
@@ -75,7 +75,7 @@ substitute for Apple, Android, or Thunderbird client behavior.
 
 ### Live Server Preflight
 
-Last checked: 2026-07-11 against `mail.housevo.us`.
+Last checked: 2026-07-20 against `mail.housevo.us`.
 
 | Area | Status | Evidence |
 | --- | --- | --- |
@@ -85,6 +85,7 @@ Last checked: 2026-07-11 against `mail.housevo.us`.
 | Public DNS | Pass | External DNS lookup confirmed `housevo.us` MX points to `mail.housevo.us`; `mail`, `autodiscover`, and `webmail` resolve to the public server address. |
 | Web routes | Pass | `/` returns 200; `/api/auth/me` returns 401 unauthenticated; Roundcube `/webmail/` returns 200. |
 | ActiveSync preflight | Pass | `OPTIONS /Microsoft-Server-ActiveSync` returns 200 and advertises EAS 14.0/14.1 commands. |
+| Calendar timezone test release | Pass operationally | The deployed EAS adapter and timezone codec match the tested repository artifacts; fixed/DST fixtures pass locally, and direct/public `OPTIONS`, web/auth boundaries, Nginx, services, post-restart logs, and full staging smoke pass. Physical Apple-client rows remain separate. |
 | Autodiscover | Pass | `autodiscover.housevo.us` returns MobileSync URL `https://mail.housevo.us/Microsoft-Server-ActiveSync`. |
 | SMTP submission health | Pass | Live submission port returns `220 mail.housevo.us ESMTP Postfix (Debian/GNU)` within the Admin health probe's 8s timeout. |
 | Rspamd filtering health | Pass | The one-minute monitor completes both a normal-worker scan and real Postfix-path Milter transaction, persists cross-probe worker generations, and rate-limits Rspamd-only recovery. Repeated post-deploy probes added zero fatal signals. |
@@ -119,6 +120,31 @@ test mailbox password in this file.
 | macOS Mail/Calendar/Contacts | Add IMAP account in Mail with SMTP submission, send and receive a self-message. | Add CalDAV account in Calendar through discovery or fallback URL, create/edit/delete an event both ways. | Add CardDAV account in Contacts through discovery or fallback URL, create/edit/delete a contact both ways. | Not run | Keep mail, calendar, and contacts as separate IMAP/CalDAV/CardDAV accounts. |
 | Android mail plus DAVx5 | Add IMAP/SMTP account in the chosen mail app, send and receive a self-message. | Add CalDAV in DAVx5, verify synced calendar, create/edit/delete an Android event and confirm in web calendar. | Add CardDAV in DAVx5, verify synced address book, create/edit/delete an Android contact and confirm in web contacts. | Not run | Use DAVx5 with the discovery URL first; fall back to `/caldav/` and `/carddav/` if discovery fails. |
 | Thunderbird desktop | Add IMAP/SMTP account, send and receive a self-message. | Add network calendar with CalDAV discovery/fallback URL, create/edit/delete an event both ways. | Add CardDAV address book with discovery/fallback URL, create/edit/delete a contact both ways. | Not run | Record Thunderbird version because DAV behavior can vary by release. |
+
+### Calendar Timezone Physical Gate
+
+Record exact macOS/iOS versions, selected client timezone, web display timezone,
+and observed values. Use a dedicated temporary calendar when the client allows
+it, and delete every test event/series after verification.
+
+1. On macOS Calendar over CalDAV, create a single zoned event, confirm it in OMS
+   Web Calendar and iOS, edit its title/time, confirm the update, then delete it
+   and confirm it disappears everywhere.
+2. Enable macOS Calendar timezone support. Create `OMS TZ macOS 2027` at 09:00
+   `America/New_York`, weekly on Friday from 2027-03-05 for four occurrences.
+   With OMS display set to `Asia/Baghdad`, March 5/12 must show 17:00 and March
+   19/26 must show 16:00. Edit the series to 09:30 and expect 17:30/16:30, then
+   delete the series and confirm removal from web and iOS.
+3. On physical iOS over ActiveSync, create a single Baghdad event, confirm it in
+   web/macOS, edit it, confirm the update, then delete it everywhere.
+4. If the iOS version exposes event timezone or Calendar timezone override,
+   repeat the New York four-occurrence series from iOS and verify the same
+   17:00-to-16:00 Baghdad shift. If it does not, use the macOS/web-created New
+   York series to validate outbound EAS and an iOS-created Baghdad series to
+   validate inbound fixed-zone EAS.
+5. Review fresh ActiveSync/CalDAV logs for errors without copying event content
+   or credentials into the validation record. Do not share or record the account
+   password.
 
 ### Per-Client Checks
 

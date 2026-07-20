@@ -5655,3 +5655,67 @@ Run a reversible pre-production Track T3 matrix for macOS-shaped CalDAV, iOS-sha
 ### Next recommended task
 
 Implement and fixture-test the EAS Calendar `Timezone` blob in both directions, then run the reversible physical macOS Calendar/iOS ActiveSync matrix. If that passes, perform a guarded deployment with rollback snapshot and deployed-artifact checks.
+
+## 2026-07-20 — EAS timezone interoperability and guarded test release
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean (`main` ahead of `origin/main`)
+Ending git state: clean after implementation, review, deployment, and documentation commits
+
+### Selected task
+
+Implement EAS Calendar `Timezone` binary encoding/decoding, lock DST-crossing recurrence behavior with regression fixtures, harden the reversible Calendar smoke, and deploy a rollback-protected test release so physical macOS Calendar and iOS ActiveSync can exercise the real route.
+
+### Why this task
+
+The missing EAS origin timezone was the last known protocol blocker before a recurring event could retain its local wall time through a DST transition on iOS. Physical devices cannot validate the fix until the tested backend is available on the production endpoint.
+
+### Changes made
+
+- `webmail-backend/src/eas-timezone.ts`
+  - Added exact 172-byte little-endian EAS timezone codec, IANA rule derivation, rule validation, bounded caches, and safe fallback behavior.
+- `webmail-backend/src/windows-timezones.ts`
+  - Added the complete CLDR 48 territory-`001` Windows-to-IANA mapping; mapped names are accepted only when their binary rules match.
+- `webmail-backend/src/eas-calendar.ts`
+  - Added outbound origin `Timezone`, inbound zoned wall-time serialization, all-day omission, and existing-zone preservation on partial changes.
+- `webmail-backend/src/calendar-format.ts`
+  - Reused the existing wall-time formatter and bounded its cache.
+- `webmail-backend/test/eas-calendar.test.cjs`
+  - Added raw binary and DST recurrence fixtures for Baghdad, New York, Microsoft Pacific, and Windows Central plus malformed/unknown/all-day cases.
+- `tests/integration/calendar_sync_smoke.sh`
+  - Added CalDAV/EAS DST-crossing route checks and collision-safe owned-calendar cleanup.
+- `THIRD_PARTY_NOTICES.md`
+  - Added the required Unicode License v3 notice for the CLDR mapping.
+- Canonical roadmap, architecture, validation, worklog, and `.shared_memory`
+  - Recorded the deployed test release and kept physical-client completion explicit.
+
+### Proof / checks run
+
+- `rtk npm --prefix webmail-backend test`
+  - 133 total: 130 passed, zero failed, three optional database tests skipped.
+- `rtk npm --prefix webmail-frontend test`, `run lint`, and `run build`
+  - 28/28 tests passed; ESLint and the TypeScript/Vite production build passed.
+- Focused EAS/calendar tests, backend build, shell syntax, integration, `git diff --check`, and two independent Standards/Spec reviews passed.
+- The authenticated `calendar_sync_smoke.sh` route test skipped because `OMS_SMOKE_USER` and `OMS_SMOKE_PASSWORD` were not supplied; no credential was retrieved or recorded.
+- Production direct/public ActiveSync `OPTIONS` returned `200`; public web returned `200`; unauthenticated `/api/auth/me` returned `401`; Nginx, services, artifact equality, post-restart journal review, and `tests/integration/staging_smoke.sh ./config.conf` passed.
+
+### Acceptance criteria
+
+- [x] Encode and decode the EAS `TIME_ZONE_INFORMATION` payload with raw byte assertions.
+- [x] Preserve fixed-zone and DST-observing recurrence wall time in both conversion directions.
+- [x] Resolve mainstream Windows timezone names without exhaustive IANA scanning.
+- [x] Keep smoke cleanup reversible and ownership-safe.
+- [x] Deploy the exact tested runtime behind a root-only rollback snapshot and pass operational gates.
+- [ ] Complete physical macOS Calendar and iOS ActiveSync create/edit/delete plus DST-crossing recurrence; requires user-operated Apple hardware.
+
+### Risks / notes
+
+- No production calendar, mailbox, message, settings row, schema, dependency, environment, Nginx, or systemd configuration was changed.
+- Root-only rollback snapshot: `/var/backups/openmailstack/calendar-timezone-20260720T150815Z`.
+- Recurrence exceptions, reminders, and custom/invalid `VTIMEZONE` remain separate Track T cases.
+- The CLDR map is versioned data. Future updates must retain the Unicode notice and binary-rule validation.
+
+### Next recommended task
+
+Run the documented reversible physical macOS Calendar and iOS ActiveSync create/edit/delete plus four-occurrence New York DST-crossing recurrence matrix, recording exact OS versions and observed web/client times.

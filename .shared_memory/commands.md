@@ -104,6 +104,16 @@ rtk node --test webmail-frontend/test/calendar-time.test.cjs
 
 These fixtures model Apple-style CalDAV and iOS-shaped ActiveSync payloads but do not replace the physical-client matrix in `docs/webmail-release-validation.md`.
 
+Calendar timezone release checks:
+
+```bash
+rtk node --test webmail-backend/test/calendar-format.test.cjs webmail-backend/test/eas-calendar.test.cjs
+rtk curl -fsS -o /dev/null -w '%{http_code}\n' -X OPTIONS http://127.0.0.1:20000/Microsoft-Server-ActiveSync
+rtk curl -fsS -o /dev/null -w '%{http_code}\n' -X OPTIONS --resolve mail.housevo.us:443:127.0.0.1 https://mail.housevo.us/Microsoft-Server-ActiveSync
+```
+
+For the physical DST matrix, create a weekly `America/New_York` series at 09:00 on 2027-03-05 with four occurrences. In `Asia/Baghdad` it should display at 17:00 on March 5/12 and 16:00 on March 19/26 because New York changes offset on March 14. Run create/edit/delete from macOS Calendar over CalDAV and physical iOS over ActiveSync; record exact client versions and do not mark the rows passed from scripted payloads alone.
+
 `mail_sync_smoke.sh` uses an IMAP client configured for cleartext/STARTTLS-style
 port 143, not implicit-TLS IMAPS on 993. Keep real device setup on public IMAPS
 993 with SSL/TLS.

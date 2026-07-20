@@ -5528,3 +5528,49 @@ Deploy the templates settings contract repair and prove the production artifacts
 ### Next recommended task
 
 Have a user with an already-owned browser session open Compose once and confirm Templates loads without a console error; no privileged session manipulation is required.
+
+## 2026-07-20 — Time, OMS Drive, and Migration roadmap
+
+Agent/tool: Codex
+Branch: `main`
+Starting fixed point: `a2883919`
+Ending git state: documentation-only roadmap ready for owner decisions
+
+### Selected task
+
+Turn new user feedback about calendar time, self-hosted/connected files, split-pane file interaction, and Google/Microsoft/iCloud migration into an implementation-ready roadmap grounded in the current repository and provider contracts.
+
+### Acceptance criteria
+
+- [x] Identify whether the reported time mismatch is a display preference or a protocol correctness issue.
+- [x] Define system/home timezone behavior and an optional current-time clock without weakening all-day, floating, `TZID`, or UTC semantics.
+- [x] Define a bounded OMS Drive product rather than a second groupware suite.
+- [x] Define one capability-aware file-provider and cross-app transfer contract for OMS Drive and external providers.
+- [x] Sequence direct contact/calendar migration with preview, idempotency, resumability, and a clear one-time-versus-sync boundary.
+- [x] Record product decisions requiring owner confirmation and update canonical roadmap/settings/project memory.
+
+### Findings and plan
+
+- Calendar settings persist an IANA timezone, but `useCalendar`, Calendar views, and `EventModal` operate on browser-local JavaScript dates and do not load that preference.
+- `calendar-format.ts` parses every timed iCalendar value with `Date.UTC(...)`, ignoring `Z` versus `TZID` versus floating semantics. Track T therefore precedes the visible clock work and every calendar-import path.
+- `AppShell`, existing resizable panels, and existing Mail/Calendar/Notes attachments provide a bounded seam for a shell-level, resizable file tray.
+- OMS Drive is planned as optional install plus Admin entitlement, dedicated metadata/blob storage, quota/scan/audit/backup boundaries, and attach-copy as the default transfer behavior.
+- Nextcloud/OpenCloud can share a WebDAV adapter. Google Drive and OneDrive have official web picker/API paths. Direct persistent iCloud Drive browsing remains a feasibility spike; Apple Files/browser upload and guided vCard/ICS migration are the initial fallback.
+- Migration Center is a one-time, reviewed, resumable copy first. Continuous bidirectional synchronization remains a separate later system with explicit conflict and deletion semantics.
+
+### Proof / checks run
+
+- Queried the current repository graph and inspected the real Calendar parser/hook/views/editor, Calendar settings API/UI, `AppShell`, dependencies, attachment paths, and import routes.
+- Cross-checked RFC 5545 and official Google, Microsoft, Nextcloud, OpenCloud, and Apple documentation current on 2026-07-20.
+- A context-free reader review identified and then rechecked migration side-effect safety, Drive v1 boundaries, floating-event conversion, provider failure gates, and source-specific migration fidelity; the roadmap now makes those explicit.
+- `ROADMAP.md`, `settings_plan.md`, `.shared_memory`, and this worklog now match the observed incomplete timezone behavior and proposed delivery order.
+- Scheduler documentation guard, whitespace scan for the new roadmap, and `git diff --check` pass.
+
+### Risks / decisions
+
+- Owner confirmation is still needed for clock default, secondary timezone timing, OMS Drive naming/navigation, attach-copy default, one-time migration boundary, iCloud Drive requirement, first-release storage drivers, and Admin provider controls.
+- No application behavior or production state changed.
+
+### Next recommended task
+
+Begin Track T0 with failing UTC/Baghdad/floating/all-day/DST fixtures and reproduce the web/macOS event discrepancy before editing the parser.

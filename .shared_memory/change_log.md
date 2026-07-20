@@ -995,3 +995,11 @@ Future entry template:
 - Health: Nginx syntax, active services, frontend `755/644` modes, full staging smoke, and warning-or-higher backend journal checks pass.
 - Safety: No migration, production authentication-session change, mailbox/message change, dependency installation, configuration change, or Scheduler-worker restart occurred.
 - Rollback: Root-only snapshot `/var/backups/openmailstack/20260720T113924Z_webmail_templates_contract`; frontend archive SHA-256 `91b5ba1c37b611e834034bff015cc099ef0286d5d60a7dbc0513c582f219b178`, backend archive SHA-256 `142b7b8adce233caffe78a095bf044ff56aa0f074cddef9917ed20e6d9002528`.
+
+## 2026-07-20 Time, OMS Drive, And Migration Roadmap
+
+- Planned: Added `docs/product/time-drive-migration.md` with three ordered tracks: Calendar time correctness/preferences, optional OMS Drive plus connected providers and a cross-app file tray, and a resumable one-time Migration Center.
+- Corrected: Reopened Calendar timezone hardening and Settings Milestone 4 in `ROADMAP.md` and `settings_plan.md`; the persisted timezone exists but is not applied by the Calendar app, and the backend parser currently collapses RFC 5545 UTC/`TZID`/floating forms into UTC.
+- Anchored: Reused the current `AppShell`, resizable Calendar/Notes layouts, Mail/Calendar/Notes attachment entry points, contacts vCard/CSV import, and Scheduler opt-in/Admin-entitlement pattern rather than proposing a suite rewrite.
+- Researched: Verified official iCalendar, Google Drive/People/Calendar, Microsoft OneDrive/Graph, Nextcloud/OpenCloud WebDAV, and Apple export/File Provider documentation. Direct persistent iCloud Drive browsing remains a feasibility spike; browser/Apple Files upload is the fallback.
+- Safety: Documentation and project-memory changes only. No application code, dependency, schema, production data, service, configuration, or deployed artifact changed.

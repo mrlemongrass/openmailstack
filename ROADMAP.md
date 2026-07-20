@@ -68,15 +68,17 @@ The contacts and notes apps have been extracted into their own directories with 
 - ❌ Table support and code blocks.
 - ❌ Sort options (currently by updated date only).
 - ❌ Reminders/due dates on notes.
-- ❌ File attachments on notes.
+- ✅ File attachments on notes.
 - ❌ Undo/redo buttons in editor.
 - ❌ Archive (third state between active and trash).
 
-## 3. Calendar Hardening ✅ (2026-06-29)
+## 3. Calendar Hardening 🟡 (Reopened 2026-07-20)
+
+The earlier hardening pass remains valuable, but user feedback and source inspection reopened timezone correctness. The saved Calendar timezone is not currently applied by the Calendar UI, and the backend parser collapses UTC, `TZID`, and floating values into UTC. Track T in `docs/product/time-drive-migration.md` is now the highest-priority Calendar work.
 
 - ✅ Replace prompt-based calendar creation with the same dialog quality used for calendar edit/delete.
 - ✅ Improve event creation and editing with move, drag, resize, calendar switching, and clearer validation.
-- ✅ Harden recurring events, recurrence exceptions, reminders (VALARM), attendees (ATTENDEE), free/busy fields (TRANSP), and timezone conversion (TZID).
+- 🟡 Harden recurring events, recurrence exceptions, reminders (VALARM), attendees (ATTENDEE), free/busy fields (TRANSP), and timezone conversion. General behavior exists, but RFC 5545 UTC/`TZID`/floating/all-day distinctions and display-timezone projection need regression repair.
 - ✅ Add calendar search, agenda/list view, import/export, and subscribed calendars (background fetch).
 - ✅ Continue hardening CalDAV and ActiveSync sync tokens, tombstones, conflicts, and real-device behavior (sync-collection REPORT, calendar_tombstones, EAS recurrence mapping, EAS Picture/CompanyName/JobTitle).
 
@@ -94,15 +96,15 @@ The contacts and notes apps have been extracted into their own directories with 
 - ✅ Improve conversation threading, undo send, delayed send, and quota display.
 - ✅ Add better attachment handling for inline images, previews, office documents (MIME type support), and draft reliability (beforeunload handler).
 
-## 5. Settings ✅ (2026-06-29)
+## 5. Settings 🟡 (Calendar Time Reopened 2026-07-20)
 
-`settings_plan.md` remains the detailed milestone plan. All milestones are complete:
+`settings_plan.md` remains the detailed milestone plan. The persistence and settings-shell milestones shipped, but Calendar time behavior has been reopened:
 
 - ✅ M1: Settings Shell And Navigation
 - ✅ M2: Server-Backed Settings Foundation
 - ✅ M2A: Admin Branding Settings (site-wide persistence and automatic image fitting hardened and deployed 2026-07-12)
 - ✅ M3: Mail Settings Product Pass
-- ✅ M4: Calendar Settings Product Pass
+- 🟡 M4: Calendar Settings Product Pass — persistence exists, but the selected timezone must be applied throughout Calendar before this returns to complete.
 - ✅ M5: Contacts Settings Product Pass
 - ✅ M6: Account, Security, And Release Hardening
 
@@ -132,6 +134,8 @@ The contacts and notes apps have been extracted into their own directories with 
 
 ## 9. OpenMailStack Sync (External CardDAV Bridge) ❌
 
+One-time, reviewed imports now precede continuous synchronization. The Migration Center roadmap in `docs/product/time-drive-migration.md` reuses existing vCard/CSV work, adds ICS after the timezone repair, then adds Google/Microsoft OAuth and guided iCloud imports. The daemon below remains later two-way-sync scope, not a prerequisite for migration.
+
 - ❌ **Rust Sync Daemon**: Build a standalone, high-performance background daemon using Rust (`tokio`, `quick-xml`) to handle XML parsing, delta syncing (`sync-collection`), and conflict resolution (Last Writer Wins).
 - ❌ **Control Plane (Node.js)**: Build API endpoints to manage credentials and sync jobs, securely storing encrypted App-Specific Passwords (AES-256-GCM) in MySQL.
 - ❌ **Settings UI (React)**: Create a React-based connection wizard in the settings panel to allow users to link iCloud, Google Contacts, and custom CardDAV servers.
@@ -155,3 +159,12 @@ The contacts and notes apps have been extracted into their own directories with 
 - ❌ Add teams, collective/group/round-robin/managed events, delegated scheduling, routing forms, attributes, fairness, and explainable assignment.
 - ❌ Add payments, external calendars/conferencing, CRM/automation adapters, analytics, public APIs, OAuth, CLI, embeds, and MCP/agent support. Phase 3 workflow webhooks are implemented; broader public integration webhooks remain in this later scope.
 - ❌ Add enterprise organization controls, SSO/SCIM reuse, audit/export/deletion/retention, operational recovery, and continuous competitor-parity review.
+
+## 11. Time, OMS Drive, And Migration Center ❌
+
+`docs/product/time-drive-migration.md` is the implementation roadmap and decision record for the new suite expansion.
+
+- 🚨 **Track T — Time correctness and clock:** reproduce and fix the reported web/macOS timezone mismatch, preserve UTC/`TZID`/floating/all-day semantics, apply system or home timezone preferences across Calendar, and add an optional live header clock.
+- ❌ **Track F — OMS Drive and connected files:** add an optional, Admin-entitled native file service; a shared, resizable file tray; safe attach-copy flows into Mail, Notes, Calendar, and Scheduler; and capability-aware Nextcloud/OpenCloud, Google Drive, and OneDrive connectors.
+- ❌ **Track M — Migration Center:** unify reviewed vCard/CSV/ICS import, then add resumable read-only Google and Microsoft migration plus guided iCloud export/import. Continuous two-way sync remains a separate later phase.
+- ⚠️ **iCloud Drive constraint:** keep browser/Apple Files upload available, but do not promise persistent server-side iCloud Drive browsing until a supported Apple integration path is proven.

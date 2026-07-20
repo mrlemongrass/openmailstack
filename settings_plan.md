@@ -273,9 +273,9 @@ Exit criteria before moving on:
 - Manual smoke: login, open Settings > Mail, edit signature, compose, send draft or test mail, reload, verify values remain.
 - Frontend lint/build and backend test/build pass.
 
-## Milestone 4: Calendar Settings Product Pass ✅
+## Milestone 4: Calendar Settings Product Pass 🟡
 
-Status: completed 2026-06-29.
+Status: reopened 2026-07-20 after user-reported web/macOS timezone disagreement and source inspection.
 
 Purpose: make Calendar settings affect the actual calendar experience instead of only existing as standalone preferences.
 
@@ -289,6 +289,14 @@ Work:
 - Add CalDAV connection information that matches the deployed hostname and current routing.
 - Add import/export planning hooks, but only ship import/export once parsing and conflict handling are implemented.
 - Prepare future sharing/free-busy controls without presenting unsupported functionality as active.
+
+Reopened correction work:
+
+- Distinguish UTC, `TZID`, floating, and all-day iCalendar values at the protocol boundary.
+- Apply the persisted timezone to every Calendar view, event editor, current-time marker, and current-time clock.
+- Add explicit `System` and fixed `Home` timezone modes instead of treating the saved IANA value as if it already controls rendering.
+- Validate the same event through web Calendar, macOS CalDAV, iOS ActiveSync, and Scheduler projection before restoring the completed status.
+- Follow Track T in `docs/product/time-drive-migration.md`; calendar import must wait for its protocol fixtures.
 
 Exit criteria before moving on:
 

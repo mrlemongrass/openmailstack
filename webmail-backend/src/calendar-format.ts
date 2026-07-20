@@ -126,6 +126,7 @@ export interface WallTimeParts {
 }
 
 const timeZoneFormatters = new Map<string, Intl.DateTimeFormat>();
+const MAX_TIME_ZONE_FORMATTERS = 256;
 
 function formatterForTimeZone(timeZone: string): Intl.DateTimeFormat {
     let formatter = timeZoneFormatters.get(timeZone);
@@ -141,6 +142,9 @@ function formatterForTimeZone(timeZone: string): Intl.DateTimeFormat {
             hourCycle: 'h23',
         });
         timeZoneFormatters.set(timeZone, formatter);
+        if (timeZoneFormatters.size > MAX_TIME_ZONE_FORMATTERS) {
+            timeZoneFormatters.delete(timeZoneFormatters.keys().next().value);
+        }
     }
     return formatter;
 }

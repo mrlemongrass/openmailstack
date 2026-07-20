@@ -27,7 +27,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-timestamp=$(date +%s)
+timestamp="$(date +%s%N)-$$-${RANDOM}"
 cal_slug="oms-smoke-${timestamp}"
 cal_name="OMS Smoke ${timestamp}"
 event_uid="oms-smoke-event-${timestamp}"
@@ -57,7 +57,7 @@ status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X MKCALENDAR \
   -o "${tmpdir}/mkcalendar.out" \
   -w '%{http_code}' \
   "${caldav_url}")
-if [[ "${status}" != "201" && "${status}" != "405" ]]; then
+if [[ "${status}" != "201" ]]; then
   echo "FAIL: MKCALENDAR returned HTTP ${status}"
   cat "${tmpdir}/mkcalendar.out"
   exit 1
@@ -421,7 +421,7 @@ status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X MKCALENDAR \
   -o "${tmpdir}/mkcalendar-second.out" \
   -w '%{http_code}' \
   "${second_url}")
-if [[ "${status}" != "201" && "${status}" != "405" ]]; then
+if [[ "${status}" != "201" ]]; then
   echo "FAIL: second MKCALENDAR returned HTTP ${status}"
   cat "${tmpdir}/mkcalendar-second.out"
   exit 1

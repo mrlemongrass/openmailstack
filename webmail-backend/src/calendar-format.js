@@ -82,6 +82,7 @@ function unescapeIcalText(value) {
         .replace(/\\\\/g, '\\');
 }
 const timeZoneFormatters = new Map();
+const MAX_TIME_ZONE_FORMATTERS = 256;
 function formatterForTimeZone(timeZone) {
     let formatter = timeZoneFormatters.get(timeZone);
     if (!formatter) {
@@ -96,6 +97,9 @@ function formatterForTimeZone(timeZone) {
             hourCycle: 'h23',
         });
         timeZoneFormatters.set(timeZone, formatter);
+        if (timeZoneFormatters.size > MAX_TIME_ZONE_FORMATTERS) {
+            timeZoneFormatters.delete(timeZoneFormatters.keys().next().value);
+        }
     }
     return formatter;
 }

@@ -6,6 +6,7 @@ import { useToast } from '../shared/components/Toast';
 import type { useMail } from './hooks/useMail';
 import * as api from '../shared/api';
 import type { Contact, Signature, MailIdentity } from '../shared/types';
+import { getUserSettings, saveUserSettings, type MessageTemplate } from '../settings/settingsApi';
 
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB warning
 const BLOCK_SIZE = 50 * 1024 * 1024; // 50MB block
@@ -23,11 +24,6 @@ function totalSize(files: File[]): number {
 interface ContactSuggestion {
   name: string;
   email: string;
-}
-
-interface MessageTemplate {
-  name: string;
-  content: string;
 }
 
 /** Extract the fragment the user is currently typing (after the last comma). */
@@ -135,9 +131,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   useEffect(() => {
-    fetch('/api/settings/templates').then((r) => r.json() as Promise<{ templates?: MessageTemplate[] }>).then((d) => {
-      if (d.templates) setTemplates(d.templates);
-    }).catch(() => {});
+    getUserSettings('templates')
+      .then((settings) => setTemplates(settings.templates))
+      .catch(() => {});
   }, []);
 
   // Toast for send confirmation
@@ -462,10 +458,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                       if (name) {
                         const updated = [...templates.filter((t) => t.name !== name), { name, content: mail.composeBody }];
                         setTemplates(updated);
-                        fetch('/api/settings/templates', {
-                          method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ templates: updated }),
-                        }).catch(() => {});
+                        saveUserSettings('templates', { templates: updated })
+                          .then((settings) => setTemplates(settings.templates))
+                          .catch(() => {});
                         setShowTemplates(false);
                       }
                     }}>

@@ -60,6 +60,9 @@ exports.settingsDefaults = {
         accentColor: 'blue',
         reduceMotion: false,
     },
+    templates: {
+        templates: [],
+    },
 };
 const namespaces = Object.keys(exports.settingsDefaults);
 let schemaPromise = null;
@@ -147,6 +150,19 @@ function normalizeSignatures(value) {
 }
 function normalizeSettings(namespace, value) {
     const source = isObject(value) ? value : {};
+    if (namespace === 'templates') {
+        const templates = Array.isArray(source.templates) ? source.templates : [];
+        return {
+            templates: templates.slice(0, 50).flatMap(item => {
+                if (!isObject(item) || typeof item.name !== 'string' || !item.name.trim())
+                    return [];
+                return [{
+                        name: item.name.trim().slice(0, 120),
+                        content: typeof item.content === 'string' ? item.content.slice(0, 20000) : '',
+                    }];
+            }),
+        };
+    }
     if (namespace === 'mail') {
         const reading = isObject(source.reading) ? source.reading : {};
         const identity = isObject(source.identity) ? source.identity : {};

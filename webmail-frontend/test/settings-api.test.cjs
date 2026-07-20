@@ -1,0 +1,56 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const Module = require('node:module');
+const path = require('node:path');
+const test = require('node:test');
+const ts = require('typescript');
+
+const sourcePath = path.resolve(__dirname, '../src/settings/settingsApi.ts');
+const source = fs.readFileSync(sourcePath, 'utf8');
+const compiled = ts.transpileModule(source, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+  fileName: sourcePath,
+}).outputText;
+const testModule = new Module(sourcePath, module);
+testModule.paths = module.paths;
+testModule._compile(compiled, sourcePath);
+
+const { getUserSettings, saveUserSettings } = testModule.exports;
+
+test('templates use the shared settings response and write contract', async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    const settings = options.method === 'PUT'
+      ? JSON.parse(options.body).settings
+      : { templates: [] };
+    return {
+      ok: true,
+      json: async () => ({ success: true, namespace: 'templates', settings }),
+    };
+  };
+
+  try {
+    assert.deepEqual(await getUserSettings('templates'), { templates: [] });
+    assert.deepEqual(
+      await saveUserSettings('templates', {
+        templates: [{ name: 'Follow up', content: 'Checking in.' }],
+      }),
+      { templates: [{ name: 'Follow up', content: 'Checking in.' }] },
+    );
+
+    assert.equal(calls[0].url, '/api/settings/templates');
+    assert.equal(calls[0].options.credentials, 'include');
+    assert.equal(calls[1].url, '/api/settings/templates');
+    assert.equal(calls[1].options.method, 'PUT');
+    assert.deepEqual(JSON.parse(calls[1].options.body), {
+      settings: { templates: [{ name: 'Follow up', content: 'Checking in.' }] },
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

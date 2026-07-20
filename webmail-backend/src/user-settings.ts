@@ -1,6 +1,6 @@
 import { pool } from './db';
 
-export type SettingsNamespace = 'mail' | 'calendar' | 'contacts' | 'appearance';
+export type SettingsNamespace = 'mail' | 'calendar' | 'contacts' | 'appearance' | 'templates';
 
 export interface MailSettings {
     signatures: {
@@ -65,7 +65,14 @@ export interface AppearanceSettings {
     reduceMotion: boolean;
 }
 
-export type UserSettings = MailSettings | CalendarSettings | ContactsSettings | AppearanceSettings;
+export interface TemplateSettings {
+    templates: {
+        name: string;
+        content: string;
+    }[];
+}
+
+export type UserSettings = MailSettings | CalendarSettings | ContactsSettings | AppearanceSettings | TemplateSettings;
 
 export const settingsDefaults = {
     mail: {
@@ -120,6 +127,9 @@ export const settingsDefaults = {
         accentColor: 'blue',
         reduceMotion: false,
     } satisfies AppearanceSettings,
+    templates: {
+        templates: [],
+    } satisfies TemplateSettings,
 };
 
 const namespaces = Object.keys(settingsDefaults) as SettingsNamespace[];
@@ -227,6 +237,19 @@ function normalizeSignatures(value: unknown): MailSettings['signatures'] {
 
 export function normalizeSettings(namespace: SettingsNamespace, value: unknown): UserSettings {
     const source = isObject(value) ? value : {};
+
+    if (namespace === 'templates') {
+        const templates = Array.isArray(source.templates) ? source.templates : [];
+        return {
+            templates: templates.slice(0, 50).flatMap(item => {
+                if (!isObject(item) || typeof item.name !== 'string' || !item.name.trim()) return [];
+                return [{
+                    name: item.name.trim().slice(0, 120),
+                    content: typeof item.content === 'string' ? item.content.slice(0, 20000) : '',
+                }];
+            }),
+        };
+    }
 
     if (namespace === 'mail') {
         const reading = isObject(source.reading) ? source.reading : {};

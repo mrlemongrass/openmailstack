@@ -1,6 +1,6 @@
 import type { AppearancePreferences } from './appearance';
 
-export type SettingsNamespace = 'mail' | 'calendar' | 'contacts' | 'appearance';
+export type SettingsNamespace = 'mail' | 'calendar' | 'contacts' | 'appearance' | 'templates';
 
 export interface SignatureSettings {
   id: string;
@@ -58,6 +58,15 @@ export interface ContactsUserSettings {
   autoCreateFromSent: boolean;
 }
 
+export interface MessageTemplate {
+  name: string;
+  content: string;
+}
+
+export interface TemplateUserSettings {
+  templates: MessageTemplate[];
+}
+
 export const defaultMailSettings: MailUserSettings = {
   signatures: [],
   identity: {
@@ -110,6 +119,7 @@ export interface NamespaceSettings {
   calendar: CalendarUserSettings;
   contacts: ContactsUserSettings;
   appearance: AppearancePreferences;
+  templates: TemplateUserSettings;
 }
 
 interface SettingsResponse<T extends SettingsNamespace> {

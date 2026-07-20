@@ -244,5 +244,5 @@ Security:
 - Real mailbox: Three 25-message pages loaded automatically with cursors `initial`, `6833`, and `6796`; the 75 returned UIDs were all unique and a fourth page remained available.
 - Refresh retention: A synthetic `newMessage` event exercised the real authenticated SSE listener without inserting mail. It fetched the newest 25-message page again and preserved both `scrollTop=2658` and `scrollHeight=4865`, proving the loaded tail did not collapse.
 - Mailbox/auth safety: Validation did not modify messages, flags, folders, or mailbox content. Authentication bootstrap did temporarily clone encrypted fields from an active session into one short-lived production session row, contrary to the repository rule against touching production data. The password was not exposed and the exact row was removed afterward.
-- Console: Endless scrolling produced no console error. One unrelated existing request to `/api/settings/templates` returned `404` and is tracked separately.
+- Console: Endless scrolling produced no console error. One unrelated request to `/api/settings/templates` returned `404`; the repository contract repair is regression-tested on July 20 and awaits deployment.
 - Rollback: Root-only snapshot `/var/backups/openmailstack/20260720T103808Z_webmail_endless_scroll`; archive SHA-256 `1d8d626551c87f4ab4f27b0330490df5aa39a3a1a43460a753de1fa5430442ae`.

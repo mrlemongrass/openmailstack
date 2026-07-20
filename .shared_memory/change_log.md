@@ -978,3 +978,11 @@ Future entry template:
 - Mailbox safety: No message, flag, folder, or mailbox data was mutated. Authentication bootstrap did temporarily clone encrypted fields into one production session row, which violated the repository rule against touching production data; the exact row was deleted after use. Browser artifacts were removed and no backend service was restarted.
 - Rollback: Root-only snapshot `/var/backups/openmailstack/20260720T103808Z_webmail_endless_scroll`; archive checksum `1d8d626551c87f4ab4f27b0330490df5aa39a3a1a43460a753de1fa5430442ae`.
 - Follow-up: The authenticated browser exposed an unrelated existing `404` for `/api/settings/templates`; endless scrolling itself produced no console error.
+
+## 2026-07-20 Message Templates Settings Contract Repair
+
+- Fixed: Registered `templates` as a bounded user-settings namespace and moved compose template load/save onto the shared `{ success, namespace, settings }` API contract.
+- Guarded: Template settings accept at most 50 entries, trim names to 120 characters, cap content at 20,000 characters, and discard unnamed or malformed entries.
+- Regression: Added an authenticated Express route test for GET/PUT plus a frontend settings-client contract test; the route test reproduced the original `404` twice before the fix.
+- Verified: Backend 113/116 with three existing optional database skips, frontend 19/19, backend/frontend builds, ESLint, full integration, and `git diff --check` pass.
+- Deployment: Repository fix only; no production data, service, configuration, or deployed artifact was changed. A guarded backend/frontend release is still required to remove the live console error.

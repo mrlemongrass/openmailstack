@@ -14,9 +14,28 @@ test('isSettingsNamespace only accepts supported settings namespaces', () => {
   assert.equal(isSettingsNamespace('calendar'), true);
   assert.equal(isSettingsNamespace('contacts'), true);
   assert.equal(isSettingsNamespace('appearance'), true);
+  assert.equal(isSettingsNamespace('templates'), true);
   assert.equal(isSettingsNamespace('admin'), false);
   assert.equal(isSettingsNamespace('forwarding'), false);
   assert.equal(isSettingsNamespace('__proto__'), false);
+});
+
+test('normalizeSettings sanitizes saved message templates', () => {
+  const normalized = normalizeSettings('templates', {
+    templates: [
+      { name: ' Follow up ', content: 'Checking in.' },
+      { name: '', content: 'Ignored' },
+      { name: 'Invalid content', content: 123 },
+      null,
+    ],
+  });
+
+  assert.deepEqual(normalized, {
+    templates: [
+      { name: 'Follow up', content: 'Checking in.' },
+      { name: 'Invalid content', content: '' },
+    ],
+  });
 });
 
 test('normalizeSettings returns safe mail settings', () => {

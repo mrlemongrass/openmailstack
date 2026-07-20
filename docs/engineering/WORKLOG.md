@@ -5450,3 +5450,43 @@ Deploy the reviewed endless-scroll frontend and prove two real mailbox page boun
 ### Next recommended task
 
 Reconcile the frontend templates-settings request with the backend route contract so authenticated webmail loads with zero console errors.
+
+## 2026-07-20 — Message templates settings contract repair
+
+Agent/tool: Codex
+Branch: `main`
+Starting fixed point: `54e1fd59`
+Ending git state: tested repository fix ready for review and deployment
+
+### Selected task
+
+Remove the authenticated `/api/settings/templates` `404` without changing unrelated settings behavior or touching production state.
+
+### Diagnosis
+
+- A new authenticated Express route test reproduced `404 !== 200` twice in about one second per run.
+- The backend generic `/settings/:namespace` route rejected `templates` because it was absent from `SettingsNamespace`.
+- The compose UI also expected a legacy top-level `{ templates }` response and sent `{ templates }`, while the shared API returns `{ success, namespace, settings }` and expects `{ settings }` on PUT.
+
+### Changes made
+
+- Added a `templates` user-settings namespace backed by the existing `webmail_user_settings` table; no migration is needed.
+- Bounded stored templates to 50 entries, 120-character trimmed names, and 20,000-character content, dropping malformed/unnamed entries.
+- Routed compose template load/save through the typed shared settings client.
+- Added authenticated Express GET/PUT coverage and a frontend request/response contract regression.
+
+### Proof / checks run
+
+- Original route repro changed from deterministic `404` failure to passing GET/PUT assertions.
+- Backend: 113 passed, 0 failed, 3 existing optional database skips.
+- Frontend: 19/19 passed; ESLint and production build passed.
+- Backend build, full integration, shared-memory hygiene, and `git diff --check` passed.
+
+### Deployment and risks
+
+- Not deployed. No production data, service, configuration, dependency, or deployed artifact changed.
+- The current live bundle/backend will continue logging the templates `404` until a guarded backend/frontend deployment and post-restart validation are completed.
+
+### Next recommended task
+
+Guardedly deploy the tested backend/frontend contract repair, verify exact artifacts and service health, then confirm the authenticated templates request returns `200` through a user-owned session without creating or cloning production authentication state.

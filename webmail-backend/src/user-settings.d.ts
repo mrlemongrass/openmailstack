@@ -1,4 +1,4 @@
-export type SettingsNamespace = 'mail' | 'calendar' | 'contacts' | 'appearance';
+export type SettingsNamespace = 'mail' | 'calendar' | 'contacts' | 'appearance' | 'templates';
 export interface MailSettings {
     signatures: {
         id: string;
@@ -58,7 +58,13 @@ export interface AppearanceSettings {
     accentColor: 'blue' | 'cyan' | 'green' | 'amber' | 'rose' | 'violet';
     reduceMotion: boolean;
 }
-export type UserSettings = MailSettings | CalendarSettings | ContactsSettings | AppearanceSettings;
+export interface TemplateSettings {
+    templates: {
+        name: string;
+        content: string;
+    }[];
+}
+export type UserSettings = MailSettings | CalendarSettings | ContactsSettings | AppearanceSettings | TemplateSettings;
 export declare const settingsDefaults: {
     mail: {
         signatures: any[];
@@ -111,6 +117,9 @@ export declare const settingsDefaults: {
         radius: "soft";
         accentColor: "blue";
         reduceMotion: false;
+    };
+    templates: {
+        templates: any[];
     };
 };
 export declare function isSettingsNamespace(value: string): value is SettingsNamespace;

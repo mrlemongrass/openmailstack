@@ -1070,7 +1070,14 @@ Current Calendar interoperability seam, verified locally 2026-07-20:
 - `webmail-backend/src/calendar-format.ts` keeps recurrence masters, `EXDATE`/cancelled/modified exceptions, `VALARM` reminders, and source timezone status in the parsed domain object. Embedded custom aliases are used only when a bounded supported yearly rule matches the canonical IANA transitions; unsupported or invalid definitions remain floating so OMS never applies a guessed offset. Raw `VTIMEZONE` and exception components remain available for lossless whole-series edits.
 - `webmail-backend/src/eas-calendar.ts` is the testable ActiveSync Calendar adapter used by the embedded `/Microsoft-Server-ActiveSync` route in `webmail-backend/src/index.ts`. It converts EAS UTC/date-only payloads, simple recurrence fields, recurring-event origin timezones, reminders, and deleted/modified exceptions to and from iCalendar. Exception reminder omission inherits the master, an empty reminder disables it, and exception all-day state is independent of the master.
 - `webmail-backend/src/eas-timezone.ts` encodes and decodes the 172-byte EAS `TIME_ZONE_INFORMATION` value, validates candidate IANA/Windows names against the decoded bias and transition rules, and uses bounded caches/fallbacks. `windows-timezones.ts` carries the CLDR 48 territory-`001` map under the Unicode notice in `THIRD_PARTY_NOTICES.md`.
-- Recurrence exceptions, reminders, and custom/invalid `VTIMEZONE` behavior are not complete. Treat physical Apple-client behavior and the release matrix as required gates even when disposable protocol tests and the deployed route pass.
+- Recurrence exceptions, reminders, and conservative custom/invalid `VTIMEZONE` handling pass the automated and physical macOS/iOS Calendar gates recorded in the worklog. Arbitrary unsupported custom rules remain floating by design.
+
+Current ActiveSync Mail interoperability seam, deployed and script-verified 2026-07-20:
+
+- `webmail-backend/src/eas-mail-sync.ts` owns persistent mail delta state. State is isolated by normalized mailbox, EAS `DeviceId`, and folder `CollectionId`; opaque sync keys bind the client to one stored snapshot, and exact WBXML retry responses are replayed only after the request has passed direct IMAP credential verification.
+- Each folder snapshot stores `UIDVALIDITY`, `HIGHESTMODSEQ`, a bounded initial-sync UID floor, cached Sync options, and known UID/read state. Previously known UIDs that leave the source folder emit EAS `Delete`; messages moved into Junk or Trash arrive as normal `Add` commands when those destination collections synchronize.
+- Email `FilterType`, `WindowSize`, and AirSyncBase body preferences are honored with UTF-8-safe truncation, protocol window bounds, and a 16 MiB aggregate source-fetch budget. Ordinary no-filter initial sync starts at the newest window instead of backfilling the whole mailbox, and unchanged `HIGHESTMODSEQ` polls avoid `SEARCH ALL`.
+- `tests/integration/activesync_mail_smoke.sh` uses the real web message-action API to prove Inbox-to-Junk and Junk-to-Trash deltas, body truncation, read/unread changes, and an empty no-change Sync. The production smoke passed under isolated synthetic-device state; the remaining gate is one clean physical iOS Exchange resync and comparison with IMAP clients.
 
 Agents should locate and document:
 
@@ -1340,5 +1347,6 @@ During repository intake, agents should answer these questions and update this f
 
 ## 16. Change Log for This Document
 
+- 2026-07-20: Documented deployed per-device/per-folder ActiveSync Mail delta state, move/delete behavior, bounded filtering/body retrieval, no-backfill/no-change behavior, authenticated production smoke evidence, and the remaining physical iOS resync gate.
 - 2026-07-11: Added and live-verified the OMS Scheduler Phase 0/1 architecture, trust boundaries, native calendar projection, installer gating, alias-host routing, and remaining mailbox/client release validation.
 - 2026-07-02: Converted older root-level `TECHNICAL.md` into an agent-safe architecture document. Added status labels, maintenance policy, verification warnings, source-of-truth rules, and known ambiguity list. Reclassified many feature claims as `Needs Verification` to prevent agents from assuming aspirational or partial features are fully implemented.

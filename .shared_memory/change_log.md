@@ -1094,3 +1094,14 @@ Future entry template:
 - Physical reverse pass: iOS 26.5.2 ActiveSync created a September 2026 weekly series with a 30-minute alert, edited only September 11 to 20:30 with a new title and 5-minute alert, and deleted only September 18. OMS Web and macOS showed exactly September 4, edited September 11, and September 25; macOS retained the master 30-minute alerts and exception 5-minute alert.
 - Cleanup: the user intentionally deleted both series from iOS. Read-only validation observed two distinct UID-specific EAS `Delete` commands 12 seconds apart, no active row, and one tombstone per UID. No cross-series cascade occurred, and the agent did not mutate production calendar data.
 - Closed: Track T is complete for the deployed scope. Next program-order slice: F0 no-storage file-tray/provider interaction prototype.
+
+## 2026-07-20 ActiveSync Mail Delta Synchronization
+
+- Added: durable EAS mail state scoped by normalized user, validated `DeviceId`, and folder `CollectionId`, with opaque sync keys, UIDVALIDITY/MODSEQ tracking, known UID/read maps, and exact WBXML retry replay after direct Basic-to-IMAP authentication.
+- Fixed: messages moved by OMS Web out of Inbox or Junk now emit EAS `Delete` in the source collection and appear as `Add` in Junk or Trash. Client Deletes honor `DeletesAsMoves`, while Trash deletes remain hard deletes.
+- Bounded: Email FilterType 0-5, WindowSize up to 512, multiple body preferences, UTF-8 byte truncation, partial MIME reporting, and a 16 MiB aggregate source-fetch budget. Ordinary no-filter initial sync starts at the newest window; unchanged MODSEQ polls skip whole-folder UID search.
+- Tested: 17 focused mail-sync regressions, backend 174/177 with three optional DB skips, frontend 37/37, full integration, shell syntax, `git diff --check`, and independent Standards/Spec review pass.
+- Deployed: commit `5b9cd89e` is live with exact runtime hashes. The service is active/running with zero restarts; route authentication, full staging smoke, and the clean post-rollout journal pass.
+- Live proof: an authenticated production smoke used the real web action API for Inbox-to-Junk and Junk-to-Trash and observed the matching EAS Deletes/Adds, read/unread propagation, body truncation, and empty no-change Sync. Its unique mail and synthetic sync state were cleaned up.
+- Rollback: `/var/backups/openmailstack/eas-mail-sync-5b9cd89-20260720T222243Z/backend-before.tar.gz`, SHA-256 `058fc4c5914b2e38dc598cc0cc41299fe83283dd9d4249fa5d36e530621ffd56`.
+- Remaining: allow one physical iOS Exchange stale-key reset, then compare Inbox/Junk/Trash and no-change refresh behavior with macOS Mail and the iOS IMAP account before closing the device gate.

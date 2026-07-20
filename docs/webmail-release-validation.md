@@ -339,3 +339,12 @@ Security:
 - Live proof: deployed source/runtime hashes matched the repository; direct/public ActiveSync `OPTIONS` returned `200`/EAS 14.1; backend stayed active with `NRestarts=0`; warning journal and full staging smoke passed.
 - Safety: only user-created physical test events were written and deleted. The agent made no direct production calendar mutation. Rollbacks are `/var/backups/openmailstack/eas-timezone-tag-52033bf8-20260720T185910Z` and `/var/backups/openmailstack/eas-recurrence-preservation-bbbd49ed-20260720T191354Z`.
 - Remaining Calendar time gates: recurrence exceptions/reminders and custom or invalid `VTIMEZONE`.
+
+## 2026-07-20 ActiveSync Mail Delta Automated And Live Gate
+
+- Release: commit `5b9cd89e` adds durable user/device/folder state, opaque SyncKeys, authenticated exact-response replay, IMAP UID disappearance Deletes, destination-folder Adds, FilterType/WindowSize/body handling, a newest-window initial floor, and an unchanged-MODSEQ fast path.
+- Automated proof: 17/17 focused mail-sync regressions; backend 174/177 with three expected optional database skips; frontend 37/37; full integration; shell syntax; `git diff --check`; and independent Standards/Spec reviews pass.
+- Authenticated live proof: one unique message passed SMTP delivery, initial EAS Add, read/unread Change, empty no-change Sync, OMS Web Inbox-to-Junk, EAS Inbox Delete plus Junk Add, OMS Web Junk-to-Trash, and EAS Junk Delete plus Trash Add. The body was UTF-8 byte-truncated to the requested size. The message and isolated synthetic-device state were removed afterward.
+- Deployment proof: repository/live hashes match; `openmailstack.service` is active/running with `NRestarts=0`; direct EAS OPTIONS returns 200; invalid Basic returns 401; the InnoDB state table exists; full staging smoke and the post-rollout warning/error scan pass.
+- Safety/rollback: no real device state was removed. Root-only rollback archive `/var/backups/openmailstack/eas-mail-sync-5b9cd89-20260720T222243Z/backend-before.tar.gz`, SHA-256 `058fc4c5914b2e38dc598cc0cc41299fe83283dd9d4249fa5d36e530621ffd56`.
+- Remaining physical gate: refresh the existing iOS 26.5.2 Exchange account once so its legacy key resets into new scoped state. Confirm the two spam messages are absent from Exchange Inbox and present only in Junk, the deleted self-test message is absent, and the second no-change refresh is quick and agrees with macOS Mail and the iOS IMAP account.

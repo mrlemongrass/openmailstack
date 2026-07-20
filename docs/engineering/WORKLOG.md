@@ -6003,3 +6003,38 @@ Implementation commit: `8469e90`
 ### Track status / next task
 
 Track T is complete for the deployed scope. The next bounded program-order task is F0: define the provider capability/transfer contract and build the no-storage, fake-provider file-tray interaction prototype before committing to OMS Drive storage or OAuth.
+
+## 2026-07-20 — ActiveSync Mail delta state and production release
+
+Agent/tool: Codex
+Branch: `main`
+Implementation commit: `5b9cd89e`
+
+### Goal and acceptance
+
+- [x] Isolate EAS mail sync state by mailbox, device, and folder.
+- [x] Emit source-folder Deletes when synchronized IMAP UIDs disappear and destination Adds after web moves.
+- [x] Honor FilterType, WindowSize, and body truncation under bounded memory.
+- [x] Avoid automatic whole-mailbox backfill and make unchanged polls efficient.
+- [x] Cover web-to-Junk, web-to-Trash, and no-change Sync regressions.
+- [x] Deploy behind rollback and pass automated production validation.
+- [ ] Complete one clean physical iOS Exchange resync and compare with the IMAP devices.
+
+### Implementation
+
+- Added `eas_mail_sync_states` with opaque keys and per-user/device/collection UIDVALIDITY, MODSEQ, minimum UID, options, known UID/read map, and bounded exact-response replay state.
+- Added source Delete/SoftDelete/Add/Change delta computation, client Delete handling including DeletesAsMoves, and direct Basic credential verification against IMAP before state or replay access.
+- Added Email FilterType 0-5, WindowSize protocol bounds, supported AirSyncBase body preferences, UTF-8 byte truncation, partial MIME signaling, and a 16 MiB aggregate source-fetch budget.
+- A no-filter initial sync establishes a newest-window floor. An unchanged HIGHESTMODSEQ poll avoids `SEARCH ALL`; MoreAvailable retains the previous MODSEQ so paged changes are not lost.
+
+### Proof and rollout
+
+- Backend suite: 177 total, 174 passed, zero failed, three expected optional database skips. Focused mail-sync tests pass 17/17; frontend tests pass 37/37; full integration, shell syntax, `git diff --check`, and independent Standards/Spec reviews pass.
+- Root-only rollback archive: `/var/backups/openmailstack/eas-mail-sync-5b9cd89-20260720T222243Z/backend-before.tar.gz`; SHA-256 `058fc4c5914b2e38dc598cc0cc41299fe83283dd9d4249fa5d36e530621ffd56`.
+- Deployed runtime/source/declaration artifacts match repository hashes. `openmailstack.service` is active/running with `NRestarts=0`; direct EAS OPTIONS returns 200, invalid Basic returns 401, the new InnoDB table exists, full staging smoke passes, and the post-rollout warning/error journal is clean.
+- Authenticated production smoke passed with exit code 0: one unique message flowed through the real OMS Web Inbox-to-Junk and Junk-to-Trash actions; EAS observed both source Deletes and destination Adds, read/unread propagation, body truncation, and an empty no-change Sync. The test message and synthetic device state were removed afterward.
+- A same-device rerun inside the two-minute retry window initially replayed the prior exact Trash key-0 response. Inspection showed the state timestamp did not advance, confirming retry-cache behavior rather than a missed IMAP move. Isolating and cleaning the synthetic test-device state made the rerun deterministic; no real device state was touched.
+
+### Remaining risk / next task
+
+The table is intentionally empty before physical reconnection. On its next poll, the existing iOS Exchange account should receive an invalid legacy-key response and establish fresh per-folder state. The next task is user-operated pull-to-refresh, followed by read-only confirmation that the previously spammed messages are only in Junk, the deleted test message is absent from Inbox, and subsequent no-change refresh is quick and agrees with macOS/iOS IMAP.

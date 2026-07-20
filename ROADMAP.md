@@ -91,6 +91,7 @@ The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day 
 
 ## 4. Mail Product Work ✅ (2026-06-29)
 
+- 🟡 ActiveSync Mail now has user/device/folder-scoped delta state, source-folder deletes for web moves, destination-folder adds, bounded FilterType/WindowSize/body retrieval, newest-window initial sync, and efficient no-change polls. Automated and authenticated production web-to-Junk/web-to-Trash checks pass at commit `5b9cd89e`; one clean physical iOS Exchange resync and IMAP-client comparison remain before closing the device gate.
 - ✅ Add a background search indexing worker so search is not dependent on an active web session (mailbox_credentials for offline indexing).
 - ✅ Add richer search operators such as `has:attachment`, `before:`, `after:`, `larger:`, and attachment content search (PDF/Office text extraction).
 - ✅ Improve conversation threading, undo send, delayed send, and quota display.

@@ -29,6 +29,15 @@ export interface RecurrenceRule {
     raw: string;
 }
 export declare function slugifyCalendarName(name: string): string;
+export interface WallTimeParts {
+    year: number;
+    month: number;
+    day: number;
+    hour: number;
+    minute: number;
+    second: number;
+}
+export declare function wallTimeAt(instant: Date, timeZone: string): WallTimeParts;
 export declare function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & {
     type?: 'event' | 'task';
 };

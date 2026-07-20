@@ -104,6 +104,38 @@ test('EAS timezone round trip keeps New York recurrence at 09:00 across DST', ()
   assert.equal(occurrences.at(-1).start.toISOString(), '2026-04-03T13:00:00.000Z');
 });
 
+test('EAS timezone rules resolve without optional display names', () => {
+  const source = parseIcalEvent('unnamed-new-york', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:unnamed-new-york',
+    'SUMMARY:Unnamed timezone',
+    'DTSTART;TZID=America/New_York:20260227T090000',
+    'DTEND;TZID=America/New_York:20260227T100000',
+    'RRULE:FREQ=WEEKLY;COUNT=2',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+  const outbound = calendarEventToActiveSyncApplicationData(source);
+  const timezone = Buffer.from(field(outbound, 'Timezone').content, 'base64');
+  timezone.fill(0, 4, 68);
+  timezone.fill(0, 88, 152);
+  const ical = activeSyncCalendarApplicationDataToIcal('unnamed-new-york', {
+    children: [
+      { tag: 'Subject', content: 'Unnamed timezone' },
+      { tag: 'Timezone', content: timezone.toString('base64') },
+      { tag: 'StartTime', content: '20260227T140000Z' },
+      { tag: 'EndTime', content: '20260227T150000Z' },
+      { tag: 'Recurrence', children: [
+        { tag: 'Type', content: '1' },
+        { tag: 'Occurrences', content: '2' },
+      ] },
+    ],
+  });
+
+  assert.match(ical, /DTSTART;TZID=America\/New_York:20260227T090000/);
+});
+
 test('Microsoft Pacific EAS timezone decodes to a DST-safe zoned iCalendar recurrence', () => {
   const ical = activeSyncCalendarApplicationDataToIcal('pacific-recurring', {
     children: [
@@ -139,6 +171,24 @@ test('malformed EAS timezone falls back to UTC without rejecting the event', () 
     children: [
       { tag: 'Subject', content: 'Still usable' },
       { tag: 'Timezone', content: 'not-a-timezone' },
+      { tag: 'StartTime', content: '20260724T170000Z' },
+      { tag: 'EndTime', content: '20260724T180000Z' },
+    ],
+  });
+
+  assert.match(ical, /DTSTART:20260724T170000Z/);
+  assert.doesNotMatch(ical, /DTSTART;TZID=/);
+});
+
+test('unknown well-formed EAS timezone falls back without exhaustive zone guessing', () => {
+  const timezone = Buffer.from(MICROSOFT_PACIFIC_TIMEZONE, 'base64');
+  timezone.writeInt32LE(12_345, 0);
+  timezone.fill(0, 4, 68);
+  timezone.fill(0, 88, 152);
+  const ical = activeSyncCalendarApplicationDataToIcal('unknown-timezone', {
+    children: [
+      { tag: 'Subject', content: 'Unknown timezone' },
+      { tag: 'Timezone', content: timezone.toString('base64') },
       { tag: 'StartTime', content: '20260724T170000Z' },
       { tag: 'EndTime', content: '20260724T180000Z' },
     ],

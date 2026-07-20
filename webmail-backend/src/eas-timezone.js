@@ -4,6 +4,7 @@ exports.encodeActiveSyncTimeZone = encodeActiveSyncTimeZone;
 exports.decodeActiveSyncTimeZone = decodeActiveSyncTimeZone;
 exports.resolveActiveSyncTimeZone = resolveActiveSyncTimeZone;
 exports.formatIcalWallTime = formatIcalWallTime;
+const calendar_format_1 = require("./calendar-format");
 const TIME_ZONE_BYTES = 172;
 const EMPTY_SYSTEM_TIME = {
     year: 0,
@@ -16,42 +17,23 @@ const EMPTY_SYSTEM_TIME = {
     milliseconds: 0,
 };
 const resolutionCache = new Map();
-const formatterCache = new Map();
 const zoneInformationCache = new Map();
-function timeZoneFormatter(timeZone) {
-    const cached = formatterCache.get(timeZone);
-    if (cached)
-        return cached;
-    const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hourCycle: 'h23',
-    });
-    formatterCache.set(timeZone, formatter);
-    return formatter;
+const MAX_RESOLUTION_CACHE_ENTRIES = 256;
+const MAX_ZONE_CACHE_ENTRIES = 512;
+const CANONICAL_RULE_ZONES = ['UTC', 'Asia/Baghdad', 'America/Phoenix', 'America/New_York', 'America/Los_Angeles'];
+function cacheValue(cache, key, value, maximum) {
+    if (cache.has(key))
+        cache.delete(key);
+    cache.set(key, value);
+    if (cache.size > maximum)
+        cache.delete(cache.keys().next().value);
 }
 function wallParts(instant, timeZone) {
-    const values = new Map(timeZoneFormatter(timeZone).formatToParts(instant).map(part => [part.type, part.value]));
-    const year = Number(values.get('year'));
-    const month = Number(values.get('month'));
-    const day = Number(values.get('day'));
-    const hour = Number(values.get('hour'));
-    const minute = Number(values.get('minute'));
-    const second = Number(values.get('second'));
+    const parts = (0, calendar_format_1.wallTimeAt)(instant, timeZone);
     return {
-        year,
-        month,
-        day,
-        hour,
-        minute,
-        second,
+        ...parts,
         milliseconds: 0,
-        dayOfWeek: new Date(Date.UTC(year, month - 1, day)).getUTCDay(),
+        dayOfWeek: new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay(),
     };
 }
 function offsetMinutesAt(instant, timeZone) {
@@ -113,7 +95,7 @@ function zoneInformation(timeZone, year) {
     if (zoneInformationCache.has(cacheKey))
         return zoneInformationCache.get(cacheKey) || null;
     try {
-        timeZoneFormatter(timeZone);
+        (0, calendar_format_1.wallTimeAt)(new Date(Date.UTC(year, 0, 1)), timeZone);
         const transitions = findTransitions(timeZone, year);
         if (transitions.length === 0) {
             const fixedInformation = {
@@ -125,17 +107,17 @@ function zoneInformation(timeZone, year) {
                 daylightDate: { ...EMPTY_SYSTEM_TIME },
                 daylightBias: 0,
             };
-            zoneInformationCache.set(cacheKey, fixedInformation);
+            cacheValue(zoneInformationCache, cacheKey, fixedInformation, MAX_ZONE_CACHE_ENTRIES);
             return fixedInformation;
         }
         if (transitions.length !== 2) {
-            zoneInformationCache.set(cacheKey, null);
+            cacheValue(zoneInformationCache, cacheKey, null, MAX_ZONE_CACHE_ENTRIES);
             return null;
         }
         const daylightStart = transitions.find(transition => transition.afterOffset > transition.beforeOffset);
         const standardStart = transitions.find(transition => transition.afterOffset < transition.beforeOffset);
         if (!daylightStart || !standardStart) {
-            zoneInformationCache.set(cacheKey, null);
+            cacheValue(zoneInformationCache, cacheKey, null, MAX_ZONE_CACHE_ENTRIES);
             return null;
         }
         const bias = -standardStart.afterOffset;
@@ -148,11 +130,11 @@ function zoneInformation(timeZone, year) {
             daylightDate: transitionRule(daylightStart, timeZone),
             daylightBias: -daylightStart.afterOffset - bias,
         };
-        zoneInformationCache.set(cacheKey, information);
+        cacheValue(zoneInformationCache, cacheKey, information, MAX_ZONE_CACHE_ENTRIES);
         return information;
     }
     catch {
-        zoneInformationCache.set(cacheKey, null);
+        cacheValue(zoneInformationCache, cacheKey, null, MAX_ZONE_CACHE_ENTRIES);
         return null;
     }
 }
@@ -209,7 +191,7 @@ function validTimeZone(value) {
     if (!value)
         return false;
     try {
-        timeZoneFormatter(value);
+        (0, calendar_format_1.wallTimeAt)(new Date(0), value);
         return true;
     }
     catch {
@@ -248,39 +230,27 @@ function sameRule(left, right) {
         && sameSystemTime(left.standardDate, right.standardDate)
         && sameSystemTime(left.daylightDate, right.daylightDate);
 }
-function supportedTimeZones() {
-    const intl = Intl;
-    return intl.supportedValuesOf ? intl.supportedValuesOf('timeZone') : [];
-}
 function resolveActiveSyncTimeZone(value, reference) {
     const cacheKey = `${reference.getUTCFullYear()}:${value}`;
     if (resolutionCache.has(cacheKey))
         return resolutionCache.get(cacheKey) || null;
     const information = decodeActiveSyncTimeZone(value);
     if (!information) {
-        resolutionCache.set(cacheKey, null);
+        cacheValue(resolutionCache, cacheKey, null, MAX_RESOLUTION_CACHE_ENTRIES);
         return null;
     }
     const year = reference.getUTCFullYear();
     const named = namedTimeZone(information);
     const namedInformation = named ? zoneInformation(named, year) : null;
     if (named && namedInformation && sameRule(information, namedInformation)) {
-        resolutionCache.set(cacheKey, named);
+        cacheValue(resolutionCache, cacheKey, named, MAX_RESOLUTION_CACHE_ENTRIES);
         return named;
     }
-    const preferred = information.bias === 0
-        ? ['UTC']
-        : information.bias === -180
-            ? ['Asia/Baghdad']
-            : information.bias === 420
-                ? ['America/Phoenix']
-                : [];
-    const candidates = [...preferred, ...supportedTimeZones().filter(zone => !preferred.includes(zone))];
-    const match = candidates.find(zone => {
+    const match = CANONICAL_RULE_ZONES.find(zone => {
         const candidate = zoneInformation(zone, year);
         return candidate ? sameRule(information, candidate) : false;
     }) || null;
-    resolutionCache.set(cacheKey, match);
+    cacheValue(resolutionCache, cacheKey, match, MAX_RESOLUTION_CACHE_ENTRIES);
     return match;
 }
 function formatIcalWallTime(instant, timeZone) {

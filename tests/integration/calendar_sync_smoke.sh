@@ -11,8 +11,19 @@ if [[ -z "${SMOKE_USER}" || -z "${SMOKE_PASSWORD}" ]]; then
 fi
 
 tmpdir=$(mktemp -d)
+calendar_created=false
+second_calendar_created=false
 cleanup() {
+  local exit_status=$?
+  trap - EXIT
+  if [[ "${second_calendar_created}" == "true" ]]; then
+    curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X DELETE -o /dev/null "${second_url}" || true
+  fi
+  if [[ "${calendar_created}" == "true" ]]; then
+    curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X DELETE -o /dev/null "${caldav_url}" || true
+  fi
   rm -rf "${tmpdir}"
+  exit "${exit_status}"
 }
 trap cleanup EXIT
 
@@ -51,6 +62,7 @@ if [[ "${status}" != "201" && "${status}" != "405" ]]; then
   cat "${tmpdir}/mkcalendar.out"
   exit 1
 fi
+calendar_created=true
 
 event_file="${tmpdir}/${event_uid}.ics"
 cat > "${event_file}" <<ICS
@@ -414,6 +426,7 @@ if [[ "${status}" != "201" && "${status}" != "405" ]]; then
   cat "${tmpdir}/mkcalendar-second.out"
   exit 1
 fi
+second_calendar_created=true
 
 node - "${sync_key}" <<'NODE' > "${tmpdir}/foldersync-stale.wbxml"
 const { WbxmlWriter } = require('./webmail-backend/src/wbxml/writer.js');
@@ -450,6 +463,8 @@ if (!statuses.includes('9')) {
 NODE
 
 curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X DELETE -o /dev/null -w '%{http_code}' "${second_url}" | grep -Eq '^(204|404)$'
+second_calendar_created=false
 curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X DELETE -o /dev/null -w '%{http_code}' "${caldav_url}" | grep -Eq '^(204|404)$'
+calendar_created=false
 
 echo "PASS: calendar sync smoke completed"

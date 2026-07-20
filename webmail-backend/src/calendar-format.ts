@@ -116,7 +116,7 @@ interface ParsedIcalDate {
     timeZone: string | null;
 }
 
-interface WallTimeParts {
+export interface WallTimeParts {
     year: number;
     month: number;
     day: number;
@@ -145,7 +145,7 @@ function formatterForTimeZone(timeZone: string): Intl.DateTimeFormat {
     return formatter;
 }
 
-function wallTimeAt(instant: Date, timeZone: string): WallTimeParts {
+export function wallTimeAt(instant: Date, timeZone: string): WallTimeParts {
     const values = new Map(formatterForTimeZone(timeZone).formatToParts(instant).map(part => [part.type, part.value]));
     return {
         year: Number(values.get('year')),

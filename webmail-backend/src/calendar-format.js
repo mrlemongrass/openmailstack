@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.slugifyCalendarName = slugifyCalendarName;
+exports.wallTimeAt = wallTimeAt;
 exports.parseIcalEvent = parseIcalEvent;
 exports.expandRecurringEvent = expandRecurringEvent;
 exports.formatActiveSyncDate = formatActiveSyncDate;

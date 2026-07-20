@@ -64,7 +64,7 @@ function activeSyncCalendarApplicationDataToIcal(uid, applicationData, existingI
         : timeZoneValue
             ? (0, eas_timezone_1.resolveActiveSyncTimeZone)(timeZoneValue, start)
             : existing?.timeZone || null;
-    let rruleLine = existing?.recurrence?.raw || '';
+    let rruleLine = existing?.recurrence?.raw ? `RRULE:${existing.recurrence.raw}` : '';
     const recurrenceNode = childNode(applicationData, 'Recurrence');
     if (recurrenceNode) {
         const recType = childText(recurrenceNode, 'Type');

@@ -138,6 +138,32 @@ test('physical iOS TimeZone payload preserves a New York weekly series across DS
   ]);
 });
 
+test('iOS partial Change preserves an existing recurrence as a valid RRULE', () => {
+  const existing = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VEVENT',
+    'UID:ios-partial-change',
+    'DTSTART;TZID=America/New_York:20270305T090000',
+    'DTEND;TZID=America/New_York:20270305T093000',
+    'SUMMARY:Before edit',
+    'RRULE:FREQ=WEEKLY;COUNT=4',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const ical = activeSyncCalendarApplicationDataToIcal('ios-partial-change', {
+    children: [
+      { tag: 'Subject', content: 'After edit' },
+      { tag: 'StartTime', content: '20270305T140000Z' },
+      { tag: 'EndTime', content: '20270305T143000Z' },
+    ],
+  }, existing);
+
+  assert.match(ical, /\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\n/);
+  assert.doesNotMatch(ical, /\r\nFREQ=WEEKLY/);
+  assert.equal(parseIcalEvent('ios-partial-change', ical).recurrence?.frequency, 'WEEKLY');
+});
+
 test('EAS timezone rules resolve without optional display names', () => {
   const source = parseIcalEvent('unnamed-new-york', [
     'BEGIN:VCALENDAR',

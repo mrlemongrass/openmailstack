@@ -5955,7 +5955,7 @@ Complete the remaining automated Track T protocol gates without guessing unsuppo
 - [x] Canonicalize custom aliases only when supported recurrence behavior matches the claimed IANA zone; keep invalid/unsupported definitions floating with a visible repair path.
 - [x] Preserve raw timezone and exception components during whole-series OMS Web edits.
 - [x] Pass complete repository gates and independent Standards/Spec review.
-- [ ] Deploy behind a root-only rollback snapshot and pass live artifact/service/protocol checks.
+- [x] Deploy behind a root-only rollback snapshot and pass live artifact/service/protocol checks.
 - [ ] Complete physical macOS CalDAV and iOS ActiveSync exception/reminder round trips.
 
 ### Implementation
@@ -5972,7 +5972,10 @@ Complete the remaining automated Track T protocol gates without guessing unsuppo
 - Full integration, shell syntax checks, focused Calendar/EAS/WBXML conversions, and `git diff --check` pass.
 - Mocked Chromium proved invalid-zone warning display and recovery, at-start reminder selection, Home Baghdad projection, and no application exception. Its sole console error was the intentionally unmocked preview Socket.IO endpoint.
 - Independent Standards and Spec reviews found and closed transition-coincidence, bounded-rule, explicit-exception-zone, exception-all-day, zero/week-alarm, second-offset, and negative-zero defects.
+- Commit `8469e90` is live. Backend/frontend contents match, direct/public EAS return `200`, public web/auth return `200/401`, Nginx and both backend services are active, the post-stable-start warning journal is empty, and full staging smoke passes.
+- Root-only rollback: `/var/backups/openmailstack/calendar-track-t-8469e90-20260720T203554Z`; backend archive SHA-256 `46663268df50bbff5d4f9d35dd13b92ab986056072ee6eb69c19830ed85e8852`, web archive SHA-256 `50b0115e6d9b4ed215a7e201153ef0801999c5e4cf32d417258e2b42d2492b9d`.
+- Deployment incident: targeted `rsync -a` preserved one generated runtime file as `0600 root:root`, so the first restart failed with EACCES and systemd retried. The bounded modules were normalized to `0644`; one explicit restart produced stable `NRestarts=0` and a clean subsequent journal. No production data, schema, mailbox, calendar row, or configuration changed.
 
 ### Remaining risk / next task
 
-This is not a Track T completion claim. Deploy the tested commit reversibly, validate exact live artifacts and service/protocol health, then ask the user to perform the macOS/iOS exception/reminder matrix. Unsupported arbitrary custom timezone rules remain deliberately floating; OMS preserves their wall time and raw definition but does not execute them.
+This is not a Track T completion claim. The guarded live gate passes; ask the user to perform the macOS/iOS exception/reminder matrix. Unsupported arbitrary custom timezone rules remain deliberately floating; OMS preserves their wall time and raw definition but does not execute them.

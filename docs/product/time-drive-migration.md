@@ -50,7 +50,7 @@ Unless the owner decides otherwise, implementation should use these defaults:
 
 ## 4. Track T — Time Correctness And Clock
 
-Implementation status (2026-07-20): T0-T2 plus most of T3 are implemented. Apple-shaped CalDAV lifecycle tests, EAS `TIME_ZONE_INFORMATION`, recurrence exceptions, display reminders, conservative custom/invalid `VTIMEZONE` handling, Scheduler availability, deterministic DST vectors, and real Chromium/WebKit pass. Physical macOS 26.5.2 CalDAV and iOS 26.5.2 ActiveSync single-event create/edit/delete plus four-occurrence New York weekly series across DST also pass in OMS Web. T3 remains open only for the physical recurrence-exception/reminder matrix and its post-deployment evidence.
+Implementation status (2026-07-20): T0-T2 plus most of T3 are implemented and deployed. Apple-shaped CalDAV lifecycle tests, EAS `TIME_ZONE_INFORMATION`, recurrence exceptions, display reminders, conservative custom/invalid `VTIMEZONE` handling, Scheduler availability, deterministic DST vectors, and real Chromium/WebKit pass. Physical macOS 26.5.2 CalDAV and iOS 26.5.2 ActiveSync single-event create/edit/delete plus four-occurrence New York weekly series across DST also pass in OMS Web. T3 remains open only for the physical recurrence-exception/reminder matrix.
 
 ### 4.1 Required time model
 

@@ -6015,17 +6015,17 @@ Implementation commit: `5b9cd89e`
 - [x] Isolate EAS mail sync state by mailbox, device, and folder.
 - [x] Emit source-folder Deletes when synchronized IMAP UIDs disappear and destination Adds after web moves.
 - [x] Honor FilterType, WindowSize, and body truncation under bounded memory.
-- [x] Avoid automatic whole-mailbox backfill and make unchanged polls efficient.
+- [x] Bound initial/full catch-up by WindowSize and make ordinary unchanged polls efficient.
 - [x] Cover web-to-Junk, web-to-Trash, and no-change Sync regressions.
 - [x] Deploy behind rollback and pass automated production validation.
-- [ ] Complete one clean physical iOS Exchange resync and compare with the IMAP devices.
+- [ ] Complete one clean physical iOS Exchange resync, exhaust its paginated all-mail catch-up, and compare with the IMAP devices.
 
 ### Implementation
 
 - Added `eas_mail_sync_states` with opaque keys and per-user/device/collection UIDVALIDITY, MODSEQ, minimum UID, options, known UID/read map, and bounded exact-response replay state.
 - Added source Delete/SoftDelete/Add/Change delta computation, client Delete handling including DeletesAsMoves, and direct Basic credential verification against IMAP before state or replay access.
 - Added Email FilterType 0-5, WindowSize protocol bounds, supported AirSyncBase body preferences, UTF-8 byte truncation, partial MIME signaling, and a 16 MiB aggregate source-fetch budget.
-- A no-filter initial sync establishes a newest-window floor. An unchanged HIGHESTMODSEQ poll avoids `SEARCH ALL`; MoreAvailable retains the previous MODSEQ so paged changes are not lost.
+- A no-filter initial sync is bounded to WindowSize pages. An unchanged HIGHESTMODSEQ poll avoids `SEARCH ALL` after catch-up; MoreAvailable retains a pending checkpoint so paged changes are not lost.
 
 ### Proof and rollout
 
@@ -6038,3 +6038,28 @@ Implementation commit: `5b9cd89e`
 ### Remaining risk / next task
 
 The table is intentionally empty before physical reconnection. On its next poll, the existing iOS Exchange account should receive an invalid legacy-key response and establish fresh per-folder state. The next task is user-operated pull-to-refresh, followed by read-only confirmation that the previously spammed messages are only in Junk, the deleted test message is absent from Inbox, and subsequent no-change refresh is quick and agrees with macOS/iOS IMAP.
+
+## 2026-07-20 — ActiveSync all-mail paging hotfix and physical continuation
+
+Agent/tool: Codex with user-operated iOS 26.5.2
+Branch: `main`
+Implementation commit: `bc4f7387`
+
+### Diagnosis and correction
+
+- Physical state reproduced the exact 25-message ceiling: FilterType normalized to 0, WindowSize 25, 25 known Inbox UIDs, the 25th UID stored as the floor, and `MoreAvailable=false`.
+- Microsoft EAS defines FilterType 0 or omission as all items and requires `MoreAvailable` while server changes exceed WindowSize. The newest-window floor therefore violated the wire contract and the iOS “No Limit” setting.
+- The delta engine now ignores legacy floors for FilterType 0. Existing floored state bypasses equal-MODSEQ optimization once, persists floor 1, and holds checkpoint 0 across older pages; bounded filters and completed no-change polls retain their existing optimizations.
+
+### Proof and rollout
+
+- Two red-to-green regressions cover a 100-item all-mail partnership paging beyond its stored first 25 and a legacy state forcing a full IMAP UID snapshot despite unchanged MODSEQ.
+- Backend 176/179 with three expected optional skips, frontend 37/37, full integration, generated-runtime build, and `git diff --check` pass.
+- Commit `bc4f7387` is pushed and live. Repository/deployed module hashes match; local/public ActiveSync OPTIONS return 200; `openmailstack.service` is active with `NRestarts=0`; the post-restart error scan and full staging smoke pass.
+- Root-only rollback: `/var/backups/openmailstack/eas-all-mail-bc4f738-20260720T224709Z/backend-before.tar.gz`, SHA-256 `fae62ec9da106e396d5fd61878a86d935b9bf4b6ddfc154134bd852afef081f6`.
+- Physical iOS immediately advanced beyond 25 messages and behaved like endless-scroll OMS Web. Read-only state observed more than 1,000 known Inbox messages in 25-command pages, floor 1, `MoreAvailable=true`, checkpoint 0, and no backend errors while the roughly 6,034-message Inbox continued catching up.
+
+### Remaining physical checks
+
+- Wait for `MoreAvailable=false`, verify the final checkpoint is nonzero, then prove a subsequent no-change poll remains empty and fast.
+- The current IMAP source of truth places the two previously reported spam subjects in Inbox rather than Junk; the deleted self-test is absent from Inbox and present in Trash. Have the user perform a fresh OMS Web spam move, then observe the iOS Inbox Delete and Junk Add without server-side mutation.

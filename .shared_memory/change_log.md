@@ -1105,3 +1105,12 @@ Future entry template:
 - Live proof: an authenticated production smoke used the real web action API for Inbox-to-Junk and Junk-to-Trash and observed the matching EAS Deletes/Adds, read/unread propagation, body truncation, and empty no-change Sync. Its unique mail and synthetic sync state were cleaned up.
 - Rollback: `/var/backups/openmailstack/eas-mail-sync-5b9cd89-20260720T222243Z/backend-before.tar.gz`, SHA-256 `058fc4c5914b2e38dc598cc0cc41299fe83283dd9d4249fa5d36e530621ffd56`.
 - Remaining: allow one physical iOS Exchange stale-key reset, then compare Inbox/Junk/Trash and no-change refresh behavior with macOS Mail and the iOS IMAP account before closing the device gate.
+
+## 2026-07-20 ActiveSync FilterType-0 All-Mail Paging Hotfix
+
+- Diagnosed: physical iOS 26.5.2 requested WindowSize 25 and omitted FilterType, which means all mail. The deployed initial floor stored only 25 known Inbox UIDs and returned `MoreAvailable=false`, exactly matching the user-visible ceiling.
+- Fixed: `computeMailSyncDelta` treats FilterType 0 as authoritative over a legacy UID floor. The route persists floor 1, forces one complete UID snapshot for old floored state despite equal MODSEQ, and holds checkpoint 0 across `MoreAvailable` pages until catch-up completes.
+- Preserved: bounded FilterType windows can retain their floor, WindowSize remains 25 for this iOS client, source/body budgets remain bounded, and a fully synchronized unchanged folder still skips `SEARCH ALL`.
+- Tested: the red regression pages a 100-item folder from a legacy 25-item state through three older pages and a final empty poll. A second regression proves legacy recovery bypasses the equal-MODSEQ shortcut. Backend 176/179 with three optional skips, frontend 37/37, full integration, and `git diff --check` pass.
+- Deployed: commit `bc4f7387` is live and pushed. Exact artifacts, local/public EAS OPTIONS, active zero-restart service state, clean error scan, and full staging smoke pass. Rollback archive `/var/backups/openmailstack/eas-all-mail-bc4f738-20260720T224709Z/backend-before.tar.gz`, SHA-256 `fae62ec9da106e396d5fd61878a86d935b9bf4b6ddfc154134bd852afef081f6`.
+- Physical proof: iOS advanced from 25 to more than 1,000 known Inbox messages in continuous 25-command pages with floor 1, `MoreAvailable=true`, recovery checkpoint 0, and no backend errors. Exhaustion/no-change and a fresh physical web-to-Junk move remain pending.

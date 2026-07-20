@@ -342,9 +342,17 @@ Security:
 
 ## 2026-07-20 ActiveSync Mail Delta Automated And Live Gate
 
-- Release: commit `5b9cd89e` adds durable user/device/folder state, opaque SyncKeys, authenticated exact-response replay, IMAP UID disappearance Deletes, destination-folder Adds, FilterType/WindowSize/body handling, a newest-window initial floor, and an unchanged-MODSEQ fast path.
+- Release: commit `5b9cd89e` adds durable user/device/folder state, opaque SyncKeys, authenticated exact-response replay, IMAP UID disappearance Deletes, destination-folder Adds, FilterType/WindowSize/body handling, and an unchanged-MODSEQ fast path. Hotfix `bc4f7387` corrects FilterType-0/omitted all-mail behavior to page the complete collection through `MoreAvailable`.
 - Automated proof: 17/17 focused mail-sync regressions; backend 174/177 with three expected optional database skips; frontend 37/37; full integration; shell syntax; `git diff --check`; and independent Standards/Spec reviews pass.
 - Authenticated live proof: one unique message passed SMTP delivery, initial EAS Add, read/unread Change, empty no-change Sync, OMS Web Inbox-to-Junk, EAS Inbox Delete plus Junk Add, OMS Web Junk-to-Trash, and EAS Junk Delete plus Trash Add. The body was UTF-8 byte-truncated to the requested size. The message and isolated synthetic-device state were removed afterward.
 - Deployment proof: repository/live hashes match; `openmailstack.service` is active/running with `NRestarts=0`; direct EAS OPTIONS returns 200; invalid Basic returns 401; the InnoDB state table exists; full staging smoke and the post-rollout warning/error scan pass.
 - Safety/rollback: no real device state was removed. Root-only rollback archive `/var/backups/openmailstack/eas-mail-sync-5b9cd89-20260720T222243Z/backend-before.tar.gz`, SHA-256 `058fc4c5914b2e38dc598cc0cc41299fe83283dd9d4249fa5d36e530621ffd56`.
 - Remaining physical gate: refresh the existing iOS 26.5.2 Exchange account once so its legacy key resets into new scoped state. Confirm the two spam messages are absent from Exchange Inbox and present only in Junk, the deleted self-test message is absent, and the second no-change refresh is quick and agrees with macOS Mail and the iOS IMAP account.
+
+## 2026-07-20 ActiveSync All-Mail Physical Paging Hotfix
+
+- Reproduction: physical iOS stored FilterType 0, WindowSize 25, exactly 25 known Inbox messages, a floor at the 25th UID, and `MoreAvailable=false`. A deterministic 100-item regression reproduced the same false terminal page.
+- Correction: FilterType 0 and omitted FilterType now synchronize every item. Existing floored partnerships force one complete UID snapshot, reset the floor to 1, retain checkpoint 0 while older pages remain, and restore the MODSEQ fast path only after exhaustion.
+- Automated/live proof: backend 176/179 with three expected skips, frontend 37/37, full integration, exact live artifacts, local/public EAS 200, zero service restarts, clean error scan, and staging smoke pass. Rollback SHA-256 is `fae62ec9da106e396d5fd61878a86d935b9bf4b6ddfc154134bd852afef081f6`.
+- Physical result in progress: iOS advanced beyond the original 25-message ceiling into continuous 25-item pages and exceeded 1,000 known Inbox messages without server errors. The Inbox contains roughly 6,034 messages, so exhaustion/no-change requires the client to finish catch-up.
+- Folder-state follow-up: read-only IMAP verification currently finds the two named spam subjects in Inbox, not Junk; the deleted self-test is absent from Inbox and present in Trash. A fresh user-operated OMS Web spam action is required before validating the physical EAS source Delete and Junk Add against current server truth.

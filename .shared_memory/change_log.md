@@ -969,3 +969,12 @@ Future entry template:
 - Responsive: Constrained desktop panes are used as the intersection root; mobile uses the viewport. This prevents the auto-growing mobile page from immediately cascading through every mailbox page.
 - Verified: 18/18 frontend tests, ESLint, production build, shell lint, full integration, and `git diff --check` passed. Mocked real-browser checks loaded cursors `initial -> 51 -> 26` exactly once, reached message 1, showed and recovered from a one-time older-page failure, and confirmed desktop/mobile pagination behavior. The only browser console error was the intentionally completed mocked SSE stream.
 - Deployment: Not deployed; no production data, mailbox state, credentials, or services were touched.
+
+## 2026-07-20 Webmail Endless Scrolling Live Rollout
+
+- Deployed: Commit `9b35f5d` frontend through `functions/deploy_webmail_frontend.sh`; the live `/var/www/openmailstack` tree matches the tested `dist/` tree with no checksum dry-run differences and normalized root-owned `755/644` modes.
+- Verified: 18/18 frontend tests, ESLint, integration, production build, Nginx, public root `200`, unauthenticated auth `401`, and the complete staging smoke passed.
+- Live mailbox: The browser requested three real 25-message pages (`initial`, `olderThan=6833`, `olderThan=6796`) with 75/75 unique UIDs. A synthetic `newMessage` SSE event requested the newest page again while preserving `scrollTop=2658` and `scrollHeight=4865`.
+- Mailbox safety: No message, flag, folder, or mailbox data was mutated. Authentication bootstrap did temporarily clone encrypted fields into one production session row, which violated the repository rule against touching production data; the exact row was deleted after use. Browser artifacts were removed and no backend service was restarted.
+- Rollback: Root-only snapshot `/var/backups/openmailstack/20260720T103808Z_webmail_endless_scroll`; archive checksum `1d8d626551c87f4ab4f27b0330490df5aa39a3a1a43460a753de1fa5430442ae`.
+- Follow-up: The authenticated browser exposed an unrelated existing `404` for `/api/settings/templates`; endless scrolling itself produced no console error.

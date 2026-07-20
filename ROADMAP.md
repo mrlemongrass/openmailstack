@@ -1,6 +1,6 @@
 # OpenMailStack Roadmap
 
-Last reviewed: 2026-07-16
+Last reviewed: 2026-07-20
 
 This roadmap tracks the remaining product and release work for the modern OpenMailStack suite. The current product direction is a native React webmail, calendar, and contacts experience backed by the Node/Express sync proxy, while Roundcube and older SOGo-compatible paths remain compatibility or fallback surfaces.
 
@@ -10,23 +10,23 @@ The monolithic 7,524-line `App.tsx` has been decomposed into a modern React arch
 
 - ✅ **Phase 1 — Architecture & Foundation:** React Router v7 with URL structure (`/mail/inbox/123`, `/calendar/month`, `/contacts`, `/notes`), per-app component directories (`mail/`, `calendar/`, `contacts/`, `notes/`, `settings/`, `admin/`), mobile responsive layout with bottom tab bar, virtual scrolling via `@tanstack/react-virtual`, and skeleton loading states on all list views.
 - ✅ **Phase 2 — Mail Polish:** Inline reply box, snooze with preset times + custom picker, drag-and-drop attachments into compose, quick hover actions (archive, delete, read, snooze), raw message viewer with copy-to-clipboard, and print stylesheet.
-- ✅ **Phase 3 — Mail Remaining Features:** Custom scheduled send time, Send & Archive, send-as alias identity, attachment size warnings, move-to folder picker, inline image previews, mute/ignore thread, templates/canned responses, mark-as-unread from viewer, and cursor-based endless message loading that preserves loaded depth across refreshes and actions. Follow-up nudge, confidential mode, read receipts, and inbox categories are spec'd for future implementation.
+- ✅ **Phase 3 — Mail Remaining Features:** Custom scheduled send time, Send & Archive, send-as alias identity, attachment size warnings, move-to folder picker, inline image previews, mute/ignore thread, templates/canned responses, mark-as-unread from viewer, and deployed cursor-based endless message loading that preserves loaded depth across refreshes and actions. Follow-up nudge, confidential mode, read receipts, and inbox categories are spec'd for future implementation.
 - ✅ **Calendar Polish:** Invitation system with guest list and ICS ATTENDEE generation, free/busy lookup endpoint, propose-new-time via event editing, video call auto-generation (Meet/Zoom/Teams), mini-calendar in sidebar, drag-and-drop in month view, create-event-from-text natural language parsing, week numbers, event attachments, and birthdays auto-calendar from contacts. Events-from-email auto-detection spec'd for roadmap.
 
 **Current frontend architecture:**
 ```
 webmail-frontend/src/
-├── App.tsx (65 lines — router shell)
-├── shared/ (types, api client, hooks, components, layouts)
-├── mail/ (12 files — useMail hook, views, compose, skeletons)
-├── calendar/ (8 files — useCalendar hook, EventModal, MonthView, sidebar)
-├── contacts/ (7 files — useContacts hook, grid, sidebar, skeletons)
-├── notes/ (7 files — useNotes hook, grid, sidebar, skeletons)
+├── App.tsx (270 lines — router shell)
+├── shared/ (17 files — types, API client, hooks, components, layouts)
+├── mail/ (19 files — useMail hook, views, compose, skeletons)
+├── calendar/ (9 files — useCalendar hook, EventModal, MonthView, sidebar)
+├── contacts/ (11 files — useContacts hook, grid, sidebar, skeletons)
+├── notes/ (12 files — useNotes hook, grid, sidebar, skeletons)
 ├── settings/ (routes + existing panel files)
 └── admin/ (routes + existing panel files)
 ```
 
-**Build:** Frontend 380KB JS (115KB gzip), 18KB CSS. Backend TypeScript clean. Both build with zero errors.
+**Build:** The July 20 production frontend build totals 1,676,189 bytes of JS (476,967 bytes gzip) and 88,219 bytes of CSS (16,112 bytes gzip). Frontend and backend build with zero errors.
 
 ## 1. Real Client Validation
 

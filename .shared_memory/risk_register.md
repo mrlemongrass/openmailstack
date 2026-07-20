@@ -2,7 +2,7 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-07-14
+Last updated: 2026-07-20
 
 ## Resolved Risks
 
@@ -73,6 +73,7 @@ Security and authorization areas to re-check:
 
 Operational/release risks:
 
+- Authenticated live webmail currently requests `/api/settings/templates`, which returns `404` and produces a console error. This was observed during the 2026-07-20 endless-scroll rollout but is unrelated to pagination; reconcile the frontend templates request with the implemented backend contract in a separate bounded task.
 - `functions/10_webmail.sh` now renders `/etc/openmailstack/webmail-backend.env`, installs `openmailstack.service`, deploys the React app, and injects Nginx proxy routes with candidate validation/rollback. It has still not been exercised on a clean VM in this cycle; validate on a clean VM before release.
 - On the live server, Nginx already had root, `/api`, `/caldav`, and ActiveSync routes before migration. Do not blindly run the `functions/10_webmail.sh` Nginx injection against an already-migrated live config without checking for duplicate locations first.
 - The backend's global raw body parser must not consume `/api/` or `multipart/form-data` requests; otherwise webmail send/draft uploads fail with Busboy `Unexpected end of form`.

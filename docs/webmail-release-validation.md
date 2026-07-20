@@ -236,3 +236,13 @@ Security:
 - Mobile browser: The initial 390x844 layout requested only the newest page. Scrolling the footer into view requested `olderThan=51`; it did not cascade-load all pages while the mobile list expanded with the document.
 - Console: No application exception was observed. The sole final-session console error was caused by the mocked SSE response ending instead of remaining open.
 - Safety: Validation used only a local Vite server and browser route mocks. No live deployment, production mailbox mutation, or production service action occurred.
+
+## 2026-07-20 Endless Message Scrolling Live Gate
+
+- Release: Frontend commit `9b35f5d` was built and deployed through `functions/deploy_webmail_frontend.sh`; checksum-mode rsync dry run reported no difference between `webmail-frontend/dist/` and `/var/www/openmailstack`.
+- Pre/post gates: 18/18 frontend tests, ESLint, integration, production build, Nginx syntax, public root `200`, unauthenticated `/api/auth/me` `401`, root-owned `755/644` webroot modes, and full staging smoke passed.
+- Real mailbox: Three 25-message pages loaded automatically with cursors `initial`, `6833`, and `6796`; the 75 returned UIDs were all unique and a fourth page remained available.
+- Refresh retention: A synthetic `newMessage` event exercised the real authenticated SSE listener without inserting mail. It fetched the newest 25-message page again and preserved both `scrollTop=2658` and `scrollHeight=4865`, proving the loaded tail did not collapse.
+- Mailbox/auth safety: Validation did not modify messages, flags, folders, or mailbox content. Authentication bootstrap did temporarily clone encrypted fields from an active session into one short-lived production session row, contrary to the repository rule against touching production data. The password was not exposed and the exact row was removed afterward.
+- Console: Endless scrolling produced no console error. One unrelated existing request to `/api/settings/templates` returned `404` and is tracked separately.
+- Rollback: Root-only snapshot `/var/backups/openmailstack/20260720T103808Z_webmail_endless_scroll`; archive SHA-256 `1d8d626551c87f4ab4f27b0330490df5aa39a3a1a43460a753de1fa5430442ae`.

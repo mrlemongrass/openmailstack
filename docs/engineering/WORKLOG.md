@@ -6057,9 +6057,9 @@ Implementation commit: `bc4f7387`
 - Backend 176/179 with three expected optional skips, frontend 37/37, full integration, generated-runtime build, and `git diff --check` pass.
 - Commit `bc4f7387` is pushed and live. Repository/deployed module hashes match; local/public ActiveSync OPTIONS return 200; `openmailstack.service` is active with `NRestarts=0`; the post-restart error scan and full staging smoke pass.
 - Root-only rollback: `/var/backups/openmailstack/eas-all-mail-bc4f738-20260720T224709Z/backend-before.tar.gz`, SHA-256 `fae62ec9da106e396d5fd61878a86d935b9bf4b6ddfc154134bd852afef081f6`.
-- Physical iOS immediately advanced beyond 25 messages and behaved like endless-scroll OMS Web. Read-only state observed more than 1,000 known Inbox messages in 25-command pages, floor 1, `MoreAvailable=true`, checkpoint 0, and no backend errors while the roughly 6,034-message Inbox continued catching up.
+- Physical iOS immediately advanced beyond 25 messages and behaved like endless-scroll OMS Web. Read-only state reached 4,550 known Inbox messages in 25-command pages, floor 1, `MoreAvailable=true`, checkpoint 0, and no backend errors before the client paused with the roughly 6,034-message Inbox still catching up.
 
 ### Remaining physical checks
 
 - Wait for `MoreAvailable=false`, verify the final checkpoint is nonzero, then prove a subsequent no-change poll remains empty and fast.
-- The current IMAP source of truth places the two previously reported spam subjects in Inbox rather than Junk; the deleted self-test is absent from Inbox and present in Trash. Have the user perform a fresh OMS Web spam move, then observe the iOS Inbox Delete and Junk Add without server-side mutation.
+- The user confirmed the IMAP account consistently shows the two historical spam examples in Junk. Current direct server and search-index checks find active Inbox UIDs for those sender/subject pairs, while the recent human OMS Web action referenced a different UID and the index has no usable Message-ID for identity comparison. Do not repeat or automate a subject-only move; reconcile exact instances first. The deleted self-test is absent from Inbox and present in Trash.

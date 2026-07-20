@@ -91,7 +91,7 @@ The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day 
 
 ## 4. Mail Product Work ✅ (2026-06-29)
 
-- 🟡 ActiveSync Mail now has user/device/folder-scoped delta state, source-folder deletes for web moves, destination-folder adds, bounded FilterType/WindowSize/body retrieval, paginated FilterType-0 all-mail sync, and efficient post-catch-up no-change polls. Automated and authenticated production web-to-Junk/web-to-Trash checks pass at `5b9cd89e`; hotfix `bc4f7387` physically advanced iOS 26.5.2 beyond the erroneous 25-message floor into continuous paging. Catch-up exhaustion/no-change and one fresh physical web-to-Junk move remain before closing the device gate.
+- 🟡 ActiveSync Mail now has user/device/folder-scoped delta state, source-folder deletes for web moves, destination-folder adds, bounded FilterType/WindowSize/body retrieval, paginated FilterType-0 all-mail sync, and efficient post-catch-up no-change polls. Automated and authenticated production web-to-Junk/web-to-Trash checks pass at `5b9cd89e`; hotfix `bc4f7387` physically advanced iOS 26.5.2 beyond the erroneous 25-message floor into continuous paging. Catch-up exhaustion/no-change and reconciliation of the historical spam-message identities remain before closing the device gate.
 - ✅ Add a background search indexing worker so search is not dependent on an active web session (mailbox_credentials for offline indexing).
 - ✅ Add richer search operators such as `has:attachment`, `before:`, `after:`, `larger:`, and attachment content search (PDF/Office text extraction).
 - ✅ Improve conversation threading, undo send, delayed send, and quota display.

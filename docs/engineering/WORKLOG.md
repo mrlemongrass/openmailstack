@@ -5812,3 +5812,48 @@ Complete the reversible physical macOS Calendar CalDAV CRUD and DST-crossing rec
 ### Next recommended task
 
 After the user confirms the live recurrence presentation, edit the macOS DST series as a whole and verify all four projected times under the same UID, then delete the series and verify automatic OMS Web removal. Continue with physical iOS ActiveSync DST recurrence afterward.
+
+## 2026-07-20 Scheduler Public Availability Recovery
+
+Agent/tool: Codex
+Branch: `main`
+Implementation commit: `cb824940`
+
+### Selected task
+
+Diagnose and repair the live `Unable to load availability` failure on public Scheduler pages without changing Scheduler settings, bookings, calendars, or production schema.
+
+### Acceptance criteria
+
+- [x] Reproduce the failure through the public page and slots API.
+- [x] Identify the exact backend exception without mutating production data.
+- [x] Add a regression that reproduces the production schema mismatch.
+- [x] Apply the smallest safe fix and pass backend/integration gates.
+- [x] Deploy only the affected runtime artifacts behind a rollback snapshot.
+- [x] Verify the public page renders real availability in a production browser.
+
+### Root cause and fix
+
+- The public metadata routes were healthy, but every slot range returned `500`. A read-only `SchedulerStore.listSlots()` diagnostic exposed MariaDB `ER_CANT_AGGREGATE_2COLLATIONS` in `busyIntervals()`.
+- Legacy `events.uid` uses `utf8mb4_general_ci`, while `scheduler_bookings.calendar_event_uid` uses `utf8mb4_unicode_ci`. Their direct equality join failed before calendar event parsing or recurrence expansion.
+- Calendar UIDs are opaque, case-sensitive identifiers, so the join now compares both values as binary strings. This avoids data coercion and a production schema migration.
+- The Phase 1 database fixture now forces the same mixed-collation layout, and it failed with the production error before the fix.
+
+### Proof / checks run
+
+- Disposable MariaDB Phase 1 lifecycle: 1/1 passed with mixed UID collations; the database and test principal were removed afterward.
+- Backend: 135 total, 132 passed, zero failed, three expected optional database skips.
+- Full integration suite, Scheduler guards, backend build, `git diff --check`, and project memory hygiene passed.
+- Live 7-day APIs returned 139 Discovery Call slots and 131 Consultation Call slots after deployment.
+- Production Chromium found `Select a time` and 14 visible `12:30 PM` slot buttons; the 62-day slots request returned `200`, with zero browser console errors or warnings.
+- `openmailstack` and `openmailstack-scheduler-worker` are active with `NRestarts=0`; the post-restart warning journal is empty and full staging smoke passed.
+
+### Safety / rollback
+
+- Deployed only `src/scheduler/store.ts` and its generated `store.js`, then restarted only `openmailstack`. The Scheduler worker was not restarted.
+- Repository and live hashes match for both artifacts. No production row, schema, mailbox, calendar, booking, Scheduler setting, dependency, environment, Nginx, or systemd configuration changed.
+- Root-only rollback archive: `/var/backups/openmailstack/scheduler-availability-cb82494-20260720T175949Z/backend-store.tar.gz`; SHA-256 `520b5fac2b5569e5ef7e6318adda83f2ca0523110ae7db3f15a53f90cd353690`.
+
+### Next recommended task
+
+Resume the physical iOS ActiveSync create/edit/delete and DST-crossing recurrence gate. Separately, add structured error logging around public Scheduler slot generation so a future internal failure is visible without a direct store diagnostic.

@@ -1049,3 +1049,12 @@ Future entry template:
 - Verified: 32 frontend tests, ESLint, production build, full integration, keyboard Chromium, `git diff --check`, and both independent reviews pass.
 - Deployed: frontend commit `c739bd5` is exact under `/var/www/openmailstack`; public root/auth/EAS, service restart counters, warning journal, Nginx, and full staging smoke pass. Rollback archive `/var/backups/openmailstack/calendar-recurrence-ui-20260720T173444Z/web-root.tar.gz` has SHA-256 `d8a18bca77935ed8f3c5cc102538e075200049c6bbc5d22ee7626d5d9fb9fef5`.
 - Remaining: physical iOS ActiveSync DST recurrence and deliberate macOS series edit/delete cleanup.
+
+## 2026-07-20 Scheduler Public Availability Recovery
+
+- Diagnosed: Public Scheduler event metadata returned `200`, but slot queries returned `500`. A read-only live store call isolated MariaDB `ER_CANT_AGGREGATE_2COLLATIONS` in the booking-to-calendar UID join.
+- Fixed: `SchedulerStore.busyIntervals()` now compares both opaque UID columns as binary values. This preserves case-sensitive UID identity and avoids a production schema migration.
+- Regressed: The disposable Scheduler Phase 1 fixture deliberately mixes legacy `events.uid` `utf8mb4_general_ci` with Scheduler `utf8mb4_unicode_ci`; it reproduced the live failure before the fix and passes the complete lifecycle afterward.
+- Verified: Backend 132/135 with three expected optional database skips, full integration/Scheduler guards, build, diff check, and disposable database cleanup pass. Live Discovery/Consultation 7-day APIs return 139/131 slots; production Chromium renders time buttons, the 62-day request returns `200`, and the console is clean.
+- Deployed: Commit `cb824940` through a two-file backend sync and one `openmailstack` restart. Live hashes match, both backend services are active with zero restarts, the warning journal is empty, and staging smoke passes.
+- Safety: No production data, schema, booking, calendar, Scheduler setting, dependency, configuration, or Scheduler-worker restart. Rollback archive `/var/backups/openmailstack/scheduler-availability-cb82494-20260720T175949Z/backend-store.tar.gz`, SHA-256 `520b5fac2b5569e5ef7e6318adda83f2ca0523110ae7db3f15a53f90cd353690`.

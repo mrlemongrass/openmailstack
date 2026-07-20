@@ -239,7 +239,7 @@ export function buildCalendarEventIcal(
   if (draft.location) lines.push(`LOCATION:${draft.location}`);
   if (draft.description) lines.push(`DESCRIPTION:${draft.description}`);
   if (draft.recurrence && draft.recurrence !== 'none') {
-    const recurrence = /^FREQ=/i.test(draft.recurrence)
+    const recurrence = /(?:^|;)FREQ=/i.test(draft.recurrence)
       ? draft.recurrence
       : `FREQ=${draft.recurrence.toUpperCase()}`;
     lines.push(`RRULE:${recurrence}`);
@@ -255,6 +255,43 @@ export function formatWallTime(date: Date, clockFormat: '12h' | '24h'): string {
   if (clockFormat === '24h') return `${pad(hour)}:${minute}`;
   const suffix = hour < 12 ? 'AM' : 'PM';
   return `${hour % 12 || 12}:${minute} ${suffix}`;
+}
+
+export type RecurrenceChoice = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+export function recurrenceChoice(recurrence: string | null | undefined): RecurrenceChoice {
+  if (!recurrence || recurrence === 'none') return 'none';
+  const normalized = recurrence.trim().toLowerCase();
+  if (['daily', 'weekly', 'monthly', 'yearly'].includes(normalized)) {
+    return normalized as RecurrenceChoice;
+  }
+  const frequency = /(?:^|;)FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)(?:;|$)/i.exec(recurrence)?.[1];
+  return frequency ? frequency.toLowerCase() as RecurrenceChoice : 'none';
+}
+
+export function recurrenceSummary(
+  recurrence: string | null | undefined,
+  recurrenceLabel?: string | null
+): string {
+  const choice = recurrenceChoice(recurrence);
+  if (choice === 'none') return '';
+  const fallback = {
+    daily: 'Every day',
+    weekly: 'Every week',
+    monthly: 'Every month',
+    yearly: 'Every year',
+  }[choice];
+  const label = recurrenceLabel?.trim() || fallback;
+  return `Repeats ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+}
+
+export function calendarEventPresentation(
+  event: Pick<CalendarEvent, 'title' | 'start' | 'isAllDay' | 'location' | 'recurrence' | 'recurrenceLabel'>,
+  clockFormat: '12h' | '24h'
+): { text: string; title: string } {
+  const text = `${event.isAllDay ? '' : `${formatWallTime(event.start, clockFormat)} `}${event.title}${event.location ? ` — ${event.location}` : ''}`;
+  const repeat = recurrenceSummary(event.recurrence, event.recurrenceLabel);
+  return { text, title: repeat ? `${text}\n${repeat}` : text };
 }
 
 export function formatHourLabel(hour: number, clockFormat: '12h' | '24h'): string {

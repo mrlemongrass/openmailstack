@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameMonth, isSameDay, getWeek } from 'date-fns';
 import type { useCalendar } from '../hooks/useCalendar';
 import type { CalendarEvent } from '../../shared/types';
-import { formatWallTime } from '../calendarTime';
+import { calendarEventPresentation } from '../calendarTime';
 
 export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const monthStart = startOfMonth(cal.currentDate);
@@ -76,17 +76,27 @@ export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                       {format(day, 'd')}
                     </div>
                     {dayEvents.slice(0, 3).map((evt) => {
-                      const fullText = (!evt.isAllDay ? formatWallTime(evt.start, cal.calendarSettings.clockFormat) + ' ' : '') + evt.title + (evt.location ? ' — ' + evt.location : '') + (evt.recurrence && evt.recurrence !== 'none' ? ` (repeats ${evt.recurrence})` : '');
+                      const presentation = calendarEventPresentation(evt, cal.calendarSettings.clockFormat);
                       return (
-                      <div key={evt.id + (evt.occurrenceId || '')} draggable
-                        onDragStart={() => setDragEvent(evt)}
-                        onClick={(e) => { e.stopPropagation(); cal.editExistingEvent(evt); }}
-                        title={fullText}
+                        <div key={evt.id + (evt.occurrenceId || '')} draggable
+                          onDragStart={() => setDragEvent(evt)}
+                          onClick={(e) => { e.stopPropagation(); cal.editExistingEvent(evt); }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              cal.editExistingEvent(evt);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={presentation.title}
+                          title={presentation.title}
                         style={{ fontSize: '0.6rem', padding: '1px 3px', borderRadius: 2, cursor: 'grab',
                           background: `${cal.calendars.find((c) => c.id === evt.calendarId)?.color || '#3B82F6'}33`,
                           color: 'var(--text-primary)', overflow: 'hidden',
                           textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 1 }}>
-                        {fullText}
+                        {presentation.text}
                       </div>
                       );
                     })}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Save, Trash2, Video, Paperclip, Plus, Minus } from 'lucide-react';
+import { X, Save, Trash2, Video, Paperclip, Plus, Minus, Repeat2 } from 'lucide-react';
 import type { useCalendar } from './hooks/useCalendar';
 import { format } from 'date-fns';
 import * as api from '../shared/api';
@@ -8,6 +8,8 @@ import type { Contact } from '../shared/types';
 import {
   addWallDays,
   convertWallDateTimeZone,
+  recurrenceChoice,
+  recurrenceSummary,
   supportedTimeZones,
   wallDateToInstant,
   type CalendarTimeKind,
@@ -147,6 +149,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const eventInstantPreview = !evt.isAllDay && eventTimeKind !== 'floating' && evt.start
     ? wallDateToInstant(evt.start as Date, eventTimeKind, eventTimeKind === 'utc' ? 'UTC' : (evt.timeZone || cal.displayTimeZone)).toISOString()
     : null;
+  const repeatSummary = recurrenceSummary(evt.recurrence, evt.recurrenceLabel);
 
   const handleEventTimeZoneChange = (value: string) => {
     const nextKind: CalendarTimeKind = value === '__floating__' ? 'floating' : value === '__utc__' ? 'utc' : 'zoned';
@@ -208,6 +211,13 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
           <input className="glass-input" placeholder="Event title" autoFocus
             value={evt.title || ''} onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, title: e.target.value }))} />
+
+          {repeatSummary && (
+            <div role="note" style={{ display: 'flex', alignItems: 'center', gap: 6,
+              color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+              <Repeat2 size={14} /> {repeatSummary}
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: 8 }}>
             <input type={evt.isAllDay ? 'date' : 'datetime-local'} className="glass-input"
@@ -363,8 +373,8 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                 value={evt.description || ''} onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, description: e.target.value }))}
                 style={{ minHeight: 80, resize: 'vertical' }} />
 
-              <select className="glass-select glass-input" value={evt.recurrence || 'none'}
-                onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, recurrence: e.target.value }))}
+              <select className="glass-select glass-input" aria-label="Repeat" value={recurrenceChoice(evt.recurrence)}
+                onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, recurrence: e.target.value, recurrenceLabel: undefined }))}
                 style={{ fontSize: '0.85rem' }}>
                 <option value="none">Does not repeat</option>
                 <option value="daily">Daily</option>

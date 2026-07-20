@@ -15,13 +15,37 @@ new Function('module', 'exports', 'require', compiled)(moduleUnderTest, moduleUn
 const {
   addWallDays,
   buildCalendarEventIcal,
+  calendarEventPresentation,
   eventUidForSave,
   convertWallDateTimeZone,
   formatIcalDateProperty,
   projectInstantToWallDate,
+  recurrenceChoice,
+  recurrenceSummary,
   resolveDisplayTimeZone,
   wallDateToInstant,
 } = moduleUnderTest.exports;
+
+test('recurring events use human labels without leaking raw RRULE text', () => {
+  const recurrence = 'FREQ=WEEKLY;UNTIL=20260323T045959Z';
+  const presentation = calendarEventPresentation({
+    title: 'OMS macOS DST Weekly',
+    start: new Date(2026, 2, 1, 17, 0, 0),
+    isAllDay: false,
+    recurrence,
+    recurrenceLabel: 'Every week',
+  }, '24h');
+
+  assert.equal(recurrenceChoice(recurrence), 'weekly');
+  assert.equal(recurrenceSummary(recurrence, 'Every week'), 'Repeats every week');
+  assert.equal(recurrenceSummary('FREQ=DAILY'), 'Repeats every day');
+  assert.equal(recurrenceSummary('COUNT=3;FREQ=MONTHLY'), 'Repeats every month');
+  assert.equal(recurrenceSummary('FREQ=YEARLY;COUNT=2'), 'Repeats every year');
+  assert.equal(presentation.text, '17:00 OMS macOS DST Weekly');
+  assert.equal(presentation.title, '17:00 OMS macOS DST Weekly\nRepeats every week');
+  assert.doesNotMatch(presentation.text, /FREQ=|UNTIL=/);
+  assert.doesNotMatch(presentation.title, /FREQ=|UNTIL=/);
+});
 
 test('editing an event preserves its existing UID without adding another suffix', () => {
   let generated = false;
@@ -49,6 +73,21 @@ test('editing a recurring event preserves its UID and complete recurrence rule',
   assert.match(ical, /\r\nUID:series@openmailstack\r\n/);
   assert.match(ical, /\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\n/);
   assert.doesNotMatch(ical, /FREQ=FREQ=/);
+});
+
+test('editing preserves a raw recurrence rule when FREQ is not the first part', () => {
+  const recurrence = 'UNTIL=20260323T045959Z;INTERVAL=2;FREQ=WEEKLY';
+  const ical = buildCalendarEventIcal({
+    title: 'Client-authored recurrence',
+    start: new Date(2026, 2, 1, 9, 0, 0),
+    end: new Date(2026, 2, 1, 10, 0, 0),
+    timeKind: 'zoned',
+    timeZone: 'America/New_York',
+    recurrence,
+  }, 'America/New_York', 'series@openmailstack', () => 'replacement');
+
+  assert.match(ical, new RegExp(`\\r\\nRRULE:${recurrence}\\r\\n`));
+  assert.doesNotMatch(ical, /FREQ=UNTIL=/);
 });
 
 test('resolveDisplayTimeZone chooses the browser system zone or saved home zone', () => {

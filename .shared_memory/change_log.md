@@ -1040,3 +1040,12 @@ Future entry template:
 - Deployed: Commits `dec7d5d3` and `fcd6e987` are live. The 13 targeted backend artifacts and complete frontend tree match the tested repository; services, Nginx, public/auth/ActiveSync boundaries, clean warning journal, and full staging smoke pass.
 - Safety: No calendar row, mailbox, setting, schema, configuration, or dependency changed during deployment. The two existing test events remain untouched. Rollback snapshots: `/var/backups/openmailstack/calendar-uid-20260720T155807Z/web-root.tar.gz` and `/var/backups/openmailstack/calendar-uid-fcd6e987/backend-modules.tar.gz`.
 - Remaining: Restart the physical matrix with clearly identified macOS actions: delete the two existing test events through macOS, create a fresh macOS event, then edit/delete it and run the DST-crossing recurrence test.
+
+## 2026-07-20 macOS Calendar CRUD, DST, And Recurrence Presentation
+
+- Physical pass: macOS 26.5.2 CalDAV created, edited, and deleted one Asia/Kuwait/Baghdad event under one UID; OMS Web updated automatically without duplicates. A four-occurrence 09:00 America/New_York weekly series rendered at 17:00 Baghdad before US DST and 16:00 afterward.
+- Client quirk: macOS End Repeat March 22 yielded three events; March 23 included the March 22 occurrence, so its date UI behaves as an exclusive series boundary.
+- Fixed: Month chips no longer display raw RRULE syntax. Event details show a human recurrence summary, the selector resolves the stored frequency, event chips support keyboard activation, and non-FREQ-first rules retain exact `UNTIL`/`INTERVAL` content on untouched saves.
+- Verified: 32 frontend tests, ESLint, production build, full integration, keyboard Chromium, `git diff --check`, and both independent reviews pass.
+- Deployed: frontend commit `c739bd5` is exact under `/var/www/openmailstack`; public root/auth/EAS, service restart counters, warning journal, Nginx, and full staging smoke pass. Rollback archive `/var/backups/openmailstack/calendar-recurrence-ui-20260720T173444Z/web-root.tar.gz` has SHA-256 `d8a18bca77935ed8f3c5cc102538e075200049c6bbc5d22ee7626d5d9fb9fef5`.
+- Remaining: physical iOS ActiveSync DST recurrence and deliberate macOS series edit/delete cleanup.

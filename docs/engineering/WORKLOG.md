@@ -5760,3 +5760,55 @@ Diagnose the duplicate 20:00/20:30 event observed during the macOS 26.5.2 intero
 ### Next recommended task
 
 Use macOS Calendar explicitly for every step: delete both current test events, create a fresh event, confirm the CalDAV PUT and OMS Web display, edit it, verify no duplicate, delete it, then run the New York DST-crossing recurrence case.
+
+## 2026-07-20 macOS Calendar CRUD, DST, And Recurrence Presentation
+
+Agent/tool: Codex
+Branch: `main`
+Starting fixed point: `d107576b`
+Ending implementation commit: `c739bd5`
+
+### Selected task
+
+Complete the reversible physical macOS Calendar CalDAV CRUD and DST-crossing recurrence gate, then repair the raw recurrence presentation defect discovered in OMS Web without changing event data.
+
+### Acceptance criteria
+
+- [x] Create, edit, and delete one physical macOS Calendar event under one UID with automatic OMS Web reconciliation.
+- [x] Create four weekly 09:00 America/New_York occurrences spanning the March 8, 2026 DST transition and verify the expected Baghdad display shift.
+- [x] Remove raw `FREQ`/`UNTIL` text from month event chips and expose a human recurrence summary in event details.
+- [x] Map stored daily/weekly/monthly/yearly rules to the Repeat selector without weakening full-rule preservation.
+- [x] Preserve valid RFC 5545 rule parts exactly even when `FREQ` is not first.
+- [x] Keep recurring chips keyboard-accessible and label the Repeat control.
+- [x] Pass automated/browser/review gates and deploy only tested static frontend assets behind a rollback snapshot.
+
+### Physical results
+
+- macOS 26.5.2 created `OMS macOS CalDAV CRUD 2` at 20:00, edited the same event to 20:30, and deleted it. The server observed one-resource create/update/delete, OMS Web never duplicated it, and the web view disappeared automatically after deletion.
+- macOS offered Asia/Kuwait and the stored VEVENT canonicalized the equivalent zone to `Asia/Baghdad`.
+- `OMS macOS DST Weekly` stored one New York series with four occurrences on March 1, 8, 15, and 22. OMS Web displayed 17:00 Baghdad on March 1 and 16:00 on March 8-22, preserving 09:00 New York wall time across DST.
+- macOS End Repeat March 22 yielded three occurrences; using March 23 included March 22, an exclusive-end-date UI quirk rather than an OMS recurrence error.
+
+### Changes
+
+- Month chips now render time/title/location only and put the human recurrence summary in the tooltip and accessible name.
+- Event details visibly show `Repeats every ...`; More options resolves complete RRULEs to the matching simple Repeat choice.
+- Event chips support Enter/Space and expose button semantics; the Repeat select has an accessible name.
+- Untouched recurrence serialization detects `FREQ` as a complete rule part anywhere in the RRULE, preserving noncanonical-but-valid `UNTIL`/`INTERVAL` ordering exactly.
+
+### Proof / checks run
+
+- Frontend: 32/32 tests, ESLint, TypeScript, and Vite production build passed.
+- Full `tests/integration/run.sh`, `git diff --check`, and independent Standards/Spec reviews passed.
+- Mocked authenticated Chromium verified concise month text, human tooltip/detail text, keyboard event opening, Weekly selector state, no raw rule leakage, and no unexpected page/console errors.
+- Production: checksum-mode rsync reports exact frontend equality; modes are root-owned `755/644`; public root returned `200`, unauthenticated auth `401`, and ActiveSync `OPTIONS` `200`; backend/Scheduler worker are active with zero restarts; warning journal, Nginx, and full staging smoke passed.
+
+### Safety / risks
+
+- Deployment changed static frontend assets only. No backend restart, production event row, mailbox, setting, schema, dependency, environment, Nginx, or systemd configuration was changed.
+- Root-only rollback archive: `/var/backups/openmailstack/calendar-recurrence-ui-20260720T173444Z/web-root.tar.gz`; SHA-256 `d8a18bca77935ed8f3c5cc102538e075200049c6bbc5d22ee7626d5d9fb9fef5`.
+- The physical iOS ActiveSync DST recurrence gate, recurrence exceptions/reminders, and custom/invalid `VTIMEZONE` remain open. The macOS DST test series remains until the user deliberately edits/deletes it.
+
+### Next recommended task
+
+After the user confirms the live recurrence presentation, edit the macOS DST series as a whole and verify all four projected times under the same UID, then delete the series and verify automatic OMS Web removal. Continue with physical iOS ActiveSync DST recurrence afterward.

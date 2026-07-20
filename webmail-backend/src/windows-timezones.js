@@ -5,6 +5,7 @@ exports.windowsTimeZoneToIana = windowsTimeZoneToIana;
 // Windows time-zone identifier. The EAS binary rule is still validated before
 // a mapped name is accepted.
 // Source: https://github.com/unicode-org/cldr/blob/release-48/common/supplemental/windowsZones.xml
+// License notice: ../../THIRD_PARTY_NOTICES.md
 const WINDOWS_TO_IANA = {
     'dateline standard time': 'Etc/GMT+12',
     'utc-11': 'Etc/GMT+11',

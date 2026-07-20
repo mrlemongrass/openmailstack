@@ -74,11 +74,11 @@ The contacts and notes apps have been extracted into their own directories with 
 
 ## 3. Calendar Hardening 🟡 (Reopened 2026-07-20)
 
-The first reopened-timezone slice now distinguishes UTC, `TZID`, floating, and all-day values; applies System/Home display zones across the current Calendar views/editor; and adds the optional desktop clock. Track T in `docs/product/time-drive-migration.md` remains open until the real CalDAV/ActiveSync/Scheduler/WebKit interoperability matrix passes and the change is deployed.
+The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day values; applies System/Home display zones across the current Calendar views/editor; and adds the optional desktop clock. A disposable CalDAV/ActiveSync/Scheduler/DST matrix plus real Chromium/WebKit checks passes locally. Track T in `docs/product/time-drive-migration.md` remains open until ActiveSync recurring-event origin-timezone data, recurrence exceptions/reminders, custom `VTIMEZONE`, physical macOS/iOS clients, and deployed artifacts are validated.
 
 - ✅ Replace prompt-based calendar creation with the same dialog quality used for calendar edit/delete.
 - ✅ Improve event creation and editing with move, drag, resize, calendar switching, and clearer validation.
-- 🟡 Harden recurring events, recurrence exceptions, reminders (VALARM), attendees (ATTENDEE), free/busy fields (TRANSP), and timezone conversion. Core UTC/`TZID`/floating/all-day parsing, DST-aware zoned recurrence, and display projection are implemented locally; exception/reminder and real-client protocol validation remain.
+- 🟡 Harden recurring events, recurrence exceptions, reminders (VALARM), attendees (ATTENDEE), free/busy fields (TRANSP), and timezone conversion. Core UTC/`TZID`/floating/all-day parsing, deterministic DST gap/overlap handling, display projection, and disposable CalDAV/ActiveSync/Scheduler/browser checks are implemented locally; ActiveSync origin-timezone recurrence, exceptions/reminders, custom `VTIMEZONE`, physical-client, and deployment validation remain.
 - ✅ Add calendar search, agenda/list view, import/export, and subscribed calendars (background fetch).
 - ✅ Continue hardening CalDAV and ActiveSync sync tokens, tombstones, conflicts, and real-device behavior (sync-collection REPORT, calendar_tombstones, EAS recurrence mapping, EAS Picture/CompanyName/JobTitle).
 
@@ -164,7 +164,7 @@ One-time, reviewed imports now precede continuous synchronization. The Migration
 
 `docs/product/time-drive-migration.md` is the implementation roadmap and decision record for the new suite expansion.
 
-- 🟡 **Track T — Time correctness and clock:** core semantics, System/Home projection, active-zone labeling, and the optional desktop clock are implemented locally. Real macOS CalDAV, iOS ActiveSync, Scheduler, WebKit, exceptions/reminders, DST edge cases, and deployment validation remain before completion.
+- 🟡 **Track T — Time correctness and clock:** core semantics, System/Home projection, active-zone labeling, the optional desktop clock, disposable CalDAV/ActiveSync/Scheduler/DST checks, and real Chromium/WebKit checks pass locally. ActiveSync recurrence origin-timezone support, exceptions/reminders, custom `VTIMEZONE`, physical macOS/iOS clients, and deployment validation remain before completion.
 - ❌ **Track F — OMS Drive and connected files:** add an optional, Admin-entitled native file service; a shared, resizable file tray; safe attach-copy flows into Mail, Notes, Calendar, and Scheduler; and capability-aware Nextcloud/OpenCloud, Google Drive, and OneDrive connectors.
 - ❌ **Track M — Migration Center:** unify reviewed vCard/CSV/ICS import, then add resumable read-only Google and Microsoft migration plus guided iCloud export/import. Continuous two-way sync remains a separate later phase.
 - ⚠️ **iCloud Drive constraint:** keep browser/Apple Files upload available, but do not promise persistent server-side iCloud Drive browsing until a supported Apple integration path is proven.

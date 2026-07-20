@@ -60,6 +60,7 @@ const contact_utils_1 = require("./contact-utils");
 const notes_utils_1 = require("./notes-utils");
 const eas_notes_1 = require("./eas-notes");
 const eas_contacts_1 = require("./eas-contacts");
+const eas_calendar_1 = require("./eas-calendar");
 const eas_sync_1 = require("./eas-sync");
 const eas_send_1 = require("./eas-send");
 const notes_imap_sync_1 = require("./notes-imap-sync");
@@ -126,105 +127,6 @@ const nodeText = (node) => node?.content ? node.content.toString() : '';
 const childNode = (node, tag) => node?.children?.find((child) => child.tag === tag);
 const childText = (node, tag) => nodeText(childNode(node, tag));
 const firstNonEmpty = (...values) => values.map(value => value.trim()).find(Boolean) || '';
-function icalEscape(value) {
-    return value
-        .replace(/\\/g, '\\\\')
-        .replace(/\n/g, '\\n')
-        .replace(/;/g, '\\;')
-        .replace(/,/g, '\\,');
-}
-function normalizeCalendarEventUid(value) {
-    const normalized = value
-        .trim()
-        .replace(/[\r\n]+/g, '-')
-        .replace(/[^A-Za-z0-9._@-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 180);
-    return normalized || `eas-event-${Date.now()}`;
-}
-function parseActiveSyncCalendarDate(value) {
-    const trimmed = value.trim();
-    if (!trimmed)
-        return null;
-    const compact = trimmed.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.\d+)?Z?$/);
-    if (compact) {
-        return new Date(Date.UTC(Number(compact[1]), Number(compact[2]) - 1, Number(compact[3]), Number(compact[4]), Number(compact[5]), Number(compact[6])));
-    }
-    const dateOnly = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/);
-    if (dateOnly) {
-        return new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 0, 0, 0));
-    }
-    const parsed = new Date(trimmed);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-function formatIcalUtcDate(date) {
-    return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-}
-function formatIcalDateOnly(date) {
-    return date.toISOString().slice(0, 10).replace(/-/g, '');
-}
-function activeSyncCalendarApplicationDataToIcal(uid, applicationData, existingIcal = '') {
-    const existing = existingIcal ? (0, calendar_utils_1.parseIcalEvent)(uid, existingIcal) : null;
-    const body = childNode(applicationData, 'Body');
-    const allDayText = childText(applicationData, 'AllDayEvent');
-    const isAllDay = allDayText ? allDayText === '1' : Boolean(existing?.isAllDay);
-    const start = parseActiveSyncCalendarDate(childText(applicationData, 'StartTime')) || existing?.start || new Date();
-    const fallbackEnd = new Date(start.getTime() + (isAllDay ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000));
-    let end = parseActiveSyncCalendarDate(childText(applicationData, 'EndTime')) || existing?.end || fallbackEnd;
-    if (end.getTime() <= start.getTime()) {
-        end = fallbackEnd;
-    }
-    const subject = firstNonEmpty(childText(applicationData, 'Subject'), existing?.title || '', 'Untitled');
-    const location = firstNonEmpty(childText(applicationData, 'Location'), existing?.location || '');
-    const description = firstNonEmpty(childText(body, 'Data'), childText(applicationData, 'Description'), existing?.description || '');
-    const dtstamp = parseActiveSyncCalendarDate(childText(applicationData, 'DtStamp')) || existing?.dtstamp || new Date();
-    // Parse recurrence from EAS
-    let rruleLine = existing?.recurrence?.raw || '';
-    const recurrenceNode = childNode(applicationData, 'Recurrence');
-    if (recurrenceNode) {
-        const recType = childText(recurrenceNode, 'Type');
-        const interval = childText(recurrenceNode, 'Interval') || '1';
-        const until = childText(recurrenceNode, 'Until');
-        const occurrences = childText(recurrenceNode, 'Occurrences');
-        const freqMap = { '0': 'DAILY', '1': 'WEEKLY', '2': 'MONTHLY', '5': 'YEARLY' };
-        const freq = freqMap[recType] || 'DAILY';
-        let rrule = `RRULE:FREQ=${freq}`;
-        if (interval !== '1')
-            rrule += `;INTERVAL=${interval}`;
-        if (until)
-            rrule += `;UNTIL=${until.replace(/[^0-9TZ]/g, '')}`;
-        if (occurrences)
-            rrule += `;COUNT=${occurrences}`;
-        rruleLine = rrule;
-    }
-    const lines = [
-        'BEGIN:VCALENDAR',
-        'VERSION:2.0',
-        'PRODID:-//OpenMailStack//ActiveSync Calendar//EN',
-        'BEGIN:VEVENT',
-        `UID:${icalEscape(uid)}`,
-        `DTSTAMP:${formatIcalUtcDate(dtstamp)}`
-    ];
-    if (isAllDay) {
-        lines.push(`DTSTART;VALUE=DATE:${formatIcalDateOnly(start)}`);
-        lines.push(`DTEND;VALUE=DATE:${formatIcalDateOnly(end)}`);
-    }
-    else {
-        lines.push(`DTSTART:${formatIcalUtcDate(start)}`);
-        lines.push(`DTEND:${formatIcalUtcDate(end)}`);
-    }
-    lines.push(`SUMMARY:${icalEscape(subject)}`);
-    if (location)
-        lines.push(`LOCATION:${icalEscape(location)}`);
-    if (description)
-        lines.push(`DESCRIPTION:${icalEscape(description)}`);
-    if (rruleLine)
-        lines.push(rruleLine);
-    lines.push('TRANSP:OPAQUE');
-    lines.push('END:VEVENT');
-    lines.push('END:VCALENDAR');
-    return `${lines.join('\r\n')}\r\n`;
-}
 async function saveActiveSyncCalendarEvent(calendarId, uid, ical) {
     const [existingRows] = await db_1.pool.query('SELECT ical_data FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1', [calendarId, uid]);
     if (existingRows.length > 0) {
@@ -949,8 +851,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                             continue;
                         }
                         const clientId = childText(commandNode, 'ClientId') || `client-${Date.now()}`;
-                        const uid = normalizeCalendarEventUid(firstNonEmpty(childText(applicationData, 'UID'), clientId));
-                        const ical = activeSyncCalendarApplicationDataToIcal(uid, applicationData);
+                        const uid = (0, eas_calendar_1.normalizeCalendarEventUid)(firstNonEmpty(childText(applicationData, 'UID'), clientId));
+                        const ical = (0, eas_calendar_1.activeSyncCalendarApplicationDataToIcal)(uid, applicationData);
                         calendarChanged = (await saveActiveSyncCalendarEvent(calendar.id, uid, ical)) || calendarChanged;
                         responses.push({
                             tag: 'Add',
@@ -965,13 +867,13 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     else if (commandNode.tag === 'Change') {
                         const serverId = childText(commandNode, 'ServerId');
                         if (serverId && applicationData) {
-                            const uid = normalizeCalendarEventUid(serverId);
+                            const uid = (0, eas_calendar_1.normalizeCalendarEventUid)(serverId);
                             const [existingRows] = await db_1.pool.query('SELECT ical_data, updated_at FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1', [calendar.id, uid]);
                             if (existingRows.length === 0) {
                                 responses.push({ tag: 'Change', page: 0, children: [{ tag: 'ServerId', page: 0, content: uid }, { tag: 'Status', page: 0, content: '8' }] });
                             }
                             else {
-                                const ical = activeSyncCalendarApplicationDataToIcal(uid, applicationData, existingRows[0]?.ical_data || '');
+                                const ical = (0, eas_calendar_1.activeSyncCalendarApplicationDataToIcal)(uid, applicationData, existingRows[0]?.ical_data || '');
                                 calendarChanged = (await saveActiveSyncCalendarEvent(calendar.id, uid, ical)) || calendarChanged;
                                 responses.push({
                                     tag: 'Change',
@@ -997,7 +899,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     else if (commandNode.tag === 'Delete') {
                         const serverId = childText(commandNode, 'ServerId');
                         if (serverId) {
-                            const uid = normalizeCalendarEventUid(serverId);
+                            const uid = (0, eas_calendar_1.normalizeCalendarEventUid)(serverId);
                             await db_1.pool.query('INSERT INTO calendar_tombstones (calendar_id, uid) VALUES (?, ?)', [calendar.id, uid]);
                             await db_1.pool.query('DELETE FROM events WHERE calendar_id = ? AND uid = ?', [calendar.id, uid]);
                             await db_1.pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar.id]);
@@ -1042,31 +944,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     const [events] = await db_1.pool.query('SELECT uid, ical_data FROM events WHERE calendar_id = ? ORDER BY updated_at ASC, id ASC', [calendar.id]);
                     for (const eventRow of events) {
                         const parsed = (0, calendar_utils_1.parseIcalEvent)(eventRow.uid, eventRow.ical_data || '');
-                        const applicationData = [
-                            { tag: "Subject", page: 4, content: parsed.title },
-                            { tag: "UID", page: 4, content: parsed.uid },
-                            { tag: "StartTime", page: 4, content: (0, calendar_utils_1.formatActiveSyncDate)(parsed.start) },
-                            { tag: "EndTime", page: 4, content: (0, calendar_utils_1.formatActiveSyncDate)(parsed.end) },
-                            { tag: "DtStamp", page: 4, content: (0, calendar_utils_1.formatActiveSyncDate)(parsed.dtstamp) },
-                            { tag: "AllDayEvent", page: 4, content: parsed.isAllDay ? "1" : "0" },
-                            { tag: "BusyStatus", page: 4, content: parsed.busyStatus === 'free' ? "0" : "2" },
-                            { tag: "Sensitivity", page: 4, content: "0" },
-                            { tag: "MeetingStatus", page: 4, content: "0" }
-                        ];
-                        if (parsed.location) {
-                            applicationData.push({ tag: "Location", page: 4, content: parsed.location });
-                        }
-                        if (parsed.description) {
-                            applicationData.push({
-                                tag: "Body",
-                                page: 17,
-                                children: [
-                                    { tag: "Type", page: 17, content: "1" },
-                                    { tag: "Data", page: 17, content: parsed.description },
-                                    { tag: "EstimatedDataSize", page: 17, content: parsed.description.length.toString() }
-                                ]
-                            });
-                        }
+                        const applicationData = (0, eas_calendar_1.calendarEventToActiveSyncApplicationData)(parsed);
                         addNodes.push({
                             tag: "Add",
                             page: 0,

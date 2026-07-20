@@ -5614,3 +5614,44 @@ Fix Calendar UTC/`TZID`/floating/all-day semantics, apply System/Home timezone p
 ### Next recommended task
 
 Run the Track T3 interoperability matrix against reversible test events, starting with macOS CalDAV and iOS ActiveSync, before enabling Calendar import or deploying broadly.
+
+## 2026-07-20 Calendar Interoperability Preflight
+
+### Task
+
+Run a reversible pre-production Track T3 matrix for macOS-shaped CalDAV, iOS-shaped ActiveSync, Scheduler, real WebKit/Chromium, and DST edge cases. Fix bounded defects found by the matrix without touching production data or deploying artifacts.
+
+### Acceptance criteria
+
+- [x] Exercise an Apple-style CalDAV event through create, HEAD/read, conditional update, and delete with no real mailbox or database.
+- [x] Exercise iOS-style ActiveSync timed, all-day, and simple recurrence payloads in both conversion directions.
+- [x] Prove Scheduler behavior across DST gaps/overlaps and cross-zone display.
+- [x] Run the Calendar/Settings flow in real Chromium and WebKit desktop/mobile engines.
+- [x] Add deterministic RFC 5545 gap/overlap regression vectors and run the full repository gates.
+- [x] Record what remains unproven and hold production rollout when a material client-interoperability risk remains.
+
+### Changes
+
+- Fixed CalDAV resource semantics: HEAD now works, PUT honors `If-None-Match`/`If-Match`, create/update status codes are distinct, and the returned strong ETag matches the immediate GET/HEAD representation.
+- Extracted the ActiveSync Calendar adapter from the server entry point so payload conversion can be tested without starting background services or accessing the production database. Simple recurrence now maps in both directions.
+- Replaced iterative timezone correction with deterministic candidate-offset resolution in backend and frontend. Ambiguous wall times select the first occurrence; nonexistent wall times use the pre-gap offset. Parsed ends that would not follow their starts use the normal duration fallback.
+- Added disposable CalDAV and ActiveSync adapter tests plus matching frontend/backend DST vectors. Scheduler source did not require a change because its existing edge-case suite passed.
+
+### Proof / checks run
+
+- Focused Calendar/CalDAV/ActiveSync/Scheduler suite: 26/26 passed.
+- Backend suite: 126 total, 123 passed, three expected optional database skips, zero failures.
+- Frontend suite: 28/28 passed; ESLint and TypeScript/Vite production build passed.
+- Shell syntax and full integration suite passed; `shellcheck` was not installed.
+- Real Chromium and WebKit desktop/mobile matrix passed with zero unexpected console/page errors. Baghdad `17:00Z` rendered at `20:00`, Phoenix conversion preserved the instant, System/Home and clock controls worked, and the current-time line stayed in the active day column.
+- Production data, mailboxes, calendars, services, configuration, and deployed artifacts were not changed. Playwright WebKit runtime dependencies were installed only on the development/test host.
+
+### Risks / decisions
+
+- Do not deploy yet. ActiveSync recurring events still need binary origin `Timezone` encoding/decoding; without it, a series that crosses DST can shift local wall time on iOS.
+- The disposable Apple/iOS-shaped protocol fixtures do not pass the named macOS Calendar or physical iOS rows. Those clients must still run create/edit/delete and DST-crossing recurrence against the deployed route.
+- Recurrence exceptions, reminders, and custom/invalid `VTIMEZONE` remain open Track T3 cases.
+
+### Next recommended task
+
+Implement and fixture-test the EAS Calendar `Timezone` blob in both directions, then run the reversible physical macOS Calendar/iOS ActiveSync matrix. If that passes, perform a guarded deployment with rollback snapshot and deployed-artifact checks.

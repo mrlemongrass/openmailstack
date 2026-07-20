@@ -1,6 +1,6 @@
 # OpenMailStack Time, Drive, And Migration Roadmap
 
-Status: `Track T core implemented locally - interoperability validation and deployment pending`
+Status: `Track T local protocol/browser preflight passed - physical-client and deployment validation pending`
 
 Research date: 2026-07-20
 
@@ -50,7 +50,7 @@ Unless the owner decides otherwise, implementation should use these defaults:
 
 ## 4. Track T — Time Correctness And Clock
 
-Implementation status (2026-07-20): the core T0-T2 browser/backend slice is implemented and locally verified. T3 remains open for real macOS CalDAV, iOS ActiveSync, Scheduler, exception/reminder, WebKit, DST gap/overlap, and deployed-artifact validation. This status deliberately does not claim protocol-matrix or production completion.
+Implementation status (2026-07-20): T0-T2 plus a disposable T3 protocol/browser preflight are implemented and locally verified. Apple-shaped CalDAV create/HEAD/read/conditional-edit/delete, iOS-shaped ActiveSync conversion, Scheduler availability, deterministic New York DST gap/overlap vectors, and real Chromium/WebKit desktop/mobile behavior pass without touching a mailbox. T3 remains open for ActiveSync recurring-event origin-timezone encoding/decoding, recurrence exceptions/reminders, custom or invalid `VTIMEZONE`, physical macOS/iOS clients, and deployed-artifact validation. This status deliberately does not claim named-client or production completion.
 
 ### 4.1 Required time model
 
@@ -119,6 +119,15 @@ UX requirements:
 - Browser matrix: at least Chromium plus WebKit/Safari behavior for `datetime-local` and `Intl` formatting.
 - Protocol matrix: web create/edit, macOS CalDAV create/edit, iOS ActiveSync create/edit, and Scheduler-created event.
 - Record exact payload, selected display timezone, expected time, actual web time, and client time in the release validation document.
+
+Local preflight status, 2026-07-20:
+
+- Passed: UTC, Baghdad, Phoenix, New York DST gap/overlap, floating, all-day, and simple recurrence fixtures in backend/frontend tests. Exception and reminder fixtures remain open.
+- Passed: real Chromium and WebKit desktop/mobile Calendar and Settings flows, including `17:00Z` displayed as `20:00 Asia/Baghdad`, Home/System selection, optional clock, current-day-only time line, and instant-preserving event-zone conversion.
+- Passed: an in-memory reversible CalDAV lifecycle using an Apple-style Baghdad event and strong conditional requests; the test creates, HEADs, reads byte-for-byte, rejects a stale ETag, updates, and deletes the event.
+- Passed: iOS-shaped ActiveSync single/all-day conversions plus simple recurrence mapping, and Scheduler DST/Baghdad/Phoenix/Tokyo availability projection.
+- Open blocker: EAS recurring meetings still need the binary origin `Timezone` value in both directions so later occurrences retain local wall time across DST.
+- Open named-client gate: the disposable protocol fixtures are not a substitute for operating macOS Calendar and physical iOS against the deployed route.
 
 ## 5. Track F — OMS Drive And Connected Files
 

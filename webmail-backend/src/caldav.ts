@@ -121,8 +121,8 @@ router.all(/.*/, async (req: Request, res: Response) => {
         return handleDelete(req, res, user);
     }
 
-    if (method === 'GET') {
-        return handleGet(req, res, user);
+    if (method === 'GET' || method === 'HEAD') {
+        return handleGet(req, res, user, method === 'HEAD');
     }
 
     res.status(404).send('Not Found');
@@ -383,7 +383,7 @@ async function handleReport(req: Request, res: Response, user: string) {
     }
 }
 
-async function handleGet(req: Request, res: Response, user: string) {
+async function handleGet(req: Request, res: Response, user: string, headOnly = false) {
     const path = req.path;
     const eventMatch = calendarEventMatch(path);
     if (!eventMatch) return res.status(404).send();
@@ -403,6 +403,7 @@ async function handleGet(req: Request, res: Response, user: string) {
 
         res.set('Content-Type', 'text/calendar; charset=utf-8');
         res.set('ETag', calendarEventEtag(events[0]));
+        if (headOnly) return res.status(200).send();
         res.status(200).send(events[0].ical_data);
     } catch (e) {
         console.error(e);
@@ -440,6 +441,23 @@ async function handlePut(req: Request, res: Response, user: string) {
             return res.status(404).send();
         }
 
+        const [existingEvents]: any = await pool.query(
+            'SELECT uid, ical_data, updated_at FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1',
+            [calendarId, uid]
+        );
+        const existingEvent = existingEvents[0];
+        const currentEtag = existingEvent ? calendarEventEtag(existingEvent) : null;
+        if (req.get('if-none-match') === '*' && existingEvent) {
+            return res.status(412).send();
+        }
+        const ifMatch = req.get('if-match');
+        if (ifMatch && ifMatch !== '*' && (!currentEtag || !ifMatch.split(',').map(value => value.trim()).includes(currentEtag))) {
+            return res.status(412).send();
+        }
+        if (ifMatch === '*' && !existingEvent) {
+            return res.status(412).send();
+        }
+
         await pool.query(
             `INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?)
              ON DUPLICATE KEY UPDATE ical_data = ?`,
@@ -447,9 +465,13 @@ async function handlePut(req: Request, res: Response, user: string) {
         );
         await pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendarId]);
         emitCalendarUpdated(user, calendarId);
-        
-        res.set('ETag', calendarEventEtag({ uid, ical_data: icalData }));
-        res.status(201).send();
+
+        const [savedEvents]: any = await pool.query(
+            'SELECT uid, ical_data, updated_at FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1',
+            [calendarId, uid]
+        );
+        res.set('ETag', calendarEventEtag(savedEvents[0] || { uid, ical_data: icalData }));
+        res.status(existingEvent ? 204 : 201).send();
     } catch (e) {
         console.error(e);
         res.status(500).send();

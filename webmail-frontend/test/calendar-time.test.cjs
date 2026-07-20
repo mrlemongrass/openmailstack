@@ -59,6 +59,14 @@ test('wallDateToInstant and iCalendar serialization preserve explicit event sema
   assert.equal(formatIcalDateProperty('DTSTART', wallDate, 'all-day', null), 'DTSTART;VALUE=DATE:20260724');
 });
 
+test('wallDateToInstant follows iCalendar DST gap and overlap rules', () => {
+  const gap = new Date(2026, 2, 8, 2, 30, 0);
+  const overlap = new Date(2026, 10, 1, 1, 30, 0);
+
+  assert.equal(wallDateToInstant(gap, 'zoned', 'America/New_York').toISOString(), '2026-03-08T07:30:00.000Z');
+  assert.equal(wallDateToInstant(overlap, 'zoned', 'America/New_York').toISOString(), '2026-11-01T05:30:00.000Z');
+});
+
 test('addWallDays keeps all-day ranges exclusive with calendar-date arithmetic', () => {
   const start = new Date(2026, 2, 7, 0, 0, 0);
   const end = addWallDays(start, 2);

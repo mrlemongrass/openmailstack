@@ -109,18 +109,37 @@ function wallTimeAt(instant, timeZone) {
         second: Number(values.get('second')),
     };
 }
+function offsetAt(instant, timeZone) {
+    const rendered = wallTimeAt(instant, timeZone);
+    const renderedAsUtc = Date.UTC(rendered.year, rendered.month - 1, rendered.day, rendered.hour, rendered.minute, rendered.second);
+    return renderedAsUtc - Math.floor(instant.getTime() / 1000) * 1000;
+}
 function wallTimeToInstant(parts, timeZone) {
     const target = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
-    let instant = new Date(target);
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    const offsets = new Set();
+    for (let sampleHours = -36; sampleHours <= 36; sampleHours += 6) {
+        offsets.add(offsetAt(new Date(target + sampleHours * 60 * 60 * 1000), timeZone));
+    }
+    const candidates = Array.from(offsets, offset => {
+        const instant = new Date(target - offset);
         const rendered = wallTimeAt(instant, timeZone);
         const renderedAsUtc = Date.UTC(rendered.year, rendered.month - 1, rendered.day, rendered.hour, rendered.minute, rendered.second);
-        const correction = target - renderedAsUtc;
-        if (correction === 0)
-            break;
-        instant = new Date(instant.getTime() + correction);
-    }
-    return instant;
+        return { instant, renderedAsUtc };
+    });
+    const exact = candidates
+        .filter(candidate => candidate.renderedAsUtc === target)
+        .sort((left, right) => left.instant.getTime() - right.instant.getTime());
+    // RFC 5545 chooses the first occurrence when a wall time repeats.
+    if (exact.length > 0)
+        return exact[0].instant;
+    // For a nonexistent wall time, RFC 5545 applies the offset that was in
+    // effect before the gap. That candidate renders immediately after it.
+    const afterGap = candidates
+        .filter(candidate => candidate.renderedAsUtc > target)
+        .sort((left, right) => left.renderedAsUtc - right.renderedAsUtc);
+    if (afterGap.length > 0)
+        return afterGap[0].instant;
+    return new Date(target);
 }
 function parameterValue(params, name) {
     const match = new RegExp(`(?:^|;)${name}=([^;]+)`, 'i').exec(params);
@@ -225,6 +244,7 @@ function parseIcalEvent(uid, ical) {
     const parsedStart = parseIcalDate(startField, allDay);
     const start = parsedStart.date;
     const fallbackEnd = new Date(start.getTime() + (allDay ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000));
+    const parsedEnd = endField?.value ? parseIcalDate(endField, allDay, parsedStart).date : fallbackEnd;
     const recurrence = parseRrule(firstIcalValue(eventLines, 'RRULE')?.value, parsedStart);
     const exdates = parseExdates(eventLines);
     // Parse TRANSP
@@ -256,7 +276,7 @@ function parseIcalEvent(uid, ical) {
         location: unescapeIcalText(firstIcalValue(eventLines, 'LOCATION')?.value || ''),
         description: unescapeIcalText(firstIcalValue(eventLines, 'DESCRIPTION')?.value || ''),
         start,
-        end: endField?.value ? parseIcalDate(endField, allDay, parsedStart).date : fallbackEnd,
+        end: parsedEnd.getTime() > start.getTime() ? parsedEnd : fallbackEnd,
         isAllDay: allDay,
         timeKind: parsedStart.timeKind,
         timeZone: parsedStart.timeZone,

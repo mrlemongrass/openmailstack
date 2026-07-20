@@ -44,6 +44,19 @@ function partsAt(instant: Date, timeZone: string): WallTimeParts {
   };
 }
 
+function offsetAt(instant: Date, timeZone: string): number {
+  const rendered = partsAt(instant, timeZone);
+  const renderedAsUtc = Date.UTC(
+    rendered.year,
+    rendered.month - 1,
+    rendered.day,
+    rendered.hour,
+    rendered.minute,
+    rendered.second,
+  );
+  return renderedAsUtc - Math.floor(instant.getTime() / 1000) * 1000;
+}
+
 function localWallParts(date: Date): WallTimeParts {
   return {
     year: date.getFullYear(),
@@ -123,15 +136,32 @@ export function wallDateToInstant(
   const target = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
   if (timeKind !== 'zoned' || !isValidTimeZone(timeZone)) return new Date(target);
 
-  let instant = new Date(target);
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const rendered = partsAt(instant, timeZone);
-    const renderedAsUtc = Date.UTC(rendered.year, rendered.month - 1, rendered.day, rendered.hour, rendered.minute, rendered.second);
-    const correction = target - renderedAsUtc;
-    if (correction === 0) break;
-    instant = new Date(instant.getTime() + correction);
+  const offsets = new Set<number>();
+  for (let sampleHours = -36; sampleHours <= 36; sampleHours += 6) {
+    offsets.add(offsetAt(new Date(target + sampleHours * 60 * 60 * 1000), timeZone));
   }
-  return instant;
+  const candidates = Array.from(offsets, offset => {
+    const instant = new Date(target - offset);
+    const rendered = partsAt(instant, timeZone);
+    const renderedAsUtc = Date.UTC(
+      rendered.year,
+      rendered.month - 1,
+      rendered.day,
+      rendered.hour,
+      rendered.minute,
+      rendered.second,
+    );
+    return { instant, renderedAsUtc };
+  });
+  const exact = candidates
+    .filter(candidate => candidate.renderedAsUtc === target)
+    .sort((left, right) => left.instant.getTime() - right.instant.getTime());
+  if (exact.length > 0) return exact[0].instant;
+
+  const afterGap = candidates
+    .filter(candidate => candidate.renderedAsUtc > target)
+    .sort((left, right) => left.renderedAsUtc - right.renderedAsUtc);
+  return afterGap[0]?.instant || new Date(target);
 }
 
 export function convertWallDateTimeZone(

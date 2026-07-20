@@ -36,6 +36,20 @@ Rspamd hardening snapshot, 2026-07-14:
 - Pass: Recovery tests cover failures within and between probes, systemd crash restarts, controlled restart baselines, three-failure threshold, 15-minute cooldown, and reset.
 - Pass: Live systemd timer, map timestamp stability, artifact equality, controlled Rspamd restart, empty Postfix queue, and full staging smoke passed.
 
+Calendar interoperability preflight, 2026-07-20 (local and disposable only):
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| RFC 5545 time semantics | Pass locally | Backend and frontend golden vectors cover UTC, `Asia/Baghdad`, floating, all-day, New York spring gap/fall overlap, and zoned recurrence. Gap/overlap resolution is deterministic and a parsed end that would not follow its start falls back to the event duration instead of creating a zero/negative event. |
+| Reversible CalDAV | Pass locally | An in-memory Express lifecycle sends an Apple-style Baghdad VEVENT through create, HEAD, byte-for-byte GET, stale `If-Match` rejection, conditional update, and DELETE. The PUT ETag is stable on immediate HEAD/GET, and the deleted resource returns 404. No real calendar or mailbox is used. |
+| ActiveSync Calendar | Partial | iOS-shaped timed/all-day payloads and simple daily/weekly/monthly/yearly recurrence convert to/from iCalendar with UTC instants. Recurring-event binary origin `Timezone` encoding/decoding is not implemented, so a physical iOS series spanning DST remains a rollout blocker. |
+| Scheduler | Pass locally | Existing availability tests skip DST gaps, return both overlap instants, and project the same slots into Baghdad, Phoenix, and Tokyo while preserving buffers, notice, and midnight boundaries. |
+| Chromium/WebKit | Pass locally | Real Chromium and WebKit desktop/mobile runs render `2026-07-24T17:00:00Z` as `8:00 PM - 9:00 PM` in Home `Asia/Baghdad`, preserve the instant when converting to Phoenix, confine the current-time line to the current day, and exercise System/Home plus the keyboard clock toggle with no unexpected page/console errors. Screenshots are under ignored `output/playwright/`. |
+| Full repository gates | Pass | Backend 126 total: 123 pass and three expected optional database skips; frontend 28/28; ESLint; TypeScript/Vite production build; shell syntax; full integration; and focused 26-test CalDAV/ActiveSync/Calendar/Scheduler suite pass. `shellcheck` is not installed. |
+| Named Apple clients | Not run in this preflight | This matrix used Apple/iOS-shaped payloads, not macOS Calendar or a physical iPhone. Keep the real-device rows below unchanged until those clients complete the round trip against the deployed routes. |
+
+Production rollout decision: hold. Complete EAS recurring-event origin-timezone support and the physical macOS Calendar/iOS ActiveSync round trip before deploying this Calendar change.
+
 ## Clean VM Gate
 
 Run a fresh install on each supported OS family before release:

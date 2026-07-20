@@ -95,6 +95,15 @@ OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integratio
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integration/activesync_contacts_smoke.sh
 ```
 
+Disposable Calendar interoperability preflight (no mailbox or real database):
+
+```bash
+rtk node --test webmail-backend/test/calendar-format.test.cjs webmail-backend/test/caldav-roundtrip.test.cjs webmail-backend/test/eas-calendar.test.cjs webmail-backend/test/scheduler-availability.test.cjs
+rtk node --test webmail-frontend/test/calendar-time.test.cjs
+```
+
+These fixtures model Apple-style CalDAV and iOS-shaped ActiveSync payloads but do not replace the physical-client matrix in `docs/webmail-release-validation.md`.
+
 `mail_sync_smoke.sh` uses an IMAP client configured for cleartext/STARTTLS-style
 port 143, not implicit-TLS IMAPS on 993. Keep real device setup on public IMAPS
 993 with SSL/TLS.

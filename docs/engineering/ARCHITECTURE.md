@@ -1064,6 +1064,12 @@ The project goal includes SOGo ActiveSync support and modern sync behavior. The 
 
 This is a high-importance area and must not be assumed complete.
 
+Current Calendar interoperability seam, verified locally 2026-07-20:
+
+- `webmail-backend/src/caldav.ts` implements the native CalDAV collection/resource routes. Event resources support GET/HEAD, conditional PUT with stable content ETags, DELETE, PROPFIND, and REPORT against the Calendar event store.
+- `webmail-backend/src/eas-calendar.ts` is the testable ActiveSync Calendar adapter used by the embedded `/Microsoft-Server-ActiveSync` route in `webmail-backend/src/index.ts`. It converts EAS UTC/date-only payloads and simple recurrence fields to and from iCalendar.
+- EAS recurring-event origin-timezone blob encoding/decoding, recurrence exceptions, and reminders are not complete. Treat physical Apple-client behavior and the release matrix as required gates even when disposable protocol tests pass.
+
 Agents should locate and document:
 
 - where the SOGo ActiveSync integration lives

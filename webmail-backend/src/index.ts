@@ -16,7 +16,7 @@ import { ensureMailSearchSchema } from './search-index';
 import { ensureUserSettingsSchema } from './user-settings';
 import { ensureAdminSettingsSchema } from './admin-settings';
 import { ensureBrandingSchema } from './branding';
-import { ensureCalendarSchema, ensureDefaultCalendar, formatActiveSyncDate, getCalendarFolderSyncKey, getVisibleCalendars, parseIcalEvent } from './calendar-utils';
+import { ensureCalendarSchema, ensureDefaultCalendar, getCalendarFolderSyncKey, getVisibleCalendars, parseIcalEvent } from './calendar-utils';
 import {
     addressBookSyncToken,
     contactSyncTokenVersion,
@@ -33,6 +33,7 @@ import {
 import { ensureNotesSchema, ensureRemindersSchema, ensureAttachmentsSchema, listNotes, saveNote, deleteNote, getNotesSyncToken } from './notes-utils';
 import { activeSyncToDbNote, dbNoteToActiveSync } from './eas-notes';
 import { activeSyncContactApplicationDataToVCard, contactToActiveSyncApplicationData } from './eas-contacts';
+import { activeSyncCalendarApplicationDataToIcal, calendarEventToActiveSyncApplicationData, normalizeCalendarEventUid } from './eas-calendar';
 import { shouldSendActiveSyncServerChanges } from './eas-sync';
 import { buildActiveSyncSendMailEnvelope, extractActiveSyncSendMailMime, summarizeActiveSyncNodeForLog } from './eas-send';
 import { syncNotesWithImap } from './notes-imap-sync';
@@ -104,119 +105,6 @@ const nodeText = (node: any): string => node?.content ? node.content.toString() 
 const childNode = (node: any, tag: string): any => node?.children?.find((child: any) => child.tag === tag);
 const childText = (node: any, tag: string): string => nodeText(childNode(node, tag));
 const firstNonEmpty = (...values: string[]): string => values.map(value => value.trim()).find(Boolean) || '';
-
-function icalEscape(value: string): string {
-    return value
-        .replace(/\\/g, '\\\\')
-        .replace(/\n/g, '\\n')
-        .replace(/;/g, '\\;')
-        .replace(/,/g, '\\,');
-}
-
-function normalizeCalendarEventUid(value: string): string {
-    const normalized = value
-        .trim()
-        .replace(/[\r\n]+/g, '-')
-        .replace(/[^A-Za-z0-9._@-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 180);
-    return normalized || `eas-event-${Date.now()}`;
-}
-
-function parseActiveSyncCalendarDate(value: string): Date | null {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-
-    const compact = trimmed.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:\.\d+)?Z?$/);
-    if (compact) {
-        return new Date(Date.UTC(
-            Number(compact[1]),
-            Number(compact[2]) - 1,
-            Number(compact[3]),
-            Number(compact[4]),
-            Number(compact[5]),
-            Number(compact[6])
-        ));
-    }
-
-    const dateOnly = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/);
-    if (dateOnly) {
-        return new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 0, 0, 0));
-    }
-
-    const parsed = new Date(trimmed);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function formatIcalUtcDate(date: Date): string {
-    return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-}
-
-function formatIcalDateOnly(date: Date): string {
-    return date.toISOString().slice(0, 10).replace(/-/g, '');
-}
-
-function activeSyncCalendarApplicationDataToIcal(uid: string, applicationData: any, existingIcal = ''): string {
-    const existing = existingIcal ? parseIcalEvent(uid, existingIcal) : null;
-    const body = childNode(applicationData, 'Body');
-    const allDayText = childText(applicationData, 'AllDayEvent');
-    const isAllDay = allDayText ? allDayText === '1' : Boolean(existing?.isAllDay);
-    const start = parseActiveSyncCalendarDate(childText(applicationData, 'StartTime')) || existing?.start || new Date();
-    const fallbackEnd = new Date(start.getTime() + (isAllDay ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000));
-    let end = parseActiveSyncCalendarDate(childText(applicationData, 'EndTime')) || existing?.end || fallbackEnd;
-    if (end.getTime() <= start.getTime()) {
-        end = fallbackEnd;
-    }
-
-    const subject = firstNonEmpty(childText(applicationData, 'Subject'), existing?.title || '', 'Untitled');
-    const location = firstNonEmpty(childText(applicationData, 'Location'), existing?.location || '');
-    const description = firstNonEmpty(childText(body, 'Data'), childText(applicationData, 'Description'), existing?.description || '');
-    const dtstamp = parseActiveSyncCalendarDate(childText(applicationData, 'DtStamp')) || existing?.dtstamp || new Date();
-
-    // Parse recurrence from EAS
-    let rruleLine = existing?.recurrence?.raw || '';
-    const recurrenceNode = childNode(applicationData, 'Recurrence');
-    if (recurrenceNode) {
-        const recType = childText(recurrenceNode, 'Type');
-        const interval = childText(recurrenceNode, 'Interval') || '1';
-        const until = childText(recurrenceNode, 'Until');
-        const occurrences = childText(recurrenceNode, 'Occurrences');
-        const freqMap: Record<string, string> = { '0': 'DAILY', '1': 'WEEKLY', '2': 'MONTHLY', '5': 'YEARLY' };
-        const freq = freqMap[recType] || 'DAILY';
-        let rrule = `RRULE:FREQ=${freq}`;
-        if (interval !== '1') rrule += `;INTERVAL=${interval}`;
-        if (until) rrule += `;UNTIL=${until.replace(/[^0-9TZ]/g, '')}`;
-        if (occurrences) rrule += `;COUNT=${occurrences}`;
-        rruleLine = rrule;
-    }
-
-    const lines = [
-        'BEGIN:VCALENDAR',
-        'VERSION:2.0',
-        'PRODID:-//OpenMailStack//ActiveSync Calendar//EN',
-        'BEGIN:VEVENT',
-        `UID:${icalEscape(uid)}`,
-        `DTSTAMP:${formatIcalUtcDate(dtstamp)}`
-    ];
-
-    if (isAllDay) {
-        lines.push(`DTSTART;VALUE=DATE:${formatIcalDateOnly(start)}`);
-        lines.push(`DTEND;VALUE=DATE:${formatIcalDateOnly(end)}`);
-    } else {
-        lines.push(`DTSTART:${formatIcalUtcDate(start)}`);
-        lines.push(`DTEND:${formatIcalUtcDate(end)}`);
-    }
-
-    lines.push(`SUMMARY:${icalEscape(subject)}`);
-    if (location) lines.push(`LOCATION:${icalEscape(location)}`);
-    if (description) lines.push(`DESCRIPTION:${icalEscape(description)}`);
-    if (rruleLine) lines.push(rruleLine);
-    lines.push('TRANSP:OPAQUE');
-    lines.push('END:VEVENT');
-    lines.push('END:VCALENDAR');
-
-    return `${lines.join('\r\n')}\r\n`;
-}
 
 async function saveActiveSyncCalendarEvent(calendarId: number, uid: string, ical: string): Promise<boolean> {
     const [existingRows]: any = await pool.query(
@@ -1064,32 +952,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 
                     for (const eventRow of events) {
                         const parsed = parseIcalEvent(eventRow.uid, eventRow.ical_data || '');
-                        const applicationData: any[] = [
-                            { tag: "Subject", page: 4, content: parsed.title },
-                            { tag: "UID", page: 4, content: parsed.uid },
-                            { tag: "StartTime", page: 4, content: formatActiveSyncDate(parsed.start) },
-                            { tag: "EndTime", page: 4, content: formatActiveSyncDate(parsed.end) },
-                            { tag: "DtStamp", page: 4, content: formatActiveSyncDate(parsed.dtstamp) },
-                            { tag: "AllDayEvent", page: 4, content: parsed.isAllDay ? "1" : "0" },
-                            { tag: "BusyStatus", page: 4, content: parsed.busyStatus === 'free' ? "0" : "2" },
-                            { tag: "Sensitivity", page: 4, content: "0" },
-                            { tag: "MeetingStatus", page: 4, content: "0" }
-                        ];
-
-                        if (parsed.location) {
-                            applicationData.push({ tag: "Location", page: 4, content: parsed.location });
-                        }
-                        if (parsed.description) {
-                            applicationData.push({
-                                tag: "Body",
-                                page: 17,
-                                children: [
-                                    { tag: "Type", page: 17, content: "1" },
-                                    { tag: "Data", page: 17, content: parsed.description },
-                                    { tag: "EstimatedDataSize", page: 17, content: parsed.description.length.toString() }
-                                ]
-                            });
-                        }
+                        const applicationData = calendarEventToActiveSyncApplicationData(parsed);
 
                         addNodes.push({
                             tag: "Add",

@@ -148,6 +148,36 @@ test('expandRecurringEvent keeps zoned weekly events at the same wall time acros
   );
 });
 
+test('parseIcalEvent follows RFC 5545 for DST gaps and preserves a positive duration', () => {
+  const parsed = parseIcalEvent('dst-gap', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'SUMMARY:Spring gap',
+    'DTSTART;TZID=America/New_York:20260308T023000',
+    'DTEND;TZID=America/New_York:20260308T033000',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+
+  assert.equal(parsed.start.toISOString(), '2026-03-08T07:30:00.000Z');
+  assert.equal(parsed.end.toISOString(), '2026-03-08T08:30:00.000Z');
+});
+
+test('parseIcalEvent chooses the first occurrence of an ambiguous DST wall time', () => {
+  const parsed = parseIcalEvent('dst-overlap', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'SUMMARY:Fall overlap',
+    'DTSTART;TZID=America/New_York:20261101T013000',
+    'DTEND;TZID=America/New_York:20261101T023000',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+
+  assert.equal(parsed.start.toISOString(), '2026-11-01T05:30:00.000Z');
+  assert.equal(parsed.end.toISOString(), '2026-11-01T07:30:00.000Z');
+});
+
 test('parseIcalEvent ignores VTIMEZONE fields before VEVENT', () => {
   const parsed = parseIcalEvent('apple-event', [
     'BEGIN:VCALENDAR',

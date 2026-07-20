@@ -5857,3 +5857,40 @@ Diagnose and repair the live `Unable to load availability` failure on public Sch
 ### Next recommended task
 
 Resume the physical iOS ActiveSync create/edit/delete and DST-crossing recurrence gate. Separately, add structured error logging around public Scheduler slot generation so a future internal failure is visible without a direct store diagnostic.
+
+## 2026-07-20 Scheduler Slot Observability And iOS ActiveSync Preflight
+
+Agent/tool: Codex
+Branch: `main`
+Implementation commit: `8c9f443`
+
+### Selected task
+
+Add privacy-bounded structured logging for unexpected public Scheduler slot-generation failures, deploy it safely, then resume the physical iOS ActiveSync Calendar CRUD and DST matrix from a fresh route/protocol preflight.
+
+### Acceptance criteria
+
+- [x] Emit one machine-readable error record for an unexpected slot-generation failure.
+- [x] Preserve the existing generic public `500` and keep expected range-validation `400` responses out of error logs.
+- [x] Exclude private-link tokens, SQL text, booking data, and calendar content; bound every free-text field.
+- [x] Cover both the record shape and real Express route behavior with regressions.
+- [x] Deploy only the Scheduler router artifacts behind a root-only rollback snapshot.
+- [x] Pass direct/public ActiveSync route and focused EAS timezone preflights.
+- [ ] Complete the physical iOS ActiveSync single-event create/edit/delete and DST-crossing recurrence matrix.
+
+### Changes and proof
+
+- Unexpected slot failures now emit one-line JSON with event `scheduler.slot_generation_failed`, timestamp, allowed host, public handle/slug, normalized start/end, request duration, `includeFull`, private-link presence as a boolean, and bounded error name/code/SQL state/message.
+- A pure regression proves bounds and omission of an attached SQL string. A route regression proves one structured record plus the unchanged generic `500`, verifies that a private-link token and SQL text are absent, and confirms an invalid-range `400` adds no error record.
+- Backend suite: 137 total, 134 passed, zero failed, three expected optional MariaDB skips. Full integration and all Scheduler guards passed.
+- Deployed source/runtime router hashes match the repository. Discovery Call returned 140 slots; a range over 62 days returned the expected `400`; both backend services are active with `NRestarts=0`; the post-restart warning journal was empty; staging smoke passed.
+- Direct and public ActiveSync `OPTIONS` returned `200` with EAS 14.0/14.1 and the expected Calendar-capable command set. Focused EAS Calendar/Sync tests passed 13/13. The authenticated route smoke skipped because no smoke credentials were supplied or retrieved.
+
+### Safety / rollback
+
+- Deployed only `src/scheduler/router.ts` and generated `router.js`, then restarted only `openmailstack`. No database row, schema, mailbox, calendar, booking, Scheduler setting, dependency, environment, Nginx, or systemd configuration changed; the Scheduler worker was not restarted.
+- Root-only rollback archive: `/var/backups/openmailstack/scheduler-slot-logging-8c9f443-20260720T181559Z/backend-router.tar.gz`; SHA-256 `56d81b33e50ccc5cb373598b96cd49b7c1027fe4e5ffed9fb28a954c117ab672`.
+
+### Next physical action
+
+Record the exact iOS version and active Calendar timezone, then use the existing Exchange account to create one temporary Baghdad event from iOS. Confirm it in OMS Web before editing or deleting it. After single-event CRUD passes, create the four-occurrence New York series when the iOS version exposes an event timezone; otherwise use the documented outbound-EAS fallback.

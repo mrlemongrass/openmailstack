@@ -1058,3 +1058,12 @@ Future entry template:
 - Verified: Backend 132/135 with three expected optional database skips, full integration/Scheduler guards, build, diff check, and disposable database cleanup pass. Live Discovery/Consultation 7-day APIs return 139/131 slots; production Chromium renders time buttons, the 62-day request returns `200`, and the console is clean.
 - Deployed: Commit `cb824940` through a two-file backend sync and one `openmailstack` restart. Live hashes match, both backend services are active with zero restarts, the warning journal is empty, and staging smoke passes.
 - Safety: No production data, schema, booking, calendar, Scheduler setting, dependency, configuration, or Scheduler-worker restart. Rollback archive `/var/backups/openmailstack/scheduler-availability-cb82494-20260720T175949Z/backend-store.tar.gz`, SHA-256 `520b5fac2b5569e5ef7e6318adda83f2ca0523110ae7db3f15a53f90cd353690`.
+
+## 2026-07-20 Scheduler Slot Observability And iOS ActiveSync Preflight
+
+- Added: Unexpected public Scheduler slot failures now emit one-line JSON event `scheduler.slot_generation_failed` with bounded host/handle/slug/range/duration and error code/state/message fields.
+- Privacy: Private-link tokens, SQL text, booking data, and calendar content are not recorded; expected range-validation `400` responses do not emit error records.
+- Regressed: Pure record-shape/privacy coverage and a real Express route test prove one log per unexpected failure, the unchanged generic public `500`, and quiet validation failures.
+- Verified: Backend 134/137 with three expected optional skips, focused EAS Calendar/Sync 13/13, full integration/Scheduler guards, exact live router hashes, 140 Discovery Call slots, expected range `400`, active zero-restart services, empty warning journal, and staging smoke pass.
+- ActiveSync: Direct/public EAS 14.0/14.1 `OPTIONS` pass. The authenticated Calendar smoke skipped without credentials; the new physical iOS CRUD/DST gate is ready for the user-operated device.
+- Deployed: Commit `8c9f443`; rollback `/var/backups/openmailstack/scheduler-slot-logging-8c9f443-20260720T181559Z/backend-router.tar.gz`, SHA-256 `56d81b33e50ccc5cb373598b96cd49b7c1027fe4e5ffed9fb28a954c117ab672`.

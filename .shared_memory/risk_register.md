@@ -48,6 +48,7 @@ Last updated: 2026-07-20
 - ✅ ActiveSync recurring-event origin timezone: the deployed EAS adapter now encodes/decodes the 172-byte `TIME_ZONE_INFORMATION` blob, validates CLDR Windows/IANA candidates against binary rules, preserves fixed/DST recurrence wall time, bounds caches/fallback work, and carries the Unicode license notice.
 - ✅ Physical macOS Calendar time gate: macOS 26.5.2 CalDAV single-event create/edit/delete retained one UID with automatic OMS Web refresh, and a New York weekly series displayed the expected Baghdad 17:00-to-16:00 shift across US DST. The recurring-event UI now humanizes stored rules without corrupting non-FREQ-first RRULEs.
 - ✅ Scheduler public availability recovery: mixed legacy/Scheduler UID collations no longer make conflict detection fail. Opaque calendar UIDs are compared as binary values, the mixed-collation schema shape has a disposable MariaDB regression, and the live Discovery Call page renders slots again.
+- ✅ Scheduler slot failure observability: unexpected public availability failures now produce bounded one-line JSON diagnostics without private-link tokens, SQL text, booking data, or calendar content; expected request-validation failures stay out of the error journal.
 
 ## Remaining High-Priority Risks
 
@@ -78,6 +79,7 @@ Security and authorization areas to re-check:
 
 Operational/release risks:
 
+- Use journal event `scheduler.slot_generation_failed` for future public availability incidents. Its `privateAccess` field records only token presence; do not add capability tokens, SQL text, booking answers, or calendar payloads to Scheduler error logs.
 - Legacy calendar tables and additive Scheduler tables can use different `utf8mb4` collations. Treat event UIDs as opaque, case-sensitive identifiers and use binary or explicitly compatible comparisons for cross-table UID joins; keep the mixed-collation disposable database regression when changing Scheduler conflict detection.
 - `functions/10_webmail.sh` now renders `/etc/openmailstack/webmail-backend.env`, installs `openmailstack.service`, deploys the React app, and injects Nginx proxy routes with candidate validation/rollback. It has still not been exercised on a clean VM in this cycle; validate on a clean VM before release.
 - On the live server, Nginx already had root, `/api`, `/caldav`, and ActiveSync routes before migration. Do not blindly run the `functions/10_webmail.sh` Nginx injection against an already-migrated live config without checking for duplicate locations first.

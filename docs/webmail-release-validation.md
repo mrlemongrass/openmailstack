@@ -316,3 +316,12 @@ Security:
 - Live proof: commit `c739bd5` frontend assets exactly match `/var/www/openmailstack`; permissions are `755/644`; public root/auth/EAS return `200/401/200`; backend and Scheduler worker are active with zero restarts; warning journal, Nginx, and staging smoke pass.
 - Safety/rollback: deployment changed only static frontend assets. Rollback archive `/var/backups/openmailstack/calendar-recurrence-ui-20260720T173444Z/web-root.tar.gz`, SHA-256 `d8a18bca77935ed8f3c5cc102538e075200049c6bbc5d22ee7626d5d9fb9fef5`.
 - Remaining gate: physically validate iOS ActiveSync DST-crossing recurrence. The macOS test series itself still needs deliberate client-side edit/delete cleanup after UI confirmation.
+
+## 2026-07-20 Scheduler Slot Observability And iOS ActiveSync Preflight
+
+- Scheduler observability: unexpected public slot-generation failures emit one-line JSON event `scheduler.slot_generation_failed` with bounded public request context and database error code/state/message. Private-link tokens, SQL text, booking data, and calendar content are excluded; expected range-validation `400` responses remain quiet.
+- Automated proof: backend 134/137 with three expected optional database skips, route-level log/privacy coverage, focused EAS Calendar/Sync 13/13, full integration, and Scheduler guards pass.
+- Live proof: commit `8c9f443` router source/runtime hashes exactly match production; Discovery Call returns 140 slots; the over-62-day range returns `400`; both backend services are active with zero restarts; warning journal and staging smoke pass.
+- ActiveSync preflight: direct and public `OPTIONS /Microsoft-Server-ActiveSync` return `200`, advertise EAS 14.0/14.1, and include `Sync`, `FolderSync`, `Ping`, and `Provision`. The authenticated calendar smoke skipped because credentials were not supplied or retrieved.
+- Safety/rollback: no production row, mailbox, calendar, booking, schema, dependency, or configuration changed. Root-only archive `/var/backups/openmailstack/scheduler-slot-logging-8c9f443-20260720T181559Z/backend-router.tar.gz`, SHA-256 `56d81b33e50ccc5cb373598b96cd49b7c1027fe4e5ffed9fb28a954c117ab672`.
+- Physical gate: record the iOS version and selected Calendar timezone, then run the single Baghdad event create/edit/delete sequence before the New York DST-crossing recurrence sequence.

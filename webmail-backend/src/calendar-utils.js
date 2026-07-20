@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.slugifyCalendarName = exports.parseIcalEvent = exports.getCalendarFolderSyncKey = exports.formatActiveSyncDate = exports.expandRecurringEvent = void 0;
+exports.slugifyCalendarName = exports.parseIcalEvent = exports.getCalendarFolderSyncKey = exports.formatActiveSyncDate = exports.extractIcalEventUid = exports.expandRecurringEvent = void 0;
 exports.ensureCalendarSchema = ensureCalendarSchema;
 exports.ensureCalendarSlug = ensureCalendarSlug;
 exports.createCalendar = createCalendar;
@@ -12,6 +12,7 @@ const db_1 = require("./db");
 const calendar_format_1 = require("./calendar-format");
 var calendar_format_2 = require("./calendar-format");
 Object.defineProperty(exports, "expandRecurringEvent", { enumerable: true, get: function () { return calendar_format_2.expandRecurringEvent; } });
+Object.defineProperty(exports, "extractIcalEventUid", { enumerable: true, get: function () { return calendar_format_2.extractIcalEventUid; } });
 Object.defineProperty(exports, "formatActiveSyncDate", { enumerable: true, get: function () { return calendar_format_2.formatActiveSyncDate; } });
 Object.defineProperty(exports, "getCalendarFolderSyncKey", { enumerable: true, get: function () { return calendar_format_2.getCalendarFolderSyncKey; } });
 Object.defineProperty(exports, "parseIcalEvent", { enumerable: true, get: function () { return calendar_format_2.parseIcalEvent; } });

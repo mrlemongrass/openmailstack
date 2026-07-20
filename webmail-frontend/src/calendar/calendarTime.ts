@@ -199,7 +199,7 @@ export function eventUidForSave(
   existingUid: string | null | undefined,
   createUid: () => string = () => crypto.randomUUID()
 ): string {
-  return existingUid?.trim() || `${createUid()}@openmailstack`;
+  return existingUid ?? `${createUid()}@openmailstack`;
 }
 
 export function formatIcalDateProperty(
@@ -213,6 +213,40 @@ export function formatIcalDateProperty(
   if (timeKind === 'utc') return `${name}:${value}Z`;
   if (timeKind === 'zoned' && isValidTimeZone(timeZone)) return `${name};TZID=${timeZone}:${value}`;
   return `${name}:${value}`;
+}
+
+export function buildCalendarEventIcal(
+  draft: Partial<CalendarEvent>,
+  displayTimeZone: string,
+  existingUid?: string | null,
+  createUid: () => string = () => crypto.randomUUID()
+): string {
+  const start = draft.start || new Date();
+  const end = draft.end || new Date(start.getTime() + 3_600_000);
+  const timeKind = draft.isAllDay ? 'all-day' : (draft.timeKind || 'zoned');
+  const timeZone = timeKind === 'zoned'
+    ? (draft.timeZone || displayTimeZone)
+    : (timeKind === 'utc' ? 'UTC' : null);
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VEVENT',
+    `UID:${eventUidForSave(existingUid, createUid)}`,
+    formatIcalDateProperty('DTSTART', start, timeKind, timeZone),
+    formatIcalDateProperty('DTEND', end, timeKind, timeZone),
+    `SUMMARY:${draft.title || ''}`,
+  ];
+  if (draft.location) lines.push(`LOCATION:${draft.location}`);
+  if (draft.description) lines.push(`DESCRIPTION:${draft.description}`);
+  if (draft.recurrence && draft.recurrence !== 'none') {
+    const recurrence = /^FREQ=/i.test(draft.recurrence)
+      ? draft.recurrence
+      : `FREQ=${draft.recurrence.toUpperCase()}`;
+    lines.push(`RRULE:${recurrence}`);
+  }
+  draft.guests?.forEach(guest => lines.push(`ATTENDEE:mailto:${guest}`));
+  lines.push('END:VEVENT', 'END:VCALENDAR');
+  return lines.join('\r\n');
 }
 
 export function formatWallTime(date: Date, clockFormat: '12h' | '24h'): string {

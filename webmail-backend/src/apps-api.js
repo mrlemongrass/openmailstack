@@ -1425,9 +1425,9 @@ exports.appsApiRouter.post('/events', async (req, res) => {
     const { data: ical_data, calendar_id } = req.body;
     if (!ical_data)
         return res.status(400).json({ success: false, error: 'Missing data (iCalendar string)' });
-    // Extract UID from the VEVENT block
-    const uidMatch = ical_data.match(/^UID:(.+)$/m);
-    const uid = uidMatch ? uidMatch[1].trim() : `event-${Date.now()}@openmailstack`;
+    // The UID is an opaque event identity. Preserve it exactly so an edit
+    // addresses the same (calendar_id, uid) row instead of creating a copy.
+    const uid = (0, calendar_utils_1.extractIcalEventUid)(ical_data) || `event-${Date.now()}@openmailstack`;
     try {
         // resolve calendar: use provided calendar_id, or the user's first personal calendar
         let calId = calendar_id;

@@ -3,11 +3,22 @@ const assert = require('node:assert/strict');
 
 const {
   expandRecurringEvent,
+  extractIcalEventUid,
   formatActiveSyncDate,
   getCalendarFolderSyncKey,
   parseIcalEvent,
   slugifyCalendarName,
 } = require('../src/calendar-format.js');
+
+test('extractIcalEventUid preserves the complete VEVENT identity', () => {
+  assert.equal(extractIcalEventUid([
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:  byte-for-byte  ',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n')), '  byte-for-byte  ');
+});
 
 test('parseIcalEvent unfolds and unescapes event fields', () => {
   const parsed = parseIcalEvent('fallback', [

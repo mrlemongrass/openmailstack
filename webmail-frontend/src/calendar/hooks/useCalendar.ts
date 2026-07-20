@@ -6,9 +6,8 @@ import { useCalendarSettings } from '../../shared/hooks/useCalendarSettings';
 import { useCalendarTimeZone } from '../../shared/hooks/useCalendarTimeZone';
 import {
   addWallDays,
+  buildCalendarEventIcal,
   eventTimeKind,
-  eventUidForSave,
-  formatIcalDateProperty,
   projectInstantToWallDate,
   wallDateToInstant,
 } from '../calendarTime';
@@ -176,23 +175,8 @@ export function useCalendar() {
     if (!newEvent.title?.trim()) { setEventError('Title is required'); return false; }
     setEventSaving(true); setEventError('');
     try {
-      const start = newEvent.start || new Date();
-      const end = newEvent.end || new Date(start.getTime() + 3600000);
-      const timeKind = newEvent.isAllDay ? 'all-day' : (newEvent.timeKind || 'zoned');
-      const timeZone = timeKind === 'zoned' ? (newEvent.timeZone || displayTimeZone) : (timeKind === 'utc' ? 'UTC' : null);
-      const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT',
-        `UID:${eventUidForSave(editingEvent?.id)}`,
-        formatIcalDateProperty('DTSTART', start, timeKind, timeZone),
-        formatIcalDateProperty('DTEND', end, timeKind, timeZone),
-        `SUMMARY:${newEvent.title}`];
-      if (newEvent.location) lines.push(`LOCATION:${newEvent.location}`);
-      if (newEvent.description) lines.push(`DESCRIPTION:${newEvent.description}`);
-      if (newEvent.recurrence && newEvent.recurrence !== 'none') lines.push(`RRULE:FREQ=${newEvent.recurrence.toUpperCase()}`);
-      if (newEvent.guests) {
-        (newEvent.guests as string[]).forEach((g) => lines.push(`ATTENDEE:mailto:${g}`));
-      }
-      lines.push('END:VEVENT', 'END:VCALENDAR');
-      await api.saveEvent(lines.join('\r\n'), newEvent.calendarId);
+      const icalData = buildCalendarEventIcal(newEvent, displayTimeZone, editingEvent?.id);
+      await api.saveEvent(icalData, newEvent.calendarId);
       setIsEventModalOpen(false);
       setEditingEvent(null);
       const nextStart = projectInstantToWallDate(new Date(), 'utc', displayTimeZone);

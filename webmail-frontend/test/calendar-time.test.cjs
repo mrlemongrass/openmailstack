@@ -14,6 +14,7 @@ new Function('module', 'exports', 'require', compiled)(moduleUnderTest, moduleUn
 
 const {
   addWallDays,
+  buildCalendarEventIcal,
   eventUidForSave,
   convertWallDateTimeZone,
   formatIcalDateProperty,
@@ -31,7 +32,23 @@ test('editing an event preserves its existing UID without adding another suffix'
 
   assert.equal(uid, '10f2e6ac@openmailstack');
   assert.equal(generated, false);
+  assert.equal(eventUidForSave('  byte-for-byte  ', () => 'replacement'), '  byte-for-byte  ');
   assert.equal(eventUidForSave(undefined, () => 'new-event'), 'new-event@openmailstack');
+});
+
+test('editing a recurring event preserves its UID and complete recurrence rule', () => {
+  const ical = buildCalendarEventIcal({
+    title: 'Weekly planning',
+    start: new Date(2027, 2, 5, 9, 0, 0),
+    end: new Date(2027, 2, 5, 10, 0, 0),
+    timeKind: 'zoned',
+    timeZone: 'America/New_York',
+    recurrence: 'FREQ=WEEKLY;COUNT=4',
+  }, 'America/New_York', 'series@openmailstack', () => 'replacement');
+
+  assert.match(ical, /\r\nUID:series@openmailstack\r\n/);
+  assert.match(ical, /\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\n/);
+  assert.doesNotMatch(ical, /FREQ=FREQ=/);
 });
 
 test('resolveDisplayTimeZone chooses the browser system zone or saved home zone', () => {

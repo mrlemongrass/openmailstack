@@ -102,6 +102,12 @@ function firstComponentPropertyLines(lines: string[], componentName: string): st
     return componentLines.length > 0 ? componentLines : lines;
 }
 
+export function extractIcalEventUid(ical: string): string | null {
+    const eventLines = firstComponentPropertyLines(unfoldIcal(ical), 'VEVENT');
+    const uid = firstIcalValue(eventLines, 'UID')?.value;
+    return uid && uid.length > 0 ? uid : null;
+}
+
 function unescapeIcalText(value: string): string {
     return value
         .replace(/\\n/gi, '\n')

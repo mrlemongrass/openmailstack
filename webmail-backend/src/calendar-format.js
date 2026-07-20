@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.slugifyCalendarName = slugifyCalendarName;
+exports.extractIcalEventUid = extractIcalEventUid;
 exports.wallTimeAt = wallTimeAt;
 exports.parseIcalEvent = parseIcalEvent;
 exports.expandRecurringEvent = expandRecurringEvent;
@@ -73,6 +74,11 @@ function firstComponentPropertyLines(lines, componentName) {
         }
     }
     return componentLines.length > 0 ? componentLines : lines;
+}
+function extractIcalEventUid(ical) {
+    const eventLines = firstComponentPropertyLines(unfoldIcal(ical), 'VEVENT');
+    const uid = firstIcalValue(eventLines, 'UID')?.value;
+    return uid && uid.length > 0 ? uid : null;
 }
 function unescapeIcalText(value) {
     return value

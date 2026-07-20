@@ -29,6 +29,7 @@ export interface RecurrenceRule {
     raw: string;
 }
 export declare function slugifyCalendarName(name: string): string;
+export declare function extractIcalEventUid(ical: string): string | null;
 export interface WallTimeParts {
     year: number;
     month: number;

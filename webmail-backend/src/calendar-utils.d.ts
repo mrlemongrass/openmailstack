@@ -1,4 +1,4 @@
-export { expandRecurringEvent, formatActiveSyncDate, getCalendarFolderSyncKey, parseIcalEvent, slugifyCalendarName } from './calendar-format';
+export { expandRecurringEvent, extractIcalEventUid, formatActiveSyncDate, getCalendarFolderSyncKey, parseIcalEvent, slugifyCalendarName } from './calendar-format';
 export interface CalendarRow {
     id: number;
     user_id: string;

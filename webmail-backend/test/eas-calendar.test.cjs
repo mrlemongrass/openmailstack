@@ -16,6 +16,7 @@ const MICROSOFT_PACIFIC_TIMEZONE = [
   'AFMAIAAmACAAQwAAAAsAAAABAAIAAAAAAAAAAAAAACgARwBNAFQALQAwADgAOgAwADAAKQAgAFAAYQ',
   'BjAGkAZgBpAGMAIABUAGkAbQBlACAAKABVAFMAIAAmACAAQwAAAAMAAAACAAIAAAAAAAAAxP///w==',
 ].join('');
+const IOS_NEW_YORK_TIME_ZONE = 'LAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAsAAAABAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAACAAIAAAAAAAAAxP///w==';
 
 test('Apple-style Baghdad CalDAV events export as UTC ActiveSync instants', () => {
   const parsed = parseIcalEvent('baghdad', [
@@ -36,7 +37,7 @@ test('Apple-style Baghdad CalDAV events export as UTC ActiveSync instants', () =
   assert.equal(child(field(payload, 'Recurrence'), 'Type').content, '1');
   assert.equal(child(field(payload, 'Recurrence'), 'DayOfWeek').content, '32');
   assert.equal(child(field(payload, 'Recurrence'), 'Occurrences').content, '3');
-  const timezone = Buffer.from(field(payload, 'Timezone').content, 'base64');
+  const timezone = Buffer.from(field(payload, 'TimeZone').content, 'base64');
   assert.equal(timezone.length, 172);
   assert.equal(timezone.readInt32LE(0), -180);
   assert.deepEqual(systemTime(timezone, 68), [0, 0, 0, 0, 0, 0, 0, 0]);
@@ -56,7 +57,7 @@ test('zoned recurrence exports the EAS TIME_ZONE_INFORMATION DST rules', () => {
     'END:VCALENDAR',
   ].join('\r\n'));
   const payload = calendarEventToActiveSyncApplicationData(parsed);
-  const timezone = Buffer.from(field(payload, 'Timezone').content, 'base64');
+  const timezone = Buffer.from(field(payload, 'TimeZone').content, 'base64');
 
   assert.equal(timezone.length, 172);
   assert.equal(timezone.readInt32LE(0), 300);
@@ -82,7 +83,7 @@ test('EAS timezone round trip keeps New York recurrence at 09:00 across DST', ()
   const ical = activeSyncCalendarApplicationDataToIcal('new-york-round-trip', {
     children: [
       { tag: 'Subject', content: 'Weekly planning' },
-      { tag: 'Timezone', content: field(outbound, 'Timezone').content },
+      { tag: 'TimeZone', content: field(outbound, 'TimeZone').content },
       { tag: 'StartTime', content: field(outbound, 'StartTime').content },
       { tag: 'EndTime', content: field(outbound, 'EndTime').content },
       { tag: 'Recurrence', children: [
@@ -104,6 +105,39 @@ test('EAS timezone round trip keeps New York recurrence at 09:00 across DST', ()
   assert.equal(occurrences.at(-1).start.toISOString(), '2026-04-03T13:00:00.000Z');
 });
 
+test('physical iOS TimeZone payload preserves a New York weekly series across DST', () => {
+  const ical = activeSyncCalendarApplicationDataToIcal('ios-new-york', {
+    children: [
+      { tag: 'TimeZone', content: IOS_NEW_YORK_TIME_ZONE },
+      { tag: 'Subject', content: 'iOS weekly planning' },
+      { tag: 'StartTime', content: '20260305T140000Z' },
+      { tag: 'EndTime', content: '20260305T143000Z' },
+      { tag: 'Recurrence', children: [
+        { tag: 'Type', content: '1' },
+        { tag: 'Interval', content: '1' },
+        { tag: 'DayOfWeek', content: '16' },
+        { tag: 'Until', content: '20260328T130000Z' },
+        { tag: 'FirstDayOfWeek', content: '1' },
+      ] },
+    ],
+  });
+  const parsed = parseIcalEvent('ios-new-york', ical);
+  const occurrences = expandRecurringEvent(
+    parsed,
+    new Date('2026-03-01T00:00:00Z'),
+    new Date('2026-04-01T00:00:00Z'),
+  );
+
+  assert.match(ical, /DTSTART;TZID=America\/New_York:20260305T090000/);
+  assert.equal(occurrences.length, 4);
+  assert.deepEqual(occurrences.map(item => item.start.toISOString()), [
+    '2026-03-05T14:00:00.000Z',
+    '2026-03-12T13:00:00.000Z',
+    '2026-03-19T13:00:00.000Z',
+    '2026-03-26T13:00:00.000Z',
+  ]);
+});
+
 test('EAS timezone rules resolve without optional display names', () => {
   const source = parseIcalEvent('unnamed-new-york', [
     'BEGIN:VCALENDAR',
@@ -117,13 +151,13 @@ test('EAS timezone rules resolve without optional display names', () => {
     'END:VCALENDAR',
   ].join('\r\n'));
   const outbound = calendarEventToActiveSyncApplicationData(source);
-  const timezone = Buffer.from(field(outbound, 'Timezone').content, 'base64');
+  const timezone = Buffer.from(field(outbound, 'TimeZone').content, 'base64');
   timezone.fill(0, 4, 68);
   timezone.fill(0, 88, 152);
   const ical = activeSyncCalendarApplicationDataToIcal('unnamed-new-york', {
     children: [
       { tag: 'Subject', content: 'Unnamed timezone' },
-      { tag: 'Timezone', content: timezone.toString('base64') },
+      { tag: 'TimeZone', content: timezone.toString('base64') },
       { tag: 'StartTime', content: '20260227T140000Z' },
       { tag: 'EndTime', content: '20260227T150000Z' },
       { tag: 'Recurrence', children: [
@@ -140,7 +174,7 @@ test('Microsoft Pacific EAS timezone decodes to a DST-safe zoned iCalendar recur
   const ical = activeSyncCalendarApplicationDataToIcal('pacific-recurring', {
     children: [
       { tag: 'Subject', content: 'Pacific planning' },
-      { tag: 'Timezone', content: MICROSOFT_PACIFIC_TIMEZONE },
+      { tag: 'TimeZone', content: MICROSOFT_PACIFIC_TIMEZONE },
       { tag: 'StartTime', content: '20110510T170000Z' },
       { tag: 'EndTime', content: '20110510T180000Z' },
       { tag: 'DtStamp', content: '20110504T152200Z' },
@@ -179,7 +213,7 @@ test('Windows Central timezone names preserve recurrence semantics across DST', 
     'END:VCALENDAR',
   ].join('\r\n'));
   const outbound = calendarEventToActiveSyncApplicationData(source);
-  const timezone = Buffer.from(field(outbound, 'Timezone').content, 'base64');
+  const timezone = Buffer.from(field(outbound, 'TimeZone').content, 'base64');
   timezone.fill(0, 4, 68);
   timezone.write('Central Standard Time', 4, 62, 'utf16le');
   timezone.fill(0, 88, 152);
@@ -188,7 +222,7 @@ test('Windows Central timezone names preserve recurrence semantics across DST', 
   const ical = activeSyncCalendarApplicationDataToIcal('central-recurring', {
     children: [
       { tag: 'Subject', content: 'Central planning' },
-      { tag: 'Timezone', content: timezone.toString('base64') },
+      { tag: 'TimeZone', content: timezone.toString('base64') },
       { tag: 'StartTime', content: '20270226T150000Z' },
       { tag: 'EndTime', content: '20270226T160000Z' },
       { tag: 'Recurrence', children: [
@@ -214,7 +248,7 @@ test('malformed EAS timezone falls back to UTC without rejecting the event', () 
   const ical = activeSyncCalendarApplicationDataToIcal('bad-timezone', {
     children: [
       { tag: 'Subject', content: 'Still usable' },
-      { tag: 'Timezone', content: 'not-a-timezone' },
+      { tag: 'TimeZone', content: 'not-a-timezone' },
       { tag: 'StartTime', content: '20260724T170000Z' },
       { tag: 'EndTime', content: '20260724T180000Z' },
     ],
@@ -232,7 +266,7 @@ test('unknown well-formed EAS timezone falls back without exhaustive zone guessi
   const ical = activeSyncCalendarApplicationDataToIcal('unknown-timezone', {
     children: [
       { tag: 'Subject', content: 'Unknown timezone' },
-      { tag: 'Timezone', content: timezone.toString('base64') },
+      { tag: 'TimeZone', content: timezone.toString('base64') },
       { tag: 'StartTime', content: '20260724T170000Z' },
       { tag: 'EndTime', content: '20260724T180000Z' },
     ],
@@ -257,7 +291,7 @@ test('iOS-style ActiveSync all-day writes round trip as exclusive iCalendar date
   assert.equal(parsed.timeKind, 'all-day');
   assert.equal(parsed.start.toISOString(), '2026-07-24T00:00:00.000Z');
   assert.equal(parsed.end.toISOString(), '2026-07-25T00:00:00.000Z');
-  assert.equal(field(calendarEventToActiveSyncApplicationData(parsed), 'Timezone'), undefined);
+  assert.equal(field(calendarEventToActiveSyncApplicationData(parsed), 'TimeZone'), undefined);
 });
 
 test('ActiveSync recurrence and AirSyncBase body survive conversion to iCalendar', () => {

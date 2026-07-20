@@ -74,7 +74,7 @@ export function activeSyncCalendarApplicationDataToIcal(uid: string, application
     const location = firstNonEmpty(childText(applicationData, 'Location'), existing?.location || '');
     const description = firstNonEmpty(childText(body, 'Data'), childText(applicationData, 'Description'), existing?.description || '');
     const dtstamp = parseActiveSyncCalendarDate(childText(applicationData, 'DtStamp')) || existing?.dtstamp || new Date();
-    const timeZoneValue = childText(applicationData, 'Timezone');
+    const timeZoneValue = childText(applicationData, 'TimeZone');
     const timeZone = isAllDay
         ? null
         : timeZoneValue
@@ -182,7 +182,7 @@ export function calendarEventToActiveSyncApplicationData(event: ParsedIcalEvent)
 
     if (!event.isAllDay && event.timeKind === 'zoned' && event.timeZone) {
         const timeZone = encodeActiveSyncTimeZone(event.timeZone, event.start);
-        if (timeZone) applicationData.unshift({ tag: 'Timezone', page: 4, content: timeZone });
+        if (timeZone) applicationData.unshift({ tag: 'TimeZone', page: 4, content: timeZone });
     }
 
     if (event.location) applicationData.push({ tag: 'Location', page: 4, content: event.location });

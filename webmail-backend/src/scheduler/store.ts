@@ -2250,7 +2250,7 @@ export class SchedulerStore {
             `SELECT e.uid, e.ical_data, b.event_type_id AS scheduler_event_type_id
              FROM events e
              LEFT JOIN scheduler_bookings b
-               ON b.calendar_id = e.calendar_id AND b.calendar_event_uid = e.uid
+               ON b.calendar_id = e.calendar_id AND BINARY b.calendar_event_uid = BINARY e.uid
               AND b.status = 'confirmed'
              WHERE e.calendar_id IN (${placeholders})`,
             calendarIds

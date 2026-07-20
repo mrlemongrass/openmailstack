@@ -26,7 +26,9 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         KEY idx_calendars_user_dav_slug (user_id, dav_slug)
     ) ENGINE=InnoDB`);
     await pool.query(`CREATE TABLE IF NOT EXISTS events (
-        id INT AUTO_INCREMENT PRIMARY KEY, calendar_id INT, uid VARCHAR(255), ical_data LONGTEXT, sync_token INT DEFAULT 1,
+        id INT AUTO_INCREMENT PRIMARY KEY, calendar_id INT,
+        uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+        ical_data LONGTEXT, sync_token INT DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY uniq_events_calendar_uid (calendar_id, uid)
     ) ENGINE=InnoDB`);

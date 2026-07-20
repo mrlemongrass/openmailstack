@@ -1,4 +1,5 @@
 import { formatActiveSyncDate, type ParsedIcalEvent, parseIcalEvent } from './calendar-format';
+import { encodeActiveSyncTimeZone, formatIcalWallTime, resolveActiveSyncTimeZone } from './eas-timezone';
 
 export interface ActiveSyncCalendarNode {
     tag: string;
@@ -73,6 +74,12 @@ export function activeSyncCalendarApplicationDataToIcal(uid: string, application
     const location = firstNonEmpty(childText(applicationData, 'Location'), existing?.location || '');
     const description = firstNonEmpty(childText(body, 'Data'), childText(applicationData, 'Description'), existing?.description || '');
     const dtstamp = parseActiveSyncCalendarDate(childText(applicationData, 'DtStamp')) || existing?.dtstamp || new Date();
+    const timeZoneValue = childText(applicationData, 'Timezone');
+    const timeZone = isAllDay
+        ? null
+        : timeZoneValue
+            ? resolveActiveSyncTimeZone(timeZoneValue, start)
+            : existing?.timeZone || null;
 
     let rruleLine = existing?.recurrence?.raw || '';
     const recurrenceNode = childNode(applicationData, 'Recurrence');
@@ -102,6 +109,9 @@ export function activeSyncCalendarApplicationDataToIcal(uid: string, application
     if (isAllDay) {
         lines.push(`DTSTART;VALUE=DATE:${formatIcalDateOnly(start)}`);
         lines.push(`DTEND;VALUE=DATE:${formatIcalDateOnly(end)}`);
+    } else if (timeZone) {
+        lines.push(`DTSTART;TZID=${timeZone}:${formatIcalWallTime(start, timeZone)}`);
+        lines.push(`DTEND;TZID=${timeZone}:${formatIcalWallTime(end, timeZone)}`);
     } else {
         lines.push(`DTSTART:${formatActiveSyncDate(start)}`);
         lines.push(`DTEND:${formatActiveSyncDate(end)}`);
@@ -169,6 +179,11 @@ export function calendarEventToActiveSyncApplicationData(event: ParsedIcalEvent)
         { tag: 'Sensitivity', page: 4, content: '0' },
         { tag: 'MeetingStatus', page: 4, content: '0' },
     ];
+
+    if (!event.isAllDay && event.timeKind === 'zoned' && event.timeZone) {
+        const timeZone = encodeActiveSyncTimeZone(event.timeZone, event.start);
+        if (timeZone) applicationData.unshift({ tag: 'Timezone', page: 4, content: timeZone });
+    }
 
     if (event.location) applicationData.push({ tag: 'Location', page: 4, content: event.location });
     if (event.description) {

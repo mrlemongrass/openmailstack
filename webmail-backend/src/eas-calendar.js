@@ -5,6 +5,7 @@ exports.parseActiveSyncCalendarDate = parseActiveSyncCalendarDate;
 exports.activeSyncCalendarApplicationDataToIcal = activeSyncCalendarApplicationDataToIcal;
 exports.calendarEventToActiveSyncApplicationData = calendarEventToActiveSyncApplicationData;
 const calendar_format_1 = require("./calendar-format");
+const eas_timezone_1 = require("./eas-timezone");
 const nodeText = (node) => node?.content ? node.content.toString() : '';
 const childNode = (node, tag) => node?.children?.find((child) => child.tag === tag);
 const childText = (node, tag) => nodeText(childNode(node, tag));
@@ -57,6 +58,12 @@ function activeSyncCalendarApplicationDataToIcal(uid, applicationData, existingI
     const location = firstNonEmpty(childText(applicationData, 'Location'), existing?.location || '');
     const description = firstNonEmpty(childText(body, 'Data'), childText(applicationData, 'Description'), existing?.description || '');
     const dtstamp = parseActiveSyncCalendarDate(childText(applicationData, 'DtStamp')) || existing?.dtstamp || new Date();
+    const timeZoneValue = childText(applicationData, 'Timezone');
+    const timeZone = isAllDay
+        ? null
+        : timeZoneValue
+            ? (0, eas_timezone_1.resolveActiveSyncTimeZone)(timeZoneValue, start)
+            : existing?.timeZone || null;
     let rruleLine = existing?.recurrence?.raw || '';
     const recurrenceNode = childNode(applicationData, 'Recurrence');
     if (recurrenceNode) {
@@ -86,6 +93,10 @@ function activeSyncCalendarApplicationDataToIcal(uid, applicationData, existingI
     if (isAllDay) {
         lines.push(`DTSTART;VALUE=DATE:${formatIcalDateOnly(start)}`);
         lines.push(`DTEND;VALUE=DATE:${formatIcalDateOnly(end)}`);
+    }
+    else if (timeZone) {
+        lines.push(`DTSTART;TZID=${timeZone}:${(0, eas_timezone_1.formatIcalWallTime)(start, timeZone)}`);
+        lines.push(`DTEND;TZID=${timeZone}:${(0, eas_timezone_1.formatIcalWallTime)(end, timeZone)}`);
     }
     else {
         lines.push(`DTSTART:${(0, calendar_format_1.formatActiveSyncDate)(start)}`);
@@ -154,6 +165,11 @@ function calendarEventToActiveSyncApplicationData(event) {
         { tag: 'Sensitivity', page: 4, content: '0' },
         { tag: 'MeetingStatus', page: 4, content: '0' },
     ];
+    if (!event.isAllDay && event.timeKind === 'zoned' && event.timeZone) {
+        const timeZone = (0, eas_timezone_1.encodeActiveSyncTimeZone)(event.timeZone, event.start);
+        if (timeZone)
+            applicationData.unshift({ tag: 'Timezone', page: 4, content: timeZone });
+    }
     if (event.location)
         applicationData.push({ tag: 'Location', page: 4, content: event.location });
     if (event.description) {

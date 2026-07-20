@@ -60,8 +60,9 @@ PRODID:-//OpenMailStack//Calendar Smoke//EN
 BEGIN:VEVENT
 UID:${event_uid}
 DTSTAMP:20260621T130000Z
-DTSTART:20260704T190000Z
-DTEND:20260704T200000Z
+DTSTART;TZID=America/New_York:20270305T090000
+DTEND;TZID=America/New_York:20270305T100000
+RRULE:FREQ=WEEKLY;COUNT=4
 SUMMARY:Calendar Smoke Event
 LOCATION:Smoke Test
 DESCRIPTION:Created by calendar_sync_smoke.sh
@@ -219,6 +220,17 @@ const start = values.find(v => v.tag === 'StartTime')?.content || '';
 if (!/^\d{8}T\d{6}Z$/.test(start)) {
   throw new Error(`Initial ActiveSync calendar StartTime was not compact UTC: ${start}`);
 }
+if (start !== '20270305T140000Z') {
+  throw new Error(`Initial ActiveSync calendar StartTime did not preserve New York wall time: ${start}`);
+}
+const timezone = values.find(v => v.tag === 'Timezone')?.content || '';
+const timezoneBytes = Buffer.from(timezone, 'base64');
+if (timezoneBytes.length !== 172 || timezoneBytes.readInt32LE(0) !== 300 || timezoneBytes.readInt32LE(168) !== -60) {
+  throw new Error('Initial ActiveSync calendar Sync did not return the expected New York timezone structure');
+}
+if (!values.some(v => v.tag === 'Recurrence') || !values.some(v => v.tag === 'Occurrences' && v.content === '4')) {
+  throw new Error('Initial ActiveSync calendar Sync did not return the recurrence');
+}
 const key = values.find(v => v.tag === 'SyncKey' && v.content && v.content !== '0')?.content;
 if (!key) throw new Error('Initial ActiveSync calendar Sync did not return a nonzero SyncKey');
 process.stdout.write(`${key}\n`);
@@ -228,9 +240,12 @@ NODE
 eas_event_uid="oms-eas-smoke-event-${timestamp}"
 node - "${cal_collection_id}" "${calendar_sync_key}" "${eas_event_uid}" <<'NODE' > "${tmpdir}/sync-add-calendar.wbxml"
 const { WbxmlWriter } = require('./webmail-backend/src/wbxml/writer.js');
+const { encodeActiveSyncTimeZone } = require('./webmail-backend/src/eas-timezone.js');
 const collectionId = process.argv[2];
 const syncKey = process.argv[3];
 const eventUid = process.argv[4];
+const timezone = encodeActiveSyncTimeZone('America/New_York', new Date('2027-03-05T14:00:00Z'));
+if (!timezone) throw new Error('Could not encode the ActiveSync smoke timezone');
 const writer = new WbxmlWriter();
 writer.writeNode({
   tag: 'Sync',
@@ -252,11 +267,18 @@ writer.writeNode({
             { tag: 'ApplicationData', page: 0, children: [
               { tag: 'Subject', page: 4, content: 'ActiveSync Calendar Smoke Event' },
               { tag: 'UID', page: 4, content: eventUid },
-              { tag: 'StartTime', page: 4, content: '20260705T150000Z' },
-              { tag: 'EndTime', page: 4, content: '20260705T160000Z' },
+              { tag: 'Timezone', page: 4, content: timezone },
+              { tag: 'StartTime', page: 4, content: '20270305T140000Z' },
+              { tag: 'EndTime', page: 4, content: '20270305T150000Z' },
               { tag: 'DtStamp', page: 4, content: '20260621T130000Z' },
               { tag: 'AllDayEvent', page: 4, content: '0' },
               { tag: 'Location', page: 4, content: 'ActiveSync Smoke' },
+              { tag: 'Recurrence', page: 4, children: [
+                { tag: 'Type', page: 4, content: '1' },
+                { tag: 'Interval', page: 4, content: '1' },
+                { tag: 'DayOfWeek', page: 4, content: '32' },
+                { tag: 'Occurrences', page: 4, content: '4' }
+              ]},
               { tag: 'Body', page: 17, children: [
                 { tag: 'Type', page: 17, content: '1' },
                 { tag: 'Data', page: 17, content: 'Created through ActiveSync calendar smoke' },
@@ -367,7 +389,10 @@ status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X REPORT \
   -o "${tmpdir}/report-after-eas.out" \
   -w '%{http_code}' \
   "${caldav_url}")
-if [[ "${status}" != "207" ]] || ! grep -q 'ActiveSync Calendar Smoke Event' "${tmpdir}/report-after-eas.out"; then
+if [[ "${status}" != "207" ]] \
+  || ! grep -q 'ActiveSync Calendar Smoke Event' "${tmpdir}/report-after-eas.out" \
+  || ! grep -q 'DTSTART;TZID=America/New_York:20270305T090000' "${tmpdir}/report-after-eas.out" \
+  || ! grep -q 'RRULE:FREQ=WEEKLY;COUNT=4' "${tmpdir}/report-after-eas.out"; then
   echo "FAIL: REPORT did not return the ActiveSync-created smoke event"
   cat "${tmpdir}/report-after-eas.out"
   exit 1

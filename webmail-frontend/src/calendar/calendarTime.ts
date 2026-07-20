@@ -195,6 +195,13 @@ function compactWallDate(date: Date, includeTime: boolean): string {
   return includeTime ? `${dateValue}T${pad(parts.hour)}${pad(parts.minute)}${pad(parts.second)}` : dateValue;
 }
 
+export function eventUidForSave(
+  existingUid: string | null | undefined,
+  createUid: () => string = () => crypto.randomUUID()
+): string {
+  return existingUid?.trim() || `${createUid()}@openmailstack`;
+}
+
 export function formatIcalDateProperty(
   name: 'DTSTART' | 'DTEND',
   wallDate: Date,

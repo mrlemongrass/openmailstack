@@ -7,6 +7,7 @@ import { useCalendarTimeZone } from '../../shared/hooks/useCalendarTimeZone';
 import {
   addWallDays,
   eventTimeKind,
+  eventUidForSave,
   formatIcalDateProperty,
   projectInstantToWallDate,
   wallDateToInstant,
@@ -180,7 +181,7 @@ export function useCalendar() {
       const timeKind = newEvent.isAllDay ? 'all-day' : (newEvent.timeKind || 'zoned');
       const timeZone = timeKind === 'zoned' ? (newEvent.timeZone || displayTimeZone) : (timeKind === 'utc' ? 'UTC' : null);
       const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT',
-        `UID:${editingEvent?.id || crypto.randomUUID()}@openmailstack`,
+        `UID:${eventUidForSave(editingEvent?.id)}`,
         formatIcalDateProperty('DTSTART', start, timeKind, timeZone),
         formatIcalDateProperty('DTEND', end, timeKind, timeZone),
         `SUMMARY:${newEvent.title}`];

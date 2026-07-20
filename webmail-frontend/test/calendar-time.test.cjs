@@ -14,12 +14,25 @@ new Function('module', 'exports', 'require', compiled)(moduleUnderTest, moduleUn
 
 const {
   addWallDays,
+  eventUidForSave,
   convertWallDateTimeZone,
   formatIcalDateProperty,
   projectInstantToWallDate,
   resolveDisplayTimeZone,
   wallDateToInstant,
 } = moduleUnderTest.exports;
+
+test('editing an event preserves its existing UID without adding another suffix', () => {
+  let generated = false;
+  const uid = eventUidForSave('10f2e6ac@openmailstack', () => {
+    generated = true;
+    return 'replacement';
+  });
+
+  assert.equal(uid, '10f2e6ac@openmailstack');
+  assert.equal(generated, false);
+  assert.equal(eventUidForSave(undefined, () => 'new-event'), 'new-event@openmailstack');
+});
 
 test('resolveDisplayTimeZone chooses the browser system zone or saved home zone', () => {
   assert.equal(resolveDisplayTimeZone({ timeZoneMode: 'system', timeZone: 'Asia/Baghdad' }, 'America/Phoenix'), 'America/Phoenix');

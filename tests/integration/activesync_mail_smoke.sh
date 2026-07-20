@@ -32,10 +32,14 @@ const imapHost = process.env.IMAP_HOST || '127.0.0.1';
 const imapPort = Number(process.env.IMAP_PORT || 143);
 const timestamp = Date.now();
 const subject = `OMS ActiveSync mail smoke ${timestamp}`;
-const body = `ActiveSync mail smoke body ${timestamp}`;
-const deviceId = `OMSEASMailSmoke${timestamp}`;
+const bodyPrefix = `ActiveSync mail smoke body ${timestamp}`;
+const body = `${bodyPrefix} ${'x'.repeat(700)}`;
+const deviceId = 'OMSEASMailSmoke';
 const inboxCollectionId = Buffer.from('INBOX').toString('base64');
+const junkCollectionId = Buffer.from('Junk').toString('base64');
+const trashCollectionId = Buffer.from('Trash').toString('base64');
 let seededUid = null;
+let webmailCookie = '';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -104,11 +108,11 @@ async function sendSeedMessage() {
   });
 }
 
-async function findSeedMessage() {
+async function findSeedMessage(folder = 'INBOX') {
   const client = imapClient();
   await client.connect();
   try {
-    const mailbox = await client.mailboxOpen('INBOX');
+    const mailbox = await client.mailboxOpen(folder);
     if (!mailbox.exists) return null;
     const start = Math.max(1, mailbox.exists - 79);
     const matches = [];
@@ -126,29 +130,75 @@ async function findSeedMessage() {
   }
 }
 
-async function waitForSeedMessage() {
+async function waitForSeedMessage(folder = 'INBOX') {
   const deadline = Date.now() + 60000;
   while (Date.now() < deadline) {
-    const found = await findSeedMessage();
+    const found = await findSeedMessage(folder);
     if (found) {
       seededUid = found.uid;
       return found;
     }
     await sleep(3000);
   }
-  throw new Error('Timed out waiting for ActiveSync smoke message in INBOX');
+  throw new Error(`Timed out waiting for ActiveSync smoke message in ${folder}`);
 }
 
 async function cleanupSeedMessage() {
-  if (!seededUid) return;
   const client = imapClient();
   await client.connect();
   try {
-    await client.mailboxOpen('INBOX');
-    await client.messageDelete(String(seededUid), { uid: true });
+    for (const folder of ['INBOX', 'Junk', 'Trash']) {
+      let mailbox;
+      try {
+        mailbox = await client.mailboxOpen(folder);
+      } catch {
+        continue;
+      }
+      if (!mailbox.exists) {
+        await client.mailboxClose();
+        continue;
+      }
+      const start = Math.max(1, mailbox.exists - 79);
+      const matches = [];
+      for await (const msg of client.fetch(`${start}:*`, { uid: true, source: true })) {
+        const parsed = await simpleParser(msg.source);
+        if (parsed.subject === subject) matches.push(msg.uid);
+      }
+      if (matches.length) await client.messageDelete(matches, { uid: true });
+      await client.mailboxClose();
+    }
   } finally {
     try { await client.mailboxClose(); } catch {}
     await client.logout().catch(() => {});
+  }
+}
+
+function cookieFrom(setCookie) {
+  if (!setCookie) throw new Error('Webmail login did not return a session cookie');
+  return setCookie.split(',').map(part => part.trim()).find(part => part.startsWith('oms_session='))?.split(';')[0]
+    || setCookie.split(';')[0];
+}
+
+async function loginWebmail() {
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: user, password: pass }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.success) throw new Error(`Webmail login failed with HTTP ${response.status}`);
+  webmailCookie = cookieFrom(response.headers.get('set-cookie'));
+}
+
+async function webmailMessageAction(folder, uid, action) {
+  const response = await fetch(`${baseUrl}/api/messages/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: webmailCookie },
+    body: JSON.stringify({ folder, uids: [uid], action }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.success) {
+    throw new Error(`Webmail ${action} action failed with HTTP ${response.status}`);
   }
 }
 
@@ -181,7 +231,7 @@ async function folderSync() {
   if (serverId !== inboxCollectionId) throw new Error(`Unexpected INBOX collection id ${serverId}`);
 }
 
-async function syncMail(syncKey) {
+async function syncMail(syncKey, collectionId = inboxCollectionId) {
   const request = writeWbxml({
     tag: 'Sync',
     page: 0,
@@ -194,7 +244,7 @@ async function syncMail(syncKey) {
         children: [
           { tag: 'Class', page: 0, content: 'Email' },
           { tag: 'SyncKey', page: 0, content: syncKey },
-          { tag: 'CollectionId', page: 0, content: inboxCollectionId },
+          { tag: 'CollectionId', page: 0, content: collectionId },
           { tag: 'GetChanges', page: 0 },
           { tag: 'WindowSize', page: 0, content: '50' },
           { tag: 'Options', page: 0, children: [
@@ -221,6 +271,18 @@ function findSmokeAdd(ast) {
     const appData = child(node, 'ApplicationData');
     return appData && text(appData, 'Subject') === subject;
   });
+}
+
+function findServerCommand(ast, commandTag, serverId) {
+  return descendants(ast, commandTag).find(node => text(node, 'ServerId') === serverId && !child(node, 'Status'));
+}
+
+function assertNoServerCommands(ast) {
+  const collection = descendants(ast, 'Collection').find(node => child(node, 'SyncKey') && child(node, 'CollectionId'));
+  const commands = collection && child(collection, 'Commands');
+  if (commands && (commands.children || []).length) {
+    throw new Error(`Expected no-change Sync to return no server commands, got ${(commands.children || []).map(node => node.tag).join(', ')}`);
+  }
 }
 
 async function changeReadFlag(serverId, syncKey, readValue) {
@@ -261,7 +323,7 @@ async function changeReadFlag(serverId, syncKey, readValue) {
 }
 
 async function assertSeenState(expectedSeen) {
-  const found = await findSeedMessage();
+    const found = await findSeedMessage('INBOX');
   if (!found) throw new Error('Seed message disappeared before cleanup');
   const seen = found.flags.includes('\\Seen');
   if (seen !== expectedSeen) {
@@ -274,6 +336,7 @@ async function assertSeenState(expectedSeen) {
     await sendSeedMessage();
     await waitForSeedMessage();
     await folderSync();
+    await loginWebmail();
     const initial = await syncMail('0');
     const smokeAdd = findSmokeAdd(initial.ast);
     if (!smokeAdd) throw new Error('Initial mail Sync did not include the seeded smoke message');
@@ -284,14 +347,46 @@ async function assertSeenState(expectedSeen) {
     if (text(appData, 'Read') !== '0') throw new Error('Seeded smoke message should start unread in ActiveSync response');
     if (text(appData, 'MessageClass') !== 'IPM.Note') throw new Error('Seeded smoke message did not return IPM.Note');
     const bodyData = descendants(appData, 'Data').map(node => node.content?.toString() || '').join('\n');
-    if (!bodyData.includes(body)) throw new Error('Seeded smoke message body was not returned in ActiveSync response');
+    if (!bodyData.includes(bodyPrefix)) throw new Error('Seeded smoke message body prefix was not returned in ActiveSync response');
+    const bodyNode = descendants(appData, 'Body').find(node => node.page === 17);
+    if (!bodyNode || text(bodyNode, 'Truncated') !== '1') throw new Error('Mail Sync did not honor body truncation');
+    if (Buffer.byteLength(text(bodyNode, 'Data')) > 500) throw new Error('Mail Sync body exceeded requested TruncationSize');
 
     const readKey = await changeReadFlag(serverId, initial.nextKey, '1');
     await assertSeenState(true);
-    await changeReadFlag(serverId, readKey, '0');
+    const unreadKey = await changeReadFlag(serverId, readKey, '0');
     await assertSeenState(false);
 
-    console.log('PASS: ActiveSync mail smoke completed');
+    const noChange = await syncMail(unreadKey);
+    assertNoServerCommands(noChange.ast);
+
+    const inboxMessage = await findSeedMessage('INBOX');
+    if (!inboxMessage) throw new Error('Seed message missing from Inbox before web spam action');
+    await webmailMessageAction('INBOX', inboxMessage.uid, 'spam');
+    await waitForSeedMessage('Junk');
+    const inboxAfterJunk = await syncMail(noChange.nextKey);
+    if (!findServerCommand(inboxAfterJunk.ast, 'Delete', serverId)) {
+      throw new Error('Inbox Sync did not emit Delete after web-style move to Junk');
+    }
+
+    const junkInitial = await syncMail('0', junkCollectionId);
+    const junkAdd = findSmokeAdd(junkInitial.ast);
+    if (!junkAdd) throw new Error('Junk Sync did not emit Add for the moved message');
+    const junkServerId = text(junkAdd, 'ServerId');
+
+    const junkMessage = await findSeedMessage('Junk');
+    if (!junkMessage) throw new Error('Seed message missing from Junk before web delete action');
+    await webmailMessageAction('Junk', junkMessage.uid, 'delete');
+    await waitForSeedMessage('Trash');
+    const junkAfterTrash = await syncMail(junkInitial.nextKey, junkCollectionId);
+    if (!findServerCommand(junkAfterTrash.ast, 'Delete', junkServerId)) {
+      throw new Error('Junk Sync did not emit Delete after web-style move to Trash');
+    }
+
+    const trashInitial = await syncMail('0', trashCollectionId);
+    if (!findSmokeAdd(trashInitial.ast)) throw new Error('Trash Sync did not emit Add for the moved message');
+
+    console.log('PASS: ActiveSync mail smoke completed with Junk/Trash deletes and efficient no-change Sync');
   } finally {
     await cleanupSeedMessage().catch(err => {
       console.error(`WARN: cleanup failed: ${err.message}`);

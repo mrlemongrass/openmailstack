@@ -3,12 +3,30 @@ import { imapConfig } from './config';
 
 export type MailSearchField = 'all' | 'from' | 'to' | 'subject' | 'body' | 'unread' | 'starred' | 'attachments';
 
+export interface ActiveSyncMailSnapshot {
+    uidValidity: string;
+    highestModseq: string;
+    allUids: number[];
+    eligibleUids: number[];
+    changedReadFlags: Record<string, 0 | 1>;
+}
+
+export interface ActiveSyncMailMessage {
+    uid: number;
+    flags: string[];
+    envelope: any;
+    internalDate?: Date;
+    size: number;
+    source: Buffer;
+    sourceComplete: boolean;
+}
+
 export class ImapService {
     public client: ImapFlow;
 
-    constructor(user: string, pass: string) {
-        const masterUser = imapConfig.masterUser;
-        const masterPass = imapConfig.masterPass;
+    constructor(user: string, pass: string, useMasterCredentials = true) {
+        const masterUser = useMasterCredentials ? imapConfig.masterUser : '';
+        const masterPass = useMasterCredentials ? imapConfig.masterPass : '';
         const authUser = (masterUser && masterPass) ? `${user}*${masterUser}` : user;
         const authPass = (masterUser && masterPass) ? masterPass : pass;
         this.client = new ImapFlow({
@@ -130,6 +148,103 @@ export class ImapService {
         }
         await this.client.mailboxClose();
         return { changed, highestModseq };
+    }
+
+    async getActiveSyncMailSnapshot(
+        folderPath: string,
+        cutoff: Date | null,
+        sinceModseq: string,
+        knownUids: number[],
+    ): Promise<ActiveSyncMailSnapshot> {
+        const mbx = await this.client.mailboxOpen(folderPath);
+        try {
+            const parsedModseq = /^\d+$/.test(sinceModseq) ? BigInt(sinceModseq) : 0n;
+            if (!cutoff && mbx.highestModseq && parsedModseq > 0n && parsedModseq === mbx.highestModseq) {
+                return {
+                    uidValidity: mbx.uidValidity.toString(),
+                    highestModseq: mbx.highestModseq.toString(),
+                    allUids: knownUids,
+                    eligibleUids: knownUids,
+                    changedReadFlags: {},
+                };
+            }
+
+            const found = await this.client.search({ all: true }, { uid: true });
+            const allUids = Array.isArray(found) ? found : [];
+            let eligibleUids = allUids;
+
+            if (cutoff) {
+                const candidates = await this.client.search({ since: cutoff }, { uid: true });
+                const exact: number[] = [];
+                if (Array.isArray(candidates) && candidates.length > 0) {
+                    for await (const msg of this.client.fetch(candidates, { uid: true, internalDate: true }, { uid: true })) {
+                        if (msg.internalDate && new Date(msg.internalDate).getTime() >= cutoff.getTime()) exact.push(msg.uid);
+                    }
+                }
+                eligibleUids = exact;
+            }
+
+            const changedReadFlags: Record<string, 0 | 1> = {};
+            if (mbx.highestModseq && parsedModseq > 0n && parsedModseq <= mbx.highestModseq) {
+                for await (const msg of this.client.fetch('1:*', { uid: true, flags: true }, { changedSince: parsedModseq, uid: true })) {
+                    changedReadFlags[String(msg.uid)] = msg.flags?.has('\\Seen') ? 1 : 0;
+                }
+            } else if (knownUids.length > 0) {
+                const allUidSet = new Set(allUids);
+                const existingKnown = knownUids.filter(uid => allUidSet.has(uid));
+                if (existingKnown.length > 0) {
+                    for await (const msg of this.client.fetch(existingKnown, { uid: true, flags: true }, { uid: true })) {
+                        changedReadFlags[String(msg.uid)] = msg.flags?.has('\\Seen') ? 1 : 0;
+                    }
+                }
+            }
+
+            return {
+                uidValidity: mbx.uidValidity.toString(),
+                highestModseq: mbx.highestModseq?.toString() || sinceModseq || '0',
+                allUids,
+                eligibleUids,
+                changedReadFlags,
+            };
+        } finally {
+            await this.client.mailboxClose();
+        }
+    }
+
+    async getActiveSyncMessages(
+        folderPath: string,
+        uids: number[],
+        maxSourceBytes: number,
+    ): Promise<ActiveSyncMailMessage[]> {
+        if (uids.length === 0) return [];
+        await this.client.mailboxOpen(folderPath);
+        const messages = new Map<number, ActiveSyncMailMessage>();
+        try {
+            const cappedSourceBytes = Math.max(1, Math.min(10 * 1024 * 1024 + 256 * 1024, maxSourceBytes));
+            for await (const msg of this.client.fetch(uids, {
+                uid: true,
+                flags: true,
+                envelope: true,
+                internalDate: true,
+                size: true,
+                source: { start: 0, maxLength: cappedSourceBytes },
+            }, { uid: true })) {
+                const source = msg.source || Buffer.alloc(0);
+                const size = Number(msg.size || source.length);
+                messages.set(msg.uid, {
+                    uid: msg.uid,
+                    flags: Array.from(msg.flags || []),
+                    envelope: msg.envelope,
+                    internalDate: msg.internalDate ? new Date(msg.internalDate) : undefined,
+                    size,
+                    source,
+                    sourceComplete: source.length >= size,
+                });
+            }
+        } finally {
+            await this.client.mailboxClose();
+        }
+        return uids.map(uid => messages.get(uid)).filter((message): message is ActiveSyncMailMessage => Boolean(message));
     }
 
     private buildSearchQuery(query: string, field: MailSearchField): SearchObject {
@@ -298,14 +413,17 @@ export class ImapService {
         await this.client.mailboxClose();
     }
 
-    async messageAction(folderPath: string, uids: number[], action: 'delete' | 'archive' | 'spam' | 'move' | 'read' | 'unread' | 'star' | 'unstar', targetFolder?: string) {
+    async messageAction(folderPath: string, uids: number[], action: 'delete' | 'hardDelete' | 'archive' | 'spam' | 'move' | 'read' | 'unread' | 'star' | 'unstar', targetFolder?: string) {
         if (uids.length === 0) return null;
         
         await this.client.mailboxOpen(folderPath);
         const sequence = uids.join(',');
         
         try {
-            if (action === 'delete') {
+            if (action === 'hardDelete') {
+                await this.client.messageDelete(sequence, { uid: true });
+                return null;
+            } else if (action === 'delete') {
                 // Try to move to Trash first
                 let trashFolder = 'Trash';
                 const folders = await this.client.list();

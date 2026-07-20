@@ -62,6 +62,7 @@ const eas_notes_1 = require("./eas-notes");
 const eas_contacts_1 = require("./eas-contacts");
 const eas_calendar_1 = require("./eas-calendar");
 const eas_sync_1 = require("./eas-sync");
+const eas_mail_sync_1 = require("./eas-mail-sync");
 const eas_send_1 = require("./eas-send");
 const notes_imap_sync_1 = require("./notes-imap-sync");
 const search_worker_1 = require("./search-worker");
@@ -100,6 +101,7 @@ exports.io.on('connection', (socket) => {
 (0, notes_utils_1.ensureNotesSchema)().catch(err => console.error('Failed to initialize notes schema:', err));
 (0, notes_utils_1.ensureRemindersSchema)().catch(err => console.error('Failed to initialize reminders schema:', err));
 (0, notes_utils_1.ensureAttachmentsSchema)().catch(err => console.error('Failed to initialize attachments schema:', err));
+(0, eas_mail_sync_1.ensureEasMailSyncSchema)().catch(err => console.error('Failed to initialize EAS mail sync schema:', err));
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(security_1.securityHeaders);
@@ -234,6 +236,22 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     }
     // Check command and respond
     const cmd = req.query.Cmd;
+    const requestCredentials = getAuthCredentials();
+    if (!requestCredentials)
+        return res.status(401).send();
+    const authenticationImap = new imap_1.ImapService(requestCredentials.user, requestCredentials.pass, false);
+    try {
+        await authenticationImap.connect();
+    }
+    catch {
+        return res.status(401).send();
+    }
+    finally {
+        try {
+            await authenticationImap.logout();
+        }
+        catch { }
+    }
     if (cmd === 'FolderSync') {
         let syncKey = "0";
         if (req.body && req.body.length > 0) {
@@ -1187,236 +1205,306 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         }
         // Real IMAP Folder
         const folderPath = Buffer.from(collectionId, 'base64').toString('utf8');
-        console.log(`Client Syncing IMAP Folder: ${folderPath} with SyncKey: ${syncKey}`);
         const creds = getAuthCredentials();
         if (!creds)
             return res.status(401).send();
-        let addNodes = [];
-        let fetchResponses = [];
-        let changeReadFlags = [];
-        let changeResponses = [];
-        let nextSyncKey = ((parseInt(syncKey) || 0) + 1).toString();
-        let moreAvailable = false;
-        try {
-            let fetchServerIds = [];
-            if (req.body && req.body.length > 0) {
-                try {
-                    const parser = new parser_1.WbxmlParser(req.body);
-                    const decoded = parser.parse();
-                    const collNode = decoded?.children?.find((c) => c.tag === 'Collections')
-                        ?.children?.find((c) => c.tag === 'Collection');
-                    if (collNode) {
-                        const commandsNode = collNode.children?.find((c) => c.tag === 'Commands');
-                        if (commandsNode) {
-                            for (let cmd of commandsNode.children || []) {
-                                if (cmd.tag === 'Fetch') {
-                                    const idNode = cmd.children?.find((c) => c.tag === 'ServerId');
-                                    if (idNode && idNode.content)
-                                        fetchServerIds.push(idNode.content.toString());
-                                }
-                                else if (cmd.tag === 'Change') {
-                                    const idNode = cmd.children?.find((c) => c.tag === 'ServerId');
-                                    const appData = cmd.children?.find((c) => c.tag === 'ApplicationData');
-                                    if (idNode && idNode.content && appData) {
-                                        const readNode = appData.children?.find((c) => c.tag === 'Read');
-                                        if (readNode && readNode.content !== undefined) {
-                                            changeReadFlags.push({
-                                                serverId: idNode.content.toString(),
-                                                isRead: readNode.content.toString() === '1'
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                catch (e) { }
+        const deviceId = (0, eas_mail_sync_1.validateActiveSyncDeviceId)(req.query.DeviceId);
+        if (!deviceId)
+            return res.status(400).send();
+        const scopeHash = (0, eas_mail_sync_1.mailSyncScopeHash)(creds.user, deviceId, collectionId);
+        const requestHash = (0, eas_mail_sync_1.mailSyncRequestHash)(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
+        const sendMailSyncStatus = (status, responseSyncKey = syncKey) => {
+            const writer = new writer_1.WbxmlWriter();
+            writer.writeNode({
+                tag: 'Sync',
+                page: 0,
+                children: [{
+                        tag: 'Collections',
+                        page: 0,
+                        children: [{
+                                tag: 'Collection',
+                                page: 0,
+                                children: [
+                                    { tag: 'SyncKey', page: 0, content: responseSyncKey },
+                                    { tag: 'CollectionId', page: 0, content: collectionId },
+                                    { tag: 'Status', page: 0, content: status },
+                                ],
+                            }],
+                    }],
+            });
+            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+            return res.status(200).send(writer.getBuffer());
+        };
+        return (0, eas_mail_sync_1.withMailSyncScopeLock)(scopeHash, async () => {
+            let state = await (0, eas_mail_sync_1.loadMailSyncState)(creds.user, deviceId, collectionId);
+            const replayResponse = (0, eas_mail_sync_1.mailSyncReplayResponse)(state, syncKey, requestHash);
+            if (replayResponse) {
+                res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+                return res.status(200).send(replayResponse);
+            }
+            if (syncKey !== '0' && (!state || syncKey !== state.currentSyncKey)) {
+                console.log(`[SYNC] Rejecting stale EAS mail key for scope ${scopeHash.slice(0, 12)}; device reset required`);
+                return sendMailSyncStatus('3');
+            }
+            const commandsNode = childNode(syncCollectionNode, 'Commands');
+            const requestCommands = commandsNode?.children || [];
+            if (requestCommands.length > 512 || requestCommands.some((command) => !['Fetch', 'Change', 'Delete'].includes(command.tag))) {
+                return sendMailSyncStatus('4');
+            }
+            const requestedFetchServerIds = requestCommands
+                .filter((command) => command.tag === 'Fetch')
+                .map((command) => childText(command, 'ServerId'))
+                .filter(Boolean);
+            const changeReadFlags = requestCommands
+                .filter((command) => command.tag === 'Change')
+                .map((command) => ({
+                serverId: childText(command, 'ServerId'),
+                read: childText(childNode(command, 'ApplicationData'), 'Read'),
+            }));
+            const deleteServerIds = requestCommands
+                .filter((command) => command.tag === 'Delete')
+                .map((command) => childText(command, 'ServerId'));
+            const deletesAsMoves = childText(syncCollectionNode, 'DeletesAsMoves') !== '0';
+            const getChangesRequested = Boolean(childNode(syncCollectionNode, 'GetChanges')) || requestCommands.length === 0;
+            const optionsNode = childNode(syncCollectionNode, 'Options');
+            const bodyPreferenceNodes = optionsNode?.children?.filter((node) => node.tag === 'BodyPreference') || [];
+            const bodyPreferenceNode = bodyPreferenceNodes.find((node) => ['1', '2', '4'].includes(childText(node, 'Type')))
+                || bodyPreferenceNodes[0];
+            const requestedFilterType = childText(optionsNode, 'FilterType');
+            const filterTypeSpecified = requestedFilterType !== '';
+            const fallbackOptions = state || undefined;
+            let syncOptions;
+            try {
+                syncOptions = (0, eas_mail_sync_1.normalizeMailSyncOptions)({
+                    filterType: requestedFilterType || undefined,
+                    windowSize: childText(syncCollectionNode, 'WindowSize') || undefined,
+                    bodyType: childText(bodyPreferenceNode, 'Type') || undefined,
+                    truncationSize: childText(bodyPreferenceNode, 'TruncationSize') || undefined,
+                }, fallbackOptions);
+            }
+            catch (error) {
+                console.warn(`[SYNC] Invalid mail options for scope ${scopeHash.slice(0, 12)}:`, error);
+                return sendMailSyncStatus('4');
+            }
+            const fetchServerIds = requestedFetchServerIds.slice(0, (0, eas_mail_sync_1.effectiveMailSyncWindow)(syncOptions));
+            const rejectedFetchServerIds = requestedFetchServerIds.slice(fetchServerIds.length);
+            const nextSyncKey = (0, eas_mail_sync_1.createMailSyncKey)();
+            let serverCommands = [];
+            let nextKnownItems = syncKey === '0' ? {} : { ...(state?.knownItems || {}) };
+            let nextHighestModseq = state?.highestModseq || '0';
+            let nextUidValidity = state?.uidValidity || '0';
+            let minimumUid = syncKey === '0' ? 1 : (state?.minimumUid || 1);
+            let moreAvailable = false;
+            const responses = [];
+            for (const serverId of rejectedFetchServerIds) {
+                responses.push({
+                    tag: 'Fetch', page: 0, children: [
+                        { tag: 'ServerId', page: 0, content: serverId },
+                        { tag: 'Status', page: 0, content: '6' },
+                    ],
+                });
             }
             const imap = new imap_1.ImapService(creds.user, creds.pass);
-            await imap.connect();
-            // Process Fetch commands
-            for (let id of fetchServerIds) {
-                // id is like "SU5CT1g=-123"
-                const parts = id.split('-');
-                const uidPart = parts.length > 1 ? parts[1] : id;
-                const msg = await imap.getMessageByUid(folderPath, parseInt(uidPart));
-                if (msg && msg.source) {
-                    fetchResponses.push({
-                        tag: "Fetch",
-                        page: 0,
-                        children: [
-                            { tag: "ServerId", page: 0, content: id },
-                            { tag: "Status", page: 0, content: "1" },
-                            { tag: "ApplicationData", page: 0, children: [
-                                    { tag: "Body", page: 17, children: [
-                                            { tag: "Type", page: 17, content: "4" },
-                                            { tag: "Data", page: 17, content: msg.source.toString('utf8') },
-                                            { tag: "EstimatedDataSize", page: 17, content: msg.source.length.toString() }
-                                        ] }
-                                ] }
-                        ]
-                    });
-                }
-                else {
-                    fetchResponses.push({
-                        tag: "Fetch",
-                        page: 0,
-                        children: [
-                            { tag: "ServerId", page: 0, content: id },
-                            { tag: "Status", page: 0, content: "8" } // Not found
-                        ]
-                    });
-                }
-            }
-            let result;
-            let lowestUid = -1;
-            let currentUidNext = -1;
-            let sinceModseq = "0";
-            if (syncKey === "1") {
-                // Initial sync, fetch newest 25
-                result = await imap.getMessages(folderPath);
-            }
-            else {
-                const parts = syncKey.split('-');
-                if (parts.length >= 2) {
-                    lowestUid = parseInt(parts[0]);
-                    currentUidNext = parseInt(parts[1]);
-                    if (parts.length >= 3) {
-                        sinceModseq = parts[2];
+            try {
+                await imap.connect();
+                for (const change of changeReadFlags) {
+                    const uid = Number.parseInt(change.serverId.slice(`${collectionId}-`.length), 10);
+                    try {
+                        if (!change.serverId.startsWith(`${collectionId}-`) || !Number.isInteger(uid) || uid < 1 || !['0', '1'].includes(change.read)) {
+                            responses.push({
+                                tag: 'Change', page: 0, children: [
+                                    { tag: 'ServerId', page: 0, content: change.serverId },
+                                    { tag: 'Status', page: 0, content: '6' },
+                                ],
+                            });
+                            continue;
+                        }
+                        await imap.messageAction(folderPath, [uid], change.read === '1' ? 'read' : 'unread');
+                        nextKnownItems[String(uid)] = change.read === '1' ? 1 : 0;
+                        responses.push({
+                            tag: 'Change', page: 0, children: [
+                                { tag: 'ServerId', page: 0, content: change.serverId },
+                                { tag: 'Status', page: 0, content: '1' },
+                            ],
+                        });
                     }
-                }
-                else {
-                    currentUidNext = parseInt(syncKey);
-                }
-                result = await imap.getMessages(folderPath, currentUidNext);
-                // If there are no new messages, but the client explicitly sent a Sync request, 
-                // they might be paging backwards.
-                if (result.messages.length === 0 && lowestUid > 1) {
-                    result = await imap.getMessages(folderPath, undefined, lowestUid);
-                }
-            }
-            // Get flag changes
-            if (sinceModseq !== "0" && syncKey !== "1") {
-                const changedResult = await imap.getChangedFlags(folderPath, sinceModseq);
-                result.highestModseq = changedResult.highestModseq;
-                for (let c of changedResult.changed) {
-                    if (!result.messages.some((m) => m.uid === c.uid)) {
-                        changeResponses.push({
-                            tag: "Change",
-                            page: 0,
-                            children: [
-                                { tag: "ServerId", page: 0, content: `${collectionId}-${c.uid}` },
-                                { tag: "ApplicationData", page: 0, children: [
-                                        { tag: "Read", page: 2, content: c.flags.includes('\\Seen') ? "1" : "0" }
-                                    ] }
-                            ]
+                    catch {
+                        responses.push({
+                            tag: 'Change', page: 0, children: [
+                                { tag: 'ServerId', page: 0, content: change.serverId },
+                                { tag: 'Status', page: 0, content: '8' },
+                            ],
                         });
                     }
                 }
-            }
-            // Process flag changes from client
-            for (let change of changeReadFlags) {
-                const parts = change.serverId.split('-');
-                const uidPart = parts.length > 1 ? parts[1] : change.serverId;
-                try {
-                    await imap.messageAction(folderPath, [parseInt(uidPart)], change.isRead ? 'read' : 'unread');
-                    changeResponses.push({
-                        tag: "Change",
-                        page: 0,
-                        children: [
-                            { tag: "ServerId", page: 0, content: change.serverId },
-                            { tag: "Status", page: 0, content: "1" }
-                        ]
+                for (const serverId of deleteServerIds) {
+                    const uid = serverId.startsWith(`${collectionId}-`)
+                        ? Number.parseInt(serverId.slice(`${collectionId}-`.length), 10)
+                        : Number.NaN;
+                    try {
+                        if (!Number.isInteger(uid) || uid < 1)
+                            throw new Error('Invalid ServerId');
+                        const folderIsTrash = ['TRASH', 'DELETED MESSAGES'].includes(folderPath.toUpperCase());
+                        await imap.messageAction(folderPath, [uid], deletesAsMoves && !folderIsTrash ? 'delete' : 'hardDelete');
+                        delete nextKnownItems[String(uid)];
+                        responses.push({
+                            tag: 'Delete', page: 0, children: [
+                                { tag: 'ServerId', page: 0, content: serverId },
+                                { tag: 'Status', page: 0, content: '1' },
+                            ],
+                        });
+                    }
+                    catch {
+                        responses.push({
+                            tag: 'Delete', page: 0, children: [
+                                { tag: 'ServerId', page: 0, content: serverId },
+                                { tag: 'Status', page: 0, content: '8' },
+                            ],
+                        });
+                    }
+                }
+                if (getChangesRequested) {
+                    const snapshot = await imap.getActiveSyncMailSnapshot(folderPath, (0, eas_mail_sync_1.filterTypeCutoff)(syncOptions.filterType), state?.highestModseq || '0', Object.keys(nextKnownItems).map(Number));
+                    if (syncKey !== '0' && state && state.uidValidity !== '0' && state.uidValidity !== snapshot.uidValidity) {
+                        return sendMailSyncStatus('3');
+                    }
+                    if (syncKey === '0' && !filterTypeSpecified) {
+                        const initialWindow = [...snapshot.eligibleUids].sort((a, b) => b - a).slice(0, syncOptions.windowSize);
+                        minimumUid = initialWindow.length ? Math.min(...initialWindow) : 1;
+                    }
+                    else if (filterTypeSpecified && (!state || state.filterType !== syncOptions.filterType || state.minimumUid > 1)) {
+                        minimumUid = 1;
+                    }
+                    const delta = (0, eas_mail_sync_1.computeMailSyncDelta)({
+                        knownItems: nextKnownItems,
+                        allUids: snapshot.allUids,
+                        eligibleUids: snapshot.eligibleUids,
+                        changedReadFlags: snapshot.changedReadFlags,
+                        windowSize: (0, eas_mail_sync_1.effectiveMailSyncWindow)(syncOptions, fetchServerIds.length),
+                        minimumUid,
+                    });
+                    serverCommands = delta.commands;
+                    nextKnownItems = delta.nextKnownItems;
+                    moreAvailable = delta.moreAvailable;
+                    nextHighestModseq = delta.moreAvailable ? (state?.highestModseq || '0') : snapshot.highestModseq;
+                    nextUidValidity = snapshot.uidValidity;
+                }
+                const bodyUids = Array.from(new Set([
+                    ...serverCommands.filter(command => command.type === 'Add').map(command => command.uid),
+                    ...fetchServerIds
+                        .filter((serverId) => serverId.startsWith(`${collectionId}-`))
+                        .map((serverId) => Number.parseInt(serverId.slice(`${collectionId}-`.length), 10))
+                        .filter(Number.isInteger),
+                ]));
+                const messages = await imap.getActiveSyncMessages(folderPath, bodyUids, syncOptions.truncationSize + 256 * 1024);
+                const messagesByUid = new Map(messages.map(message => [message.uid, message]));
+                for (const serverId of fetchServerIds) {
+                    const uid = serverId.startsWith(`${collectionId}-`)
+                        ? Number.parseInt(serverId.slice(`${collectionId}-`.length), 10)
+                        : Number.NaN;
+                    const message = messagesByUid.get(uid);
+                    responses.push(message ? {
+                        tag: 'Fetch', page: 0, children: [
+                            { tag: 'ServerId', page: 0, content: serverId },
+                            { tag: 'Status', page: 0, content: '1' },
+                            { tag: 'ApplicationData', page: 0, children: await (0, eas_mail_sync_1.activeSyncMailApplicationData)(message, syncOptions) },
+                        ],
+                    } : {
+                        tag: 'Fetch', page: 0, children: [
+                            { tag: 'ServerId', page: 0, content: serverId },
+                            { tag: 'Status', page: 0, content: '8' },
+                        ],
                     });
                 }
-                catch (e) {
-                    changeResponses.push({
-                        tag: "Change",
-                        page: 0,
-                        children: [
-                            { tag: "ServerId", page: 0, content: change.serverId },
-                            { tag: "Status", page: 0, content: "8" }
-                        ]
-                    });
-                }
-            }
-            await imap.logout();
-            const { messages, uidNext, highestModseq, lowestUid: newLowestUid, moreAvailable: isMore } = result;
-            if (isMore)
-                moreAvailable = true;
-            // Set nextSyncKey to maintain pagination bounds
-            if (uidNext) {
-                const effectiveLowestUid = newLowestUid > 0 ? newLowestUid : (lowestUid > 0 ? lowestUid : uidNext);
-                nextSyncKey = `${effectiveLowestUid}-${uidNext}-${highestModseq || "0"}`;
-            }
-            console.log(`[SYNC] Fetched ${messages.length} messages, ${changeResponses.length} changes for ${folderPath} (SyncKey: ${nextSyncKey})`);
-            const simpleParser = require('mailparser').simpleParser;
-            for (let msg of messages) {
-                // parse email
-                const parsed = await simpleParser(msg.source);
-                const isRead = msg.flags.includes('\\Seen') ? "1" : "0";
-                const textBody = parsed.text || "No preview available.";
-                const truncatedText = textBody.substring(0, 499);
-                const isTruncated = textBody.length > 500 ? "1" : "0";
-                const globalServerId = `${collectionId}-${msg.uid}`;
-                addNodes.push({
-                    tag: "Add",
-                    page: 0,
-                    children: [
-                        { tag: "ServerId", page: 0, content: globalServerId },
-                        { tag: "ApplicationData", page: 0, children: [
-                                { tag: "To", page: 2, content: parsed.to?.text || "" },
-                                { tag: "From", page: 2, content: parsed.from?.text || "" },
-                                { tag: "Subject", page: 2, content: parsed.subject || "" },
-                                { tag: "DateReceived", page: 2, content: (parsed.date || new Date()).toISOString() },
-                                { tag: "DisplayTo", page: 2, content: parsed.to?.text || "" },
-                                { tag: "Read", page: 2, content: isRead },
-                                { tag: "MessageClass", page: 2, content: "IPM.Note" },
-                                { tag: "Body", page: 17, children: [
-                                        { tag: "Type", page: 17, content: "1" },
-                                        { tag: "Data", page: 17, content: truncatedText },
-                                        { tag: "EstimatedDataSize", page: 17, content: textBody.length.toString() },
-                                        ...(isTruncated === "1" ? [{ tag: "Truncated", page: 17, content: "1" }] : [])
-                                    ] }
-                            ] }
-                    ]
-                });
-            }
-        }
-        catch (e) {
-            console.error("Failed to sync IMAP:", e);
-        }
-        const responseAst = {
-            tag: "Sync",
-            page: 0,
-            children: [
-                {
-                    tag: "Collections",
-                    page: 0,
-                    children: [
-                        {
-                            tag: "Collection",
-                            page: 0,
-                            children: [
-                                { tag: "Class", page: 0, content: "Email" },
-                                { tag: "SyncKey", page: 0, content: nextSyncKey },
-                                { tag: "CollectionId", page: 0, content: collectionId },
-                                { tag: "Status", page: 0, content: "1" },
-                                ...(moreAvailable ? [{ tag: "MoreAvailable", page: 0, children: [] }] : []),
-                                ...((fetchResponses.length > 0 || changeResponses.length > 0) ? [{ tag: "Responses", page: 0, children: [...fetchResponses, ...changeResponses] }] : []),
-                                ...(addNodes.length > 0 ? [{ tag: "Commands", page: 0, children: addNodes }] : [])
-                            ]
+                const commandNodes = [];
+                for (const command of serverCommands) {
+                    const serverId = `${collectionId}-${command.uid}`;
+                    if (command.type === 'Add') {
+                        const message = messagesByUid.get(command.uid);
+                        if (!message) {
+                            delete nextKnownItems[String(command.uid)];
+                            moreAvailable = true;
+                            continue;
                         }
-                    ]
+                        nextKnownItems[String(command.uid)] = message.flags.includes('\\Seen') ? 1 : 0;
+                        commandNodes.push({
+                            tag: 'Add', page: 0, children: [
+                                { tag: 'ServerId', page: 0, content: serverId },
+                                { tag: 'ApplicationData', page: 0, children: await (0, eas_mail_sync_1.activeSyncMailApplicationData)(message, syncOptions) },
+                            ],
+                        });
+                    }
+                    else if (command.type === 'Change') {
+                        commandNodes.push({
+                            tag: 'Change', page: 0, children: [
+                                { tag: 'ServerId', page: 0, content: serverId },
+                                { tag: 'ApplicationData', page: 0, children: [
+                                        { tag: 'Read', page: 2, content: command.isRead === 1 ? '1' : '0' },
+                                    ] },
+                            ],
+                        });
+                    }
+                    else {
+                        commandNodes.push({
+                            tag: command.type, page: 0, children: [
+                                { tag: 'ServerId', page: 0, content: serverId },
+                            ],
+                        });
+                    }
                 }
-            ]
-        };
-        const writer = new writer_1.WbxmlWriter();
-        writer.writeNode(responseAst);
-        console.log(`[SYNC] Sending Sync Response for ${folderPath} with ${addNodes.length} items. SyncKey going to ${nextSyncKey}. MoreAvailable: ${moreAvailable}`);
-        res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
-        return res.status(200).send(writer.getBuffer());
+                const responseAst = {
+                    tag: 'Sync', page: 0, children: [{
+                            tag: 'Collections', page: 0, children: [{
+                                    tag: 'Collection', page: 0, children: [
+                                        { tag: 'Class', page: 0, content: 'Email' },
+                                        { tag: 'SyncKey', page: 0, content: nextSyncKey },
+                                        { tag: 'CollectionId', page: 0, content: collectionId },
+                                        { tag: 'Status', page: 0, content: '1' },
+                                        ...(moreAvailable ? [{ tag: 'MoreAvailable', page: 0, children: [] }] : []),
+                                        ...(responses.length ? [{ tag: 'Responses', page: 0, children: responses }] : []),
+                                        ...(commandNodes.length ? [{ tag: 'Commands', page: 0, children: commandNodes }] : []),
+                                    ],
+                                }],
+                        }],
+                };
+                const writer = new writer_1.WbxmlWriter();
+                writer.writeNode(responseAst);
+                const responseBuffer = writer.getBuffer();
+                const replayable = responseBuffer.length <= eas_mail_sync_1.MAX_MAIL_SYNC_REPLAY_BYTES;
+                state = {
+                    scopeHash,
+                    username: creds.user,
+                    deviceId,
+                    collectionId,
+                    currentSyncKey: nextSyncKey,
+                    previousSyncKey: replayable ? syncKey : null,
+                    uidValidity: nextUidValidity,
+                    highestModseq: nextHighestModseq,
+                    minimumUid,
+                    ...syncOptions,
+                    knownItems: nextKnownItems,
+                    lastCommands: serverCommands,
+                    lastMoreAvailable: moreAvailable,
+                    lastRequestHash: replayable ? requestHash : null,
+                    lastResponse: replayable ? responseBuffer : null,
+                    updatedAt: new Date(),
+                };
+                await (0, eas_mail_sync_1.saveMailSyncState)(state);
+                console.log(`[SYNC] Scope ${scopeHash.slice(0, 12)}: ${commandNodes.length} commands, ${responses.length} responses, MoreAvailable=${moreAvailable}`);
+                res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+                return res.status(200).send(responseBuffer);
+            }
+            catch (error) {
+                console.error(`Failed to sync IMAP scope ${scopeHash.slice(0, 12)}:`, error);
+                return res.status(500).send();
+            }
+            finally {
+                try {
+                    await imap.logout();
+                }
+                catch { }
+            }
+        });
     }
     if (cmd === 'Ping') {
         let heartbeat = 60; // default 60s

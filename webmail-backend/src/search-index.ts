@@ -241,11 +241,18 @@ const addAnyColumnLikeCondition = (conditions: string[], params: unknown[], colu
     params.push(...columns.map(() => like));
 };
 
+const DEFAULT_INNODB_STOPWORDS = new Set([
+    'a', 'about', 'an', 'are', 'as', 'at', 'be', 'by', 'com', 'de', 'en', 'for', 'from',
+    'how', 'i', 'in', 'is', 'it', 'la', 'of', 'on', 'or', 'that', 'the', 'this', 'to',
+    'und', 'was', 'what', 'when', 'where', 'who', 'will', 'with', 'www',
+]);
+
 const buildBooleanFullTextQuery = (terms: string[]) => {
     const tokens: string[] = [];
     for (const term of terms) {
         const normalized = term.normalize('NFKC');
-        if (!/^[\p{L}\p{N}]{3,}$/u.test(normalized)) return null;
+        if (!/^[\p{L}\p{N}]{3,}$/u.test(normalized)
+            || DEFAULT_INNODB_STOPWORDS.has(normalized.toLowerCase())) return null;
         tokens.push(`+${normalized}*`);
     }
     return [...new Set(tokens)].join(' ');

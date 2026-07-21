@@ -241,8 +241,6 @@ const invalidateSearchIndexFolderIdentity = async (username, folder, uidValidity
 };
 exports.invalidateSearchIndexFolderIdentity = invalidateSearchIndexFolderIdentity;
 /* ---------- Expunge reconciliation ---------- */
-const EXPUNGE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-let lastExpungeRun = 0;
 const reconcileExpungedMessages = async (username, folder, imap) => {
     try {
         const mbx = await imap.client.mailboxOpen(folder);
@@ -255,12 +253,13 @@ const reconcileExpungedMessages = async (username, folder, imap) => {
                     await (0, search_index_1.deleteMailSearchRows)(username, folder, staleUids);
                     console.log(`[SearchWorker] Expunge: removed ${staleUids.length} stale entries for ${username} in ${folder} (folder empty)`);
                 }
-                return;
+                return true;
             }
             // Get all UIDs currently in the IMAP folder
             const imapUids = await imap.client.search({ all: true }, { uid: true });
-            if (!Array.isArray(imapUids) || imapUids.length === 0)
-                return;
+            if (!Array.isArray(imapUids) || imapUids.length === 0) {
+                throw new Error(`Unable to reconcile UIDs for non-empty folder ${folder}`);
+            }
             const imapUidSet = new Set(imapUids.map(Number));
             // Get all indexed UIDs for this folder
             const [indexedRows] = await db_1.pool.query('SELECT uid FROM mail_search_index WHERE username = ? AND folder = ?', [username, folder]);
@@ -275,6 +274,7 @@ const reconcileExpungedMessages = async (username, folder, imap) => {
                 await (0, search_index_1.deleteMailSearchRows)(username, folder, staleUids);
                 console.log(`[SearchWorker] Expunge: removed ${staleUids.length} stale entries for ${username} in ${folder}`);
             }
+            return true;
         }
         finally {
             await imap.client.mailboxClose();
@@ -282,6 +282,7 @@ const reconcileExpungedMessages = async (username, folder, imap) => {
     }
     catch (err) {
         console.error(`[SearchWorker] Expunge reconciliation failed for ${username} in ${folder}:`, err);
+        return false;
     }
 };
 const getAvailableUserCredentials = async () => {
@@ -313,13 +314,14 @@ const indexUserFolders = async (credential) => {
     const { username, password } = credential;
     let imap = null;
     try {
+        // An incomplete or failed cycle must never leave an older snapshot trusted.
+        await (0, exports.invalidateSearchIndexSnapshot)(username);
         imap = new imap_1.ImapService(username, password);
         await imap.connect();
         const folderSnapshot = await imap.getSearchFolderSnapshot();
         const folders = folderSnapshot.folderPaths.map(path => ({ path }));
         const completedFolders = [];
         let snapshotComplete = folderSnapshot.failedFolders.length === 0;
-        const shouldRunExpunge = Date.now() - lastExpungeRun >= EXPUNGE_INTERVAL_MS;
         for (const folderObj of folders) {
             const folderPath = folderObj.path;
             try {
@@ -372,10 +374,9 @@ const indexUserFolders = async (credential) => {
                     messageCount: indexedCount + (rows.length > 0 ? 0 : 0), // will be updated by expunge
                     indexedCount
                 });
-                // Run expunge reconciliation less frequently
-                if (shouldRunExpunge) {
-                    await reconcileExpungedMessages(username, folderPath, imap);
-                    // Update counts after expunge
+                // A complete snapshot requires same-cycle reconciliation of external moves/deletes.
+                const reconciled = await reconcileExpungedMessages(username, folderPath, imap);
+                if (reconciled) {
                     const [postExpungeRows] = await db_1.pool.query('SELECT COUNT(*) AS cnt FROM mail_search_index WHERE username = ? AND folder = ?', [username, folderPath]);
                     const postExpungeCount = Number(postExpungeRows[0]?.cnt || 0);
                     await updateWorkerFolderState(username, folderPath, {
@@ -386,7 +387,10 @@ const indexUserFolders = async (credential) => {
                         indexedCount: postExpungeCount
                     });
                 }
-                if (!page.moreAvailable) {
+                else {
+                    snapshotComplete = false;
+                }
+                if (!page.moreAvailable && reconciled) {
                     completedFolders.push({
                         path: folderPath,
                         uidNext: observedUidNext,
@@ -401,9 +405,6 @@ const indexUserFolders = async (credential) => {
         }
         if (snapshotComplete && completedFolders.length === folders.length) {
             await saveSearchIndexSnapshot(username, completedFolders);
-        }
-        if (shouldRunExpunge) {
-            lastExpungeRun = Date.now();
         }
         if (imap) {
             await imap.logout().catch(() => { });

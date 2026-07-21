@@ -1569,13 +1569,8 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
     let telemetryRecorded = false;
     let indexDurationMs = 0;
     const searchStartedAt = Date.now();
-    req.once('aborted', () => { requestCancelled = true; });
-    res.once('close', () => {
-        if (!res.writableEnded) requestCancelled = true;
-    });
-
     const recordSearchTelemetry = (
-        source: 'index' | 'hybrid' | 'imap' | 'error',
+        source: 'index' | 'hybrid' | 'imap' | 'cancelled' | 'error',
         folderCount: number,
         liveFolderCount: number,
         resultCount: number,
@@ -1606,6 +1601,14 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
             partial,
         }));
     };
+    const markSearchCancelled = () => {
+        requestCancelled = true;
+        recordSearchTelemetry('cancelled', 0, 0, 0, true);
+    };
+    req.once('aborted', markSearchCancelled);
+    res.once('close', () => {
+        if (!res.writableEnded) markSearchCancelled();
+    });
 
     try {
         const indexedSearch = (async () => {
@@ -1946,6 +1949,13 @@ apiRouter.post('/messages/undo', requireAuth, async (req: any, res) => {
         const restoreFolder = sourceFolder || 'INBOX';
         await imap.client.mailboxOpen(targetFolder);
         await imap.client.messageMove(uids.map(String), restoreFolder, { uid: true });
+
+        try {
+            await deleteMailSearchRows(user, targetFolder, uids);
+            await invalidateSearchIndexSnapshot(user);
+        } catch (indexErr) {
+            console.error('Failed to update mail search index after undo:', indexErr);
+        }
 
         res.json({ success: true, message: 'Messages restored' });
     } catch (err: any) {

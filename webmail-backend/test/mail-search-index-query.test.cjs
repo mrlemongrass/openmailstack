@@ -80,3 +80,21 @@ test('quoted phrases keep exact LIKE semantics instead of broadening into word m
   assert.doesNotMatch(call.text, /IN BOOLEAN MODE/);
   assert.ok(call.params.includes('%quarterly roadmap%'));
 });
+
+test('InnoDB stopwords use LIKE so accepted searches are not silently empty', async () => {
+  executed.length = 0;
+
+  await searchMailIndex('search@example.test', {
+    query: 'the',
+    field: 'all',
+    scope: 'all',
+    folder: 'INBOX',
+    limit: 50,
+  });
+
+  const call = searchSelect();
+  assert.ok(call, 'search SELECT should execute');
+  assert.match(call.text, /body_text LIKE/);
+  assert.doesNotMatch(call.text, /IN BOOLEAN MODE/);
+  assert.ok(call.params.includes('%the%'));
+});

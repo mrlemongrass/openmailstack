@@ -18,8 +18,11 @@ let indexedUidValidity = new Map();
 let currentUidValidity = new Map();
 let failedFolders = [];
 const invalidatedFolderIdentities = [];
+const invalidatedSnapshots = [];
+const undoMoveCalls = [];
 let freshIndexSnapshot = null;
 let imapConnectionCalls = 0;
+let liveSearchDelayMs = 0;
 
 const rawMessage = ({ subject, messageId, date }) => Buffer.from([
   'From: Sender <sender@example.test>',
@@ -33,8 +36,17 @@ const rawMessage = ({ subject, messageId, date }) => Buffer.from([
 ].join('\r\n'));
 
 const fakeImap = {
+  client: {
+    async mailboxOpen(folder) { undoMoveCalls.push({ type: 'open', folder }); },
+    async messageMove(uids, folder, options) {
+      undoMoveCalls.push({ type: 'move', uids, folder, options });
+    },
+  },
   async searchMessages(folderPaths, query, field, limit) {
     searchCalls.push({ folderPaths, query, field, limit });
+    if (liveSearchDelayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, liveSearchDelayMs));
+    }
     return { messages: liveMessages, failedFolders, partialFolders: [] };
   },
   async getExistingUidStates(folder, uids) {
@@ -94,6 +106,9 @@ searchWorker.invalidateSearchIndexFolderIdentity = async (username, folder, uidV
   invalidatedFolderIdentities.push({ username, folder, uidValidity });
 };
 searchWorker.getFreshSearchIndexSnapshot = async () => freshIndexSnapshot;
+searchWorker.invalidateSearchIndexSnapshot = async username => {
+  invalidatedSnapshots.push(username);
+};
 
 const imapPoolPath = require.resolve('../src/imap-pool.js');
 require.cache[imapPoolPath] = {
@@ -125,6 +140,29 @@ const request = (port, path) => new Promise((resolve, reject) => {
   });
   req.on('error', reject);
   req.end();
+});
+
+const requestJson = (port, path, body) => new Promise((resolve, reject) => {
+  const payload = Buffer.from(JSON.stringify(body));
+  const req = http.request({
+    hostname: '127.0.0.1',
+    port,
+    path,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': payload.length,
+    },
+  }, response => {
+    const chunks = [];
+    response.on('data', chunk => chunks.push(chunk));
+    response.on('end', () => resolve({
+      status: response.statusCode,
+      json: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+    }));
+  });
+  req.on('error', reject);
+  req.end(payload);
 });
 
 test('folder search merges live matches and removes moved or deleted index rows', async t => {
@@ -589,4 +627,69 @@ test('fresh complete text index returns all-mail results without opening IMAP', 
   assert.deepEqual(existingUidCalls, []);
   assert.match(response.headers['server-timing'], /index;dur=/);
   assert.match(response.headers['server-timing'], /total;dur=/);
+});
+
+test('an aborted live search records bounded cancellation telemetry', async t => {
+  indexedMessages = [];
+  liveMessages = [];
+  indexedThrough = new Map([['INBOX', 0]]);
+  uidNextByFolder = new Map([['INBOX', 2]]);
+  indexedUidValidity = new Map([['INBOX', '1']]);
+  currentUidValidity = new Map([['INBOX', '1']]);
+  freshIndexSnapshot = null;
+  liveSearchDelayMs = 75;
+  t.after(() => { liveSearchDelayMs = 0; });
+
+  const express = require('express');
+  const app = express();
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  await new Promise(resolve => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: server.address().port,
+      path: '/api/messages/search?q=cancelled&field=subject&scope=folder&folder=INBOX&limit=50',
+    });
+    req.on('error', resolve);
+    req.end();
+    setTimeout(() => req.destroy(), 10);
+  });
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  const metrics = await require('prom-client').register.metrics();
+  assert.match(
+    metrics,
+    /openmailstack_mail_search_duration_seconds_count\{scope="folder",field="subject",source="cancelled"\} 1/,
+  );
+});
+
+test('undoing a move invalidates the complete snapshot and removes the old destination row', async t => {
+  deletedIndexRows.length = 0;
+  invalidatedSnapshots.length = 0;
+  undoMoveCalls.length = 0;
+
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const response = await requestJson(server.address().port, '/api/messages/undo', {
+    uids: [141],
+    targetFolder: 'Projects',
+    sourceFolder: 'INBOX',
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(undoMoveCalls, [
+    { type: 'open', folder: 'Projects' },
+    { type: 'move', uids: ['141'], folder: 'INBOX', options: { uid: true } },
+  ]);
+  assert.deepEqual(deletedIndexRows, [{ username: user, folder: 'Projects', uids: [141] }]);
+  assert.deepEqual(invalidatedSnapshots, [user]);
 });

@@ -1130,11 +1130,13 @@ Future entry template:
 - Rollback: `/var/backups/openmailstack/search-fa63f7e6-20260721T095532Z`; backend archive SHA-256 `678ac192262687b93b041ca33de25b90adf46613f729a83c1f515549ff215e6f`, webroot archive SHA-256 `7f5f7e093f1f86bc7e7e60d79abebf3d1dd99b0c128e44b16ef07b90c5102b4e`.
 - Follow-up: Confirm a subject search through the authenticated user session, then build the safe Rule Workbench preview seam using the shared search/rule predicate vocabulary before adding historical mailbox mutations.
 
-## 2026-07-21 — Per-folder search acceleration and Move picker release candidate
+## 2026-07-21 — Per-folder search acceleration and Move picker rollout
 
 - Changed: Search coverage is evaluated per folder. Complete UIDVALIDITY/UIDNEXT generations stay on the verified index path, while only incomplete or failed folders reach live IMAP; unread/starred queries still reconcile every requested folder because their flags are mutable.
 - Changed: Selected messages now expose a searchable Move picker that sends the explicit destination folder for single and bulk moves. The active source folder is excluded, all-mail cross-folder bulk mutation remains disabled, and duplicate UIDs are resolved by route folder plus UID.
 - Changed: The picker focuses its filter, closes on Escape, restores trigger focus, and reports failed Move actions through visible error toasts.
 - Regressed: Backend tests cover mixed complete/incomplete folder coverage, mutable all-folder searches, and bulk IMAP UID moves. Frontend tests cover destination serialization, picker destinations/selection, active-folder exclusion, disabled cross-folder bulk actions, and route-folder UID collisions.
 - Verified: Backend 188/191 passed with three expected optional database skips; frontend 45/45, ESLint, backend/frontend production builds, repository lint/integration checks, and `git diff --check` passed.
-- Status: Release candidate is local and production is unchanged pending commit, push, rollback snapshot, and guarded deployment.
+- Deployed: Commit `31812fdb` is pushed and live. Repository and production hashes match for `api.ts`, `api.js`, `api.js.map`, and frontend `index.html`; a content-only rsync comparison is empty, and the public route chunk exposes the Move failure path.
+- Verified: `openmailstack.service` is active with zero automatic restarts, the post-restart warning journal is empty, API/auth endpoints return `401`, ActiveSync OPTIONS returns `200`, Nginx passes, and the complete staging smoke passes.
+- Rollback: `/var/backups/openmailstack/search-move-31812fd-20260721T123720Z`; backend archive SHA-256 `2d0127dda80e6b19bef19642eb3e5c695678d7867521ed2dc04f1925373cdfd0`, webroot archive SHA-256 `02bb297be92dccb117c8654c7ceaf1742da4b19e5e09e3f8ac0f21b89facf653`.

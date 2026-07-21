@@ -6243,12 +6243,12 @@ Push commits `04fe82ce` and `fa63f7e6`, deploy the complete Webmail search repai
 
 Have the user retry an exact subject search in the current folder and all-mail scopes. If both return expected messages, close the physical gate and proceed to Rule Workbench Phase 1 read-only preview.
 
-## 2026-07-21 — Per-folder search acceleration and Move picker release candidate
+## 2026-07-21 — Per-folder search acceleration and Move picker rollout
 
 Agent/tool: Codex
 Branch: `main`
 Starting git state: clean at `7be6de1b`
-Ending git state: tested release candidate, not yet deployed
+Ending git state: implementation commit `31812fdb` pushed and deployed; deployment-record commit pending
 
 ### Selected task
 
@@ -6262,7 +6262,7 @@ Reduce avoidable live IMAP work during search and add a folder picker for moving
 - [x] The active folder is not offered as a destination and all-mail bulk mutation remains disabled.
 - [x] Duplicate IMAP UIDs are resolved by route folder plus UID.
 - [x] Picker keyboard behavior and Move failure recovery are visible and regression-covered.
-- [ ] Commit, push, rollback snapshot, deployment, and live validation remain.
+- [x] Commit, push, rollback snapshot, deployment, and live validation pass.
 
 ### Changes made
 
@@ -6281,8 +6281,20 @@ Reduce avoidable live IMAP work during search and add a folder picker for moving
 ### Risks / notes
 
 - Broad mutable-flag searches intentionally remain live across all selected folders for correctness.
-- Production is unchanged until the release commit is pushed and recoverable snapshots predate live mutation.
+- Authenticated timing and moving a real user-selected message remain a physical browser confirmation; deployment validation did not mutate mailbox data.
+
+### Deployment and live proof
+
+- Pushed implementation commit `31812fdb` to `origin/main` before deployment.
+- Created root-only rollback directory `/var/backups/openmailstack/search-move-31812fd-20260721T123720Z` before live mutation.
+  - `backend-api-before.tar.gz`: SHA-256 `2d0127dda80e6b19bef19642eb3e5c695678d7867521ed2dc04f1925373cdfd0`.
+  - `webroot-before.tar.gz`: SHA-256 `02bb297be92dccb117c8654c7ceaf1742da4b19e5e09e3f8ac0f21b89facf653`.
+- Installed only `api.ts`, `api.js`, and `api.js.map`, restarted only `openmailstack.service`, and deployed the tested frontend through `functions/deploy_webmail_frontend.sh`.
+- Repository and production SHA-256 hashes match for all three API artifacts and `index.html`; the content-only frontend rsync comparison is empty and webroot permissions are normalized to root-owned `0755/0644`.
+- Production serves `assets/index-BGW6qogG.js` and `assets/routes-Cb0Zs-9V.js`; the route returns `200` and contains the visible Move failure message.
+- `/api/auth/me`, unauthenticated search, and unauthenticated Move return `401`; ActiveSync OPTIONS returns `200`.
+- `openmailstack.service` is active/running with `NRestarts=0`, the post-restart warning journal has no entries, `nginx -t` passes, and the complete staging smoke passes.
 
 ### Next recommended task
 
-Commit and push the tested candidate, create checksum-verified backend/webroot snapshots, deploy only the affected backend and frontend artifacts, then prove exact artifact equality, route/service health, warning-free logs, and staging smoke before requesting authenticated UX confirmation.
+Have the user refresh the authenticated webmail session, compare a current-folder search with an all-mail search, then select same-folder results and move them to a non-source folder. Confirm the move in OMS Web and one IMAP client; use measured latency and logs to decide whether worker coverage or IMAP response time is the remaining search bottleneck.

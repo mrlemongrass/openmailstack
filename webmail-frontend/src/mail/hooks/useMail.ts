@@ -399,12 +399,12 @@ export function useMail(_opts: UseMailOptions) {
   }, [fetchMessages]);
 
   // ---- Message actions ----
-  const messageAction = useCallback(async (action: string, uids?: number[], folderOverride?: string) => {
+  const messageAction = useCallback(async (action: string, uids?: number[], folderOverride?: string, targetFolder?: string) => {
     const targetUids = uids || selectedMessages;
-    if (!targetUids.length) return;
+    if (!targetUids.length) return false;
     const folder = folderOverride || activeFolder;
     try {
-      const result = await api.messageAction(action, folder, targetUids);
+      const result = await api.messageAction(action, folder, targetUids, targetFolder);
       if (result.undoUids && result.undoUids.length > 0) {
         setMailUndo({
           message: getUndoMessage(action),
@@ -420,11 +420,11 @@ export function useMail(_opts: UseMailOptions) {
         }
         setSelectedMessages([]);
         await fetchFolders();
-        return;
+        return true;
       }
       if (activeFolderRef.current !== folder) {
         await fetchFolders();
-        return;
+        return true;
       }
       if (action !== 'move' || result.targetFolder) {
         setMessages((current) => applyLoadedMessageAction(current, action, targetUids));
@@ -432,7 +432,11 @@ export function useMail(_opts: UseMailOptions) {
       setSelectedMessages([]);
       await fetchMessages();
       await fetchFolders();
-    } catch (e) { console.error('Action failed', e); }
+      return true;
+    } catch (e) {
+      console.error('Action failed', e);
+      return false;
+    }
   }, [activeFolder, selectedMessages, fetchMessages, fetchFolders, isSearchActive, setMessages]);
 
   const undoAction = useCallback(async () => {

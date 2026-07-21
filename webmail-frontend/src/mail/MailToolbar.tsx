@@ -1,6 +1,8 @@
-import { useState } from 'react';
-import { Trash2, Archive, ShieldAlert, Mail, MailOpen, StarIcon, X } from 'lucide-react';
-import type { SearchField, SearchScope } from '../shared/types';
+import { useRef, useState } from 'react';
+import { Trash2, Archive, ShieldAlert, Mail, MailOpen, StarIcon, X, FolderOpen } from 'lucide-react';
+import type { MailFolder, SearchField, SearchScope } from '../shared/types';
+import { MoveToPopover } from './components/MoveToPopover';
+import { moveDestinationFolders } from './mail-message-identity';
 
 interface MailToolbarProps {
   selectedCount: number;
@@ -11,6 +13,7 @@ interface MailToolbarProps {
   isSearchActive: boolean;
   selectionDisabled: boolean;
   activeFolder?: string;
+  folders: MailFolder[];
   onSearchChange: (q: string) => void;
   onSearchSubmit: () => void;
   onSearchFieldChange: (field: SearchField) => void;
@@ -18,6 +21,7 @@ interface MailToolbarProps {
   onClearSearch: () => void;
   onSelectAll: () => void;
   onBulkAction: (action: string) => void;
+  onMoveSelected: (targetFolder: string) => void;
   onMarkAllRead?: () => void;
 }
 
@@ -32,9 +36,16 @@ const SEARCH_HINTS = [
   { syntax: 'after:2026-01-01', desc: 'Messages after date' },
 ];
 
-export function MailToolbar({ selectedCount, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, activeFolder, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMarkAllRead }: MailToolbarProps) {
+export function MailToolbar({ selectedCount, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, activeFolder, folders, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMoveSelected, onMarkAllRead }: MailToolbarProps) {
   const allSelected = selectedCount > 0 && selectedCount === totalCount;
   const [showHints, setShowHints] = useState(false);
+  const [showMoveTo, setShowMoveTo] = useState(false);
+  const moveButtonRef = useRef<HTMLButtonElement>(null);
+  const moveFolders = moveDestinationFolders(folders, activeFolder || '');
+  const closeMoveTo = () => {
+    setShowMoveTo(false);
+    window.requestAnimationFrame(() => moveButtonRef.current?.focus());
+  };
 
   return (
     <div style={{ borderBottom: '1px solid var(--border-glass)' }}>
@@ -108,7 +119,7 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, searchFiel
       </div>
       {/* Bulk action bar — visible when messages are selected */}
       {selectedCount > 0 && !selectionDisabled && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', flexWrap: 'wrap',
           background: 'rgba(59,130,246,0.08)', borderTop: '1px solid var(--border-glass)' }}>
           <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)', fontWeight: 500 }}>
             {selectedCount} selected
@@ -117,6 +128,17 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, searchFiel
           <button className="btn btn-ghost" onClick={() => onBulkAction('read')} title="Mark read"><Mail size={16} /></button>
           <button className="btn btn-ghost" onClick={() => onBulkAction('unread')} title="Mark unread"><MailOpen size={16} /></button>
           <button className="btn btn-ghost" onClick={() => onBulkAction('archive')} title="Archive"><Archive size={16} /></button>
+          <div style={{ position: 'relative' }}>
+            <button ref={moveButtonRef} className="btn btn-ghost" onClick={() => setShowMoveTo((visible) => !visible)}
+              title="Move to folder" aria-haspopup="dialog" aria-expanded={showMoveTo} disabled={moveFolders.length === 0}>
+              <FolderOpen size={16} />
+            </button>
+            {showMoveTo && (
+              <MoveToPopover folders={moveFolders} align="right"
+                onMove={onMoveSelected}
+                onClose={closeMoveTo} />
+            )}
+          </div>
           <button className="btn btn-ghost" onClick={() => onBulkAction('star')} title="Star"><StarIcon size={16} /></button>
           <button className="btn btn-ghost" onClick={() => onBulkAction('spam')} title="Mark as spam"><ShieldAlert size={16} /></button>
           <button className="btn btn-danger" onClick={() => onBulkAction('delete')} title="Delete"><Trash2 size={16} /></button>

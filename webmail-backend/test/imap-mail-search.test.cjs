@@ -105,3 +105,26 @@ test('live IMAP search reports a folder failure instead of silently returning a 
   assert.deepEqual(result.messages, []);
   assert.deepEqual(result.failedFolders, ['Broken']);
 });
+
+test('bulk move sends every selected UID to the chosen destination folder', async () => {
+  const calls = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen(folder) { calls.push({ type: 'open', folder }); },
+    async mailboxClose() { calls.push({ type: 'close' }); },
+    async messageMove(sequence, targetFolder, options) {
+      calls.push({ type: 'move', sequence, targetFolder, options });
+      return { uidMap: new Map([[41, 141], [42, 142]]) };
+    },
+  };
+
+  const result = await service.messageAction('INBOX', [41, 42], 'move', 'Projects/2026');
+
+  assert.deepEqual(calls, [
+    { type: 'open', folder: 'INBOX' },
+    { type: 'move', sequence: '41,42', targetFolder: 'Projects/2026', options: { uid: true } },
+    { type: 'close' },
+  ]);
+  assert.equal(result.targetFolder, 'Projects/2026');
+  assert.deepEqual(result.uidMap, { 41: 141, 42: 142 });
+});

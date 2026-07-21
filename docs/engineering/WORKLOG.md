@@ -6242,3 +6242,47 @@ Push commits `04fe82ce` and `fa63f7e6`, deploy the complete Webmail search repai
 ### Next recommended task
 
 Have the user retry an exact subject search in the current folder and all-mail scopes. If both return expected messages, close the physical gate and proceed to Rule Workbench Phase 1 read-only preview.
+
+## 2026-07-21 — Per-folder search acceleration and Move picker release candidate
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `7be6de1b`
+Ending git state: tested release candidate, not yet deployed
+
+### Selected task
+
+Reduce avoidable live IMAP work during search and add a folder picker for moving selected search results, with regressions and a guarded production rollout.
+
+### Acceptance criteria
+
+- [x] Complete folders stay on the verified index path while only incomplete folders use live IMAP.
+- [x] Mutable unread/starred searches still reconcile every requested folder.
+- [x] Single and same-folder bulk Move actions submit an explicit destination folder.
+- [x] The active folder is not offered as a destination and all-mail bulk mutation remains disabled.
+- [x] Duplicate IMAP UIDs are resolved by route folder plus UID.
+- [x] Picker keyboard behavior and Move failure recovery are visible and regression-covered.
+- [ ] Commit, push, rollback snapshot, deployment, and live validation remain.
+
+### Changes made
+
+- `webmail-backend/src/api.ts` and generated artifacts evaluate search-index completeness per folder and restrict live IMAP reconciliation to the incomplete subset.
+- `webmail-frontend/src/mail/` adds the selected-message Move control, searchable destination picker, folder-qualified route lookup, keyboard focus recovery, and visible failure toasts.
+- Backend and frontend regressions cover mixed coverage, mutable flags, explicit bulk destinations, picker selection, source exclusion, cross-folder safeguards, and duplicate UID collisions.
+
+### Proof / checks run
+
+- Red regressions failed before implementation for per-folder live-search selection, destination serialization, the missing toolbar control, and folder-qualified route lookup.
+- Backend: 188/191 passed, zero failed, with three expected optional database skips; TypeScript build passed.
+- Frontend: 45/45 passed; ESLint and the TypeScript/Vite production build passed.
+- `tests/lint/run.sh`, `tests/integration/run.sh`, and `git diff --check` passed.
+- Independent Standards and Spec review identified folder-collision, error-recovery, keyboard, and UI-test gaps; those findings were remediated before release preparation.
+
+### Risks / notes
+
+- Broad mutable-flag searches intentionally remain live across all selected folders for correctness.
+- Production is unchanged until the release commit is pushed and recoverable snapshots predate live mutation.
+
+### Next recommended task
+
+Commit and push the tested candidate, create checksum-verified backend/webroot snapshots, deploy only the affected backend and frontend artifacts, then prove exact artifact equality, route/service health, warning-free logs, and staging smoke before requesting authenticated UX confirmation.

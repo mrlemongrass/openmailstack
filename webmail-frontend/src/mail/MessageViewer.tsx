@@ -14,6 +14,7 @@ import { CalendarInviteCard } from '../shared/components/CalendarInviteCard';
 import { KeyboardHelp } from '../shared/components/KeyboardHelp';
 import { useToast } from '../shared/components/Toast';
 import type { useMail } from './hooks/useMail';
+import { messageFolder, messageForRoute, moveDestinationFolders } from './mail-message-identity';
 
 export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const { showToast } = useToast();
@@ -25,31 +26,39 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
   const [showBackFab, setShowBackFab] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const moveButtonRef = useRef<HTMLButtonElement>(null);
   const markingReadRef = useRef<Set<string>>(new Set());
   const { messages, fetchMessageBody, messageAction } = mail;
 
   const messageUid = uid ? parseInt(uid, 10) : 0;
-  const message = messages.find((m) => m.uid === messageUid);
+  const decodedRouteFolder = folder ? decodeURIComponent(folder) : mail.activeFolder;
+  const message = messageForRoute(messages, decodedRouteFolder, messageUid);
+  const sourceFolder = message ? messageFolder(message, decodedRouteFolder) : decodedRouteFolder;
+  const moveFolders = moveDestinationFolders(mail.folders, sourceFolder);
+  const closeMoveTo = () => {
+    setShowMoveTo(false);
+    window.requestAnimationFrame(() => moveButtonRef.current?.focus());
+  };
 
   // Fetch full message body when message is selected, and mark as read
   useEffect(() => {
     if (message && uid && folder) {
       const timer = window.setTimeout(() => {
         if (!message.html && !message.text) {
-          void fetchMessageBody(messageUid, decodeURIComponent(folder));
+          void fetchMessageBody(messageUid, decodedRouteFolder);
         }
       // Mark message as read automatically when viewing
         const readKey = `${folder}\u0000${messageUid}`;
         if (!message.isRead && !markingReadRef.current.has(readKey)) {
           markingReadRef.current.add(readKey);
-          void messageAction('read', [messageUid]).finally(() => {
+          void messageAction('read', [messageUid], sourceFolder).finally(() => {
             markingReadRef.current.delete(readKey);
           });
         }
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [message, uid, folder, messageUid, fetchMessageBody, messageAction]);
+  }, [message, uid, folder, messageUid, decodedRouteFolder, sourceFolder, fetchMessageBody, messageAction]);
 
   const bodyLoading = !!message && !message.bodyLoaded && !message.html && !message.text;
 
@@ -217,10 +226,18 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           <Archive size={16} />
         </button>
         <div style={{ position: 'relative' }}>
-          <button className="btn btn-ghost" onClick={() => setShowMoveTo(!showMoveTo)} title="Move to folder">
+          <button ref={moveButtonRef} className="btn btn-ghost" onClick={() => setShowMoveTo(!showMoveTo)}
+            title="Move to folder" aria-haspopup="dialog" aria-expanded={showMoveTo} disabled={moveFolders.length === 0}>
             <FolderOpen size={16} />
           </button>
-          {showMoveTo && <MoveToPopover folders={mail.folders} onMove={(_f) => { mail.messageAction('move', [message.uid]); setShowMoveTo(false); }} onClose={() => setShowMoveTo(false)} />}
+          {showMoveTo && <MoveToPopover folders={moveFolders}
+            onMove={(targetFolder) => {
+              void mail.messageAction('move', [message.uid], sourceFolder, targetFolder).then((moved) => {
+                if (!moved) {
+                  showToast({ type: 'error', message: 'Could not move this message. Try again.' });
+                }
+              });
+            }} onClose={closeMoveTo} />}
         </div>
         <button className="btn btn-ghost" onClick={() => { if (mail.muteThread) mail.muteThread([message.uid]); }} title="Mute thread">
           <BellOff size={16} />

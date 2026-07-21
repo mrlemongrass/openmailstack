@@ -135,6 +135,30 @@ test('mail search reports an API failure instead of silently keeping old results
   }
 });
 
+test('message move sends the selected destination folder to the action API', async () => {
+  const { messageAction } = loadTypeScriptModule('../src/shared/api.ts');
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (url, options) => {
+    requests.push({ url: String(url), options });
+    return { ok: true, json: async () => ({ success: true, targetFolder: 'Projects/2026' }) };
+  };
+
+  try {
+    await messageAction('move', 'INBOX', [41, 42], 'Projects/2026');
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, '/api/messages/action');
+    assert.deepEqual(JSON.parse(requests[0].options.body), {
+      action: 'move',
+      folder: 'INBOX',
+      uids: [41, 42],
+      targetFolder: 'Projects/2026',
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('mail toolbar exposes field and folder-scope controls', () => {
   const sourcePath = path.resolve(__dirname, '../src/mail/MailToolbar.tsx');
   const source = fs.readFileSync(sourcePath, 'utf8');
@@ -153,19 +177,30 @@ test('mail toolbar exposes field and folder-scope controls', () => {
     if (id === 'lucide-react') {
       return new Proxy({}, { get: () => props => React.createElement('svg', props) });
     }
+    if (id === './components/MoveToPopover') {
+      return { MoveToPopover: () => React.createElement('div', { role: 'dialog' }) };
+    }
+    if (id === './mail-message-identity') {
+      return loadTypeScriptModule('../src/mail/mail-message-identity.ts');
+    }
     return Module.prototype.require.call(toolbarModule, id);
   };
   toolbarModule._compile(compiled, sourcePath);
 
-  const markup = renderToStaticMarkup(React.createElement(toolbarModule.exports.MailToolbar, {
-    selectedCount: 0,
-    totalCount: 1,
+  const toolbarProps = {
+    selectedCount: 2,
+    totalCount: 2,
     searchQuery: '',
     searchField: 'all',
     searchScope: 'folder',
     isSearchActive: true,
     selectionDisabled: false,
     activeFolder: 'Projects',
+    folders: [
+      { path: 'INBOX', unseen: 0 },
+      { path: 'Projects', unseen: 0 },
+      { path: 'Archive', unseen: 0 },
+    ],
     onSearchChange: () => undefined,
     onSearchSubmit: () => undefined,
     onSearchFieldChange: () => undefined,
@@ -173,7 +208,9 @@ test('mail toolbar exposes field and folder-scope controls', () => {
     onClearSearch: () => undefined,
     onSelectAll: () => undefined,
     onBulkAction: () => undefined,
-  }));
+    onMoveSelected: () => undefined,
+  };
+  const markup = renderToStaticMarkup(React.createElement(toolbarModule.exports.MailToolbar, toolbarProps));
 
   assert.match(markup, /aria-label="Search field"/);
   assert.match(markup, /<option value="attachments">Attachments<\/option>/);
@@ -182,19 +219,90 @@ test('mail toolbar exposes field and folder-scope controls', () => {
   assert.match(markup, /<option value="all">All mail<\/option>/);
   assert.match(markup, /in Projects/);
   assert.match(markup, /aria-label="Clear search"/);
+  assert.match(markup, /title="Move to folder"/);
+  assert.match(markup, /2 selected/);
+
+  const disabledMarkup = renderToStaticMarkup(React.createElement(toolbarModule.exports.MailToolbar, {
+    ...toolbarProps,
+    selectionDisabled: true,
+  }));
+  assert.doesNotMatch(disabledMarkup, /title="Move to folder"/);
+  assert.doesNotMatch(disabledMarkup, /2 selected/);
 });
 
-test('mail search identities remain distinct when folders reuse the same UID', () => {
-  const { messageIdentityKey, groupMessagesByFolder } = loadTypeScriptModule('../src/mail/mail-message-identity.ts');
+test('move picker renders destinations and completes a selected-folder workflow', () => {
+  const sourcePath = path.resolve(__dirname, '../src/mail/components/MoveToPopover.tsx');
+  const source = fs.readFileSync(sourcePath, 'utf8');
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.ReactJSX,
+      esModuleInterop: true,
+    },
+    fileName: sourcePath,
+  }).outputText;
+  const pickerModule = new Module(sourcePath, module);
+  pickerModule.paths = module.paths;
+  pickerModule.require = id => {
+    if (id === 'lucide-react') {
+      return new Proxy({}, { get: () => props => React.createElement('svg', props) });
+    }
+    if (id === './move-picker-selection') {
+      return loadTypeScriptModule('../src/mail/components/move-picker-selection.ts');
+    }
+    return Module.prototype.require.call(pickerModule, id);
+  };
+  pickerModule._compile(compiled, sourcePath);
+
+  const selected = [];
+  let closed = false;
+  const props = {
+    folders: [
+      { path: 'INBOX', unseen: 0 },
+      { path: 'Projects/2026', unseen: 0 },
+    ],
+    onMove: folderPath => selected.push(folderPath),
+    onClose: () => { closed = true; },
+  };
+  const markup = renderToStaticMarkup(React.createElement(pickerModule.exports.MoveToPopover, props));
+
+  assert.match(markup, /role="dialog"/);
+  assert.match(markup, /aria-label="Filter folders"/);
+  assert.match(markup, />INBOX<\/button>/);
+  assert.match(markup, />Projects\/2026<\/button>/);
+
+  const { selectMoveDestination } = loadTypeScriptModule('../src/mail/components/move-picker-selection.ts');
+  selectMoveDestination('Projects/2026', props.onMove, props.onClose);
+  assert.deepEqual(selected, ['Projects/2026']);
+  assert.equal(closed, true);
+});
+
+test('mail search identities and route lookups remain folder-qualified when UIDs collide', () => {
+  const {
+    groupMessagesByFolder,
+    messageForRoute,
+    messageIdentityKey,
+    moveDestinationFolders,
+  } = loadTypeScriptModule('../src/mail/mail-message-identity.ts');
   const messages = [
-    { folder: 'INBOX', uid: 42 },
-    { folder: 'Archive', uid: 42 },
+    { folder: 'INBOX', uid: 42, subject: 'Inbox copy' },
+    { folder: 'Archive', uid: 42, subject: 'Archive copy' },
     { uid: 7 },
   ];
 
   assert.notEqual(messageIdentityKey(messages[0], 'INBOX'), messageIdentityKey(messages[1], 'INBOX'));
+  assert.equal(messageForRoute(messages, 'Archive', 42)?.subject, 'Archive copy');
   assert.deepEqual(
     [...groupMessagesByFolder(messages, 'Projects')],
     [['INBOX', [42]], ['Archive', [42]], ['Projects', [7]]],
+  );
+  assert.deepEqual(
+    moveDestinationFolders([
+      { path: 'INBOX', unseen: 0 },
+      { path: 'Archive', unseen: 0 },
+      { path: 'Projects', unseen: 0 },
+    ], 'Archive').map((folder) => folder.path),
+    ['INBOX', 'Projects'],
   );
 });

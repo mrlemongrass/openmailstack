@@ -1,4 +1,4 @@
-import type { Message } from '../shared/types';
+import type { MailFolder, Message } from '../shared/types';
 
 export function messageFolder(message: Pick<Message, 'folder'>, fallbackFolder: string) {
   return message.folder || fallbackFolder;
@@ -9,6 +9,16 @@ export function messageIdentityKey(
   fallbackFolder: string,
 ) {
   return `${messageFolder(message, fallbackFolder)}\u0000${message.uid}`;
+}
+
+export function messageForRoute(messages: Message[], routeFolder: string, uid: number) {
+  return messages.find((message) => (
+    message.uid === uid && messageFolder(message, routeFolder) === routeFolder
+  ));
+}
+
+export function moveDestinationFolders(folders: MailFolder[], sourceFolder: string) {
+  return folders.filter((folder) => folder.path !== sourceFolder);
 }
 
 export function groupMessagesByFolder(

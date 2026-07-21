@@ -193,6 +193,7 @@ export function MessageList({ mail, density }: MessageListProps) {
         searchScope={mail.searchScope}
         isSearchActive={mail.isSearchActive}
         selectionDisabled={crossFolderSearch}
+        folders={mail.folders}
         onSearchChange={mail.updateSearchQuery}
         onSearchSubmit={mail.submitSearchQuery}
         onSearchFieldChange={mail.changeSearchField}
@@ -207,6 +208,15 @@ export function MessageList({ mail, density }: MessageListProps) {
           }
         }}
         onBulkAction={(action) => { if (!crossFolderSearch) void mail.messageAction(action); }}
+        onMoveSelected={(targetFolder) => {
+          if (!crossFolderSearch) {
+            void mail.messageAction('move', undefined, undefined, targetFolder).then((moved) => {
+              if (!moved) {
+                showToast({ type: 'error', message: 'Could not move the selected messages. Try again.' });
+              }
+            });
+          }
+        }}
         onMarkAllRead={crossFolderSearch ? undefined : () => {
           const allUids = mail.messages.map((m) => m.uid);
           if (allUids.length > 0) {

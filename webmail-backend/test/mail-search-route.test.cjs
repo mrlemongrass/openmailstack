@@ -255,6 +255,56 @@ test('all-mail search replaces moved source rows and purges removed-folder rows'
   ]);
 });
 
+test('all-mail search live-searches only folders whose index coverage is incomplete', async t => {
+  indexedMessages = [{
+    folder: 'Projects', uid: 401, messageId: 'complete-folder@example.test',
+    subject: 'Quarterly plan indexed', from: 'sender@example.test', to: user,
+    date: '2026-07-20T12:00:00.000Z', preview: 'complete folder result',
+    isRead: false, isStarred: false,
+  }];
+  liveMessages = [{
+    folder: 'Archive', uid: 502, flags: [],
+    envelope: {
+      subject: 'Quarterly plan archived', date: new Date('2026-07-21T12:00:00.000Z'),
+      from: [{ address: 'sender@example.test' }], to: [{ address: user }],
+      messageId: '<incomplete-folder@example.test>',
+    },
+  }];
+  missingUidKeys = new Set();
+  currentFlags = new Map([['Projects:401', []]]);
+  indexedThrough = new Map([['INBOX', 300], ['Projects', 401], ['Archive', 500]]);
+  uidNextByFolder = new Map([['INBOX', 301], ['Projects', 402], ['Archive', 503]]);
+  indexedUidValidity = new Map([['INBOX', '1'], ['Projects', '1'], ['Archive', '1']]);
+  currentUidValidity = new Map([['INBOX', '1'], ['Projects', '1'], ['Archive', '1']]);
+  failedFolders = [];
+  invalidatedFolderIdentities.length = 0;
+  searchCalls.length = 0;
+  existingUidCalls.length = 0;
+  deletedIndexRows.length = 0;
+
+  const express = require('express');
+  const app = express();
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const response = await request(
+    server.address().port,
+    '/api/messages/search?q=quarterly&field=subject&scope=all&limit=50',
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.json.source, 'hybrid');
+  assert.deepEqual(
+    response.json.messages.map(message => `${message.folder}:${message.uid}`),
+    ['Archive:502', 'Projects:401'],
+  );
+  assert.deepEqual(searchCalls, [{
+    folderPaths: ['Archive'], query: 'quarterly', field: 'subject', limit: 50,
+  }]);
+});
+
 test('a complete index avoids a live full-folder search while refreshing current flags', async t => {
   indexedMessages = [{
     folder: 'Projects', uid: 401, messageId: 'complete@example.test',
@@ -334,6 +384,47 @@ test('flag-only search excludes stale indexed flags and uses live IMAP matches',
   assert.equal(response.status, 200);
   assert.deepEqual(response.json.messages.map(message => message.uid), [502]);
   assert.equal(searchCalls.length, 1);
+});
+
+test('all-mail mutable-flag search still reconciles every folder with live IMAP', async t => {
+  indexedMessages = [];
+  liveMessages = [{
+    folder: 'INBOX', uid: 801, flags: [],
+    envelope: {
+      subject: 'Unread from live state', date: new Date('2026-07-21T13:00:00.000Z'),
+      from: [{ address: 'sender@example.test' }], to: [{ address: user }],
+      messageId: '<live-unread@example.test>',
+    },
+  }];
+  missingUidKeys = new Set();
+  currentFlags = new Map();
+  indexedThrough = new Map([['INBOX', 801], ['Projects', 601], ['Archive', 701]]);
+  uidNextByFolder = new Map([['INBOX', 802], ['Projects', 602], ['Archive', 702]]);
+  indexedUidValidity = new Map([['INBOX', '1'], ['Projects', '1'], ['Archive', '1']]);
+  currentUidValidity = new Map([['INBOX', '1'], ['Projects', '1'], ['Archive', '1']]);
+  failedFolders = [];
+  invalidatedFolderIdentities.length = 0;
+  searchCalls.length = 0;
+  existingUidCalls.length = 0;
+  deletedIndexRows.length = 0;
+
+  const express = require('express');
+  const app = express();
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const response = await request(
+    server.address().port,
+    '/api/messages/search?q=&field=unread&scope=all&limit=50',
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(searchCalls, [{
+    folderPaths: ['INBOX', 'Projects', 'Archive'], query: '', field: 'unread', limit: 50,
+  }]);
+  assert.deepEqual(response.json.messages.map(message => message.uid), [801]);
 });
 
 test('attachment-name search rejects a body-text false positive from live IMAP', async t => {

@@ -1569,6 +1569,7 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
         ]);
 
         const invalidIdentityFolders = new Set<string>();
+        const liveSearchFolders = new Set<string>();
         for (const folderPath of folderPaths) {
             const currentUidValidity = folderCoverage.uidValidityByFolder.get(folderPath) || '';
             const coverage = indexCoverage.get(folderPath);
@@ -1576,6 +1577,10 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
                 await invalidateSearchIndexFolderIdentity(user, folderPath, currentUidValidity);
                 invalidIdentityFolders.add(folderPath);
             }
+            const coverageIsComplete = !folderCoverage.failedFolders.includes(folderPath)
+                && coverage?.uidValidity === currentUidValidity
+                && (coverage?.lastUidIndexed || 0) >= ((folderCoverage.uidNextByFolder.get(folderPath) || 1) - 1);
+            if (!coverageIsComplete) liveSearchFolders.add(folderPath);
         }
         if (invalidIdentityFolders.size > 0) {
             indexedMessages = indexedMessages.filter(message => !invalidIdentityFolders.has(message.folder));
@@ -1590,11 +1595,9 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
         }
 
         const verifiedIndexedMessages: typeof indexedMessages = [];
-        let indexReconciliationNeeded = invalidIdentityFolders.size > 0;
         for (const [indexedFolder, messages] of indexedByFolder) {
             if (scope === 'all' && !currentFolders.has(indexedFolder)) {
                 await deleteMailSearchRows(user, indexedFolder, messages.map(message => message.uid));
-                indexReconciliationNeeded = true;
                 continue;
             }
             try {
@@ -1616,33 +1619,29 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
                     };
                     if (matchesCurrentSearchFlags(currentMessage, query, field)) {
                         verifiedIndexedMessages.push(currentMessage);
-                    } else {
-                        indexReconciliationNeeded = true;
                     }
                 }
                 if (staleUids.length > 0) {
                     await deleteMailSearchRows(user, indexedFolder, staleUids);
-                    indexReconciliationNeeded = true;
                 }
             } catch (verificationErr) {
                 console.error('Failed to reconcile mail search index:', verificationErr);
-                indexReconciliationNeeded = true;
+                if (currentFolders.has(indexedFolder)) liveSearchFolders.add(indexedFolder);
             }
         }
 
-        const indexIsComplete = folderCoverage.failedFolders.length === 0 && folderPaths.every((folderPath: string) => (
-            indexCoverage.get(folderPath)?.uidValidity === folderCoverage.uidValidityByFolder.get(folderPath)
-            && (indexCoverage.get(folderPath)?.lastUidIndexed || 0)
-                >= ((folderCoverage.uidNextByFolder.get(folderPath) || 1) - 1)
-        ));
-        const needsLiveSearch = !indexIsComplete
-            || indexReconciliationNeeded
-            || searchUsesMutableFlags(query, field);
+        if (searchUsesMutableFlags(query, field)) {
+            for (const folderPath of folderPaths) liveSearchFolders.add(folderPath);
+        }
+        const liveSearchFolderPaths = folderPaths.filter((folderPath: string) => liveSearchFolders.has(folderPath));
+        const needsLiveSearch = liveSearchFolderPaths.length > 0;
         const liveResult = needsLiveSearch
-            ? await imap.searchMessages(folderPaths, query, field, limit)
+            ? await imap.searchMessages(liveSearchFolderPaths, query, field, limit)
             : { messages: [], failedFolders: [], partialFolders: [] };
 
-        if (needsLiveSearch && liveResult.failedFolders.length === folderPaths.length) {
+        if (needsLiveSearch
+            && liveResult.failedFolders.length === liveSearchFolderPaths.length
+            && verifiedIndexedMessages.length === 0) {
             return res.status(503).json({ success: false, error: 'Search is temporarily unavailable.' });
         }
 

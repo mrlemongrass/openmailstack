@@ -58,11 +58,11 @@ export async function saveDraft(formData: FormData): Promise<SaveDraftResponse> 
   return res.json();
 }
 
-export async function messageAction(action: string, folder: string, uids: number[]): Promise<MessageActionResponse> {
+export async function messageAction(action: string, folder: string, uids: number[], targetFolder?: string): Promise<MessageActionResponse> {
   const res = await fetch('/api/messages/action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, folder, uids }),
+    body: JSON.stringify({ action, folder, uids, ...(targetFolder ? { targetFolder } : {}) }),
   });
   if (!res.ok) throw new Error('Action failed');
   return res.json();

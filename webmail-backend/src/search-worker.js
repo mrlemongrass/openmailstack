@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.startSearchWorker = exports.purgeUserSearchIndex = exports.getSearchWorkerStatus = exports.runSearchIndexer = void 0;
+exports.startSearchWorker = exports.purgeUserSearchIndex = exports.getSearchWorkerStatus = exports.runSearchIndexer = exports.invalidateSearchIndexFolderIdentity = exports.getSearchIndexCoverage = void 0;
 const db_1 = require("./db");
 const imap_1 = require("./imap");
 const mailparser_1 = require("mailparser");
@@ -92,6 +92,7 @@ const ensureWorkerSchema = async () => {
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                     username VARCHAR(255) NOT NULL,
                     folder VARCHAR(255) NOT NULL,
+                    uid_validity VARCHAR(32) NULL,
                     last_uid_indexed BIGINT UNSIGNED NOT NULL DEFAULT 0,
                     last_full_sync_at TIMESTAMP NULL,
                     message_count INT UNSIGNED NOT NULL DEFAULT 0,
@@ -100,16 +101,21 @@ const ensureWorkerSchema = async () => {
                     UNIQUE KEY uniq_user_folder (username, folder)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
+            const [uidValidityColumns] = await db_1.pool.query('SHOW COLUMNS FROM mail_search_worker_state LIKE "uid_validity"');
+            if (uidValidityColumns.length === 0) {
+                await db_1.pool.query('ALTER TABLE mail_search_worker_state ADD COLUMN uid_validity VARCHAR(32) NULL AFTER folder');
+            }
         })();
     }
     return workerSchemaReady;
 };
 const getWorkerFolderState = async (username, folder) => {
-    const [rows] = await db_1.pool.query('SELECT last_uid_indexed, last_full_sync_at, message_count, indexed_count FROM mail_search_worker_state WHERE username = ? AND folder = ?', [username, folder]);
+    const [rows] = await db_1.pool.query('SELECT uid_validity, last_uid_indexed, last_full_sync_at, message_count, indexed_count FROM mail_search_worker_state WHERE username = ? AND folder = ?', [username, folder]);
     if (rows.length === 0) {
-        return { lastUidIndexed: 0, lastFullSyncAt: null, messageCount: 0, indexedCount: 0 };
+        return { uidValidity: '', lastUidIndexed: 0, lastFullSyncAt: null, messageCount: 0, indexedCount: 0 };
     }
     return {
+        uidValidity: String(rows[0].uid_validity || ''),
         lastUidIndexed: Number(rows[0].last_uid_indexed || 0),
         lastFullSyncAt: rows[0].last_full_sync_at || null,
         messageCount: Number(rows[0].message_count || 0),
@@ -117,18 +123,62 @@ const getWorkerFolderState = async (username, folder) => {
     };
 };
 const updateWorkerFolderState = async (username, folder, update) => {
+    const uidValidity = update.uidValidity || null;
     const lastUid = update.lastUidIndexed ?? 0;
     const msgCount = update.messageCount ?? 0;
     const idxCount = update.indexedCount ?? 0;
     const lastSync = update.lastFullSyncAt || null;
-    await db_1.pool.query(`INSERT INTO mail_search_worker_state (username, folder, last_uid_indexed, last_full_sync_at, message_count, indexed_count)
-         VALUES (?, ?, ?, ?, ?, ?)
+    await db_1.pool.query(`INSERT INTO mail_search_worker_state (username, folder, uid_validity, last_uid_indexed, last_full_sync_at, message_count, indexed_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
+            uid_validity = COALESCE(VALUES(uid_validity), uid_validity),
             last_uid_indexed = GREATEST(last_uid_indexed, VALUES(last_uid_indexed)),
             last_full_sync_at = COALESCE(VALUES(last_full_sync_at), last_full_sync_at),
             message_count = VALUES(message_count),
-            indexed_count = VALUES(indexed_count)`, [username, folder, lastUid, lastSync, msgCount, idxCount]);
+            indexed_count = VALUES(indexed_count)`, [username, folder, uidValidity, lastUid, lastSync, msgCount, idxCount]);
 };
+const getSearchIndexCoverage = async (username, folders) => {
+    await ensureWorkerSchema();
+    if (folders.length === 0)
+        return new Map();
+    const [rows] = await db_1.pool.query(`SELECT folder, uid_validity, last_uid_indexed
+         FROM mail_search_worker_state
+         WHERE username = ? AND folder IN (?)`, [username, folders]);
+    return new Map(rows.map((row) => [
+        row.folder,
+        {
+            uidValidity: String(row.uid_validity || ''),
+            lastUidIndexed: Number(row.last_uid_indexed || 0),
+        },
+    ]));
+};
+exports.getSearchIndexCoverage = getSearchIndexCoverage;
+const invalidateSearchIndexFolderIdentity = async (username, folder, uidValidity) => {
+    await ensureWorkerSchema();
+    const connection = await db_1.pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        await connection.query('DELETE FROM mail_search_index WHERE username = ? AND folder = ?', [username, folder]);
+        await connection.query(`INSERT INTO mail_search_worker_state
+                (username, folder, uid_validity, last_uid_indexed, last_full_sync_at, message_count, indexed_count)
+             VALUES (?, ?, ?, 0, NULL, 0, 0)
+             ON DUPLICATE KEY UPDATE
+                uid_validity = VALUES(uid_validity),
+                last_uid_indexed = 0,
+                last_full_sync_at = NULL,
+                message_count = 0,
+                indexed_count = 0`, [username, folder, uidValidity]);
+        await connection.commit();
+    }
+    catch (err) {
+        await connection.rollback();
+        throw err;
+    }
+    finally {
+        connection.release();
+    }
+};
+exports.invalidateSearchIndexFolderIdentity = invalidateSearchIndexFolderIdentity;
 /* ---------- Expunge reconciliation ---------- */
 const EXPUNGE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 let lastExpungeRun = 0;
@@ -210,7 +260,18 @@ const indexUserFolders = async (credential) => {
             const folderPath = folderObj.path;
             try {
                 // Get worker state for resume tracking
-                const state = await getWorkerFolderState(username, folderPath);
+                let state = await getWorkerFolderState(username, folderPath);
+                const folderIdentity = await imap.getFolderUidNext([folderPath]);
+                if (folderIdentity.failedFolders.length > 0) {
+                    throw new Error(`Unable to read UIDVALIDITY for ${folderPath}`);
+                }
+                const uidValidity = folderIdentity.uidValidityByFolder.get(folderPath) || '';
+                if (!uidValidity)
+                    throw new Error(`Missing UIDVALIDITY for ${folderPath}`);
+                if (state.uidValidity !== uidValidity) {
+                    await (0, exports.invalidateSearchIndexFolderIdentity)(username, folderPath, uidValidity);
+                    state = { uidValidity, lastUidIndexed: 0, lastFullSyncAt: null, messageCount: 0, indexedCount: 0 };
+                }
                 const maxUid = state.lastUidIndexed;
                 // Incremental indexing: fetch new messages since last indexed UID
                 const messages = await imap.getMessagesSinceUid(folderPath, maxUid + 1, BATCH_SIZE);
@@ -237,6 +298,7 @@ const indexUserFolders = async (credential) => {
                 const [countRows] = await db_1.pool.query('SELECT COUNT(*) AS cnt FROM mail_search_index WHERE username = ? AND folder = ?', [username, folderPath]);
                 const indexedCount = Number(countRows[0]?.cnt || 0);
                 await updateWorkerFolderState(username, folderPath, {
+                    uidValidity,
                     lastUidIndexed: newMaxUid,
                     messageCount: indexedCount + (rows.length > 0 ? 0 : 0), // will be updated by expunge
                     indexedCount
@@ -248,6 +310,7 @@ const indexUserFolders = async (credential) => {
                     const [postExpungeRows] = await db_1.pool.query('SELECT COUNT(*) AS cnt FROM mail_search_index WHERE username = ? AND folder = ?', [username, folderPath]);
                     const postExpungeCount = Number(postExpungeRows[0]?.cnt || 0);
                     await updateWorkerFolderState(username, folderPath, {
+                        uidValidity,
                         lastUidIndexed: newMaxUid,
                         lastFullSyncAt: new Date(),
                         messageCount: postExpungeCount,
@@ -295,7 +358,7 @@ const runSearchIndexer = async () => {
 exports.runSearchIndexer = runSearchIndexer;
 const getSearchWorkerStatus = async () => {
     await ensureWorkerSchema();
-    const [rows] = await db_1.pool.query(`SELECT username, folder, last_uid_indexed, last_full_sync_at, message_count, indexed_count, updated_at
+    const [rows] = await db_1.pool.query(`SELECT username, folder, uid_validity, last_uid_indexed, last_full_sync_at, message_count, indexed_count, updated_at
          FROM mail_search_worker_state
          ORDER BY updated_at DESC`);
     const userSet = new Set();
@@ -311,6 +374,7 @@ const getSearchWorkerStatus = async () => {
         return {
             username: row.username,
             folder: row.folder,
+            uidValidity: String(row.uid_validity || ''),
             lastUidIndexed: Number(row.last_uid_indexed || 0),
             lastFullSyncAt: row.last_full_sync_at || null,
             messageCount: Number(row.message_count || 0),

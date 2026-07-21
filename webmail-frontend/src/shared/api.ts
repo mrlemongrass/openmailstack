@@ -3,6 +3,7 @@ import type {
   SendMessageResponse, SaveDraftResponse,
   SearchResponse, SearchIndexStatusResponse, SearchIndexRefreshResponse,
   SearchWorkerStatusResponse, SavedSearch,
+  SearchField, SearchScope,
   MailFolder, Signature, Rule,
   ContactsResponse, Contact, ContactLabel, ContactGroup,
   CalendarsResponse, Calendar, CalendarUpdateResponse, CalendarDeleteResponse,
@@ -75,11 +76,26 @@ export async function undoAction(undo: { uids: number[]; targetFolder?: string; 
   });
 }
 
-export async function searchMessages(query: string, folder?: string): Promise<SearchResponse> {
-  const params = new URLSearchParams({ q: query });
-  if (folder) params.set('folder', folder);
+export async function searchMessages({
+  query,
+  field,
+  scope,
+  folder,
+  limit,
+}: {
+  query: string;
+  field: SearchField;
+  scope: SearchScope;
+  folder?: string;
+  limit?: number;
+}): Promise<SearchResponse> {
+  const params = new URLSearchParams({ q: query, field, scope });
+  if (scope === 'folder' && folder) params.set('folder', folder);
+  if (limit !== undefined) params.set('limit', String(limit));
   const res = await fetch(`/api/messages/search?${params}`);
-  return res.json();
+  const data: SearchResponse = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Search failed');
+  return data;
 }
 
 export async function fetchSearchIndexStatus(): Promise<SearchIndexStatusResponse> {

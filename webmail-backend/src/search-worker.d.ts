@@ -1,3 +1,8 @@
+export declare const getSearchIndexCoverage: (username: string, folders: string[]) => Promise<Map<string, {
+    uidValidity: string;
+    lastUidIndexed: number;
+}>>;
+export declare const invalidateSearchIndexFolderIdentity: (username: string, folder: string, uidValidity: string) => Promise<void>;
 export declare const runSearchIndexer: () => Promise<void>;
 export interface SearchWorkerStatus {
     totalUsers: number;
@@ -7,6 +12,7 @@ export interface SearchWorkerStatus {
     folders: Array<{
         username: string;
         folder: string;
+        uidValidity: string;
         lastUidIndexed: number;
         lastFullSyncAt: Date | string | null;
         messageCount: number;

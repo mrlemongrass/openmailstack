@@ -39,7 +39,20 @@ export declare class ImapService {
     getActiveSyncMailSnapshot(folderPath: string, cutoff: Date | null, sinceModseq: string, knownUids: number[], forceFullSnapshot?: boolean): Promise<ActiveSyncMailSnapshot>;
     getActiveSyncMessages(folderPath: string, uids: number[], maxSourceBytes: number): Promise<ActiveSyncMailMessage[]>;
     private buildSearchQuery;
-    searchMessages(folderPaths: string[], query: string, field?: MailSearchField, limit?: number): Promise<any[]>;
+    searchMessages(folderPaths: string[], query: string, field?: MailSearchField, limit?: number): Promise<{
+        messages: any[];
+        failedFolders: string[];
+        partialFolders: string[];
+    }>;
+    getExistingUidStates(folderPath: string, uids: number[]): Promise<{
+        uid: number;
+        flags: string[];
+    }[]>;
+    getFolderUidNext(folderPaths: string[]): Promise<{
+        uidNextByFolder: Map<string, number>;
+        uidValidityByFolder: Map<string, string>;
+        failedFolders: string[];
+    }>;
     getRecentMessagesForIndex(folderPath: string, limit?: number): Promise<any[]>;
     getMessagesSinceUid(folderPath: string, minUid: number, limit?: number): Promise<any[]>;
     getQuota(): Promise<false | import("imapflow").QuotaResponse>;

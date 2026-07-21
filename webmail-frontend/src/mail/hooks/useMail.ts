@@ -14,6 +14,7 @@ import {
   applyLoadedMessageAction,
   reconcileNewestMessagePage,
 } from '../mail-pagination';
+import { createMailSearchInputController } from '../mail-search-input';
 
 interface UseMailOptions {
   mailSettings: MailUserSettings;
@@ -23,6 +24,27 @@ interface UseMailOptions {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function applyFolderScopedAction(
+  messages: Message[],
+  action: string,
+  folder: string,
+  uids: number[],
+) {
+  const targets = new Set(uids);
+  const matches = (message: Message) => (message.folder || folder) === folder && targets.has(message.uid);
+  if (['archive', 'delete', 'spam', 'move', 'snooze'].includes(action)) {
+    return messages.filter((message) => !matches(message));
+  }
+  return messages.map((message) => {
+    if (!matches(message)) return message;
+    if (action === 'read') return { ...message, isRead: true };
+    if (action === 'unread') return { ...message, isRead: false };
+    if (action === 'star') return { ...message, isStarred: true };
+    if (action === 'unstar') return { ...message, isStarred: false };
+    return message;
+  });
 }
 
 export function useMail(_opts: UseMailOptions) {
@@ -66,6 +88,7 @@ export function useMail(_opts: UseMailOptions) {
   const olderMessageRequestIdRef = useRef(0);
   const olderMessageLoadingRef = useRef(false);
   const searchRequestIdRef = useRef(0);
+  const searchInputControllerRef = useRef<ReturnType<typeof createMailSearchInputController> | null>(null);
 
   // Loading state
   const [mailLoading, setMailLoading] = useState(false);
@@ -296,7 +319,7 @@ export function useMail(_opts: UseMailOptions) {
           messageDetailCacheRef.current.set(cacheKey, detail);
           if (activeFolderRef.current !== folderPath) return;
           setMessages((prev) => prev.map((m) =>
-            m.uid === uid ? mergeMessageDetails(m, detail) : m
+            (m.folder || folderPath) === folderPath && m.uid === uid ? mergeMessageDetails(m, detail) : m
           ));
         }
       }).catch(() => { prefetchedRef.current.delete(cacheKey); });
@@ -304,20 +327,25 @@ export function useMail(_opts: UseMailOptions) {
   }, [setMessages]);
 
   // Snooze
-  const snoozeMessages = useCallback(async (uids: number[], until: Date) => {
-    const folder = activeFolder;
+  const snoozeMessages = useCallback(async (uids: number[], until: Date, folderOverride?: string) => {
+    const folder = folderOverride || activeFolder;
     try {
       const response = await fetch('/api/messages/snooze', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ folder, uids, until: until.toISOString() }),
       });
       if (!response.ok) throw new Error('Failed to snooze messages');
+      if (isSearchActive) {
+        setMessages((current) => applyFolderScopedAction(current, 'snooze', folder, uids));
+        await fetchFolders();
+        return;
+      }
       if (activeFolderRef.current !== folder) return;
       setMessages((current) => applyLoadedMessageAction(current, 'snooze', uids));
       await fetchMessages();
       await fetchFolders();
     } catch (e) { console.error('Snooze failed', e); }
-  }, [activeFolder, fetchMessages, fetchFolders, setMessages]);
+  }, [activeFolder, fetchMessages, fetchFolders, isSearchActive, setMessages]);
 
   // Mute thread
   const muteThread = useCallback(async (uids: number[]) => {
@@ -371,10 +399,10 @@ export function useMail(_opts: UseMailOptions) {
   }, [fetchMessages]);
 
   // ---- Message actions ----
-  const messageAction = useCallback(async (action: string, uids?: number[]) => {
+  const messageAction = useCallback(async (action: string, uids?: number[], folderOverride?: string) => {
     const targetUids = uids || selectedMessages;
     if (!targetUids.length) return;
-    const folder = activeFolder;
+    const folder = folderOverride || activeFolder;
     try {
       const result = await api.messageAction(action, folder, targetUids);
       if (result.undoUids && result.undoUids.length > 0) {
@@ -385,6 +413,14 @@ export function useMail(_opts: UseMailOptions) {
           sourceFolder: folder,
           timestamp: Date.now(),
         });
+      }
+      if (isSearchActive) {
+        if (action !== 'move' || result.targetFolder) {
+          setMessages((current) => applyFolderScopedAction(current, action, folder, targetUids));
+        }
+        setSelectedMessages([]);
+        await fetchFolders();
+        return;
       }
       if (activeFolderRef.current !== folder) {
         await fetchFolders();
@@ -397,7 +433,7 @@ export function useMail(_opts: UseMailOptions) {
       await fetchMessages();
       await fetchFolders();
     } catch (e) { console.error('Action failed', e); }
-  }, [activeFolder, selectedMessages, fetchMessages, fetchFolders, setMessages]);
+  }, [activeFolder, selectedMessages, fetchMessages, fetchFolders, isSearchActive, setMessages]);
 
   const undoAction = useCallback(async () => {
     if (!mailUndo) return;
@@ -410,21 +446,36 @@ export function useMail(_opts: UseMailOptions) {
   }, [mailUndo, fetchMessages, fetchFolders]);
 
   // ---- Search ----
-  const doSearch = useCallback(async (query: string, scope: SearchScope) => {
+  const doSearch = useCallback(async (query: string, scope: SearchScope, field: SearchField = searchField) => {
     const requestId = ++searchRequestIdRef.current;
-    if (!query.trim()) { setIsSearchActive(false); await fetchMessages('reset'); return; }
+    const allowsBlankQuery = field === 'unread' || field === 'starred';
+    if (!query.trim() && !allowsBlankQuery) {
+      setIsSearchActive(false);
+      setSearchLoading(false);
+      setSearchError('');
+      setSearchInfo('');
+      await fetchMessages('reset');
+      return;
+    }
     const folder = activeFolder;
     messageRequestIdRef.current += 1;
     setMailLoading(false);
     invalidateOlderMessageRequest();
+    setSelectedMessages([]);
     setIsSearchActive(true);
     setSearchLoading(true);
     setSearchError('');
     try {
-      const result = await api.searchMessages(query, scope === 'folder' ? folder : undefined);
+      const result = await api.searchMessages({
+        query,
+        field,
+        scope,
+        folder: scope === 'folder' ? folder : undefined,
+        limit: 100,
+      });
       if (requestId !== searchRequestIdRef.current || activeFolderRef.current !== folder) return;
       if (result.messages) setMessages(result.messages);
-      setSearchInfo(result.source ? `Results from ${result.source}` : '');
+      setSearchInfo(result.partial ? 'Some folders could not be searched. Results may be incomplete.' : '');
     } catch (e: unknown) {
       if (requestId === searchRequestIdRef.current && activeFolderRef.current === folder) {
         setSearchError(errorMessage(e, 'Search failed'));
@@ -433,7 +484,61 @@ export function useMail(_opts: UseMailOptions) {
     finally {
       if (requestId === searchRequestIdRef.current) setSearchLoading(false);
     }
-  }, [activeFolder, fetchMessages, invalidateOlderMessageRequest, setMessages]);
+  }, [activeFolder, fetchMessages, invalidateOlderMessageRequest, searchField, setMessages]);
+
+  const resetSearchState = useCallback(() => {
+    searchInputControllerRef.current?.cancel();
+    searchRequestIdRef.current += 1;
+    setSearchQuery('');
+    setIsSearchActive(false);
+    setSearchLoading(false);
+    setSearchError('');
+    setSearchInfo('');
+  }, []);
+
+  const clearSearch = useCallback(() => {
+    resetSearchState();
+    setSearchField('all');
+    setSearchScope('folder');
+    setSelectedMessages([]);
+    void fetchMessages('reset');
+  }, [fetchMessages, resetSearchState]);
+
+  useEffect(() => {
+    const controller = createMailSearchInputController({
+      onQueryChange: setSearchQuery,
+      onSearch: query => {
+        if (!query.trim()) clearSearch();
+        else void doSearch(query, searchScope, searchField);
+      },
+    });
+    searchInputControllerRef.current = controller;
+    return () => {
+      controller.cancel();
+      if (searchInputControllerRef.current === controller) searchInputControllerRef.current = null;
+    };
+  }, [clearSearch, doSearch, searchField, searchScope]);
+
+  const updateSearchQuery = useCallback((query: string) => {
+    searchInputControllerRef.current?.update(query);
+  }, []);
+
+  const changeSearchField = useCallback((field: SearchField) => {
+    setSearchField(field);
+    searchInputControllerRef.current?.cancel();
+    if (searchQuery.trim() || field === 'unread' || field === 'starred' || isSearchActive) {
+      void doSearch(searchQuery, searchScope, field);
+    }
+  }, [doSearch, isSearchActive, searchQuery, searchScope]);
+
+  const changeSearchScope = useCallback((scope: SearchScope) => {
+    setSearchScope(scope);
+    setSelectedMessages([]);
+    searchInputControllerRef.current?.cancel();
+    if (searchQuery.trim() || searchField === 'unread' || searchField === 'starred') {
+      void doSearch(searchQuery, scope, searchField);
+    }
+  }, [doSearch, searchField, searchQuery]);
 
   // ---- Real-time events ----
   useEffect(() => {
@@ -463,6 +568,7 @@ export function useMail(_opts: UseMailOptions) {
   // Refetch messages when folder changes
   useEffect(() => {
     activeFolderRef.current = activeFolder;
+    searchInputControllerRef.current?.cancel();
     const messageTimer = window.setTimeout(() => { void fetchMessages('reset'); }, 0);
     return () => window.clearTimeout(messageTimer);
   }, [activeFolder, fetchMessages]);
@@ -516,8 +622,8 @@ export function useMail(_opts: UseMailOptions) {
     mailLowestUid, mailMoreAvailable,
     mailLoading, isRefreshing, loadingOlderMessages, mailPaginationError,
     mailUndo, setMailUndo, undoSendId, cancelSendUndo,
-    searchQuery, setSearchQuery, searchField, setSearchField,
-    searchScope, setSearchScope, isSearchActive, setIsSearchActive,
+    searchQuery, setSearchQuery, updateSearchQuery, resetSearchState, clearSearch, searchField, setSearchField, changeSearchField,
+    searchScope, setSearchScope, changeSearchScope, isSearchActive, setIsSearchActive,
     searchLoading, searchError, searchInfo,
     mailError, setMailError,
     searchIndexStatus, searchWorkerStatus,

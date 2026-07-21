@@ -6063,3 +6063,74 @@ Implementation commit: `bc4f7387`
 
 - Wait for `MoreAvailable=false`, verify the final checkpoint is nonzero, then prove a subsequent no-change poll remains empty and fast.
 - The user confirmed the IMAP account consistently shows the two historical spam examples in Junk. Current direct server and search-index checks find active Inbox UIDs for those sender/subject pairs, while the recent human OMS Web action referenced a different UID and the index has no usable Message-ID for identity comparison. Do not repeat or automate a subject-only move; reconcile exact instances first. The deleted self-test is absent from Inbox and present in Trash.
+
+## 2026-07-21 — Webmail search interaction and hybrid correctness
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean
+Ending git state: clean after commit
+
+### Selected task
+
+Repair the broken visible Webmail search interaction, pass every search option through the frontend contract, and prevent incomplete or stale indexed rows from suppressing live IMAP results.
+
+### Why this task
+
+Search is a core mail workflow. The rendered toolbar only changed local text, all-mail/field state was disconnected from the request, and any indexed hit prevented live IMAP search. This produced both an obvious dead control and incorrect partial/stale results.
+
+### Changes made
+
+- `webmail-frontend/src/mail/`
+  - Added a tested 300 ms trailing input controller, explicit clear/reset behavior including flag-only searches, field and scope selectors, responsive wrapping, folder-navigation reset, and visible API/partial-result feedback. Folder plus UID now keys rows, prefetch, navigation, and individual actions; bulk actions are disabled across folders.
+- `webmail-frontend/src/shared/`
+  - Added an explicit query/field/scope/folder/limit request contract and hybrid response source.
+- `webmail-backend/src/api.ts`, `webmail-backend/src/imap.ts`, `webmail-backend/src/search-worker.ts`, and generated runtime artifacts
+  - Use a UIDVALIDITY-bound complete-coverage index fast path, refresh indexed UID existence/current flags, purge stale generations/move/delete/removed-folder rows, and fall back to globally ranked envelope-only IMAP reconciliation. Attachment names are MIME-verified within 1 MiB/message and 8 MiB/request; caps and folder failures are explicit partial results.
+- `webmail-frontend/test/mail-search.test.cjs`
+  - Covers debounce/clear, complete request serialization, server failure propagation, and visible field/scope controls.
+- `webmail-backend/test/mail-search-route.test.cjs`, `webmail-backend/test/imap-mail-search.test.cjs`
+  - Cover folder scope, deleted messages, moved source/target identity, removed folders, and folder-order-independent all-mail results.
+
+### Proof / checks run
+
+- `rtk npm --prefix webmail-frontend test`
+  - 42/42 passed.
+- `rtk npm --prefix webmail-frontend run lint`
+  - Passed with zero warnings.
+- `rtk npm --prefix webmail-frontend run build`
+  - TypeScript and Vite production build passed.
+- `rtk npm --prefix webmail-backend test`
+  - 185/188 passed, zero failed, three expected optional database skips.
+- `rtk bash ./tests/lint/run.sh`
+  - Passed; shellcheck was unavailable and explicitly skipped by the repository script.
+- `rtk bash ./tests/integration/run.sh`
+  - Passed.
+- Local mocked Chromium
+  - Desktop and 390 px mobile controls rendered within the viewport; debounce, folder/all-mail request parameters, and clear-to-folder behavior passed.
+- `rtk git diff --check`
+  - Passed before documentation update and rerun at finalization.
+
+### Acceptance criteria
+
+- [x] Typing searches after a short debounce and only the newest input fires.
+- [x] Clearing cancels pending search work and restores the active folder.
+- [x] Field, current-folder/all-mail scope, folder, and limit reach the API explicitly.
+- [x] Incomplete indexes cannot suppress live IMAP matches.
+- [x] Moved, deleted, removed-folder, and folder-scope behavior is regression-covered.
+- [x] All-mail results are selected globally rather than stopping at the first folder.
+- [x] Duplicate UIDs in different folders cannot collide in rendering, prefetch, navigation, or message actions.
+- [x] Complete index coverage skips full live search; mutable flags still reconcile against IMAP.
+- [x] Folder failures and bounded attachment verification surface partial results instead of silent incompleteness.
+- [x] UIDVALIDITY changes purge stale cache generations before a reused numeric UID can be returned.
+- [ ] Production deployment and authenticated live-mailbox validation were not requested in this cycle.
+
+### Risks / notes
+
+- Correct all-mail ranking fetches envelopes for up to the requested limit in every folder. Exact attachment-name verification reads at most 1 MiB per candidate and 8 MiB per request, so unusually large or broad attachment searches may be explicitly partial. Production latency/IMAP load still needs measurement on a mailbox with many folders.
+- Attachment extracted-text search still depends on index coverage because IMAP cannot reproduce every indexed document-text match.
+- No production mailbox, index row, service, schema, configuration, or deployed artifact changed.
+
+### Next recommended task
+
+Implement Rule Workbench Phase 1: one canonical predicate model plus a read-only preview for current folder, selected folders, folder tree, and whole mailbox before enabling historical rule mutations.

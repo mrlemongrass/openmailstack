@@ -279,6 +279,19 @@ export class ImapService {
                 searchQuery.to = token.slice(3).replace(/^"|"$/g, '');
             } else if (normalized.startsWith('subject:') && token.length > 8) {
                 searchQuery.subject = token.slice(8).replace(/^"|"$/g, '');
+            } else if (normalized === 'has:attachment') {
+                searchQuery.or = [
+                    { body: 'Content-Disposition: attachment' },
+                    { body: 'filename=' },
+                ];
+            } else if (normalized.startsWith('before:') && token.length > 7) {
+                const date = new Date(`${token.slice(7).replace(/^"|"$/g, '')}T00:00:00.000Z`);
+                if (Number.isNaN(date.getTime())) terms.push(value);
+                else searchQuery.sentBefore = date;
+            } else if (normalized.startsWith('after:') && token.length > 6) {
+                const date = new Date(`${token.slice(6).replace(/^"|"$/g, '')}T00:00:00.000Z`);
+                if (Number.isNaN(date.getTime())) terms.push(value);
+                else searchQuery.sentSince = date;
             } else {
                 terms.push(value);
             }
@@ -292,39 +305,127 @@ export class ImapService {
     }
 
     async searchMessages(folderPaths: string[], query: string, field: MailSearchField = 'all', limit = 50) {
-        const results: any[] = [];
         const searchQuery = this.buildSearchQuery(query, field);
-        const perFolderLimit = Math.max(10, Math.min(limit, 25));
+        const cappedLimit = Math.max(1, Math.min(limit, 100));
+        const candidates: any[] = [];
+        const failedFolders: string[] = [];
+        const partialFolders = new Set<string>();
+        const verifyAttachments = field === 'attachments' || /(?:^|\s)has:attachment(?:\s|$)/i.test(query);
 
         for (const folderPath of folderPaths) {
-            if (results.length >= limit) break;
-
             try {
                 await this.client.mailboxOpen(folderPath);
-                const found = await this.client.search(searchQuery, { uid: true });
-                if (!Array.isArray(found) || found.length === 0) {
-                    await this.client.mailboxClose();
-                    continue;
-                }
+                try {
+                    const found = await this.client.search(searchQuery, { uid: true });
+                    if (!Array.isArray(found) || found.length === 0) continue;
 
-                const batchUids = found.slice(-perFolderLimit);
-                for await (let msg of this.client.fetch(batchUids, { envelope: true, source: true, uid: true, flags: true }, { uid: true })) {
-                    results.push({
-                        folder: folderPath,
-                        uid: msg.uid,
-                        flags: Array.from(msg.flags || []),
-                        envelope: msg.envelope,
-                        source: msg.source
-                    });
+                    if (verifyAttachments && found.length > cappedLimit) partialFolders.add(folderPath);
+                    const batchUids = found.slice(-cappedLimit);
+                    for await (let msg of this.client.fetch(batchUids, { envelope: true, uid: true, flags: true, size: true }, { uid: true })) {
+                        candidates.push({
+                            folder: folderPath,
+                            uid: msg.uid,
+                            flags: Array.from(msg.flags || []),
+                            envelope: msg.envelope,
+                            size: Number(msg.size || 0),
+                        });
+                    }
+                } finally {
+                    await this.client.mailboxClose();
                 }
-                await this.client.mailboxClose();
             } catch (err) {
                 try { await this.client.mailboxClose(); } catch (e) {}
+                failedFolders.push(folderPath);
                 console.error(`Failed to search folder ${folderPath}:`, err);
             }
         }
 
-        return results.slice(0, limit);
+        const selected = candidates
+            .sort((a, b) => (
+                new Date(b.envelope?.date || 0).getTime() - new Date(a.envelope?.date || 0).getTime()
+                || b.uid - a.uid
+            ))
+            .slice(0, cappedLimit);
+        if (!verifyAttachments) {
+            return { messages: selected, failedFolders, partialFolders: [...partialFolders] };
+        }
+
+        const maxMessageBytes = 1024 * 1024;
+        let remainingBytes = 8 * 1024 * 1024;
+        const messages: any[] = [];
+        const selectedByFolder = new Map<string, any[]>();
+        for (const message of selected) {
+            const folderMessages = selectedByFolder.get(message.folder) || [];
+            folderMessages.push(message);
+            selectedByFolder.set(message.folder, folderMessages);
+        }
+        for (const [folderPath, folderMessages] of selectedByFolder) {
+            try {
+                await this.client.mailboxOpen(folderPath);
+                try {
+                    for (const candidate of folderMessages) {
+                        const size = candidate.size || maxMessageBytes;
+                        if (size > maxMessageBytes || size > remainingBytes) {
+                            partialFolders.add(folderPath);
+                            continue;
+                        }
+                        for await (const message of this.client.fetch(
+                            [candidate.uid],
+                            { source: { start: 0, maxLength: size }, uid: true, size: true },
+                            { uid: true },
+                        )) {
+                            const source = message.source || Buffer.alloc(0);
+                            if (source.length < Number(message.size || size)) {
+                                partialFolders.add(folderPath);
+                                continue;
+                            }
+                            remainingBytes -= source.length;
+                            messages.push({ ...candidate, source });
+                        }
+                    }
+                } finally {
+                    await this.client.mailboxClose();
+                }
+            } catch (err) {
+                try { await this.client.mailboxClose(); } catch (e) {}
+                if (!failedFolders.includes(folderPath)) failedFolders.push(folderPath);
+                console.error(`Failed to verify attachment search results in folder ${folderPath}:`, err);
+            }
+        }
+        return { messages, failedFolders, partialFolders: [...partialFolders] };
+    }
+
+    async getExistingUidStates(folderPath: string, uids: number[]) {
+        const candidates = [...new Set(uids.filter(uid => Number.isInteger(uid) && uid > 0))];
+        if (candidates.length === 0) return [];
+
+        await this.client.mailboxOpen(folderPath);
+        try {
+            const messages: Array<{ uid: number; flags: string[] }> = [];
+            for await (const message of this.client.fetch(candidates, { uid: true, flags: true }, { uid: true })) {
+                messages.push({ uid: message.uid, flags: Array.from(message.flags || []) });
+            }
+            return messages;
+        } finally {
+            await this.client.mailboxClose();
+        }
+    }
+
+    async getFolderUidNext(folderPaths: string[]) {
+        const uidNextByFolder = new Map<string, number>();
+        const uidValidityByFolder = new Map<string, string>();
+        const failedFolders: string[] = [];
+        for (const folderPath of folderPaths) {
+            try {
+                const status = await this.client.status(folderPath, { uidNext: true, uidValidity: true });
+                uidNextByFolder.set(folderPath, Number(status.uidNext || 1));
+                uidValidityByFolder.set(folderPath, String(status.uidValidity || ''));
+            } catch (err) {
+                failedFolders.push(folderPath);
+                console.error(`Failed to read search coverage for folder ${folderPath}:`, err);
+            }
+        }
+        return { uidNextByFolder, uidValidityByFolder, failedFolders };
     }
 
     async getRecentMessagesForIndex(folderPath: string, limit = 100) {

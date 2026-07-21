@@ -12,6 +12,7 @@ import { ScrollToTop } from '../shared/components/ScrollToTop';
 import { Inbox, SearchX, Loader } from 'lucide-react';
 import type { useMail } from './hooks/useMail';
 import type { Message } from '../shared/types';
+import { groupMessagesByFolder, messageFolder, messageIdentityKey } from './mail-message-identity';
 
 interface MessageListProps {
   mail: ReturnType<typeof useMail>;
@@ -24,7 +25,7 @@ export function MessageList({ mail, density }: MessageListProps) {
   const navigate = useNavigate();
   const parentRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
-  const starringRef = useRef<Set<number>>(new Set());
+  const starringRef = useRef<Set<string>>(new Set());
   const decodedFolder = folder ? decodeURIComponent(folder) : 'INBOX';
   const {
     activeFolder,
@@ -35,18 +36,19 @@ export function MessageList({ mail, density }: MessageListProps) {
     mailPaginationError,
     messages,
     prefetchBodies,
+    resetSearchState,
     setActiveFolder,
-    setIsSearchActive,
     setSelectedMessages,
   } = mail;
+  const crossFolderSearch = isSearchActive && mail.searchScope === 'all';
 
   useEffect(() => {
     if (decodedFolder !== activeFolder) {
+      resetSearchState();
       setActiveFolder(decodedFolder);
       setSelectedMessages([]);
-      setIsSearchActive(false);
     }
-  }, [activeFolder, decodedFolder, setActiveFolder, setIsSearchActive, setSelectedMessages]);
+  }, [activeFolder, decodedFolder, resetSearchState, setActiveFolder, setSelectedMessages]);
 
   useEffect(() => {
     parentRef.current?.scrollTo({ top: 0 });
@@ -54,16 +56,15 @@ export function MessageList({ mail, density }: MessageListProps) {
 
   // Pre-fetch message bodies for the first batch of visible messages
   useEffect(() => {
-    if (messages.length > 0 && folder) {
-      const uidsToPreFetch = messages
+    if (messages.length > 0) {
+      const messagesToPrefetch = messages
         .filter((m) => !m.html && !m.text)
-        .slice(0, 8)
-        .map((m) => m.uid);
-      if (uidsToPreFetch.length > 0) {
-        prefetchBodies(uidsToPreFetch, decodeURIComponent(folder));
+        .slice(0, 8);
+      for (const [messageFolderPath, uids] of groupMessagesByFolder(messagesToPrefetch, decodedFolder)) {
+        prefetchBodies(uids, messageFolderPath);
       }
     }
-  }, [messages, folder, prefetchBodies]);
+  }, [decodedFolder, messages, prefetchBodies]);
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack virtualizer is intentional for large mailboxes.
   const rowVirtualizer = useVirtualizer({
@@ -113,20 +114,18 @@ export function MessageList({ mail, density }: MessageListProps) {
     }
   };
 
-  const handleClick = (uid: number) => {
-    navigate(`/mail/${encodeURIComponent(decodedFolder)}/${uid}`);
-  };
-
-  const handleStar = (uid: number) => {
-    if (starringRef.current.has(uid)) return; // guard against rapid double-clicks
-    const msg = mail.messages.find((m) => m.uid === uid);
-    if (!msg) return;
+  const handleStar = (msg: Message) => {
+    const folderPath = messageFolder(msg, decodedFolder);
+    const identity = messageIdentityKey(msg, decodedFolder);
+    if (starringRef.current.has(identity)) return; // guard against rapid double-clicks
     const action = msg.isStarred ? 'unstar' : 'star';
     // Optimistic update: immediately toggle local state
-    starringRef.current.add(uid);
-    mail.setMessages((prev: Message[]) => prev.map((m) => m.uid === uid ? { ...m, isStarred: !msg.isStarred } : m));
-    mail.messageAction(action, [uid]).finally(() => {
-      starringRef.current.delete(uid);
+    starringRef.current.add(identity);
+    mail.setMessages((prev: Message[]) => prev.map((message) => (
+      messageIdentityKey(message, decodedFolder) === identity ? { ...message, isStarred: !msg.isStarred } : message
+    )));
+    mail.messageAction(action, [msg.uid], folderPath).finally(() => {
+      starringRef.current.delete(identity);
     });
   };
 
@@ -147,9 +146,9 @@ export function MessageList({ mail, density }: MessageListProps) {
       return (
         <EmptyState
           icon={SearchX}
-          title="No results found"
-          description={`Your search for "${mail.searchQuery}" returned no matches.`}
-          action={{ label: 'Clear search', onClick: () => { mail.setSearchQuery(''); mail.setIsSearchActive(false); } }}
+          title={mail.searchInfo ? 'Search incomplete' : 'No results found'}
+          description={mail.searchInfo || `Your search for "${mail.searchQuery}" returned no matches.`}
+          action={{ label: 'Clear search', onClick: mail.clearSearch }}
         />
       );
     }
@@ -176,21 +175,38 @@ export function MessageList({ mail, density }: MessageListProps) {
           Searching...
         </div>
       )}
+      {mail.isSearchActive && mail.searchInfo && !mail.searchLoading && (
+        <div role="status" style={{
+          padding: '6px 16px', fontSize: '0.8rem',
+          color: 'var(--warning, #f59e0b)', background: 'rgba(245,158,11,0.08)',
+          borderBottom: '1px solid rgba(245,158,11,0.18)',
+        }}>
+          {mail.searchInfo}
+        </div>
+      )}
       <MailToolbar
         selectedCount={mail.selectedMessages.length}
         totalCount={mail.messages.length}
         activeFolder={mail.activeFolder}
         searchQuery={mail.searchQuery}
-        onSearchChange={mail.setSearchQuery}
+        searchField={mail.searchField}
+        searchScope={mail.searchScope}
+        isSearchActive={mail.isSearchActive}
+        selectionDisabled={crossFolderSearch}
+        onSearchChange={mail.updateSearchQuery}
+        onSearchFieldChange={mail.changeSearchField}
+        onSearchScopeChange={mail.changeSearchScope}
+        onClearSearch={mail.clearSearch}
         onSelectAll={() => {
+          if (crossFolderSearch) return;
           if (mail.selectedMessages.length === mail.messages.length) {
             mail.setSelectedMessages([]);
           } else {
             mail.setSelectedMessages(mail.messages.map((m) => m.uid));
           }
         }}
-        onBulkAction={(action) => mail.messageAction(action)}
-        onMarkAllRead={() => {
+        onBulkAction={(action) => { if (!crossFolderSearch) void mail.messageAction(action); }}
+        onMarkAllRead={crossFolderSearch ? undefined : () => {
           const allUids = mail.messages.map((m) => m.uid);
           if (allUids.length > 0) {
             mail.messageAction('read', allUids);
@@ -203,19 +219,21 @@ export function MessageList({ mail, density }: MessageListProps) {
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const msg = mail.messages[virtualRow.index];
             return (
-              <MessageRow key={msg.uid} message={msg}
-                isSelected={mail.selectedMessages.includes(msg.uid)}
+              <MessageRow key={messageIdentityKey(msg, decodedFolder)} message={msg}
+                isSelected={!crossFolderSearch && mail.selectedMessages.includes(msg.uid)}
                 isThreaded={false} density={density}
+                selectionDisabled={crossFolderSearch}
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
-                onSelect={handleSelect} onClick={handleClick} onStar={handleStar}
-                onArchive={(uid) => mail.messageAction('archive', [uid])}
-                onDelete={(uid) => mail.messageAction('delete', [uid])}
-                onMarkRead={(uid) => {
-                  const m = mail.messages.find((msg) => msg.uid === uid);
-                  if (m) mail.messageAction(m.isRead ? 'unread' : 'read', [uid]);
+                onSelect={handleSelect}
+                onClick={() => navigate(`/mail/${encodeURIComponent(messageFolder(msg, decodedFolder))}/${msg.uid}`)}
+                onStar={() => handleStar(msg)}
+                onArchive={() => mail.messageAction('archive', [msg.uid], messageFolder(msg, decodedFolder))}
+                onDelete={() => mail.messageAction('delete', [msg.uid], messageFolder(msg, decodedFolder))}
+                onMarkRead={() => {
+                  mail.messageAction(msg.isRead ? 'unread' : 'read', [msg.uid], messageFolder(msg, decodedFolder));
                 }}
-                onSnooze={(uid) => {
-                  mail.snoozeMessages([uid], setHours(startOfDay(addDays(new Date(), 1)), 8));
+                onSnooze={() => {
+                  mail.snoozeMessages([msg.uid], setHours(startOfDay(addDays(new Date(), 1)), 8), messageFolder(msg, decodedFolder));
                 }} />
             );
           })}

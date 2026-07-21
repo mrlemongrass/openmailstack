@@ -122,7 +122,9 @@ export interface SearchResponse {
   success: boolean;
   messages?: Message[];
   error?: string;
-  source?: 'index' | 'imap';
+  source?: 'index' | 'imap' | 'hybrid';
+  partial?: boolean;
+  failedFolders?: string[];
 }
 
 export interface SearchIndexStatusResponse {

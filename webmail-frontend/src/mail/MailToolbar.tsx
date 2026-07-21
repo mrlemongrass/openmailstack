@@ -1,12 +1,20 @@
 import { useState } from 'react';
-import { Trash2, Archive, ShieldAlert, Mail, MailOpen, StarIcon } from 'lucide-react';
+import { Trash2, Archive, ShieldAlert, Mail, MailOpen, StarIcon, X } from 'lucide-react';
+import type { SearchField, SearchScope } from '../shared/types';
 
 interface MailToolbarProps {
   selectedCount: number;
   totalCount: number;
   searchQuery: string;
+  searchField: SearchField;
+  searchScope: SearchScope;
+  isSearchActive: boolean;
+  selectionDisabled: boolean;
   activeFolder?: string;
   onSearchChange: (q: string) => void;
+  onSearchFieldChange: (field: SearchField) => void;
+  onSearchScopeChange: (scope: SearchScope) => void;
+  onClearSearch: () => void;
   onSelectAll: () => void;
   onBulkAction: (action: string) => void;
   onMarkAllRead?: () => void;
@@ -23,7 +31,7 @@ const SEARCH_HINTS = [
   { syntax: 'after:2026-01-01', desc: 'Messages after date' },
 ];
 
-export function MailToolbar({ selectedCount, totalCount, searchQuery, activeFolder, onSearchChange, onSelectAll, onBulkAction, onMarkAllRead }: MailToolbarProps) {
+export function MailToolbar({ selectedCount, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, activeFolder, onSearchChange, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMarkAllRead }: MailToolbarProps) {
   const allSelected = selectedCount > 0 && selectedCount === totalCount;
   const [showHints, setShowHints] = useState(false);
 
@@ -31,16 +39,38 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, activeFold
     <div style={{ borderBottom: '1px solid var(--border-glass)' }}>
       {/* Search row — always visible */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
-        background: 'rgba(0,0,0,0.1)', position: 'relative' }}>
-        <input type="checkbox" checked={allSelected} onChange={onSelectAll} title="Select all" />
+        background: 'rgba(0,0,0,0.1)', position: 'relative', flexWrap: 'wrap' }}>
+        <input type="checkbox" checked={allSelected} onChange={onSelectAll} title={selectionDisabled ? 'Bulk selection is unavailable across folders' : 'Select all'} disabled={selectionDisabled} />
         <input type="text" className="glass-input" placeholder="Search messages..."
           value={searchQuery} onChange={(e) => onSearchChange(e.target.value)}
           onFocus={() => setShowHints(true)}
           onBlur={() => setTimeout(() => setShowHints(false), 200)}
-          style={{ flex: 1, fontSize: '0.85rem' }} />
+          style={{ flex: 1, minWidth: 160, fontSize: '0.85rem' }} />
+        <select className="glass-input glass-select" aria-label="Search field" value={searchField}
+          onChange={(e) => onSearchFieldChange(e.target.value as SearchField)}>
+          <option value="all">Everything</option>
+          <option value="from">From</option>
+          <option value="to">To</option>
+          <option value="subject">Subject</option>
+          <option value="body">Body</option>
+          <option value="attachments">Attachments</option>
+          <option value="unread">Unread</option>
+          <option value="starred">Starred</option>
+        </select>
+        <select className="glass-input glass-select" aria-label="Search scope" value={searchScope}
+          onChange={(e) => onSearchScopeChange(e.target.value as SearchScope)}>
+          <option value="folder">Current folder</option>
+          <option value="all">All mail</option>
+        </select>
+        {isSearchActive && (
+          <button className="btn btn-ghost" aria-label="Clear search" title="Clear search" onClick={onClearSearch}
+            style={{ padding: 4, flexShrink: 0 }}>
+            <X size={16} />
+          </button>
+        )}
         {activeFolder && (
           <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-            in {activeFolder}
+            {searchScope === 'folder' ? `in ${activeFolder}` : 'all folders'}
           </span>
         )}
         {onMarkAllRead && totalCount > 0 && (
@@ -75,7 +105,7 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, activeFold
         )}
       </div>
       {/* Bulk action bar — visible when messages are selected */}
-      {selectedCount > 0 && (
+      {selectedCount > 0 && !selectionDisabled && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
           background: 'rgba(59,130,246,0.08)', borderTop: '1px solid var(--border-glass)' }}>
           <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)', fontWeight: 500 }}>

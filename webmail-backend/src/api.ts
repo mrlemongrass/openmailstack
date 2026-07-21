@@ -28,7 +28,12 @@ import {
 import { getUserSettings, isSettingsNamespace, saveUserSettings } from './user-settings';
 import { getAdminSettings, isAdminSettingsNamespace, saveAdminSettings } from './admin-settings';
 import { BrandingValidationError, getBrandingSettings, saveBrandingSettings } from './branding';
-import { getSearchWorkerStatus, purgeUserSearchIndex } from './search-worker';
+import {
+    getSearchIndexCoverage,
+    getSearchWorkerStatus,
+    invalidateSearchIndexFolderIdentity,
+    purgeUserSearchIndex,
+} from './search-worker';
 import { parseRspamdHealthStatus } from './rspamd-health';
 
 export const apiRouter = Router();
@@ -501,6 +506,53 @@ const parsedMailToSummary = (folder: string, msg: any, parsed: any, previewLengt
     inReplyTo: parsed.inReplyTo || '',
     references: parsed.references || []
 });
+
+const envelopeAddressesToText = (addresses: any) => (
+    Array.isArray(addresses)
+        ? addresses.map((address: any) => (
+            address?.name
+                ? `${address.name} <${address.address || ''}>`
+                : address?.address || ''
+        )).filter(Boolean).join(', ')
+        : ''
+);
+
+const envelopeMailToSummary = (msg: any) => ({
+    folder: msg.folder,
+    uid: msg.uid,
+    subject: msg.envelope?.subject || '(No Subject)',
+    from: envelopeAddressesToText(msg.envelope?.from),
+    to: envelopeAddressesToText(msg.envelope?.to),
+    date: msg.envelope?.date || '',
+    isRead: msg.flags.includes('\\Seen'),
+    isStarred: msg.flags.includes('\\Flagged'),
+    hasAttachments: false,
+    preview: '',
+    messageId: msg.envelope?.messageId || '',
+    inReplyTo: msg.envelope?.inReplyTo || '',
+    references: [],
+});
+
+const searchUsesMutableFlags = (query: string, field: IndexedMailSearchField) => (
+    field === 'unread'
+    || field === 'starred'
+    || /(?:^|\s)(?:is:(?:unread|read|starred|flagged|unstarred)|label:unread|-is:(?:starred|flagged))(?:\s|$)/i.test(query)
+);
+
+const matchesCurrentSearchFlags = (
+    message: { isRead?: boolean; isStarred?: boolean },
+    query: string,
+    field: IndexedMailSearchField,
+) => {
+    if (field === 'unread' && message.isRead) return false;
+    if (field === 'starred' && !message.isStarred) return false;
+    const normalized = query.toLowerCase();
+    if (/(?:^|\s)(?:is:unread|label:unread)(?:\s|$)/.test(normalized) && message.isRead) return false;
+    if (/(?:^|\s)is:read(?:\s|$)/.test(normalized) && !message.isRead) return false;
+    if (/(?:^|\s)(?:is:starred|is:flagged)(?:\s|$)/.test(normalized) && !message.isStarred) return false;
+    if (/(?:^|\s)(?:is:unstarred|-is:starred|-is:flagged)(?:\s|$)/.test(normalized) && message.isStarred) return false;
+    return true;
+};
 
 const parsedMailToIndexRow = (folder: string, msg: any, parsed: any): MailSearchIndexRow => ({
     folder,
@@ -1371,9 +1423,8 @@ apiRouter.post('/messages/search/index/sync', requireAuth, async (req: any, res)
     const folder = String(req.body?.folder || 'INBOX');
     const requestedLimit = Math.max(1, Math.min(parseInt(String(req.body?.limit || (scope === 'all' ? '40' : '100')), 10) || 100, 250));
     const perFolderLimit = scope === 'all' ? Math.min(requestedLimit, 40) : requestedLimit;
-
-    const { ImapService } = require('./imap');
     const simpleParser = require('mailparser').simpleParser;
+
     const imap = await getPooledImap(user, pass);
 
     try {
@@ -1409,9 +1460,8 @@ apiRouter.post('/messages/search/index', requireAuth, async (req: any, res) => {
     const folder = String(req.body?.folder || 'INBOX');
     const requestedLimit = Math.max(1, Math.min(parseInt(String(req.body?.limit || (scope === 'all' ? '50' : '200')), 10) || 50, 250));
     const perFolderLimit = scope === 'all' ? Math.min(requestedLimit, 75) : requestedLimit;
-
-    const { ImapService } = require('./imap');
     const simpleParser = require('mailparser').simpleParser;
+
     const imap = await getPooledImap(user, pass);
 
     try {
@@ -1509,35 +1559,138 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
     const imap = await getPooledImap(user, pass);
 
     try {
-        const indexedMessages = await searchMailIndex(user, { query, field, scope, folder, limit });
-        if (indexedMessages.length > 0 || field === 'attachments') {
-            return res.json({ success: true, messages: indexedMessages, query, scope, field, source: 'index' });
-        }
-
         const folderPaths = scope === 'all'
             ? (await imap.getFolders()).map((f: any) => f.path)
             : [folder];
-        const results = await imap.searchMessages(folderPaths, query, field, limit);
+        let [indexedMessages, indexCoverage, folderCoverage] = await Promise.all([
+            searchMailIndex(user, { query, field, scope, folder, limit }),
+            getSearchIndexCoverage(user, folderPaths),
+            imap.getFolderUidNext(folderPaths),
+        ]);
 
-        const parsedMessages = [];
-        const indexRows: MailSearchIndexRow[] = [];
-        const parsed = await Promise.all(results.map(async (msg: any) => {
-            const parsed = await simpleParser(msg.source);
-            return {
-                summary: parsedMailToSummary(msg.folder, msg, parsed, 180),
-                indexRow: parsedMailToIndexRow(msg.folder, msg, parsed),
-            };
-        }));
-        for (const p of parsed) {
-            parsedMessages.push(p.summary);
-            indexRows.push(p.indexRow);
+        const invalidIdentityFolders = new Set<string>();
+        for (const folderPath of folderPaths) {
+            const currentUidValidity = folderCoverage.uidValidityByFolder.get(folderPath) || '';
+            const coverage = indexCoverage.get(folderPath);
+            if (currentUidValidity && coverage?.uidValidity !== currentUidValidity) {
+                await invalidateSearchIndexFolderIdentity(user, folderPath, currentUidValidity);
+                invalidIdentityFolders.add(folderPath);
+            }
         }
-        upsertMailSearchRows(user, indexRows).catch(indexErr => {
-            console.error('Failed to update mail search index from IMAP search:', indexErr);
-        });
+        if (invalidIdentityFolders.size > 0) {
+            indexedMessages = indexedMessages.filter(message => !invalidIdentityFolders.has(message.folder));
+        }
 
-        parsedMessages.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
-        res.json({ success: true, messages: parsedMessages.slice(0, limit), query, scope, field, source: 'imap' });
+        const indexedByFolder = new Map<string, typeof indexedMessages>();
+        const currentFolders = new Set(folderPaths);
+        for (const message of indexedMessages) {
+            const messages = indexedByFolder.get(message.folder) || [];
+            messages.push(message);
+            indexedByFolder.set(message.folder, messages);
+        }
+
+        const verifiedIndexedMessages: typeof indexedMessages = [];
+        let indexReconciliationNeeded = invalidIdentityFolders.size > 0;
+        for (const [indexedFolder, messages] of indexedByFolder) {
+            if (scope === 'all' && !currentFolders.has(indexedFolder)) {
+                await deleteMailSearchRows(user, indexedFolder, messages.map(message => message.uid));
+                indexReconciliationNeeded = true;
+                continue;
+            }
+            try {
+                const states = new Map((await imap.getExistingUidStates(
+                    indexedFolder,
+                    messages.map(message => message.uid),
+                )).map((state: any) => [state.uid, state]));
+                const staleUids: number[] = [];
+                for (const message of messages) {
+                    const state: any = states.get(message.uid);
+                    if (!state) {
+                        staleUids.push(message.uid);
+                        continue;
+                    }
+                    const currentMessage = {
+                        ...message,
+                        isRead: state.flags.includes('\\Seen'),
+                        isStarred: state.flags.includes('\\Flagged'),
+                    };
+                    if (matchesCurrentSearchFlags(currentMessage, query, field)) {
+                        verifiedIndexedMessages.push(currentMessage);
+                    } else {
+                        indexReconciliationNeeded = true;
+                    }
+                }
+                if (staleUids.length > 0) {
+                    await deleteMailSearchRows(user, indexedFolder, staleUids);
+                    indexReconciliationNeeded = true;
+                }
+            } catch (verificationErr) {
+                console.error('Failed to reconcile mail search index:', verificationErr);
+                indexReconciliationNeeded = true;
+            }
+        }
+
+        const indexIsComplete = folderCoverage.failedFolders.length === 0 && folderPaths.every((folderPath: string) => (
+            indexCoverage.get(folderPath)?.uidValidity === folderCoverage.uidValidityByFolder.get(folderPath)
+            && (indexCoverage.get(folderPath)?.lastUidIndexed || 0)
+                >= ((folderCoverage.uidNextByFolder.get(folderPath) || 1) - 1)
+        ));
+        const needsLiveSearch = !indexIsComplete
+            || indexReconciliationNeeded
+            || searchUsesMutableFlags(query, field);
+        const liveResult = needsLiveSearch
+            ? await imap.searchMessages(folderPaths, query, field, limit)
+            : { messages: [], failedFolders: [], partialFolders: [] };
+
+        if (needsLiveSearch && liveResult.failedFolders.length === folderPaths.length) {
+            return res.status(503).json({ success: false, error: 'Search is temporarily unavailable.' });
+        }
+
+        const verifyAttachments = field === 'attachments' || /(?:^|\s)has:attachment(?:\s|$)/i.test(query);
+        const liveSummaries = verifyAttachments
+            ? (await Promise.all(liveResult.messages.map(async (message: any) => {
+                const parsed = await require('mailparser').simpleParser(message.source);
+                const visibleAttachments = getVisibleAttachments(parsed);
+                const matches = field === 'attachments'
+                    ? visibleAttachments.some((attachment: any) => (
+                        String(attachment.filename || '').toLowerCase().includes(query.toLowerCase())
+                    ))
+                    : visibleAttachments.length > 0;
+                return matches ? parsedMailToSummary(message.folder, message, parsed, 180) : null;
+            }))).filter(Boolean)
+            : liveResult.messages.map(envelopeMailToSummary);
+
+        const mergedMessages = new Map<string, (typeof verifiedIndexedMessages)[number]>();
+        for (const message of verifiedIndexedMessages) {
+            mergedMessages.set(`${message.folder}\u0000${message.uid}`, message);
+        }
+        for (const liveSummary of liveSummaries) {
+            const key = `${liveSummary.folder}\u0000${liveSummary.uid}`;
+            const cachedMessage = mergedMessages.get(key);
+            mergedMessages.set(key, cachedMessage
+                ? {
+                    ...cachedMessage,
+                    ...liveSummary,
+                    preview: cachedMessage.preview,
+                    hasAttachments: cachedMessage.hasAttachments,
+                }
+                : liveSummary);
+        }
+        const messages = [...mergedMessages.values()]
+            .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+            .slice(0, limit);
+        res.json({
+            success: true,
+            messages,
+            query,
+            scope,
+            field,
+            source: needsLiveSearch
+                ? (verifiedIndexedMessages.length > 0 ? 'hybrid' : 'imap')
+                : 'index',
+            partial: liveResult.failedFolders.length > 0 || liveResult.partialFolders.length > 0,
+            failedFolders: liveResult.failedFolders,
+        });
     } catch (err: any) {
         console.error('Failed to search messages:', err);
         res.status(500).json({ success: false, error: err.message });

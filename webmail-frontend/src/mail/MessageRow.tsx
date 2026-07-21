@@ -17,6 +17,7 @@ interface MessageRowProps {
   onDelete: (uid: number) => void;
   onMarkRead: (uid: number) => void;
   onSnooze: (uid: number) => void;
+  selectionDisabled?: boolean;
   forwardedRef?: React.RefCallback<HTMLDivElement>;
 }
 
@@ -24,7 +25,7 @@ export const DENSITY_HEIGHTS = { compact: 48, cozy: 64, comfortable: 80 };
 
 export function MessageRow({
   message, isSelected, density, style, onSelect, onClick, onStar,
-  onArchive, onDelete, onMarkRead, onSnooze, forwardedRef,
+  onArchive, onDelete, onMarkRead, onSnooze, selectionDisabled = false, forwardedRef,
 }: MessageRowProps) {
   const padding = density === 'compact' ? '4px 8px' : density === 'cozy' ? '8px 12px' : '12px 16px';
   const dateObj = typeof message.date === 'string' ? new Date(message.date) : message.date;
@@ -45,8 +46,9 @@ export function MessageRow({
         borderBottom: '1px solid var(--border-glass)',
         ...style,
       }}
-      onClick={(e) => { if (e.shiftKey) onSelect(message.uid, true); else onClick(message.uid); }}>
-      <input type="checkbox" checked={isSelected}
+      onClick={(e) => { if (e.shiftKey && !selectionDisabled) onSelect(message.uid, true); else onClick(message.uid); }}>
+      <input type="checkbox" checked={isSelected} disabled={selectionDisabled}
+        title={selectionDisabled ? 'Open a result to act on its folder' : undefined}
         onChange={(e) => { e.stopPropagation(); onSelect(message.uid, false); }}
         style={{ flexShrink: 0 }} />
       <button onClick={(e) => { e.stopPropagation(); onStar(message.uid); }}

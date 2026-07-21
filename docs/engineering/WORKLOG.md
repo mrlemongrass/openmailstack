@@ -6298,3 +6298,65 @@ Reduce avoidable live IMAP work during search and add a folder picker for moving
 ### Next recommended task
 
 Have the user refresh the authenticated webmail session, compare a current-folder search with an all-mail search, then select same-folder results and move them to a non-source folder. Confirm the move in OMS Web and one IMAP client; use measured latency and logs to decide whether worker coverage or IMAP response time is the remaining search bottleneck.
+
+## 2026-07-21 — Webmail search production performance pass
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean at `9cd6617c`
+Ending git state: implementation commits through `4b0eb69d` pushed and deployed; rollout record synchronized with `origin/main`
+
+### Selected task
+
+Reduce the severe Webmail search latency without adding Redis prematurely, preserve folder/move/delete correctness, deploy behind rollback, and prove the result against production data and worker behavior.
+
+### Acceptance criteria
+
+- [x] Ordinary all-field terms use the existing MariaDB FULLTEXT index; short, quoted, punctuation-bearing, and default-stopword terms preserve fallback semantics.
+- [x] A recent complete worker snapshot opens no request-time IMAP connection; stale, incomplete, failed, paginated, or UIDVALIDITY-mismatched coverage falls back safely.
+- [x] Snapshot certification requires same-cycle external move/delete reconciliation for every folder, and prior snapshots are invalidated before each cycle.
+- [x] Folder status reads use LIST-STATUS where supported, worker cycles cannot overlap, and UID batches cannot skip an unindexed tail.
+- [x] Superseded frontend requests abort, cancelled live searches stop opening folders, and cancellation remains visible in privacy-safe telemetry.
+- [x] Move, Undo, and purge paths cannot leave a stale complete snapshot.
+- [x] Regression, build, integration, independent review, rollback, deployment, and live performance gates pass.
+
+### Changes made
+
+- `webmail-backend/src/search-index.ts` and generated artifacts use one Boolean MATCH expression for filtering and relevance. This avoids body-wide LIKE scans for normal terms and avoids the second natural-language MATCH that the live optimizer probe exposed as expensive.
+- `webmail-backend/src/search-worker.ts` and generated artifacts persist recent per-user folder snapshots, invalidate old snapshots before work, page incremental indexing safely, reconcile every folder before certification, and reject overlapping cycles.
+- `webmail-backend/src/imap.ts` and generated artifacts use ImapFlow LIST-STATUS requests for unseen/UID metadata where advertised, expose one search-folder snapshot, return incremental pagination state, and honor live-search cancellation between folders.
+- `webmail-backend/src/api.ts` and generated artifacts choose index/hybrid/IMAP paths from certified coverage, invalidate snapshot state after Move/Undo/purge changes, and emit bounded `Server-Timing`, Prometheus, and structured timing records without content or identity values.
+- `webmail-frontend/src/mail/` and the shared API abort superseded search requests and silently ignore intentional abort errors.
+- Backend regressions cover FULLTEXT/fallback SQL shape, zero-IMAP certified search, stale/moved/deleted/UIDVALIDITY behavior, LIST-STATUS contracts, pagination, failed/incomplete worker cycles, overlap, Undo invalidation, cancellation, and privacy-safe timing headers/metrics.
+
+### Proof / checks run
+
+- Red tests reproduced the old request-time IMAP connection, body LIKE filter, missing abort signal/coordinator, continued live-folder work after cancellation, missing timing header, and natural-language rescoring query shape before each change.
+- Backend: 202/205 tests passed, zero failed, with three expected optional database skips; TypeScript production build passed.
+- Frontend: 47/47 tests passed; ESLint and TypeScript/Vite production build passed.
+- `tests/lint/run.sh`, `tests/integration/run.sh`, and `git diff --check` passed.
+- Independent Standards and Spec reviews caught stale expunge certification, old-snapshot reuse, stopword behavior, Undo invalidation, and cancellation-observability gaps; all release blockers were remediated and both final reviews are clear.
+- Production Boolean filter/ranking returned 50 bounded rows in about 85 ms. The removed Boolean-filter plus natural-language-rescore shape took about 6.3 seconds on the same indexed data.
+- The final production worker cycle completed in 33.6 seconds, certified two available user snapshots, and logged no failure or overlap.
+- Repository/live hashes match for `api.js`, `imap.js`, `search-index.js`, `search-worker.js`, and frontend `index.html`; the frontend content checksum dry-run is empty and affected backend modes are `0644`.
+- `openmailstack.service` is active/running with `NRestarts=0`; post-restart critical/failure counts are zero. Public web is `200`, auth/search boundaries are `401`, ActiveSync OPTIONS is `200`, Nginx passes, and the full staging smoke succeeds.
+
+### Deployment and rollback
+
+- Pushed `8a3befe8`, `73a7ec2c`, and final scoring correction `4b0eb69d` to `origin/main`.
+- Created root-only rollback directory `/var/backups/openmailstack/search-perf-73a7ec2-20260721T133522Z` before the first live write.
+  - `backend-src-before.tar.gz`: SHA-256 `7df90ef57470ce1e14462755b4c63c9d8fd8ab4f329a86da1ca00ae738dd34d9`.
+  - `webroot-before.tar.gz`: SHA-256 `01b3d01be972f30a5475771b3a9a682761a789e348dfedc3a52a7c896ccaf636`.
+- Synchronized only affected backend source/generated artifacts, normalized them to `openmailstack:openmailstack` and `0644`, deployed the tested frontend helper path, and restarted only `openmailstack.service`.
+- The additive `mail_search_user_state` table stores derived search coverage only; no mailbox content, settings, sessions, or secrets were mutated.
+
+### Risks / notes
+
+- Worker certification now performs per-folder `SEARCH ALL` reconciliation every five minutes. The first two-user cycle used 33.6 seconds, but this must be monitored as users and mailbox sizes grow; MODSEQ-guided background reconciliation is the preferred next optimization before Redis.
+- Short, quoted, punctuation-bearing, and default-stopword searches intentionally use the slower correctness fallback.
+- Authenticated end-to-end browser timing still requires the user's normal session; validation did not read or manufacture a production session secret.
+- One deliberately bounded legacy LIKE diagnostic continued on MariaDB after its client returned; its exact root-owned query was identified and killed after 76 seconds. No write or mailbox mutation occurred, and no long-running diagnostic query remains.
+
+### Next recommended task
+
+Have the user refresh once and compare one ordinary current-folder search with one ordinary all-mail search. Use the emitted `Server-Timing`/structured source to confirm the physical request takes the certified `index` path. If worker duration trends upward, add MODSEQ-guided reconciliation; do not add Redis unless measured database concurrency, rather than query shape or IMAP work, becomes the next bottleneck.

@@ -82,17 +82,19 @@ export async function searchMessages({
   scope,
   folder,
   limit,
+  signal,
 }: {
   query: string;
   field: SearchField;
   scope: SearchScope;
   folder?: string;
   limit?: number;
+  signal?: AbortSignal;
 }): Promise<SearchResponse> {
   const params = new URLSearchParams({ q: query, field, scope });
   if (scope === 'folder' && folder) params.set('folder', folder);
   if (limit !== undefined) params.set('limit', String(limit));
-  const res = await fetch(`/api/messages/search?${params}`);
+  const res = await fetch(`/api/messages/search?${params}`, { signal });
   const data: SearchResponse = await res.json();
   if (!res.ok || !data.success) throw new Error(data.error || 'Search failed');
   return data;

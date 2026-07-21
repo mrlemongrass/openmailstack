@@ -18,6 +18,8 @@ let indexedUidValidity = new Map();
 let currentUidValidity = new Map();
 let failedFolders = [];
 const invalidatedFolderIdentities = [];
+let freshIndexSnapshot = null;
+let imapConnectionCalls = 0;
 
 const rawMessage = ({ subject, messageId, date }) => Buffer.from([
   'From: Sender <sender@example.test>',
@@ -43,6 +45,15 @@ const fakeImap = {
   },
   async getFolderUidNext(folderPaths) {
     return {
+      uidNextByFolder: new Map(folderPaths.map(folder => [folder, uidNextByFolder.get(folder) || 1])),
+      uidValidityByFolder: new Map(folderPaths.map(folder => [folder, currentUidValidity.get(folder) || '1'])),
+      failedFolders: [],
+    };
+  },
+  async getSearchFolderSnapshot() {
+    const folderPaths = ['INBOX', 'Projects', 'Archive'];
+    return {
+      folderPaths,
       uidNextByFolder: new Map(folderPaths.map(folder => [folder, uidNextByFolder.get(folder) || 1])),
       uidValidityByFolder: new Map(folderPaths.map(folder => [folder, currentUidValidity.get(folder) || '1'])),
       failedFolders: [],
@@ -82,13 +93,17 @@ searchWorker.getSearchIndexCoverage = async (_username, folders) => new Map(
 searchWorker.invalidateSearchIndexFolderIdentity = async (username, folder, uidValidity) => {
   invalidatedFolderIdentities.push({ username, folder, uidValidity });
 };
+searchWorker.getFreshSearchIndexSnapshot = async () => freshIndexSnapshot;
 
 const imapPoolPath = require.resolve('../src/imap-pool.js');
 require.cache[imapPoolPath] = {
   id: imapPoolPath,
   filename: imapPoolPath,
   loaded: true,
-  exports: { getImapConnection: async () => fakeImap },
+  exports: { getImapConnection: async () => {
+    imapConnectionCalls += 1;
+    return fakeImap;
+  } },
   children: [],
   paths: [],
 };
@@ -104,6 +119,7 @@ const request = (port, path) => new Promise((resolve, reject) => {
     response.on('data', chunk => chunks.push(chunk));
     response.on('end', () => resolve({
       status: response.statusCode,
+      headers: response.headers,
       json: JSON.parse(Buffer.concat(chunks).toString('utf8')),
     }));
   });
@@ -305,7 +321,7 @@ test('all-mail search live-searches only folders whose index coverage is incompl
   }]);
 });
 
-test('a complete index avoids a live full-folder search while refreshing current flags', async t => {
+test('a complete text index avoids live search and per-result IMAP verification', async t => {
   indexedMessages = [{
     folder: 'Projects', uid: 401, messageId: 'complete@example.test',
     subject: 'Complete indexed roadmap', from: 'sender@example.test', to: user,
@@ -339,9 +355,10 @@ test('a complete index avoids a live full-folder search while refreshing current
 
   assert.equal(response.status, 200);
   assert.equal(response.json.source, 'index');
-  assert.equal(response.json.messages[0].isRead, true);
-  assert.equal(response.json.messages[0].isStarred, true);
+  assert.equal(response.json.messages[0].isRead, false);
+  assert.equal(response.json.messages[0].isStarred, false);
   assert.deepEqual(searchCalls, []);
+  assert.deepEqual(existingUidCalls, []);
 });
 
 test('flag-only search excludes stale indexed flags and uses live IMAP matches', async t => {
@@ -531,4 +548,45 @@ test('UIDVALIDITY reset purges reused UID rows and returns the new live identity
   assert.equal(response.json.source, 'imap');
   assert.deepEqual(response.json.messages.map(message => message.subject), ['New generation result']);
   assert.deepEqual(invalidatedFolderIdentities, [{ username: user, folder: 'INBOX', uidValidity: '200' }]);
+});
+
+test('fresh complete text index returns all-mail results without opening IMAP', async t => {
+  indexedMessages = [{
+    folder: 'Projects', uid: 901, messageId: 'fast-index@example.test',
+    subject: 'Fast indexed result', from: 'sender@example.test', to: user,
+    date: '2026-07-21T16:00:00.000Z', preview: 'served from the index',
+    isRead: false, isStarred: false,
+  }];
+  indexedThrough = new Map([['INBOX', 300], ['Projects', 901], ['Archive', 700]]);
+  indexedUidValidity = new Map([['INBOX', '1'], ['Projects', '1'], ['Archive', '1']]);
+  freshIndexSnapshot = {
+    folderPaths: ['INBOX', 'Projects', 'Archive'],
+    uidNextByFolder: new Map([['INBOX', 301], ['Projects', 902], ['Archive', 701]]),
+    uidValidityByFolder: new Map([['INBOX', '1'], ['Projects', '1'], ['Archive', '1']]),
+    ageMs: 250,
+  };
+  searchCalls.length = 0;
+  existingUidCalls.length = 0;
+  imapConnectionCalls = 0;
+
+  const express = require('express');
+  const app = express();
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const response = await request(
+    server.address().port,
+    '/api/messages/search?q=fast&field=all&scope=all&limit=50',
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.json.source, 'index');
+  assert.deepEqual(response.json.messages.map(message => message.uid), [901]);
+  assert.equal(imapConnectionCalls, 0);
+  assert.deepEqual(searchCalls, []);
+  assert.deepEqual(existingUidCalls, []);
+  assert.match(response.headers['server-timing'], /index;dur=/);
+  assert.match(response.headers['server-timing'], /total;dur=/);
 });

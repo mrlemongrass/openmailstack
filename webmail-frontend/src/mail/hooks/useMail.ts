@@ -15,6 +15,7 @@ import {
   reconcileNewestMessagePage,
 } from '../mail-pagination';
 import { createMailSearchInputController } from '../mail-search-input';
+import { createMailSearchRequestCoordinator, isMailSearchAbort } from '../mail-search-request';
 
 interface UseMailOptions {
   mailSettings: MailUserSettings;
@@ -89,6 +90,7 @@ export function useMail(_opts: UseMailOptions) {
   const olderMessageLoadingRef = useRef(false);
   const searchRequestIdRef = useRef(0);
   const searchInputControllerRef = useRef<ReturnType<typeof createMailSearchInputController> | null>(null);
+  const searchRequestCoordinatorRef = useRef(createMailSearchRequestCoordinator());
 
   // Loading state
   const [mailLoading, setMailLoading] = useState(false);
@@ -454,6 +456,7 @@ export function useMail(_opts: UseMailOptions) {
     const requestId = ++searchRequestIdRef.current;
     const allowsBlankQuery = field === 'unread' || field === 'starred';
     if (!query.trim() && !allowsBlankQuery) {
+      searchRequestCoordinatorRef.current.cancel();
       setIsSearchActive(false);
       setSearchLoading(false);
       setSearchError('');
@@ -469,6 +472,7 @@ export function useMail(_opts: UseMailOptions) {
     setIsSearchActive(true);
     setSearchLoading(true);
     setSearchError('');
+    const requestController = searchRequestCoordinatorRef.current.begin();
     try {
       const result = await api.searchMessages({
         query,
@@ -476,22 +480,26 @@ export function useMail(_opts: UseMailOptions) {
         scope,
         folder: scope === 'folder' ? folder : undefined,
         limit: 100,
+        signal: requestController.signal,
       });
       if (requestId !== searchRequestIdRef.current || activeFolderRef.current !== folder) return;
       if (result.messages) setMessages(result.messages);
       setSearchInfo(result.partial ? 'Some folders could not be searched. Results may be incomplete.' : '');
     } catch (e: unknown) {
+      if (isMailSearchAbort(e)) return;
       if (requestId === searchRequestIdRef.current && activeFolderRef.current === folder) {
         setSearchError(errorMessage(e, 'Search failed'));
       }
     }
     finally {
+      searchRequestCoordinatorRef.current.complete(requestController);
       if (requestId === searchRequestIdRef.current) setSearchLoading(false);
     }
   }, [activeFolder, fetchMessages, invalidateOlderMessageRequest, searchField, setMessages]);
 
   const resetSearchState = useCallback(() => {
     searchInputControllerRef.current?.cancel();
+    searchRequestCoordinatorRef.current.cancel();
     searchRequestIdRef.current += 1;
     setSearchQuery('');
     setIsSearchActive(false);
@@ -499,6 +507,8 @@ export function useMail(_opts: UseMailOptions) {
     setSearchError('');
     setSearchInfo('');
   }, []);
+
+  useEffect(() => () => searchRequestCoordinatorRef.current.cancel(), []);
 
   const clearSearch = useCallback(() => {
     resetSearchState();

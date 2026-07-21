@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.startSearchWorker = exports.purgeUserSearchIndex = exports.getSearchWorkerStatus = exports.runSearchIndexer = exports.invalidateSearchIndexFolderIdentity = exports.getSearchIndexCoverage = void 0;
+exports.startSearchWorker = exports.purgeUserSearchIndex = exports.getSearchWorkerStatus = exports.runSearchIndexer = exports.invalidateSearchIndexFolderIdentity = exports.getFreshSearchIndexSnapshot = exports.invalidateSearchIndexSnapshot = exports.getSearchIndexCoverage = void 0;
 const db_1 = require("./db");
 const imap_1 = require("./imap");
 const mailparser_1 = require("mailparser");
@@ -105,6 +105,14 @@ const ensureWorkerSchema = async () => {
             if (uidValidityColumns.length === 0) {
                 await db_1.pool.query('ALTER TABLE mail_search_worker_state ADD COLUMN uid_validity VARCHAR(32) NULL AFTER folder');
             }
+            await db_1.pool.query(`
+                CREATE TABLE IF NOT EXISTS mail_search_user_state (
+                    username VARCHAR(255) NOT NULL PRIMARY KEY,
+                    folders_json MEDIUMTEXT NOT NULL,
+                    completed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
         })();
     }
     return workerSchemaReady;
@@ -153,6 +161,59 @@ const getSearchIndexCoverage = async (username, folders) => {
     ]));
 };
 exports.getSearchIndexCoverage = getSearchIndexCoverage;
+const saveSearchIndexSnapshot = async (username, folders) => {
+    await ensureWorkerSchema();
+    await db_1.pool.query(`INSERT INTO mail_search_user_state (username, folders_json, completed_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON DUPLICATE KEY UPDATE
+            folders_json = VALUES(folders_json),
+            completed_at = CURRENT_TIMESTAMP`, [username, JSON.stringify(folders)]);
+};
+const invalidateSearchIndexSnapshot = async (username) => {
+    await ensureWorkerSchema();
+    await db_1.pool.query('DELETE FROM mail_search_user_state WHERE username = ?', [username]);
+};
+exports.invalidateSearchIndexSnapshot = invalidateSearchIndexSnapshot;
+const getFreshSearchIndexSnapshot = async (username, scope, folder, maxAgeMs = 10 * 60 * 1000) => {
+    await ensureWorkerSchema();
+    const [rows] = await db_1.pool.query(`SELECT folders_json, completed_at
+         FROM mail_search_user_state
+         WHERE username = ?`, [username]);
+    if (rows.length === 0)
+        return null;
+    const completedAt = new Date(rows[0].completed_at);
+    const ageMs = Date.now() - completedAt.getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs)
+        return null;
+    let storedFolders;
+    try {
+        const parsed = JSON.parse(String(rows[0].folders_json || '[]'));
+        if (!Array.isArray(parsed))
+            return null;
+        storedFolders = parsed.filter((item) => (item && typeof item.path === 'string' && item.path
+            && Number.isInteger(Number(item.uidNext)) && Number(item.uidNext) > 0
+            && typeof item.uidValidity === 'string' && item.uidValidity)).map((item) => ({
+            path: item.path,
+            uidNext: Number(item.uidNext),
+            uidValidity: item.uidValidity,
+        }));
+    }
+    catch {
+        return null;
+    }
+    if (scope === 'folder') {
+        storedFolders = storedFolders.filter(item => item.path === folder);
+    }
+    if (storedFolders.length === 0)
+        return null;
+    return {
+        folderPaths: storedFolders.map(item => item.path),
+        uidNextByFolder: new Map(storedFolders.map(item => [item.path, item.uidNext])),
+        uidValidityByFolder: new Map(storedFolders.map(item => [item.path, item.uidValidity])),
+        ageMs,
+    };
+};
+exports.getFreshSearchIndexSnapshot = getFreshSearchIndexSnapshot;
 const invalidateSearchIndexFolderIdentity = async (username, folder, uidValidity) => {
     await ensureWorkerSchema();
     const connection = await db_1.pool.getConnection();
@@ -254,27 +315,32 @@ const indexUserFolders = async (credential) => {
     try {
         imap = new imap_1.ImapService(username, password);
         await imap.connect();
-        const folders = await imap.getFolders();
+        const folderSnapshot = await imap.getSearchFolderSnapshot();
+        const folders = folderSnapshot.folderPaths.map(path => ({ path }));
+        const completedFolders = [];
+        let snapshotComplete = folderSnapshot.failedFolders.length === 0;
         const shouldRunExpunge = Date.now() - lastExpungeRun >= EXPUNGE_INTERVAL_MS;
         for (const folderObj of folders) {
             const folderPath = folderObj.path;
             try {
                 // Get worker state for resume tracking
                 let state = await getWorkerFolderState(username, folderPath);
-                const folderIdentity = await imap.getFolderUidNext([folderPath]);
-                if (folderIdentity.failedFolders.length > 0) {
-                    throw new Error(`Unable to read UIDVALIDITY for ${folderPath}`);
-                }
-                const uidValidity = folderIdentity.uidValidityByFolder.get(folderPath) || '';
+                const uidValidity = folderSnapshot.uidValidityByFolder.get(folderPath) || '';
+                const observedUidNext = folderSnapshot.uidNextByFolder.get(folderPath) || 0;
                 if (!uidValidity)
                     throw new Error(`Missing UIDVALIDITY for ${folderPath}`);
+                if (observedUidNext < 1)
+                    throw new Error(`Missing UIDNEXT for ${folderPath}`);
                 if (state.uidValidity !== uidValidity) {
                     await (0, exports.invalidateSearchIndexFolderIdentity)(username, folderPath, uidValidity);
                     state = { uidValidity, lastUidIndexed: 0, lastFullSyncAt: null, messageCount: 0, indexedCount: 0 };
                 }
                 const maxUid = state.lastUidIndexed;
                 // Incremental indexing: fetch new messages since last indexed UID
-                const messages = await imap.getMessagesSinceUid(folderPath, maxUid + 1, BATCH_SIZE);
+                const page = await imap.getMessagesSinceUid(folderPath, maxUid + 1, BATCH_SIZE);
+                const messages = page.messages;
+                if (page.moreAvailable)
+                    snapshotComplete = false;
                 const rows = [];
                 for (const msg of messages) {
                     const parsed = await (0, mailparser_1.simpleParser)(msg.source);
@@ -294,12 +360,15 @@ const indexUserFolders = async (credential) => {
                 }
                 // Find the highest UID we indexed
                 const newMaxUid = rows.reduce((max, row) => Math.max(max, row.uid), maxUid);
+                const indexedThroughUid = page.moreAvailable
+                    ? newMaxUid
+                    : Math.max(newMaxUid, observedUidNext - 1);
                 // Get current indexed count for this folder
                 const [countRows] = await db_1.pool.query('SELECT COUNT(*) AS cnt FROM mail_search_index WHERE username = ? AND folder = ?', [username, folderPath]);
                 const indexedCount = Number(countRows[0]?.cnt || 0);
                 await updateWorkerFolderState(username, folderPath, {
                     uidValidity,
-                    lastUidIndexed: newMaxUid,
+                    lastUidIndexed: indexedThroughUid,
                     messageCount: indexedCount + (rows.length > 0 ? 0 : 0), // will be updated by expunge
                     indexedCount
                 });
@@ -311,16 +380,27 @@ const indexUserFolders = async (credential) => {
                     const postExpungeCount = Number(postExpungeRows[0]?.cnt || 0);
                     await updateWorkerFolderState(username, folderPath, {
                         uidValidity,
-                        lastUidIndexed: newMaxUid,
+                        lastUidIndexed: indexedThroughUid,
                         lastFullSyncAt: new Date(),
                         messageCount: postExpungeCount,
                         indexedCount: postExpungeCount
                     });
                 }
+                if (!page.moreAvailable) {
+                    completedFolders.push({
+                        path: folderPath,
+                        uidNext: observedUidNext,
+                        uidValidity,
+                    });
+                }
             }
             catch (folderErr) {
+                snapshotComplete = false;
                 console.error(`[SearchWorker] Failed to index folder ${folderPath} for ${username}:`, folderErr);
             }
+        }
+        if (snapshotComplete && completedFolders.length === folders.length) {
+            await saveSearchIndexSnapshot(username, completedFolders);
         }
         if (shouldRunExpunge) {
             lastExpungeRun = Date.now();
@@ -337,7 +417,13 @@ const indexUserFolders = async (credential) => {
     }
 };
 /* ---------- Main indexer entry ---------- */
+let searchIndexerRunning = false;
 const runSearchIndexer = async () => {
+    if (searchIndexerRunning) {
+        console.log('[SearchWorker] Previous indexing cycle is still running, skipping overlap');
+        return;
+    }
+    searchIndexerRunning = true;
     try {
         await ensureWorkerSchema();
         const credentials = await getAvailableUserCredentials();
@@ -353,6 +439,9 @@ const runSearchIndexer = async () => {
     }
     catch (err) {
         console.error("[SearchWorker] General error:", err);
+    }
+    finally {
+        searchIndexerRunning = false;
     }
 };
 exports.runSearchIndexer = runSearchIndexer;
@@ -397,6 +486,7 @@ const purgeUserSearchIndex = async (username) => {
     await ensureWorkerSchema();
     const [result] = await db_1.pool.query('DELETE FROM mail_search_index WHERE username = ?', [username]);
     await db_1.pool.query('DELETE FROM mail_search_worker_state WHERE username = ?', [username]);
+    await db_1.pool.query('DELETE FROM mail_search_user_state WHERE username = ?', [username]);
     const deletedCount = result.affectedRows || 0;
     console.log(`[SearchWorker] Purged ${deletedCount} index entries for ${username}`);
     return deletedCount;

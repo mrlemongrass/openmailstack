@@ -207,6 +207,16 @@ const addAnyColumnLikeCondition = (conditions, params, columns, value) => {
     conditions.push(`(${columns.map(column => `${column} LIKE ?`).join(' OR ')})`);
     params.push(...columns.map(() => like));
 };
+const buildBooleanFullTextQuery = (terms) => {
+    const tokens = [];
+    for (const term of terms) {
+        const normalized = term.normalize('NFKC');
+        if (!/^[\p{L}\p{N}]{3,}$/u.test(normalized))
+            return null;
+        tokens.push(`+${normalized}*`);
+    }
+    return [...new Set(tokens)].join(' ');
+};
 const upsertMailSearchRows = async (username, rows) => {
     if (rows.length === 0)
         return 0;
@@ -404,10 +414,17 @@ const searchMailIndex = async (username, options) => {
     const freeTerms = field === 'all' || field === 'unread' || field === 'starred'
         ? parsed.terms
         : [options.query].filter(Boolean);
+    const booleanFullTextQuery = field === 'all' || field === 'unread' || field === 'starred'
+        ? buildBooleanFullTextQuery(freeTerms)
+        : null;
     if (freeTerms.length > 0) {
         const fullTextQuery = freeTerms.join(' ');
         scoreExpression = 'MATCH(subject, sender, recipients, body_text, attachment_names) AGAINST (? IN NATURAL LANGUAGE MODE)';
         scoreParams.push(fullTextQuery);
+        if (booleanFullTextQuery) {
+            where.push('MATCH(subject, sender, recipients, body_text, attachment_names) AGAINST (? IN BOOLEAN MODE)');
+            whereParams.push(booleanFullTextQuery);
+        }
     }
     for (const term of freeTerms) {
         if (field === 'from')
@@ -420,7 +437,7 @@ const searchMailIndex = async (username, options) => {
             addLikeCondition(where, whereParams, 'body_text', term);
         else if (field === 'attachments')
             addLikeCondition(where, whereParams, 'attachment_names', term);
-        else
+        else if (!booleanFullTextQuery)
             addAnyColumnLikeCondition(where, whereParams, fullTextColumns, term);
     }
     const [rows] = await db_1.pool.query(`SELECT

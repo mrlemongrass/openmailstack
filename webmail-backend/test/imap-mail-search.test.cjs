@@ -5,6 +5,67 @@ process.env.OMS_DB_PASSWORD ||= 'imap-mail-search-test';
 
 const { ImapService } = require('../src/imap.js');
 
+test('folder listings request unseen counts through LIST-STATUS', async () => {
+  const calls = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async list(options) {
+      calls.push(options);
+      return [{ path: 'INBOX', delimiter: '/', status: { unseen: 7 } }];
+    },
+  };
+
+  const folders = await service.getFolders();
+
+  assert.deepEqual(calls, [{ statusQuery: { unseen: true } }]);
+  assert.deepEqual(folders, [{ path: 'INBOX', delimiter: '/', unseen: 7 }]);
+});
+
+test('search snapshots collect UID state in one LIST-STATUS request', async () => {
+  const calls = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async list(options) {
+      calls.push(options);
+      return [
+        { path: 'INBOX', flags: new Set(), status: { uidNext: 42, uidValidity: 9n } },
+        { path: 'Virtual', flags: new Set(['\\Noselect']), status: {} },
+        { path: 'Broken', flags: new Set(), status: { uidNext: 0 } },
+      ];
+    },
+  };
+
+  const snapshot = await service.getSearchFolderSnapshot();
+
+  assert.deepEqual(calls, [{ statusQuery: { uidNext: true, uidValidity: true } }]);
+  assert.deepEqual(snapshot.folderPaths, ['INBOX', 'Broken']);
+  assert.equal(snapshot.uidNextByFolder.get('INBOX'), 42);
+  assert.equal(snapshot.uidValidityByFolder.get('INBOX'), '9');
+  assert.deepEqual(snapshot.failedFolders, ['Broken']);
+});
+
+test('incremental indexing reports when another UID page remains', async () => {
+  const fetched = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen() {},
+    async mailboxClose() {},
+    async search() { return [10, 11, 12]; },
+    async *fetch(uids) {
+      fetched.push(uids);
+      for (const uid of uids) {
+        yield { uid, flags: new Set(), envelope: {}, source: Buffer.from('') };
+      }
+    },
+  };
+
+  const page = await service.getMessagesSinceUid('INBOX', 10, 2);
+
+  assert.deepEqual(fetched, [[10, 11]]);
+  assert.deepEqual(page.messages.map(message => message.uid), [10, 11]);
+  assert.equal(page.moreAvailable, true);
+});
+
 test('all-mail IMAP search chooses the newest matches across every folder', async () => {
   const folderMessages = {
     INBOX: [
@@ -104,6 +165,28 @@ test('live IMAP search reports a folder failure instead of silently returning a 
   const result = await service.searchMessages(['INBOX', 'Broken'], 'roadmap', 'subject', 10);
   assert.deepEqual(result.messages, []);
   assert.deepEqual(result.failedFolders, ['Broken']);
+});
+
+test('live IMAP search does not open a folder after its request is cancelled', async () => {
+  const opened = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen(folder) { opened.push(folder); },
+    async mailboxClose() {},
+    async search() { return []; },
+    async *fetch() {},
+  };
+
+  const result = await service.searchMessages(
+    ['INBOX', 'Archive'],
+    'roadmap',
+    'subject',
+    10,
+    () => true,
+  );
+
+  assert.deepEqual(opened, []);
+  assert.deepEqual(result.messages, []);
 });
 
 test('bulk move sends every selected UID to the chosen destination folder', async () => {

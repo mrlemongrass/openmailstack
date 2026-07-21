@@ -50,18 +50,38 @@ export class ImapService {
         await this.client.logout();
     }
 
-    async getFolders() {
-        const folders = await this.client.list();
-        const results = [];
-        for (const f of folders) {
-            try {
-                const status = await this.client.status(f.path, { unseen: true });
-                results.push({ path: f.path, delimiter: f.delimiter, unseen: status.unseen || 0 });
-            } catch (e) {
-                results.push({ path: f.path, delimiter: f.delimiter, unseen: 0 });
+    async getFolders(): Promise<any[]> {
+        const folders = await this.client.list({ statusQuery: { unseen: true } });
+        return folders.map(f => ({
+            path: f.path,
+            delimiter: f.delimiter,
+            unseen: Number(f.status?.unseen || 0),
+        }));
+    }
+
+    async getSearchFolderSnapshot() {
+        const folders = await this.client.list({
+            statusQuery: { uidNext: true, uidValidity: true },
+        });
+        const folderPaths: string[] = [];
+        const uidNextByFolder = new Map<string, number>();
+        const uidValidityByFolder = new Map<string, string>();
+        const failedFolders: string[] = [];
+
+        for (const folder of folders) {
+            if (folder.flags?.has('\\Noselect')) continue;
+            folderPaths.push(folder.path);
+            const uidNext = Number(folder.status?.uidNext || 0);
+            const uidValidity = String(folder.status?.uidValidity || '');
+            if (uidNext > 0 && uidValidity) {
+                uidNextByFolder.set(folder.path, uidNext);
+                uidValidityByFolder.set(folder.path, uidValidity);
+            } else {
+                failedFolders.push(folder.path);
             }
         }
-        return results;
+
+        return { folderPaths, uidNextByFolder, uidValidityByFolder, failedFolders };
     }
 
     async getMessages(folderPath: string, minUid?: number, fetchOlderThan?: number) {
@@ -304,7 +324,13 @@ export class ImapService {
         return Object.keys(searchQuery).length > 0 ? searchQuery : { text: query };
     }
 
-    async searchMessages(folderPaths: string[], query: string, field: MailSearchField = 'all', limit = 50) {
+    async searchMessages(
+        folderPaths: string[],
+        query: string,
+        field: MailSearchField = 'all',
+        limit = 50,
+        shouldStop: () => boolean = () => false,
+    ) {
         const searchQuery = this.buildSearchQuery(query, field);
         const cappedLimit = Math.max(1, Math.min(limit, 100));
         const candidates: any[] = [];
@@ -313,6 +339,7 @@ export class ImapService {
         const verifyAttachments = field === 'attachments' || /(?:^|\s)has:attachment(?:\s|$)/i.test(query);
 
         for (const folderPath of folderPaths) {
+            if (shouldStop()) break;
             try {
                 await this.client.mailboxOpen(folderPath);
                 try {
@@ -360,10 +387,12 @@ export class ImapService {
             selectedByFolder.set(message.folder, folderMessages);
         }
         for (const [folderPath, folderMessages] of selectedByFolder) {
+            if (shouldStop()) break;
             try {
                 await this.client.mailboxOpen(folderPath);
                 try {
                     for (const candidate of folderMessages) {
+                        if (shouldStop()) break;
                         const size = candidate.size || maxMessageBytes;
                         if (size > maxMessageBytes || size > remainingBytes) {
                             partialFolders.add(folderPath);
@@ -457,13 +486,16 @@ export class ImapService {
         await this.client.mailboxOpen(folderPath);
         const messages: any[] = [];
         const cappedLimit = Math.max(1, Math.min(limit, 250));
+        let moreAvailable = false;
 
         try {
             const found = await this.client.search({ uid: `${Math.max(1, minUid)}:*` }, { uid: true });
-            if (!Array.isArray(found) || found.length === 0) return messages;
+            if (!Array.isArray(found) || found.length === 0) return { messages, moreAvailable: false };
 
-            const batchUids = found.filter(uid => uid >= minUid).slice(0, cappedLimit);
-            if (batchUids.length === 0) return messages;
+            const matchingUids = found.filter(uid => uid >= minUid);
+            const batchUids = matchingUids.slice(0, cappedLimit);
+            moreAvailable = matchingUids.length > batchUids.length;
+            if (batchUids.length === 0) return { messages, moreAvailable: false };
 
             for await (let msg of this.client.fetch(batchUids, { envelope: true, source: true, uid: true, flags: true }, { uid: true })) {
                 messages.push({
@@ -477,7 +509,7 @@ export class ImapService {
             await this.client.mailboxClose();
         }
 
-        return messages;
+        return { messages, moreAvailable };
     }
 
     async getQuota() {

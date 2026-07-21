@@ -22,6 +22,12 @@ export declare class ImapService {
     connect(): Promise<void>;
     logout(): Promise<void>;
     getFolders(): Promise<any[]>;
+    getSearchFolderSnapshot(): Promise<{
+        folderPaths: string[];
+        uidNextByFolder: Map<string, number>;
+        uidValidityByFolder: Map<string, string>;
+        failedFolders: string[];
+    }>;
     getMessages(folderPath: string, minUid?: number, fetchOlderThan?: number): Promise<{
         messages: any[];
         uidNext: number;
@@ -39,7 +45,7 @@ export declare class ImapService {
     getActiveSyncMailSnapshot(folderPath: string, cutoff: Date | null, sinceModseq: string, knownUids: number[], forceFullSnapshot?: boolean): Promise<ActiveSyncMailSnapshot>;
     getActiveSyncMessages(folderPath: string, uids: number[], maxSourceBytes: number): Promise<ActiveSyncMailMessage[]>;
     private buildSearchQuery;
-    searchMessages(folderPaths: string[], query: string, field?: MailSearchField, limit?: number): Promise<{
+    searchMessages(folderPaths: string[], query: string, field?: MailSearchField, limit?: number, shouldStop?: () => boolean): Promise<{
         messages: any[];
         failedFolders: string[];
         partialFolders: string[];
@@ -54,7 +60,10 @@ export declare class ImapService {
         failedFolders: string[];
     }>;
     getRecentMessagesForIndex(folderPath: string, limit?: number): Promise<any[]>;
-    getMessagesSinceUid(folderPath: string, minUid: number, limit?: number): Promise<any[]>;
+    getMessagesSinceUid(folderPath: string, minUid: number, limit?: number): Promise<{
+        messages: any[];
+        moreAvailable: boolean;
+    }>;
     getQuota(): Promise<false | import("imapflow").QuotaResponse>;
     getMessageByUid(folderPath: string, uid: number): Promise<any>;
     appendMessage(folderPath: string, content: string | Buffer, flags?: string[]): Promise<void>;

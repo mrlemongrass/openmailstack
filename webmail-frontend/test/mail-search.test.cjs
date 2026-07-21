@@ -135,6 +135,46 @@ test('mail search reports an API failure instead of silently keeping old results
   }
 });
 
+test('mail search forwards an abort signal so superseded requests can be cancelled', async () => {
+  const { searchMessages } = loadTypeScriptModule('../src/shared/api.ts');
+  const originalFetch = global.fetch;
+  const controller = new AbortController();
+  let receivedSignal;
+  global.fetch = async (_url, options) => {
+    receivedSignal = options?.signal;
+    return { ok: true, json: async () => ({ success: true, messages: [] }) };
+  };
+
+  try {
+    await searchMessages({
+      query: 'quarterly',
+      field: 'all',
+      scope: 'all',
+      signal: controller.signal,
+    });
+    assert.equal(receivedSignal, controller.signal);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('starting a newer mail search aborts the previous in-flight request', () => {
+  const { createMailSearchRequestCoordinator } = loadTypeScriptModule('../src/mail/mail-search-request.ts');
+  const coordinator = createMailSearchRequestCoordinator();
+
+  const first = coordinator.begin();
+  const second = coordinator.begin();
+
+  assert.equal(first.signal.aborted, true);
+  assert.equal(second.signal.aborted, false);
+  coordinator.complete(second);
+  assert.equal(second.signal.aborted, false);
+
+  const third = coordinator.begin();
+  coordinator.cancel();
+  assert.equal(third.signal.aborted, true);
+});
+
 test('message move sends the selected destination folder to the action API', async () => {
   const { messageAction } = loadTypeScriptModule('../src/shared/api.ts');
   const originalFetch = global.fetch;

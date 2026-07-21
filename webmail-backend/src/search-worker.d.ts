@@ -2,6 +2,14 @@ export declare const getSearchIndexCoverage: (username: string, folders: string[
     uidValidity: string;
     lastUidIndexed: number;
 }>>;
+export interface SearchIndexSnapshot {
+    folderPaths: string[];
+    uidNextByFolder: Map<string, number>;
+    uidValidityByFolder: Map<string, string>;
+    ageMs: number;
+}
+export declare const invalidateSearchIndexSnapshot: (username: string) => Promise<void>;
+export declare const getFreshSearchIndexSnapshot: (username: string, scope: "folder" | "all", folder: string, maxAgeMs?: number) => Promise<SearchIndexSnapshot | null>;
 export declare const invalidateSearchIndexFolderIdentity: (username: string, folder: string, uidValidity: string) => Promise<void>;
 export declare const runSearchIndexer: () => Promise<void>;
 export interface SearchWorkerStatus {

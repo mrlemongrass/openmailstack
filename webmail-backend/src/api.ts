@@ -29,8 +29,10 @@ import { getUserSettings, isSettingsNamespace, saveUserSettings } from './user-s
 import { getAdminSettings, isAdminSettingsNamespace, saveAdminSettings } from './admin-settings';
 import { BrandingValidationError, getBrandingSettings, saveBrandingSettings } from './branding';
 import {
+    getFreshSearchIndexSnapshot,
     getSearchIndexCoverage,
     getSearchWorkerStatus,
+    invalidateSearchIndexSnapshot,
     invalidateSearchIndexFolderIdentity,
     purgeUserSearchIndex,
 } from './search-worker';
@@ -66,6 +68,12 @@ const apiRequestsCounter = new promClient.Counter({
     name: 'openmailstack_api_requests_total',
     help: 'Total number of API requests',
     labelNames: ['method', 'status']
+});
+const mailSearchDurationHistogram = new promClient.Histogram({
+    name: 'openmailstack_mail_search_duration_seconds',
+    help: 'Webmail search request duration by bounded search path',
+    labelNames: ['scope', 'field', 'source'],
+    buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30],
 });
 
 const mailQueueGauge = new promClient.Gauge({ name: 'openmailstack_mail_queue_size', help: 'Number of emails currently queued in Postfix' });
@@ -1436,7 +1444,7 @@ apiRouter.post('/messages/search/index/sync', requireAuth, async (req: any, res)
         for (const folderPath of folderPaths) {
             const maxUid = await getMaxIndexedUid(user, folderPath);
             const messages = maxUid > 0
-                ? await imap.getMessagesSinceUid(folderPath, maxUid + 1, perFolderLimit)
+                ? (await imap.getMessagesSinceUid(folderPath, maxUid + 1, perFolderLimit)).messages
                 : await imap.getRecentMessagesForIndex(folderPath, Math.min(perFolderLimit, 50));
             const parsedResults = await Promise.all(messages.map(async (msg: any) => {
                 const parsed = await simpleParser(msg.source);
@@ -1554,19 +1562,87 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
         return res.status(400).json({ success: false, error: 'Search query is too long.' });
     }
 
-    const { ImapService } = require('./imap');
     const simpleParser = require('mailparser').simpleParser;
-    const imap = await getPooledImap(user, pass);
+    const usesMutableFlags = searchUsesMutableFlags(query, field);
+    let imap: any = null;
+    let requestCancelled = false;
+    let telemetryRecorded = false;
+    let indexDurationMs = 0;
+    const searchStartedAt = Date.now();
+    req.once('aborted', () => { requestCancelled = true; });
+    res.once('close', () => {
+        if (!res.writableEnded) requestCancelled = true;
+    });
+
+    const recordSearchTelemetry = (
+        source: 'index' | 'hybrid' | 'imap' | 'error',
+        folderCount: number,
+        liveFolderCount: number,
+        resultCount: number,
+        partial: boolean,
+    ) => {
+        if (telemetryRecorded) return;
+        telemetryRecorded = true;
+        const totalDurationMs = Date.now() - searchStartedAt;
+        const reconcileDurationMs = Math.max(0, totalDurationMs - indexDurationMs);
+        if (!res.headersSent) {
+            res.setHeader(
+                'Server-Timing',
+                `index;dur=${indexDurationMs}, reconcile;dur=${reconcileDurationMs}, total;dur=${totalDurationMs}`,
+            );
+        }
+        mailSearchDurationHistogram.labels(scope, field, source).observe(totalDurationMs / 1000);
+        console.info(JSON.stringify({
+            event: 'mail.search.completed',
+            durationMs: totalDurationMs,
+            indexMs: indexDurationMs,
+            reconcileMs: reconcileDurationMs,
+            scope,
+            field,
+            source,
+            folderCount,
+            liveFolderCount,
+            resultCount,
+            partial,
+        }));
+    };
 
     try {
-        const folderPaths = scope === 'all'
-            ? (await imap.getFolders()).map((f: any) => f.path)
-            : [folder];
-        let [indexedMessages, indexCoverage, folderCoverage] = await Promise.all([
-            searchMailIndex(user, { query, field, scope, folder, limit }),
-            getSearchIndexCoverage(user, folderPaths),
-            imap.getFolderUidNext(folderPaths),
+        const indexedSearch = (async () => {
+            const startedAt = Date.now();
+            try {
+                return await searchMailIndex(user, { query, field, scope, folder, limit });
+            } finally {
+                indexDurationMs = Date.now() - startedAt;
+            }
+        })();
+        let [indexedMessages, freshSnapshot] = await Promise.all([
+            indexedSearch,
+            usesMutableFlags
+                ? Promise.resolve(null)
+                : getFreshSearchIndexSnapshot(user, scope, folder),
         ]);
+        let folderPaths: string[];
+        let folderCoverage: {
+            uidNextByFolder: Map<string, number>;
+            uidValidityByFolder: Map<string, string>;
+            failedFolders: string[];
+        };
+        if (freshSnapshot) {
+            folderPaths = freshSnapshot.folderPaths;
+            folderCoverage = { ...freshSnapshot, failedFolders: [] };
+        } else {
+            imap = await getPooledImap(user, pass);
+            if (scope === 'all') {
+                const currentSnapshot = await imap.getSearchFolderSnapshot();
+                folderPaths = currentSnapshot.folderPaths;
+                folderCoverage = currentSnapshot;
+            } else {
+                folderPaths = [folder];
+                folderCoverage = await imap.getFolderUidNext(folderPaths);
+            }
+        }
+        const indexCoverage = await getSearchIndexCoverage(user, folderPaths);
 
         const invalidIdentityFolders = new Set<string>();
         const liveSearchFolders = new Set<string>();
@@ -1600,7 +1676,13 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
                 await deleteMailSearchRows(user, indexedFolder, messages.map(message => message.uid));
                 continue;
             }
+            if (usesMutableFlags) continue;
+            if (!liveSearchFolders.has(indexedFolder)) {
+                verifiedIndexedMessages.push(...messages);
+                continue;
+            }
             try {
+                if (!imap) imap = await getPooledImap(user, pass);
                 const states = new Map((await imap.getExistingUidStates(
                     indexedFolder,
                     messages.map(message => message.uid),
@@ -1630,18 +1712,28 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
             }
         }
 
-        if (searchUsesMutableFlags(query, field)) {
+        if (usesMutableFlags) {
             for (const folderPath of folderPaths) liveSearchFolders.add(folderPath);
         }
         const liveSearchFolderPaths = folderPaths.filter((folderPath: string) => liveSearchFolders.has(folderPath));
         const needsLiveSearch = liveSearchFolderPaths.length > 0;
+        if (needsLiveSearch && !imap) imap = await getPooledImap(user, pass);
         const liveResult = needsLiveSearch
-            ? await imap.searchMessages(liveSearchFolderPaths, query, field, limit)
+            ? await imap.searchMessages(
+                liveSearchFolderPaths,
+                query,
+                field,
+                limit,
+                () => requestCancelled,
+            )
             : { messages: [], failedFolders: [], partialFolders: [] };
+
+        if (requestCancelled) return;
 
         if (needsLiveSearch
             && liveResult.failedFolders.length === liveSearchFolderPaths.length
             && verifiedIndexedMessages.length === 0) {
+            recordSearchTelemetry('error', folderPaths.length, liveSearchFolderPaths.length, 0, true);
             return res.status(503).json({ success: false, error: 'Search is temporarily unavailable.' });
         }
 
@@ -1678,21 +1770,26 @@ apiRouter.get('/messages/search', requireAuth, async (req: any, res) => {
         const messages = [...mergedMessages.values()]
             .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
             .slice(0, limit);
+        if (requestCancelled) return;
+        const source = needsLiveSearch
+            ? (verifiedIndexedMessages.length > 0 ? 'hybrid' : 'imap')
+            : 'index';
+        const partial = liveResult.failedFolders.length > 0 || liveResult.partialFolders.length > 0;
+        recordSearchTelemetry(source, folderPaths.length, liveSearchFolderPaths.length, messages.length, partial);
         res.json({
             success: true,
             messages,
             query,
             scope,
             field,
-            source: needsLiveSearch
-                ? (verifiedIndexedMessages.length > 0 ? 'hybrid' : 'imap')
-                : 'index',
-            partial: liveResult.failedFolders.length > 0 || liveResult.partialFolders.length > 0,
+            source,
+            partial,
             failedFolders: liveResult.failedFolders,
         });
     } catch (err: any) {
+        recordSearchTelemetry('error', 0, 0, 0, true);
         console.error('Failed to search messages:', err);
-        res.status(500).json({ success: false, error: err.message });
+        if (!requestCancelled) res.status(500).json({ success: false, error: err.message });
     } finally {
     }
 });
@@ -1968,6 +2065,7 @@ apiRouter.post('/messages/action', requireAuth, async (req: any, res) => {
                 await updateMailSearchFlags(user, folder, uids, { isStarred: false });
             } else {
                 await deleteMailSearchRows(user, folder, uids);
+                await invalidateSearchIndexSnapshot(user);
             }
         } catch (indexErr) {
             console.error('Failed to update mail search index after message action:', indexErr);

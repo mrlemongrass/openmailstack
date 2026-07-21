@@ -41,6 +41,7 @@ test('ordinary all-field search filters with FULLTEXT instead of scanning messag
   const call = searchSelect();
   assert.ok(call, 'search SELECT should execute');
   assert.match(call.text, /MATCH\(subject, sender, recipients, body_text, attachment_names\) AGAINST \(\? IN BOOLEAN MODE\)/);
+  assert.doesNotMatch(call.text, /IN NATURAL LANGUAGE MODE/);
   assert.doesNotMatch(call.text, /body_text LIKE/);
   assert.ok(call.params.includes('+quarterly* +roadmap*'));
 });

@@ -517,11 +517,14 @@ export const searchMailIndex = async (
 
     if (freeTerms.length > 0) {
         const fullTextQuery = freeTerms.join(' ');
-        scoreExpression = 'MATCH(subject, sender, recipients, body_text, attachment_names) AGAINST (? IN NATURAL LANGUAGE MODE)';
-        scoreParams.push(fullTextQuery);
         if (booleanFullTextQuery) {
+            scoreExpression = 'MATCH(subject, sender, recipients, body_text, attachment_names) AGAINST (? IN BOOLEAN MODE)';
+            scoreParams.push(booleanFullTextQuery);
             where.push('MATCH(subject, sender, recipients, body_text, attachment_names) AGAINST (? IN BOOLEAN MODE)');
             whereParams.push(booleanFullTextQuery);
+        } else {
+            scoreExpression = 'MATCH(subject, sender, recipients, body_text, attachment_names) AGAINST (? IN NATURAL LANGUAGE MODE)';
+            scoreParams.push(fullTextQuery);
         }
     }
 

@@ -8,6 +8,7 @@ export function SearchBar({ mail }: { mail: ReturnType<typeof useMail> }) {
       <input type="text" className="glass-input" placeholder="Search mail..."
         value={mail.searchQuery}
         onChange={(e) => mail.updateSearchQuery(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); mail.submitSearchQuery(); } }}
         style={{ flex: 1, fontSize: '0.85rem' }} />
     </div>
   );

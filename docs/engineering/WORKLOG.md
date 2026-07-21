@@ -6095,7 +6095,7 @@ Search is a core mail workflow. The rendered toolbar only changed local text, al
 ### Proof / checks run
 
 - `rtk npm --prefix webmail-frontend test`
-  - 42/42 passed.
+  - 43/43 passed.
 - `rtk npm --prefix webmail-frontend run lint`
   - Passed with zero warnings.
 - `rtk npm --prefix webmail-frontend run build`
@@ -6134,3 +6134,59 @@ Search is a core mail workflow. The rendered toolbar only changed local text, al
 ### Next recommended task
 
 Implement Rule Workbench Phase 1: one canonical predicate model plus a read-only preview for current folder, selected folders, folder tree, and whole mailbox before enabling historical rule mutations.
+
+## 2026-07-21 — Production search report and Enter submission diagnosis
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean
+Ending git state: clean after commit
+
+### Selected task
+
+Diagnose the report that entering a specific subject and pressing Enter in production returned no results, then close any local interaction gap with a regression before proposing deployment.
+
+### Diagnosis
+
+- Production is still serving the older Webmail bundle: the local and deployed `index.html` SHA-256 hashes differ, and their route asset names differ.
+- The deployed route chunk wires the visible toolbar to `setSearchQuery` only. It has no submit or Enter handler, so the live input changes client state without initiating search.
+- The complete search repair in commit `04fe82ce` has not been pushed or deployed. Production therefore cannot exercise its debounce, scope controls, request contract, or hybrid IMAP/index reconciliation.
+- The repaired local interaction still lacked an explicit Enter path. Its debounce would eventually fire, but pressing Enter did not immediately submit as users expect.
+
+### Changes made
+
+- `webmail-frontend/src/mail/mail-search-input.ts`
+  - Track the pending query and expose `flush()` to cancel its timer and submit it immediately.
+- `webmail-frontend/src/mail/hooks/useMail.ts`
+  - Added `submitSearchQuery()` to flush pending input or explicitly run the current query and options.
+- `webmail-frontend/src/mail/MailToolbar.tsx`, `MessageList.tsx`, and `SearchBar.tsx`
+  - Submit the current search on Enter in both the visible toolbar and legacy search input.
+- `webmail-frontend/test/mail-search.test.cjs`
+  - Added a regression proving Enter immediately submits the pending query exactly once.
+
+### Proof / checks run
+
+- Red regression: the new Enter test failed with `controller.flush is not a function` before implementation.
+- Focused frontend search/toolbar tests: 6/6 passed after implementation.
+- `rtk npm --prefix webmail-frontend test`: 43/43 passed.
+- `rtk npm --prefix webmail-frontend run lint`: passed with zero warnings.
+- `rtk npm --prefix webmail-frontend run build`: TypeScript and Vite production build passed.
+- Deployment comparison: `rsync -naci --delete webmail-frontend/dist/ /var/www/openmailstack/` reports the expected bundle differences; no production files were changed.
+
+### Acceptance criteria
+
+- [x] The live failure is traced to an exact deployed interaction path rather than inferred from repository code.
+- [x] Pressing Enter submits a pending subject or other search immediately without a duplicate delayed request.
+- [x] Debounced typing and immediate clear behavior remain covered.
+- [x] Frontend tests, lint, and production build pass.
+- [ ] Production remains unchanged until deployment is explicitly authorized.
+
+### Risks / notes
+
+- Production search remains broken because it still serves the old bundle.
+- No production mailbox, service, index, schema, configuration, or deployed artifact changed during diagnosis.
+- `origin/main` remains unchanged until push authorization is explicit.
+
+### Next recommended task
+
+Perform a guarded production deployment of the committed search repair, verify exact deployed artifacts, then validate authenticated subject searches through Enter and debounce in both current-folder and all-mail scopes while watching service logs and preserving a tested rollback.

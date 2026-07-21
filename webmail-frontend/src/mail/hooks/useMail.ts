@@ -523,6 +523,12 @@ export function useMail(_opts: UseMailOptions) {
     searchInputControllerRef.current?.update(query);
   }, []);
 
+  const submitSearchQuery = useCallback(() => {
+    if (searchInputControllerRef.current?.flush()) return;
+    if (!searchQuery.trim()) clearSearch();
+    else void doSearch(searchQuery, searchScope, searchField);
+  }, [clearSearch, doSearch, searchField, searchQuery, searchScope]);
+
   const changeSearchField = useCallback((field: SearchField) => {
     setSearchField(field);
     searchInputControllerRef.current?.cancel();
@@ -622,7 +628,7 @@ export function useMail(_opts: UseMailOptions) {
     mailLowestUid, mailMoreAvailable,
     mailLoading, isRefreshing, loadingOlderMessages, mailPaginationError,
     mailUndo, setMailUndo, undoSendId, cancelSendUndo,
-    searchQuery, setSearchQuery, updateSearchQuery, resetSearchState, clearSearch, searchField, setSearchField, changeSearchField,
+    searchQuery, setSearchQuery, updateSearchQuery, submitSearchQuery, resetSearchState, clearSearch, searchField, setSearchField, changeSearchField,
     searchScope, setSearchScope, changeSearchScope, isSearchActive, setIsSearchActive,
     searchLoading, searchError, searchInfo,
     mailError, setMailError,

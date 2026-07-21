@@ -12,6 +12,7 @@ interface MailToolbarProps {
   selectionDisabled: boolean;
   activeFolder?: string;
   onSearchChange: (q: string) => void;
+  onSearchSubmit: () => void;
   onSearchFieldChange: (field: SearchField) => void;
   onSearchScopeChange: (scope: SearchScope) => void;
   onClearSearch: () => void;
@@ -31,7 +32,7 @@ const SEARCH_HINTS = [
   { syntax: 'after:2026-01-01', desc: 'Messages after date' },
 ];
 
-export function MailToolbar({ selectedCount, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, activeFolder, onSearchChange, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMarkAllRead }: MailToolbarProps) {
+export function MailToolbar({ selectedCount, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, activeFolder, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMarkAllRead }: MailToolbarProps) {
   const allSelected = selectedCount > 0 && selectedCount === totalCount;
   const [showHints, setShowHints] = useState(false);
 
@@ -43,6 +44,7 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, searchFiel
         <input type="checkbox" checked={allSelected} onChange={onSelectAll} title={selectionDisabled ? 'Bulk selection is unavailable across folders' : 'Select all'} disabled={selectionDisabled} />
         <input type="text" className="glass-input" placeholder="Search messages..."
           value={searchQuery} onChange={(e) => onSearchChange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSearchSubmit(); } }}
           onFocus={() => setShowHints(true)}
           onBlur={() => setTimeout(() => setShowHints(false), 200)}
           style={{ flex: 1, minWidth: 160, fontSize: '0.85rem' }} />

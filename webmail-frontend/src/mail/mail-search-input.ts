@@ -14,11 +14,13 @@ export function createMailSearchInputController({
   cancel = timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
 }: MailSearchInputControllerOptions) {
   let pendingTimer: unknown = null;
+  let pendingQuery: string | null = null;
 
   const cancelPending = () => {
     if (pendingTimer === null) return;
     cancel(pendingTimer);
     pendingTimer = null;
+    pendingQuery = null;
   };
 
   return {
@@ -31,10 +33,22 @@ export function createMailSearchInputController({
         return;
       }
 
+      pendingQuery = query;
       pendingTimer = schedule(() => {
+        const queryToSearch = pendingQuery;
         pendingTimer = null;
-        onSearch(query);
+        pendingQuery = null;
+        if (queryToSearch !== null) onSearch(queryToSearch);
       }, delayMs);
+    },
+    flush() {
+      if (pendingQuery === null) return false;
+      const queryToSearch = pendingQuery;
+      if (pendingTimer !== null) cancel(pendingTimer);
+      pendingTimer = null;
+      pendingQuery = null;
+      onSearch(queryToSearch);
+      return true;
     },
     cancel: cancelPending,
   };

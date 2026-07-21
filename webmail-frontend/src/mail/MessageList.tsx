@@ -194,6 +194,7 @@ export function MessageList({ mail, density }: MessageListProps) {
         isSearchActive={mail.isSearchActive}
         selectionDisabled={crossFolderSearch}
         onSearchChange={mail.updateSearchQuery}
+        onSearchSubmit={mail.submitSearchQuery}
         onSearchFieldChange={mail.changeSearchField}
         onSearchScopeChange={mail.changeSearchScope}
         onClearSearch={mail.clearSearch}

@@ -60,6 +60,29 @@ test('mail search waits for typing to pause and clears immediately', () => {
   assert.equal(pending.size, 0);
 });
 
+test('mail search submits the pending query immediately when Enter is pressed', () => {
+  const { createMailSearchInputController } = loadTypeScriptModule('../src/mail/mail-search-input.ts');
+  const pending = new Map();
+  const searchedQueries = [];
+  let nextTimer = 1;
+  const controller = createMailSearchInputController({
+    onQueryChange: () => undefined,
+    onSearch: query => searchedQueries.push(query),
+    schedule: callback => {
+      const timer = nextTimer++;
+      pending.set(timer, callback);
+      return timer;
+    },
+    cancel: timer => pending.delete(timer),
+  });
+
+  controller.update('specific subject');
+  assert.equal(controller.flush(), true);
+  assert.deepEqual(searchedQueries, ['specific subject']);
+  assert.equal(pending.size, 0);
+  assert.equal(controller.flush(), false);
+});
+
 test('mail search sends every option and distinguishes folder from all-mail scope', async () => {
   const { searchMessages } = loadTypeScriptModule('../src/shared/api.ts');
   const originalFetch = global.fetch;
@@ -144,6 +167,7 @@ test('mail toolbar exposes field and folder-scope controls', () => {
     selectionDisabled: false,
     activeFolder: 'Projects',
     onSearchChange: () => undefined,
+    onSearchSubmit: () => undefined,
     onSearchFieldChange: () => undefined,
     onSearchScopeChange: () => undefined,
     onClearSearch: () => undefined,

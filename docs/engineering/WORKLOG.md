@@ -6190,3 +6190,55 @@ Diagnose the report that entering a specific subject and pressing Enter in produ
 ### Next recommended task
 
 Perform a guarded production deployment of the committed search repair, verify exact deployed artifacts, then validate authenticated subject searches through Enter and debounce in both current-folder and all-mail scopes while watching service logs and preserving a tested rollback.
+
+## 2026-07-21 — Webmail search production rollout
+
+Agent/tool: Codex
+Branch: `main`
+Starting git state: clean, two commits ahead of `origin/main`
+Ending git state: clean and synchronized with `origin/main` before this deployment-record commit
+
+### Selected task
+
+Push commits `04fe82ce` and `fa63f7e6`, deploy the complete Webmail search repair to production behind a recoverable snapshot, and prove that the live bundle now submits Enter searches.
+
+### Deployment
+
+- Reran the release gates on the exact commit state, then pushed `main` from `99ea81c0` through `fa63f7e6`.
+- Created root-only rollback directory `/var/backups/openmailstack/search-fa63f7e6-20260721T095532Z` before any live write.
+  - `backend-src-before.tar.gz`: SHA-256 `678ac192262687b93b041ca33de25b90adf46613f729a83c1f515549ff215e6f`.
+  - `webroot-before.tar.gz`: SHA-256 `7f5f7e093f1f86bc7e7e60d79abebf3d1dd99b0c128e44b16ef07b90c5102b4e`.
+- Synchronized only the affected backend `api`, `imap`, and `search-worker` source/generated artifacts with `openmailstack:openmailstack` ownership and `0644` modes, then restarted only `openmailstack.service`.
+- Deployed the tested frontend through `functions/deploy_webmail_frontend.sh`, which removed stale hashed assets and normalized the webroot to root-owned `0755/0644` modes.
+- Did not rewrite Nginx, service environment, secrets, mailbox data, search rows, or unrelated service configuration.
+
+### Proof / checks run
+
+- Pre-deploy backend: 185/188 tests passed, zero failed, with three expected optional database skips; TypeScript build passed.
+- Pre-deploy frontend: 43/43 tests passed; ESLint and production build passed.
+- Repository lint, integration suite, and `git diff --check` passed.
+- Repository/live SHA-256 hashes match for `api.js`, `imap.js`, `search-worker.js`, and frontend `index.html`.
+- Production `index.html` now loads `/assets/index-BemdpK3F.js`; the public mail route `/assets/routes-TXIMHkcp.js` returns `200` and contains both `onSearchSubmit:e.submitSearchQuery` and an Enter `onKeyDown` handler.
+- `/api/auth/me` and unauthenticated `/api/messages/search` both return the expected `401`; ActiveSync OPTIONS returns `200`.
+- `mail_search_worker_state.uid_validity` exists as nullable `varchar(32)`.
+- `openmailstack.service` is active/running with `NRestarts=0`; the post-restart warning journal is empty.
+- `nginx -t` and the complete staging smoke pass, including core services, listeners, configuration, Rspamd functional scan, TLS, web/API boundaries, and DKIM assets.
+
+### Acceptance criteria
+
+- [x] Both search commits are pushed to `origin/main`.
+- [x] Recoverable, checksum-verified backend and webroot snapshots predate live mutation.
+- [x] Exact affected backend and frontend artifacts are live with safe ownership and modes.
+- [x] The public bundle contains the Enter-submit path that was absent from the reported production build.
+- [x] Service, schema, route, protocol, log, and staging gates pass.
+- [ ] Authenticated subject-search results require confirmation from the user's existing browser session because no smoke mailbox credential is available in the deployment environment.
+
+### Risks / notes
+
+- The search index is an accelerator; incomplete coverage causes bounded live IMAP reconciliation, so a first broad all-mail query may be slower than a complete-index query.
+- The additive nullable `uid_validity` column already existed before the physical user retry; no production schema write was needed during this deployment.
+- Rollback restores the prior runtime/webroot. Search-index rows are derived cache data and no mailbox content was changed.
+
+### Next recommended task
+
+Have the user retry an exact subject search in the current folder and all-mail scopes. If both return expected messages, close the physical gate and proceed to Rule Workbench Phase 1 read-only preview.

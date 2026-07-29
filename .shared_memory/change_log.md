@@ -1227,3 +1227,10 @@ Future entry template:
 - Mobile uses a labelled, grouped section picker generated from the same Settings navigation model; desktop retains its sidebar.
 - A focused regression covers the shared navigation model, accessible picker, route selection, and responsive CSS.
 - Authenticated Playwright verified full-width 390×844 content, no overflow, and a Signatures route transition without changing any setting; the 1440×900 sidebar layout remains intact.
+
+## 2026-07-29 — Admin Mobile Drawer Legibility
+
+- The Admin mobile drawer now overrides its translucent desktop treatment with an opaque theme surface, keeps the dimming overlay, and adds a side shadow.
+- A dedicated Close Admin menu control, labelled navigation, and expanded/control semantics make the drawer state explicit.
+- Closed mobile drawers use `visibility: hidden`, preventing their off-canvas links from remaining keyboard/accessibility targets.
+- Authenticated Playwright verified all 14 links, opaque 390×844 presentation, explicit close, Branding navigation, no overflow, and unchanged 1440×900 static-sidebar behavior without mutating Admin state.

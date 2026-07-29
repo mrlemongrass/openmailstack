@@ -71,6 +71,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
       {open && (
         <div
           onClick={onClose}
+          aria-hidden="true"
           style={{
             position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,0.4)',
             display: 'none',
@@ -78,7 +79,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           className="sidebar-overlay"
         />
       )}
-      <aside style={{
+      <aside id="admin-navigation" style={{
         width: 240,
         minWidth: 240,
         height: '100%',
@@ -91,10 +92,26 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
         transition: 'transform 0.2s ease',
         zIndex: 100,
       }} className={`admin-sidebar${open ? ' open' : ''}`}>
-        <div style={{ padding: '0 16px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: 8 }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 12px 12px 16px',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          marginBottom: 8,
+        }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Admin Panel</h2>
+          <button
+            type="button"
+            className="btn btn-secondary admin-sidebar-close"
+            aria-label="Close Admin menu"
+            onClick={onClose}
+            style={{ display: 'none', padding: 6 }}
+          >
+            <X size={18} />
+          </button>
         </div>
-        <nav style={{ flex: 1 }}>
+        <nav aria-label="Admin sections" style={{ flex: 1 }}>
           {NAV_ITEMS.map(item => (
             <NavLink
               key={item.path}
@@ -146,8 +163,11 @@ function AdminLayout() {
       }}>
         {/* Mobile menu toggle */}
         <button
+          type="button"
           className="btn btn-secondary sidebar-toggle"
           onClick={() => setSidebarOpen(v => !v)}
+          aria-expanded={sidebarOpen}
+          aria-controls="admin-navigation"
           style={{
             display: 'none',
             marginBottom: 12,
@@ -170,14 +190,21 @@ function AdminLayout() {
             top: 0;
             bottom: 0;
             transform: translateX(-100%);
+            visibility: hidden;
+            background: var(--surface-color) !important;
+            box-shadow: 8px 0 28px rgba(0, 0, 0, 0.36);
           }
           .admin-sidebar.open {
             transform: translateX(0);
+            visibility: visible;
           }
           .sidebar-overlay {
             display: block !important;
           }
           .sidebar-toggle {
+            display: flex !important;
+          }
+          .admin-sidebar-close {
             display: flex !important;
           }
         }

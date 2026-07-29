@@ -6679,3 +6679,31 @@ Ending git state: focused Settings implementation, regression, audit, and memory
 ### Next task
 
 Inspect authenticated Admin desktop/mobile navigation and content for the next bounded UX defect.
+
+## 2026-07-29 — Admin mobile drawer legibility
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `a54701d`
+Ending git state: focused Admin implementation, regression, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] The open mobile Admin drawer is opaque and visually separated from the dashboard.
+- [x] The open drawer has a reachable, labelled close control.
+- [x] Closed off-canvas links are hidden from visibility and keyboard/accessibility navigation.
+- [x] All 14 Admin destinations remain available and route selection closes the drawer.
+- [x] Desktop keeps the static sidebar and the mobile layout has no horizontal overflow.
+
+### Changes and proof
+
+- The mobile `.admin-sidebar` now overrides the translucent inline desktop treatment with `var(--surface-color)`, adds a side shadow, and keeps the existing dimming overlay.
+- The drawer heading includes a dedicated Close Admin menu button. The main toggle reports `aria-expanded` and `aria-controls`, and the Admin navigation has an accessible label.
+- Closed mobile drawers now use `visibility: hidden`; opening restores visibility alongside the transform.
+- The focused regression failed against the original translucent/unlabelled drawer and passes after the repair.
+- Authenticated Playwright at 390×844 computed an opaque `rgb(17, 24, 39)` 240 px drawer with 14 links and no overflow. The close control hid it, and selecting Branding closed it and reached `/admin/branding`. At 1440×900, the static sidebar remained visible while both mobile controls were hidden.
+- No Admin setting, entitlement, service, mailbox, routing, branding, or security state was changed.
+
+### Next task
+
+Inspect Sync Setup at desktop and mobile widths, then run the final priority-batch release gates.

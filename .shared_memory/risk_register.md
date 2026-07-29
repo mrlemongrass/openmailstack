@@ -60,6 +60,7 @@ Last updated: 2026-07-29
 - ✅ Scheduler owner mobile discovery: the owner app replaces the overflowing six-tab strip with a labelled mobile section picker and stacks public booking-link actions. Fixture-backed Playwright confirms every destination, Profile selection, zero overflow, and unchanged desktop navigation.
 - ✅ Dark-login tenant-logo contrast: the unchanged uploaded mark now renders on a light, bounded brand surface with a subtle image shadow, and the Admin branding preview matches. Desktop/mobile Playwright confirms legibility and no overflow.
 - ✅ Settings mobile navigation: the fixed 220 px desktop sidebar no longer clips mobile panes. A labelled grouped picker exposes every section at 390 px, route selection and zero overflow are verified, and the desktop sidebar remains unchanged.
+- ✅ Admin mobile drawer: the off-canvas navigation now uses an opaque theme surface, a dimming overlay, explicit close control, and hidden closed state. All 14 destinations remain labelled and reachable without overflow; desktop stays static.
 
 ## Remaining High-Priority Risks
 

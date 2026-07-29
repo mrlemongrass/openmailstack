@@ -41,6 +41,17 @@ export function ContactsLayout() {
         } catch (e) { console.error('Delete failed', e); }
     };
 
+    const contactEditor = editingContact && (
+        <ContactEditModal
+            contact={editingContact}
+            onClose={() => setEditingContact(null)}
+            onSaved={() => {
+                contacts.refreshContacts();
+                contacts.setSelectedContact(null);
+            }}
+        />
+    );
+
     const contactsPanelLayout = useDefaultLayout({
         id: 'oms-contacts-v12',
         panelIds: ['contacts-sidebar', 'contacts-view'],
@@ -64,16 +75,7 @@ export function ContactsLayout() {
                             onClose={() => setShowShare(false)}
                         />
                     )}
-                    {editingContact && (
-                        <ContactEditModal
-                            contact={editingContact}
-                            onClose={() => setEditingContact(null)}
-                            onSaved={() => {
-                                contacts.refreshContacts();
-                                contacts.setSelectedContact(null);
-                            }}
-                        />
-                    )}
+                    {contactEditor}
                 </div>
             );
         }
@@ -91,7 +93,8 @@ export function ContactsLayout() {
         }
         return (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                <ContactGrid contacts={contacts} density={density} />
+                <ContactGrid contacts={contacts} density={density} isMobile onNewContact={handleNewContact} />
+                {contactEditor}
             </div>
         );
     }
@@ -148,16 +151,7 @@ export function ContactsLayout() {
                     onClose={() => setShowShare(false)}
                 />
             )}
-            {editingContact && (
-                <ContactEditModal
-                    contact={editingContact}
-                    onClose={() => setEditingContact(null)}
-                    onSaved={() => {
-                        contacts.refreshContacts();
-                        contacts.setSelectedContact(null);
-                    }}
-                />
-            )}
+            {contactEditor}
         </div>
     );
 }

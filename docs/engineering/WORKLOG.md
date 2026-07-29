@@ -6521,3 +6521,29 @@ Ending git state: focused Mail implementation, regression, audit, and memory cha
 ### Next task
 
 Repair the Contacts mobile grid and provide an obvious mobile New Contact action.
+
+## 2026-07-29 — Contacts mobile grid and creation
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `96c4af0`
+Ending git state: focused Contacts implementation, regression, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] Populated mobile Contacts renders one discoverable, full-width card per row without horizontal overflow.
+- [x] Virtualized rows use spacing appropriate to the actual mobile card height.
+- [x] The populated mobile list exposes a prominent New Contact action.
+- [x] The action opens the existing contact editor without creating or changing data.
+- [x] Desktop grid and sidebar creation behavior remain unchanged.
+
+### Changes and proof
+
+- `ContactGrid.tsx` accepts the mobile context, selects one column and a 90 px virtual-row estimate, hides the redundant mobile grid/list toggle, and adds the primary New Contact action plus mobile-aware empty-state copy.
+- `ContactsLayout.tsx` wires the mobile action to the existing editor and renders that editor from the populated list.
+- A focused regression failed against the hard-coded three-column implementation, then passed after the responsive layout and editor wiring were added.
+- Authenticated Playwright at 390×844 measured document width 390 px, two 358 px cards, and row tops at 201/291 px; the New Contact action opened the complete Create Contact modal and no contact was saved.
+
+### Next task
+
+Repair Calendar mobile month chips so the event title remains identifiable in narrow day cells.

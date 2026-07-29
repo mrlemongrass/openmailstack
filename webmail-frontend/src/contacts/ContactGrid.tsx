@@ -1,6 +1,6 @@
 import { useRef, useCallback, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Check, Trash2, Users, X } from 'lucide-react';
+import { Check, Plus, Trash2, Users, X } from 'lucide-react';
 import { ContactSkeleton } from './components/ContactSkeleton';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { useToast } from '../shared/components/Toast';
@@ -9,13 +9,15 @@ import { ScrollToTop } from '../shared/components/ScrollToTop';
 import type { useContacts } from './hooks/useContacts';
 import type { Contact } from '../shared/types';
 
-export function ContactGrid({ contacts: c, density }: {
+export function ContactGrid({ contacts: c, density, isMobile = false, onNewContact }: {
   contacts: ReturnType<typeof useContacts>;
   density: 'compact' | 'cozy' | 'comfortable';
+  isMobile?: boolean;
+  onNewContact?: () => void;
 }) {
   const { showToast } = useToast();
   const parentRef = useRef<HTMLDivElement>(null);
-  const cols = 3;
+  const cols = isMobile ? 1 : 3;
   const isListMode = c.contactViewMode === 'list';
   const rows = isListMode ? c.contacts.length : Math.ceil(c.contacts.length / cols);
   const visibleContactIds = c.contacts
@@ -32,7 +34,10 @@ export function ContactGrid({ contacts: c, density }: {
   const virtualizer = useVirtualizer({
     count: rows,
     getScrollElement: () => parentRef.current,
-    estimateSize: useCallback(() => isListMode ? 74 : density === 'compact' ? 160 : density === 'cozy' ? 190 : 220, [density, isListMode]),
+    estimateSize: useCallback(
+      () => isListMode ? 74 : isMobile ? 90 : density === 'compact' ? 160 : density === 'cozy' ? 190 : 220,
+      [density, isListMode, isMobile],
+    ),
     overscan: 3,
   });
 
@@ -59,8 +64,15 @@ export function ContactGrid({ contacts: c, density }: {
             No contacts yet
           </h3>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: 320, lineHeight: 1.5 }}>
-            Use the New Contact button in the sidebar to create your first contact, or import contacts from a vCard or CSV file.
+            {isMobile
+              ? 'Create your first contact here, or import contacts from a vCard or CSV file.'
+              : 'Use the New Contact button in the sidebar to create your first contact, or import contacts from a vCard or CSV file.'}
           </p>
+          {onNewContact && (
+            <button className="btn btn-primary" onClick={onNewContact} style={{ marginTop: 16 }}>
+              <Plus size={16} /> New Contact
+            </button>
+          )}
         </div>
       </div>
     );
@@ -86,10 +98,12 @@ export function ContactGrid({ contacts: c, density }: {
             <option value="firstLast">First Last</option>
             <option value="lastFirst">Last, First</option>
           </select>
-          <button className="btn btn-ghost" onClick={() => c.setContactViewMode(c.contactViewMode === 'grid' ? 'list' : 'grid')}
-            style={{ padding: '6px 10px' }}>
-            {c.contactViewMode === 'grid' ? 'List' : 'Grid'}
-          </button>
+          {!isMobile && (
+            <button className="btn btn-ghost" onClick={() => c.setContactViewMode(c.contactViewMode === 'grid' ? 'list' : 'grid')}
+              style={{ padding: '6px 10px' }}>
+              {c.contactViewMode === 'grid' ? 'List' : 'Grid'}
+            </button>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginRight: 'auto' }}>
@@ -109,59 +123,64 @@ export function ContactGrid({ contacts: c, density }: {
           )}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <div style={{ position: 'relative' }}>
-          <button className="btn btn-ghost" style={{ padding: '6px 10px' }}
-            onClick={() => setShowExportMenu(!showExportMenu)}>
-            Export
-          </button>
-          {showExportMenu && (
-            <div className="glass-panel" style={{
-              position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 50,
-              padding: 4, minWidth: 160, borderRadius: 'var(--radius-md)',
-            }}>
-              <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem' }}
-                onClick={() => { setShowExportMenu(false); window.open('/api/apps/contacts-export?format=vcard', '_blank'); }}>
-                Export All (vCard)
-              </button>
-              <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem' }}
-                onClick={() => { setShowExportMenu(false); window.open('/api/apps/contacts-export?format=csv', '_blank'); }}>
-                Export All (CSV)
-              </button>
-              {c.selectedContactIds.size > 0 && (
-                <>
-                  <div style={{ height: 1, background: 'var(--border-glass)', margin: '2px 8px' }} />
-                  <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem' }}
-                    onClick={() => {
-                      setShowExportMenu(false);
-                      const ids = Array.from(c.selectedContactIds).join(',');
-                      window.open(`/api/apps/contacts-export?format=vcard&ids=${ids}`, '_blank');
-                    }}>
-                    Export Selected ({c.selectedContactIds.size}) vCard
-                  </button>
-                  <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem' }}
-                    onClick={() => {
-                      setShowExportMenu(false);
-                      const ids = Array.from(c.selectedContactIds).join(',');
-                      window.open(`/api/apps/contacts-export?format=csv&ids=${ids}`, '_blank');
-                    }}>
-                    Export Selected ({c.selectedContactIds.size}) CSV
-                  </button>
-                  <div style={{ height: 1, background: 'var(--border-glass)', margin: '2px 8px' }} />
-                  <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem', color: 'var(--danger)' }}
-                    onClick={async () => {
-                      if (!confirm(`Delete ${c.selectedContactIds.size} selected contact(s)?`)) return;
-                      await bulkDeleteContacts(Array.from(c.selectedContactIds));
-                      showToast({ type: 'success', message: `${c.selectedContactIds.size} contact(s) deleted` });
-                      c.setSelectedContactIds(new Set());
-                      c.refreshContacts();
-                    }}>
-                    <Trash2 size={14} /> Delete Selected ({c.selectedContactIds.size})
-                  </button>
-                </>
-              )}
-            </div>
+          {isMobile && onNewContact && (
+            <button className="btn btn-primary" onClick={onNewContact} style={{ flex: 1 }}>
+              <Plus size={16} /> New Contact
+            </button>
           )}
-        </div>
+          <div style={{ position: 'relative' }}>
+            <button className="btn btn-ghost" style={{ padding: '6px 10px' }}
+              onClick={() => setShowExportMenu(!showExportMenu)}>
+              Export
+            </button>
+            {showExportMenu && (
+              <div className="glass-panel" style={{
+                position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 50,
+                padding: 4, minWidth: 160, borderRadius: 'var(--radius-md)',
+              }}>
+                <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem' }}
+                  onClick={() => { setShowExportMenu(false); window.open('/api/apps/contacts-export?format=vcard', '_blank'); }}>
+                  Export All (vCard)
+                </button>
+                <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem' }}
+                  onClick={() => { setShowExportMenu(false); window.open('/api/apps/contacts-export?format=csv', '_blank'); }}>
+                  Export All (CSV)
+                </button>
+                {c.selectedContactIds.size > 0 && (
+                  <>
+                    <div style={{ height: 1, background: 'var(--border-glass)', margin: '2px 8px' }} />
+                    <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem' }}
+                      onClick={() => {
+                        setShowExportMenu(false);
+                        const ids = Array.from(c.selectedContactIds).join(',');
+                        window.open(`/api/apps/contacts-export?format=vcard&ids=${ids}`, '_blank');
+                      }}>
+                      Export Selected ({c.selectedContactIds.size}) vCard
+                    </button>
+                    <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem' }}
+                      onClick={() => {
+                        setShowExportMenu(false);
+                        const ids = Array.from(c.selectedContactIds).join(',');
+                        window.open(`/api/apps/contacts-export?format=csv&ids=${ids}`, '_blank');
+                      }}>
+                      Export Selected ({c.selectedContactIds.size}) CSV
+                    </button>
+                    <div style={{ height: 1, background: 'var(--border-glass)', margin: '2px 8px' }} />
+                    <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem', color: 'var(--danger)' }}
+                      onClick={async () => {
+                        if (!confirm(`Delete ${c.selectedContactIds.size} selected contact(s)?`)) return;
+                        await bulkDeleteContacts(Array.from(c.selectedContactIds));
+                        showToast({ type: 'success', message: `${c.selectedContactIds.size} contact(s) deleted` });
+                        c.setSelectedContactIds(new Set());
+                        c.refreshContacts();
+                      }}>
+                      <Trash2 size={14} /> Delete Selected ({c.selectedContactIds.size})
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div ref={parentRef} style={{ flex: 1, overflow: 'auto', padding: 16 }}>

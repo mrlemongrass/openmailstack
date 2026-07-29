@@ -1185,3 +1185,10 @@ Future entry template:
 - A focused regression failed before the fix and now protects both the click-isolation and labelling contracts.
 - Authenticated Playwright with `localtest@housevo.us` verified mouse and Space-key selection on desktop plus 390×844 without leaving `/mail/inbox`; ordinary subject clicks still open the message.
 - No message was moved, deleted, starred, or otherwise mutated. Full release checks and deployment remain part of the final priority-backlog rollout.
+
+## 2026-07-29 — Contacts Mobile Grid and Creation
+
+- Mobile Contacts now uses one full-width virtualized card per row with a compact row estimate and no redundant grid/list toggle.
+- The populated list and empty state expose New Contact directly; the populated-list action opens the existing editor without requiring the desktop-only sidebar.
+- A focused regression covers the responsive column, row-spacing, and editor-wiring contracts.
+- Authenticated Playwright at 390×844 verified zero horizontal overflow, 358 px cards with 90 px row spacing, and editor launch without saving contact data.

@@ -1249,3 +1249,11 @@ Future entry template:
 - Contacts virtual rows measure rendered height. A 60-contact long-field fixture produced 122 px rows, 7320 px total height, no overlap, and no overflow.
 - Admin Branding preview now exactly matches custom-logo and no-login-logo branches; a blank-logo fixture rendered the original Mail fallback even with a separate app icon.
 - Settings and Scheduler share one mobile section-picker style. Focused regressions and authenticated/fixture-backed Playwright passed without mutation requests.
+
+## 2026-07-29 — Priority UI Batch Deployed
+
+- Pushed and deployed the complete priority UI batch through `d1aaa6b0`.
+- Frontend tests passed 58/58; ESLint, build, repository lint, integration, staging smoke, and `git diff --check` passed.
+- Repository/live `index.html` SHA-256 values match at `00702f30e2831de5f15c47327d8affd15348e5ad5f037be6611c83f686777e33`; checksum-mode rsync found no drift.
+- Live Playwright with `localtest@housevo.us` verified Mail, Contacts, Calendar, Notes, login, Settings, Admin, Sync Setup, and the public Scheduler booking transition at 390×844 without mutation requests or console errors. Scheduler owner navigation remained fixture-backed because that account's live entitlement is disabled.
+- Root-only rollback archive: `/var/backups/openmailstack/ui-priority-d1aaa6b0-20260729T222131Z/webroot-before.tar.gz`; SHA-256 `419752dd7e8cb9ba752390d2e5c1c65ae33bc73cd1d9c42e57d04377336605a3`.

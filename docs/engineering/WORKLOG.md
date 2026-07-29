@@ -6761,3 +6761,39 @@ Ending git state: review fixes and regressions ready for final release commit
 ### Next task
 
 Rerun all release gates, commit the review remediation, push the complete batch, and deploy with rollback evidence.
+
+## 2026-07-29 — Priority UI batch live release
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `d1aaa6b0`
+Ending git state: deployed priority UI batch with rollback and live-browser proof
+
+### Acceptance criteria
+
+- [x] All priority UI fixes and independent-review remediations are pushed to `origin/main`.
+- [x] The production frontend exactly matches the built release artifact.
+- [x] Repository gates, staging smoke, service health, and live browser checks pass.
+- [x] Live validation avoids mail, contact, calendar, note, Scheduler, Settings, and Admin mutations.
+- [x] A root-only rollback archive and checksum exist before deployment.
+
+### Release proof
+
+- Pushed the complete batch through `d1aaa6b0`, covering Mail, Contacts, Calendar, Notes, Scheduler, login branding, Settings, Admin, and Sync Setup.
+- Frontend tests passed 58/58; ESLint, production build, repository lint, integration, `git diff --check`, and the complete staging smoke passed.
+- Deployed with `functions/deploy_webmail_frontend.sh`. Repository and live `index.html` SHA-256 values match at `00702f30e2831de5f15c47327d8affd15348e5ad5f037be6611c83f686777e33`, and checksum-mode rsync reported no differences.
+- Nginx configuration passed. Nginx, OpenMailStack, Scheduler worker, Dovecot, Postfix, Rspamd, and Fail2ban were active with zero restarts.
+- Live route boundaries returned the expected statuses: root 200, unauthenticated `/api/auth/me` 401, public Scheduler 200, and ActiveSync OPTIONS 200.
+- Authenticated Playwright with `localtest@housevo.us` at 390×844 verified Mail checkbox isolation, Contacts cards, Calendar event identity, Notes creation affordances and no public signaling, Settings navigation, Admin modal focus behavior, and Sync endpoint layout.
+- Live public Scheduler Playwright selected a real slot without booking; the booking form scrolled fully into view and received focus. Scheduler owner navigation remained fixture-backed because the test account's live Scheduler entitlement is disabled.
+- Browser validation produced no console errors and sent no mutation request.
+
+### Rollback
+
+- Archive: `/var/backups/openmailstack/ui-priority-d1aaa6b0-20260729T222131Z/webroot-before.tar.gz`
+- SHA-256: `419752dd7e8cb9ba752390d2e5c1c65ae33bc73cd1d9c42e57d04377336605a3`
+- The backup directory is mode 700 and the archive is mode 600, both owned by root.
+
+### Next task
+
+Continue with the next bounded UX pass on authenticated compose/reply and event/contact creation workflows, using disposable records or explicit mutation approval for end-to-end saves.

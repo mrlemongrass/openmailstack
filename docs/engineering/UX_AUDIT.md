@@ -19,19 +19,19 @@ The desktop suite is generally coherent and usable. The largest current gaps are
 | Contacts / mobile | The virtualized grid forced three columns after the sidebar disappeared, clipping cards and removing the only New Contact action. | Mobile now renders one full-width card per virtual row, uses a compact row estimate, hides the redundant grid/list switch, and exposes a primary New Contact action that opens the editor. | At 390×844, authenticated Playwright measured a 390 px document with 358 px cards, consecutive row tops at 201/291 px, and a complete Create Contact modal opened from the populated list without saving data. |
 | Calendar / mobile | Month event chips truncated from the leading time, leaving no visible event identity. | Narrow mobile chips now lead with the event title while the full time, title, location, and recurrence context remain in the accessible label and tooltip; desktop keeps the full time-first text. | At 390 px, authenticated Playwright observed visible `Calendar Smoke Event` / `ActiveSync Calendar Smoke Event` strings in 46 px chips with complete time/location titles. At 1440 px, the rendered text retained the complete time-first presentation. |
 | Notes / mobile | The populated list had no creation action, and numeric false flags rendered as stray `0`/`00` text. Opening the editor also contacted hard-coded public WebRTC signaling endpoints by default. | Mobile now exposes New Note above populated cards, normalizes numeric flags before rendering, and enables WebRTC only when an operator explicitly configures signaling endpoints. The empty-state copy no longer promises unconfigured collaboration. | A populated 390×844 fixture showed the primary action, no numeric artifacts, no overflow, and a working editor. A fresh editor open produced zero console errors and no signaling requests; existing content still initialized through the local Yjs/Quill binding. |
+| Scheduler owner / mobile | Six owner tabs lived in an unlabelled horizontal overflow strip, hiding later destinations, while public-link actions competed for one row. | Mobile now uses a labelled section picker containing every destination and stacks the public-link actions at full width. Desktop retains the icon sidebar and inline actions. | At 390×844, Playwright confirmed the desktop tabs hidden, all six picker options visible, 328 px action columns, zero horizontal overflow, and a successful Profile transition. At 1440 px the desktop grid returned and the mobile picker was hidden. |
 
 ### Prioritized open findings
 
 | Priority | Surface | Finding | User impact | Source evidence |
 |----------|---------|---------|-------------|-----------------|
-| P2 | Scheduler owner / mobile | Six owner tabs use an unlabelled horizontal overflow region; only the first three are initially visible. Public-link actions also wrap awkwardly. | Workflows, Tools, and Profile are easy to miss, especially for first-time users. | Mobile `.scheduler-sidebar nav` uses `overflow-x: auto` without an overflow cue or alternate menu. |
 | P3 | Login / dark | The tenant logo is very low contrast against the dark login background. | Branding looks faint and can appear missing on first load. | Live login Playwright screenshot at 1440 px. |
 
 ### What is working well
 
 - Mail's desktop three-pane hierarchy, Calendar's desktop views, Contacts detail, Notes cards, and the Scheduler owner desktop are visually coherent.
 - The suite-level mobile tab bar is consistent across the audited authenticated apps.
-- Scheduler's owner event cards, public profile, and mobile booking transition are clear; the remaining Scheduler finding is owner-tab discoverability on mobile.
+- Scheduler's owner event cards, public profile, mobile navigation, and public booking transition are clear.
 
 ## Earlier Audit Summary (2026-07-02)
 

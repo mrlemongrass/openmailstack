@@ -6599,3 +6599,29 @@ Ending git state: focused Notes implementation, regressions, audit, architecture
 ### Next task
 
 Make all Scheduler owner destinations discoverable on mobile and clean up wrapped public-link actions.
+
+## 2026-07-29 — Scheduler owner mobile navigation
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `f83c39d`
+Ending git state: focused Scheduler owner implementation, regression, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] Every owner destination is visible without horizontal scrolling at 390 px.
+- [x] The control is labelled and changes the rendered owner section.
+- [x] Public booking-link actions use a clean full-width mobile layout.
+- [x] Desktop icon navigation and inline public actions remain unchanged.
+- [x] Validation does not change Scheduler entitlement, event, booking, profile, or availability data.
+
+### Changes and proof
+
+- `routes.tsx` now renders an accessible desktop navigation and a labelled mobile section select from the same six-tab model.
+- `scheduler.css` hides the correct control at each breakpoint and stacks public actions in one mobile column. The focused regression was extended after Playwright caught and proved a CSS-specificity failure in the first implementation.
+- Authenticated Playwright used a deterministic read-only Scheduler state fixture because `localtest@housevo.us` remains intentionally unentitled. At 390×844, the desktop tabs computed `display: none`, the picker computed `display: grid`, all six destinations were present, Profile rendered after selection, the public action column measured 328 px, and document width remained 390 px.
+- At 1440×900, the desktop navigation returned as a grid, the mobile picker was hidden, and public actions returned to flex layout. No owner mutation request was sent.
+
+### Next task
+
+Improve dark-login tenant-logo contrast without changing uploaded branding assets.

@@ -40,6 +40,27 @@
   background: color-mix(in srgb, var(--accent-primary) 11%, transparent);
   font-weight: 600;
 }
+.scheduler-mobile-navigation {
+  display: none;
+}
+.scheduler-mobile-navigation span {
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.scheduler-mobile-navigation select {
+  width: 100%;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--surface-color);
+  color: var(--text-primary);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
 .scheduler-main {
   overflow: auto;
   padding: 24px clamp(18px, 4vw, 48px) 48px;
@@ -1144,6 +1165,14 @@
     white-space: nowrap;
     border-radius: var(--radius-md) var(--radius-md) 0 0;
   }
+  .scheduler-sidebar .scheduler-desktop-navigation {
+    display: none;
+  }
+  .scheduler-mobile-navigation {
+    display: grid;
+    gap: 5px;
+    padding-bottom: 10px;
+  }
   .scheduler-main {
     overflow: visible;
     padding: 18px 14px 90px;
@@ -1158,7 +1187,7 @@
   }
   .scheduler-public-actions {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
   .scheduler-public-actions .btn {
     justify-content: center;

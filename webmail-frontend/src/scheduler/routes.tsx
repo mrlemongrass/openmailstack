@@ -397,7 +397,18 @@ export function SchedulerRoutes() {
     { id: 'profile', label: 'Profile', icon: Settings2 },
   ];
   return <div className="scheduler-app">
-    <aside className="scheduler-sidebar"><div className="scheduler-app-title"><CalendarClock size={21} /><strong>Scheduler</strong></div><nav>{tabs.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}><item.icon size={17} />{item.label}</button>)}</nav></aside>
+    <aside className="scheduler-sidebar">
+      <div className="scheduler-app-title"><CalendarClock size={21} /><strong>Scheduler</strong></div>
+      <nav className="scheduler-desktop-navigation" aria-label="Scheduler sections">
+        {tabs.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}><item.icon size={17} />{item.label}</button>)}
+      </nav>
+      <label className="scheduler-mobile-navigation">
+        <span>Scheduler section</span>
+        <select aria-label="Scheduler section" value={tab} onChange={event => setTab(event.target.value as SchedulerTab)}>
+          {tabs.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
+      </label>
+    </aside>
     <main className="scheduler-main">
       {error && <ErrorBanner error={error} />}
       <section className="scheduler-public-bar" aria-label="Public booking site"><div><span>Your booking site</span><strong>{publicUrl}</strong></div><div className="scheduler-public-actions"><button className="btn btn-secondary" type="button" onClick={() => void copyLink(publicUrl, 'Booking link')}><Copy size={15} /> Copy booking link</button><a className="btn btn-primary" href={publicUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open booking site</a></div></section>

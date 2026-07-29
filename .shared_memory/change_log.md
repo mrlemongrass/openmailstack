@@ -1206,3 +1206,10 @@ Future entry template:
 - Hard-coded public Yjs signaling endpoints were removed. WebRTC collaboration is now disabled by default and opt-in through `VITE_OMS_NOTES_SIGNALING_URLS`; the local Yjs/Quill editor remains active.
 - Regressions cover mobile creation, boolean rendering, and the no-public-signaling default.
 - Authenticated Playwright with GET-only fixtures verified the 390×844 editor flow, no overflow, no signaling requests or editor console errors, and existing-content initialization without mutating note data.
+
+## 2026-07-29 — Scheduler Owner Mobile Navigation
+
+- The overflowing mobile owner-tab row was replaced by a labelled section picker generated from the same six-destination model as desktop.
+- Mobile public-link actions now stack at full width; desktop keeps its icon sidebar and inline actions.
+- A focused regression covers control visibility, every option, and the mobile action grid. Playwright caught an initial CSS-specificity miss, which is now included in the regression.
+- Authenticated fixture-backed Playwright verified 390×844 selection/overflow and 1440×900 desktop preservation without changing Scheduler data or entitlement.

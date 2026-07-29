@@ -6707,3 +6707,31 @@ Ending git state: focused Admin implementation, regression, audit, and memory ch
 ### Next task
 
 Inspect Sync Setup at desktop and mobile widths, then run the final priority-batch release gates.
+
+## 2026-07-29 — Sync mobile endpoint layout
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `429e378`
+Ending git state: focused Sync implementation, regression, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] Mobile setup cards gain enough width for protocol endpoints and descriptions.
+- [x] Long CalDAV/CardDAV values wrap without passing under copy controls.
+- [x] Each copy action has a protocol-specific accessible name.
+- [x] The mobile status header wraps cleanly and the page has no horizontal overflow.
+- [x] Desktop retains its established 640 px panel and 40 px padding.
+
+### Changes and proof
+
+- `SyncView` and `SyncRow` now expose named layout hooks while retaining the existing component and behavior.
+- The mobile Sync page uses 12 px outer and 16 px panel gutters, while the header wraps and endpoint text uses `overflow-wrap: anywhere`.
+- Copy buttons now report names such as Copy Calendar (CalDAV) rather than five identical Copy to clipboard labels.
+- The focused regression failed against the original inline-only desktop layout and passes after the responsive contract was added.
+- Authenticated Playwright at 390×844 measured a 366 px panel and five 332 px rows; each endpoint's right edge was x=298 before its copy action at x=310, all copy labels were distinct, and document width stayed 390 px. At 1440×900, the 640 px panel, 40 px padding, nowrap header, and 558 px rows remained unchanged.
+- Copy interaction was exercised without changing account, mailbox, calendar, contact, device, or server state.
+
+### Next task
+
+Run the complete frontend/repository test gates, independent Standards and Spec review, then push, back up, deploy, and verify the full priority batch live.

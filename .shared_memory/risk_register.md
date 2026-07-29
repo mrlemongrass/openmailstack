@@ -61,6 +61,7 @@ Last updated: 2026-07-29
 - ✅ Dark-login tenant-logo contrast: the unchanged uploaded mark now renders on a light, bounded brand surface with a subtle image shadow, and the Admin branding preview matches. Desktop/mobile Playwright confirms legibility and no overflow.
 - ✅ Settings mobile navigation: the fixed 220 px desktop sidebar no longer clips mobile panes. A labelled grouped picker exposes every section at 390 px, route selection and zero overflow are verified, and the desktop sidebar remains unchanged.
 - ✅ Admin mobile drawer: the off-canvas navigation now uses an opaque theme surface, a dimming overlay, explicit close control, and hidden closed state. All 14 destinations remain labelled and reachable without overflow; desktop stays static.
+- ✅ Sync mobile endpoints: reduced mobile gutters and wrapping keep long CalDAV/CardDAV values clear of their copy actions. All five copy controls have distinct protocol names, no overflow occurs at 390 px, and desktop geometry is unchanged.
 
 ## Remaining High-Priority Risks
 

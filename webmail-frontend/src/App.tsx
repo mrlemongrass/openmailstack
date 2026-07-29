@@ -50,7 +50,7 @@ function SyncRow({ icon: Icon, label, host, detail }: SyncRowProps) {
   };
 
   return (
-    <div style={{
+    <div className="sync-row" style={{
       display: 'flex', alignItems: 'center', gap: 12, padding: 14,
       borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.02)',
       border: '1px solid var(--border-glass)',
@@ -64,7 +64,7 @@ function SyncRow({ icon: Icon, label, host, detail }: SyncRowProps) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{label}</div>
-        <div style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--text-primary)', marginTop: 2 }}>
+        <div className="sync-row-host" style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--text-primary)', marginTop: 2 }}>
           {host}
         </div>
         <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: 2 }}>
@@ -72,10 +72,12 @@ function SyncRow({ icon: Icon, label, host, detail }: SyncRowProps) {
         </div>
       </div>
       <button
+        type="button"
         onClick={handleCopy}
-        className="btn btn-ghost"
+        className="btn btn-ghost sync-row-copy"
         style={{ padding: '6px 10px', fontSize: '0.75rem', flexShrink: 0 }}
         title="Copy to clipboard"
+        aria-label={`Copy ${label}`}
       >
         {copied ? <Check size={14} style={{ color: '#10b981' }} /> : <Copy size={14} />}
       </button>
@@ -177,9 +179,9 @@ function SyncView() {
   ];
 
   return (
-    <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
-      <div className="glass-panel" style={{ maxWidth: 640, margin: '0 auto', padding: 40 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+    <div className="sync-view" style={{ flex: 1, overflow: 'auto' }}>
+      <div className="glass-panel sync-panel" style={{ maxWidth: 640, margin: '0 auto' }}>
+        <div className="sync-header" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
           <h2 style={{ margin: 0 }}>Sync Setup</h2>
           <span style={{
             fontSize: '0.7rem', padding: '2px 10px', borderRadius: 999,

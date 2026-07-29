@@ -1234,3 +1234,10 @@ Future entry template:
 - A dedicated Close Admin menu control, labelled navigation, and expanded/control semantics make the drawer state explicit.
 - Closed mobile drawers use `visibility: hidden`, preventing their off-canvas links from remaining keyboard/accessibility targets.
 - Authenticated Playwright verified all 14 links, opaque 390×844 presentation, explicit close, Branding navigation, no overflow, and unchanged 1440×900 static-sidebar behavior without mutating Admin state.
+
+## 2026-07-29 — Sync Mobile Endpoint Layout
+
+- Mobile Sync Setup now uses narrower page/panel gutters, a wrapping status header, and endpoint text that wraps instead of passing under copy controls.
+- The five copy buttons now have distinct protocol-specific accessible names.
+- A focused regression covers the responsive layout hooks, wrapping, mobile geometry, and copy labelling.
+- Authenticated Playwright verified five 332 px rows inside a 366 px panel at 390×844, clear endpoint/copy separation, no overflow, and unchanged 1440×900 desktop geometry without mutating suite data.

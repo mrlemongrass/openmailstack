@@ -512,6 +512,18 @@ body {
   overflow: auto;
 }
 
+.sync-view {
+  padding: 20px;
+}
+
+.sync-panel {
+  padding: 40px;
+}
+
+.sync-row-host {
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 767px) {
   .settings-layout {
     flex-direction: column;
@@ -551,6 +563,22 @@ body {
 
   .settings-layout-content .settings-content-stack {
     padding: 12px;
+  }
+
+  .sync-view {
+    padding: 12px;
+  }
+
+  .sync-panel {
+    padding: 20px 16px;
+  }
+
+  .sync-header {
+    flex-wrap: wrap;
+  }
+
+  .sync-header .btn {
+    margin-left: 0 !important;
   }
 }
 

@@ -9,6 +9,19 @@ const { renderToStaticMarkup } = require('react-dom/server');
 
 const componentPath = path.resolve(__dirname, '../src/scheduler/WorkflowsPanel.tsx');
 
+const loadTypeScriptModule = (relativePath) => {
+  const sourcePath = path.resolve(__dirname, relativePath);
+  const source = fs.readFileSync(sourcePath, 'utf8');
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    fileName: sourcePath,
+  }).outputText;
+  const testModule = new Module(sourcePath, module);
+  testModule.paths = module.paths;
+  testModule._compile(compiled, sourcePath);
+  return testModule.exports;
+};
+
 test('workflow builder presents the complete Phase 3 automation surface', () => {
   const source = fs.readFileSync(componentPath, 'utf8');
   const compiled = ts.transpileModule(source, {
@@ -46,4 +59,36 @@ test('workflow builder presents the complete Phase 3 automation surface', () => 
   assert.match(adminSource, /Scheduler delivery metrics/);
   assert.match(adminSource, /Before you enable this provider/);
   assert.match(adminSource, /Last tested/);
+});
+
+test('public booking transitions mobile guests from a selected slot to the details step', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../src/scheduler/PublicScheduler.tsx'), 'utf8');
+  const { transitionMobileBookingForm } = loadTypeScriptModule('../src/scheduler/public-booking-transition.ts');
+  const calls = [];
+  const bookingForm = {
+    scrollIntoView: options => calls.push(['scroll', options]),
+    focus: options => calls.push(['focus', options]),
+  };
+
+  assert.match(source, /const bookingFormRef = useRef<HTMLFormElement>\(null\)/);
+  assert.match(source, /if \(!selectedStart\) return;[\s\S]*requestAnimationFrame[\s\S]*transitionMobileBookingForm\(bookingFormRef\.current/);
+  assert.match(source, /ref=\{bookingFormRef\}[\s\S]*tabIndex=\{-1\}[\s\S]*aria-labelledby="public-booking-details-title"/);
+
+  assert.equal(transitionMobileBookingForm(bookingForm, () => ({ matches: false })), false);
+  assert.deepEqual(calls, []);
+
+  assert.equal(transitionMobileBookingForm(bookingForm, query => ({
+    matches: query === '(max-width: 680px)',
+  })), true);
+  assert.deepEqual(calls, [
+    ['scroll', { behavior: 'smooth', block: 'start' }],
+    ['focus', { preventScroll: true }],
+  ]);
+
+  calls.length = 0;
+  assert.equal(transitionMobileBookingForm(bookingForm, () => ({ matches: true })), true);
+  assert.deepEqual(calls, [
+    ['scroll', { behavior: 'auto', block: 'start' }],
+    ['focus', { preventScroll: true }],
+  ]);
 });

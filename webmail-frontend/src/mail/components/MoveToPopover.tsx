@@ -34,7 +34,7 @@ export function MoveToPopover({ folders, onMove, onClose, align = 'left' }: Move
           onClose();
         }
       }}>
-      <div className="glass-panel" style={{ padding: 8, maxHeight: 300, overflow: 'auto' }}>
+      <div className="glass-panel move-to-popover-panel" style={{ padding: 8, maxHeight: 300, overflow: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', marginBottom: 4 }}>
           <Search size={14} style={{ color: 'var(--text-secondary)' }} />
           <input ref={filterRef} className="glass-input" aria-label="Filter folders" placeholder="Filter folders..." value={filter}

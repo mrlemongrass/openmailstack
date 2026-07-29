@@ -309,8 +309,15 @@ test('move picker renders destinations and completes a selected-folder workflow'
 
   assert.match(markup, /role="dialog"/);
   assert.match(markup, /aria-label="Filter folders"/);
+  assert.match(markup, /class="glass-panel move-to-popover-panel"/);
   assert.match(markup, />INBOX<\/button>/);
   assert.match(markup, />Projects\/2026<\/button>/);
+
+  const styles = fs.readFileSync(path.resolve(__dirname, '../src/index.css'), 'utf8');
+  assert.match(
+    styles,
+    /\.move-to-popover-panel\s*\{[^}]*background:\s*var\(--surface-color\);[^}]*backdrop-filter:\s*none;/s,
+  );
 
   const { selectMoveDestination } = loadTypeScriptModule('../src/mail/components/move-picker-selection.ts');
   selectMoveDestination('Projects/2026', props.onMove, props.onClose);

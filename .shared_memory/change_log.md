@@ -1151,3 +1151,21 @@ Future entry template:
 - Deployed: Commits `8a3befe8`, `73a7ec2c`, and `4b0eb69d` are pushed and live with exact affected-artifact hashes, normalized `0644` backend modes, a complete frontend checksum match, active zero-restart service state, clean post-restart diagnostics, Nginx/API/ActiveSync boundaries, and full staging smoke.
 - Worker: The first final cycle completed in 33.6 seconds, certified two available user snapshots, and reported no failure or overlap. Continue monitoring cycle duration before the installation approaches the five-minute interval.
 - Rollback: `/var/backups/openmailstack/search-perf-73a7ec2-20260721T133522Z`; backend archive SHA-256 `7df90ef57470ce1e14462755b4c63c9d8fd8ab4f329a86da1ca00ae738dd34d9`, webroot archive SHA-256 `01b3d01be972f30a5475771b3a9a682761a789e348dfedc3a52a7c896ccaf636`.
+
+## 2026-07-29 — Suite Playwright Audit and Mail Move Surface
+
+- Audited Mail, Calendar, Contacts, Notes, and Scheduler at desktop and mobile widths. Live public/login routes were read-only; the initial authenticated pass used deterministic Playwright API fixtures and was followed by read-only validation with the established `localtest@housevo.us` admin test account.
+- Fixed the Mail Move-to-folder picker by adding a dedicated opaque `var(--surface-color)` panel. The rest of the glass design system remains unchanged.
+- Added a regression for the picker class and opacity contract. Frontend 47/47 tests, ESLint, production build, and diff hygiene passed.
+- Playwright verified opaque dark, light, and high-contrast backgrounds plus filter focus, filtering, and Escape dismissal.
+- Recorded the next UI risks in `docs/engineering/UX_AUDIT.md` and `risk_register.md`: public Scheduler mobile booking-form visibility, Mail checkbox navigation bubbling, Contacts mobile clipping/create access, Calendar event-title truncation, Notes mobile creation/numeric flags, Scheduler tab discoverability, and login logo contrast.
+- Not deployed. Generated Playwright evidence remains local under ignored `output/playwright/`.
+
+## 2026-07-29 — Scheduler Mobile Booking Transition
+
+- Selecting a public Scheduler slot at widths up to 680 px now scrolls the labelled booking-details form into view and focuses its container without opening a text field.
+- The scroll is smooth by default, immediate for `prefers-reduced-motion`, and a no-op on desktop.
+- Added a focused behavioral regression covering desktop no-op, mobile and reduced-motion transitions, scroll alignment, focus, render-frame wiring, and the accessible label.
+- Playwright verified the real public Discovery Call page at 390×844, reduced motion, and 1440×900 without submitting a booking. Read-only login confirmed that `localtest@housevo.us` is an Admin-authorized test account; its Scheduler entitlement remains disabled.
+- Frontend 48/48 tests, ESLint, production build, repository lint/integration, memory hygiene, and diff hygiene passed.
+- Not deployed. The next highest-value UI fix is Mail checkbox click propagation.

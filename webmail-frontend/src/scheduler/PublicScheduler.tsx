@@ -4,6 +4,7 @@ import { ArrowLeft, CalendarCheck, CalendarClock, Check, Clock3, Download, Globe
 import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { useBranding } from '../branding-context';
 import { applyBookingAction, createPublicBooking, getBookingAction, getPublicEvent, getPublicProfile, getPublicSlots, getPublicPoll, joinPublicWaitlist, requestPublicVerification, requestPublicPollVerification, votePublicPoll, type SchedulerAttendee, type SchedulerEntitlement, type SchedulerEventType, type SchedulerBookingActionPolicy } from './api';
+import { transitionMobileBookingForm } from './public-booking-transition';
 import './scheduler.css';
 
 interface Slot {
@@ -154,6 +155,8 @@ function BookingEvent({ profile, event, rootDefault = false, accessToken = '' }:
     attendees: SchedulerAttendee[];
   } | null>(null);
   const bookingAttemptKeyRef = useRef(crypto.randomUUID());
+  const bookingFormRef = useRef<HTMLFormElement>(null);
+  const selectedStart = selected?.start;
   const loadSlots = useCallback(async () => {
     const start = new Date();
     const end = new Date(start.getTime() + 62 * 24 * 60 * 60 * 1000);
@@ -188,6 +191,13 @@ function BookingEvent({ profile, event, rootDefault = false, accessToken = '' }:
       document.removeEventListener('visibilitychange', refreshVisibleSlots);
     };
   }, [loadSlots]);
+  useEffect(() => {
+    if (!selectedStart) return;
+    const transitionFrame = window.requestAnimationFrame(() => {
+      transitionMobileBookingForm(bookingFormRef.current, (query) => window.matchMedia(query));
+    });
+    return () => window.cancelAnimationFrame(transitionFrame);
+  }, [selectedStart]);
   const grouped = useMemo(() => {
     const groups = new Map<string, Slot[]>();
     slots.forEach((slot) => {
@@ -456,8 +466,8 @@ function BookingEvent({ profile, event, rootDefault = false, accessToken = '' }:
           )}
         </section>
         {selected && (
-          <form className="public-booking-form" onSubmit={submit}>
-            <h2>{selected.remainingSeats === 0 ? 'Join the waitlist' : 'Your details'}</h2>
+          <form ref={bookingFormRef} className="public-booking-form" tabIndex={-1} aria-labelledby="public-booking-details-title" onSubmit={submit}>
+            <h2 id="public-booking-details-title">{selected.remainingSeats === 0 ? 'Join the waitlist' : 'Your details'}</h2>
             <p>
               {dateLabel(selected.start, timeZone, event.locale)} at {timeLabel(selected.start, timeZone, event.locale)}
             </p>

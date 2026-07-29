@@ -6360,3 +6360,100 @@ Reduce the severe Webmail search latency without adding Redis prematurely, prese
 ### Next recommended task
 
 Have the user refresh once and compare one ordinary current-folder search with one ordinary all-mail search. Use the emitted `Server-Timing`/structured source to confirm the physical request takes the certified `index` path. If worker duration trends upward, add MODSEQ-guided reconciliation; do not add Redis unless measured database concurrency, rather than query shape or IMAP work, becomes the next bottleneck.
+
+## 2026-07-29 — Suite UI audit and opaque Mail Move picker
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean; Playwright generated local ignored audit artifacts
+Ending git state: tracked implementation, test, audit, and memory changes; not committed or deployed
+
+### Selected task
+
+Fix the user-reported translucent Move-to-folder picker as the highest-confidence bounded issue, while auditing Mail, Calendar, Contacts, Notes, and Scheduler on desktop and mobile to identify the next product loops.
+
+### Acceptance criteria
+
+- [x] The Move picker uses a fully opaque, theme-aware elevated surface in dark, light, and high-contrast modes.
+- [x] Message content no longer shows through the folder rows.
+- [x] Filter autofocus, folder filtering, Escape-to-close, and selection behavior remain unchanged.
+- [x] A regression protects the dedicated surface class and opaque CSS contract.
+- [x] Cross-suite Playwright findings are prioritized and source-traced without touching authenticated production data.
+
+### Changes made
+
+- `webmail-frontend/src/mail/components/MoveToPopover.tsx` gives the picker a dedicated surface class.
+- `webmail-frontend/src/index.css` overrides the shared glass background with opaque `var(--surface-color)` and disables backdrop filtering only for this picker.
+- `webmail-frontend/test/mail-search.test.cjs` covers the rendered class and opaque CSS contract.
+- `docs/engineering/UX_AUDIT.md` records the desktop/mobile audit, resolved picker issue, prioritized open findings, and positive baseline.
+- `.shared_memory/risk_register.md` retains the high-impact follow-up flows; `.gitignore` excludes generated Playwright audit output.
+
+### Proof / checks run
+
+- The focused regression failed before implementation because the picker rendered only `glass-panel`, then passed after the dedicated class and CSS were added.
+- Playwright computed opaque picker backgrounds of `rgb(17, 24, 39)`, `rgb(255, 255, 255)`, and `rgb(5, 5, 5)` in dark, light, and high-contrast themes, each with `backdrop-filter: none`.
+- Playwright confirmed autofocus, `Projects` filtering, and Escape dismissal. Public/login routes were checked live; the initial authenticated app audit used deterministic API fixtures.
+- Frontend tests: 47/47 passed.
+- Frontend ESLint passed.
+- TypeScript/Vite production build passed.
+- `git diff --check` passed before the final documentation-only append.
+
+### Risks / notes
+
+- This cycle did not deploy or mutate production data. The live site will retain the translucent picker until the change is reviewed and deployed.
+- The initial audit used realistic fixtures for authenticated routes. The established `localtest@housevo.us` admin test account was available and was used for read-only authenticated follow-up validation in the next product loop.
+- Highest-impact remaining findings are the public Scheduler mobile form transition, Mail checkbox click propagation, and Contacts mobile grid/create flow.
+
+### Next recommended task
+
+Fix the public Scheduler mobile transition so selecting a time immediately reveals and focuses the booking form without forcing guests through the remaining slot list. Verify the flow at 390 px and desktop widths with a regression and Playwright.
+
+## 2026-07-29 — Public Scheduler mobile booking transition
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: tracked changes from the immediately preceding UI audit and Mail picker loop; no unrelated human changes
+Ending git state: clean after one local commit; not deployed
+
+### Selected task
+
+Fix the highest-priority Scheduler audit finding so a mobile guest who selects a slot is taken directly to the booking-details step instead of being left above the remaining slot list.
+
+### Acceptance criteria
+
+- [x] At widths up to 680 px, selecting a slot brings the details form into view.
+- [x] The labelled form container receives programmatic focus without moving focus into a text field or opening a mobile keyboard.
+- [x] The transition is smooth by default and immediate when the user requests reduced motion.
+- [x] Desktop slot selection preserves its existing position and selected-button focus.
+- [x] A regression protects the responsive, motion, scroll, focus, and accessible-labelling contract.
+- [x] Real-browser validation covers mobile, reduced-motion, desktop, and an authenticated test-account boundary without submitting a booking.
+
+### Changes made
+
+- `webmail-frontend/src/scheduler/PublicScheduler.tsx` tracks the selected start and labelled booking form, then schedules the transition after the form renders.
+- `webmail-frontend/src/scheduler/public-booking-transition.ts` owns the testable mobile-width, reduced-motion, scroll, and focus behavior; the form uses `tabIndex={-1}` so focus communicates the step change without entering a field.
+- `webmail-frontend/test/scheduler-workflows.test.cjs` verifies desktop no-op, smooth mobile transition, reduced-motion transition, and the component wiring/accessibility contract.
+- The UX audit and project memory now mark this finding resolved and record the established `localtest@housevo.us` account as the credential-safe authenticated UI test account.
+
+### Proof / checks run
+
+- The focused Scheduler regression failed before implementation, then passed after the transition was added.
+- At 390×844, Playwright selected a real current public slot and observed the complete 378 px details form in the viewport, the app root scrolling from 0 to 6761, and the form container as `document.activeElement`.
+- With `prefers-reduced-motion: reduce`, the same mobile transition completed immediately and kept the full form visible.
+- At 1440×900, slot selection left the form in its existing right column, did not scroll, and kept focus on the selected slot button.
+- The established `localtest@housevo.us` account authenticated successfully and was authorized for an Admin API. Its Scheduler owner route correctly reported that Scheduler is not enabled for that mailbox. No entitlement, booking, mailbox, calendar, or production data was mutated.
+- The public Scheduler page reported zero console errors during the final transition checks.
+- Frontend tests: 48/48 passed.
+- Frontend ESLint passed.
+- TypeScript/Vite production build passed.
+- Repository lint, integration, memory-hygiene, and `git diff --check` passed.
+
+### Risks / notes
+
+- This is a presentation and focus transition only; slot selection, availability, and booking submission contracts are unchanged.
+- The change is committed locally but not deployed, so the live public Scheduler will retain the old transition until a reviewed deployment.
+- The test account's Scheduler entitlement remains disabled; public booking behavior was validated against the current public Discovery Call data without creating a booking.
+
+### Next recommended task
+
+Fix Mail checkbox click propagation so bulk selection cannot open the clicked message, then verify mouse, keyboard, and mobile selection behavior.

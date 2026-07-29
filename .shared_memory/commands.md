@@ -95,6 +95,12 @@ OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integratio
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integration/activesync_contacts_smoke.sh
 ```
 
+Authenticated browser validation:
+
+- `localtest@housevo.us` is the established Admin test account for read-only UI and authorization checks.
+- Retrieve its password only from the existing secure local credential source at runtime. Never copy it into commands that print their arguments, screenshots, Playwright artifacts, documentation, commits, or shared memory.
+- Scheduler is currently disabled for this mailbox; use public Scheduler routes for guest booking-flow checks unless a task explicitly authorizes changing the entitlement.
+
 Disposable Calendar interoperability preflight (no mailbox or real database):
 
 ```bash

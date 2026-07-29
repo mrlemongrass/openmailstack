@@ -100,6 +100,13 @@ body {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
+.move-to-popover-panel {
+  background: var(--surface-color);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
+}
+
 .glass-input {
   background: rgba(0, 0, 0, 0.2);
   border: 1px solid var(--border-glass);

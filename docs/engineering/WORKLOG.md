@@ -6572,3 +6572,30 @@ Ending git state: focused Calendar implementation, regression, audit, and memory
 ### Next task
 
 Repair Notes mobile creation access and numeric false indicators.
+
+## 2026-07-29 — Notes mobile creation and safe editor signaling
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `6617509`
+Ending git state: focused Notes implementation, regressions, audit, architecture, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] A populated mobile list exposes an obvious New Note action.
+- [x] Numeric false pin/lock values never render as `0` or `00`.
+- [x] The action opens a usable editor at 390×844 without horizontal overflow or creating data.
+- [x] Default builds do not contact third-party collaboration signaling when a note opens.
+- [x] Existing note HTML still initializes through the local Yjs/Quill binding.
+
+### Changes and proof
+
+- `NotesGrid.tsx` receives the mobile context, exposes a full-width New Note action, reuses the same creation handler as the empty state, and normalizes pin/lock flags before JSX rendering.
+- `LiveNoteEditor.tsx` no longer contains hard-coded public signaling URLs. It creates a WebRTC provider only when `VITE_OMS_NOTES_SIGNALING_URLS` is explicitly configured and otherwise retains the local Yjs/Quill binding.
+- The empty state no longer advertises collaboration that is not safely configured by default; `ARCHITECTURE.md` records the verified boundary and the remaining authenticated-room requirement.
+- The focused regressions failed before the mobile wiring and signaling guard, then passed after both repairs.
+- Authenticated Playwright used deterministic GET-only note fixtures: the populated 390×844 page showed New Note with no `0`/`00` artifacts or overflow, the editor opened with zero console errors or signaling requests, and existing HTML initialized correctly. No note API mutation was sent.
+
+### Next task
+
+Make all Scheduler owner destinations discoverable on mobile and clean up wrapped public-link actions.

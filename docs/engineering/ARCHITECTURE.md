@@ -645,6 +645,8 @@ Agents should reclassify each feature as `Implemented`, `Partial`, `Planned`, or
 - Yjs/WebRTC usage
 - conflict behavior
 
+Verified 2026-07-29: the editor always uses a local Yjs/Quill binding, but creates a `WebrtcProvider` only when the build-time `VITE_OMS_NOTES_SIGNALING_URLS` list is explicitly configured. Default builds make no public signaling connection. Endpoint configuration alone does not provide authenticated room authorization; do not claim production-ready collaborative editing until a self-hosted signaling and access-control contract is implemented and validated.
+
 ### 6.5 Backend architecture
 
 Status: `Needs Verification`

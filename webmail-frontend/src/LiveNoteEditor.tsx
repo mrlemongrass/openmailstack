@@ -90,12 +90,16 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
     if (!editor) return;
 
     const ydoc = new Y.Doc();
-    const provider = new WebrtcProvider(`oms-note-${noteId}`, ydoc, {
-      signaling: ['wss://signaling.yjs.dev', 'wss://y-webrtc-signaling-eu.herokuapp.com']
-    });
+    const signalingUrls = String(import.meta.env.VITE_OMS_NOTES_SIGNALING_URLS || '')
+      .split(',')
+      .map((url) => url.trim())
+      .filter(Boolean);
+    const provider = signalingUrls.length > 0
+      ? new WebrtcProvider(`oms-note-${noteId}`, ydoc, { signaling: signalingUrls })
+      : null;
     const ytext = ydoc.getText('quill');
 
-    const binding = new QuillBinding(ytext, editor, provider.awareness);
+    const binding = new QuillBinding(ytext, editor, provider?.awareness);
 
     // Short debounce to allow CRDT sync before checking for initial content
     initTimerRef.current = setTimeout(() => {
@@ -117,7 +121,7 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
       if (initTimerRef.current) clearTimeout(initTimerRef.current);
       editor.off('text-change', handleTextChange);
       binding.destroy();
-      provider.destroy();
+      provider?.destroy();
       ydoc.destroy();
       initialized.current = false;
     };

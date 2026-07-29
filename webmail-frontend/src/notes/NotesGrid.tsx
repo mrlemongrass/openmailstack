@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Star, Lock, StickyNote, PenLine } from 'lucide-react';
+import { Star, Lock, StickyNote, PenLine, Plus } from 'lucide-react';
 import { NoteSkeleton } from './components/NoteSkeleton';
 import { SortDropdown } from './components/SortDropdown';
 import { EmptyState } from '../shared/components/EmptyState';
@@ -33,8 +33,15 @@ function parseNoteLabels(raw?: string | null): string[] {
   }
 }
 
-export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNotes> }) {
+export function NotesGrid({ notesCtx: n, isMobile = false }: {
+  notesCtx: ReturnType<typeof useNotes>;
+  isMobile?: boolean;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const openNewNote = () => {
+    n.setEditingNote({});
+    n.setIsNoteModalOpen(true);
+  };
   const filtered = n.notes.filter((note) => {
     if (n.notesView === 'pinned') {
       return note.is_pinned;
@@ -83,19 +90,26 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
       <EmptyState
         icon={PenLine}
         title="No notes yet"
-        description="Create your first note to start writing. Notes support rich text, attachments, reminders, and collaboration."
-        action={{ label: 'Create Note', onClick: () => { n.setEditingNote({}); n.setIsNoteModalOpen(true); } }}
+        description="Create your first note to start writing. Notes support rich text, attachments, and reminders."
+        action={{ label: 'Create Note', onClick: openNewNote }}
       />
     );
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)', alignItems: 'center' }}>
-        <input type="text" className="glass-input" placeholder="Search notes..."
-          value={n.notesSearchQuery} onChange={(e) => n.setNotesSearchQuery(e.target.value)}
-          style={{ flex: 1, fontSize: '0.85rem' }} />
-        <SortDropdown value={n.notesSort} onChange={n.setNotesSort} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input type="text" className="glass-input" placeholder="Search notes..."
+            value={n.notesSearchQuery} onChange={(e) => n.setNotesSearchQuery(e.target.value)}
+            style={{ flex: 1, fontSize: '0.85rem' }} />
+          <SortDropdown value={n.notesSort} onChange={n.setNotesSort} />
+        </div>
+        {isMobile && (
+          <button className="btn btn-primary" onClick={openNewNote} style={{ width: '100%' }}>
+            <Plus size={16} /> New Note
+          </button>
+        )}
       </div>
       <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: 16,
         display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16,
@@ -118,6 +132,8 @@ export function NotesGrid({ notesCtx: n }: { notesCtx: ReturnType<typeof useNote
 function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
   const { showToast } = useToast();
   const labels = parseNoteLabels(note.labels_json);
+  const isPinned = Boolean(note.is_pinned);
+  const isLocked = Boolean(note.is_locked);
 
   const stripsHtml = note.content?.replace(/<[^>]*>/g, '') || '';
   const updatedAt = note.updated_at ? new Date(note.updated_at) : null;
@@ -134,7 +150,7 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {note.title || 'Untitled'}
         </div>
-        {note.is_locked ? (
+        {isLocked ? (
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
             <Lock size={12} /> Locked Note
           </div>
@@ -161,8 +177,8 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
         padding: '4px 16px 8px', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
         <span>{relativeTime || 'Draft'}</span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          {note.is_pinned && <Star size={11} style={{ color: '#f59e0b' }} />}
-          {note.is_locked && <Lock size={11} />}
+          {isPinned && <Star size={11} style={{ color: '#f59e0b' }} />}
+          {isLocked && <Lock size={11} />}
         </div>
       </div>
       {/* Hover actions */}
@@ -201,18 +217,18 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
         )}
         {note.folder !== 'trash' && (
           <button className="btn btn-ghost btn-xs"
-            style={{ fontSize: '0.7rem', color: note.is_pinned ? '#f59e0b' : undefined }}
+            style={{ fontSize: '0.7rem', color: isPinned ? '#f59e0b' : undefined }}
             onClick={(e) => {
               e.stopPropagation();
-              const newPinned = !note.is_pinned;
+              const newPinned = !isPinned;
               n.saveNote({ id: note.id, is_pinned: newPinned ? 1 : 0 });
               showToast({ type: 'info', message: newPinned ? 'Note pinned' : 'Note unpinned' });
             }}>
-            <Star size={12} fill={note.is_pinned ? '#f59e0b' : 'none'} /> {note.is_pinned ? 'Unpin' : 'Pin'}
+            <Star size={12} fill={isPinned ? '#f59e0b' : 'none'} /> {isPinned ? 'Unpin' : 'Pin'}
           </button>
         )}
       </div>
-      {note.is_pinned ? (
+      {isPinned ? (
         <div style={{ position: 'absolute', top: 8, right: 8 }}>
           <Star size={14} fill="#f59e0b" color="#f59e0b" />
         </div>

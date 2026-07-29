@@ -26,7 +26,7 @@ export function NotesLayout() {
   if (isMobile) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <NotesGrid notesCtx={notesCtx} />
+        <NotesGrid notesCtx={notesCtx} isMobile />
         <NoteEditorModal notesCtx={notesCtx} />
       </div>
     );

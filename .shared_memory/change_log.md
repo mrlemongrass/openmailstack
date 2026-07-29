@@ -1199,3 +1199,10 @@ Future entry template:
 - Full time, title, location, and recurrence context remain in the accessible label and tooltip; desktop rendering remains time-first.
 - The focused calendar regression covers the compact presentation and responsive wiring.
 - Authenticated Playwright verified both existing event chips at 390 px and unchanged full labels at 1440 px without mutating calendar data.
+
+## 2026-07-29 — Notes Mobile Creation and Safe Signaling
+
+- Populated mobile Notes now exposes a full-width New Note action, while numeric pin/lock flags are normalized before JSX rendering so false values cannot appear as `0`/`00`.
+- Hard-coded public Yjs signaling endpoints were removed. WebRTC collaboration is now disabled by default and opt-in through `VITE_OMS_NOTES_SIGNALING_URLS`; the local Yjs/Quill editor remains active.
+- Regressions cover mobile creation, boolean rendering, and the no-public-signaling default.
+- Authenticated Playwright with GET-only fixtures verified the 390×844 editor flow, no overflow, no signaling requests or editor console errors, and existing-content initialization without mutating note data.

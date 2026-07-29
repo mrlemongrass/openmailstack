@@ -72,6 +72,8 @@ rtk bash -lc 'for q in A AAAA MX; do echo "== housevo.us $q"; dig +short @1.1.1.
 rtk bash -lc 'curl -k -sS -D - -o /dev/null -X OPTIONS https://mail.housevo.us/Microsoft-Server-ActiveSync | sed -n "1,40p"'
 ```
 
+On this Debian 13/OpenSSL 3 host, the SMTP STARTTLS certificate chain is emitted on stderr. Smoke checks must capture both stdout and stderr, then require both `BEGIN CERTIFICATE` and `Verify return code: 0 (ok)`; redirecting stderr to `/dev/null` produces a false failure.
+
 Live iPhone Exchange validation helpers:
 
 ```bash

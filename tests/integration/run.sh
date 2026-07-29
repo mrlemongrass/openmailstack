@@ -99,6 +99,17 @@ test_rspamd_milter_timeout_guards() {
     pass "Rspamd milter failures do not block SMTP greetings for default timeouts"
 }
 
+test_staging_starttls_output_guard() {
+    local staging_smoke="${PROJECT_ROOT}/tests/integration/staging_smoke.sh"
+
+    assert_contains "${staging_smoke}" 'tls_output=$(openssl s_client -starttls smtp'
+    assert_contains "${staging_smoke}" '2>&1)'
+    assert_contains "${staging_smoke}" 'grep -q "BEGIN CERTIFICATE" <<< "${tls_output}"'
+    assert_contains "${staging_smoke}" 'grep -q "Verify return code: 0 (ok)" <<< "${tls_output}"'
+    assert_not_contains "${staging_smoke}" 'openssl s_client -starttls smtp -connect "${endpoint}" -servername "${server_name}" < /dev/null 2>/dev/null'
+    pass "Staging STARTTLS captures OpenSSL 3 certificate output"
+}
+
 test_mysql_e_reduction_guards() {
     local rc_file="${PROJECT_ROOT}/functions/06_roundcube.sh"
     local dkim_file="${PROJECT_ROOT}/functions/dkim_sync.sh"
@@ -209,6 +220,7 @@ test_cert_host_validation_target
 test_postfixadmin_dns_guard_defaults
 test_secret_handling_guards
 test_rspamd_milter_timeout_guards
+test_staging_starttls_output_guard
 "${PROJECT_ROOT}/tests/integration/rspamd_health_recovery_test.sh"
 "${PROJECT_ROOT}/tests/integration/rspamd_map_sync_test.sh"
 test_mysql_e_reduction_guards

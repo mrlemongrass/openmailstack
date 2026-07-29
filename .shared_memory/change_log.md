@@ -1169,3 +1169,12 @@ Future entry template:
 - Playwright verified the real public Discovery Call page at 390×844, reduced motion, and 1440×900 without submitting a booking. Read-only login confirmed that `localtest@housevo.us` is an Admin-authorized test account; its Scheduler entitlement remains disabled.
 - Frontend 48/48 tests, ESLint, production build, repository lint/integration, memory hygiene, and diff hygiene passed.
 - Not deployed. The next highest-value UI fix is Mail checkbox click propagation.
+
+## 2026-07-29 — UI Audit Release and OpenSSL 3 STARTTLS Smoke
+
+- Pushed and deployed `f5fa2258`, containing the opaque Mail Move picker and public Scheduler mobile booking transition, as a static-frontend-only release.
+- Root-only rollback archive: `/var/backups/openmailstack/ui-audit-f5fa2258-20260729T210348Z/webroot-before.tar.gz`; SHA-256 `cc833b16fd51e1de49c26cdc6298d1660b6af37c66bd3abf5e0ffb7ac750323d`.
+- Repository/live `index.html` hashes match at `3fdc1d716b5ea51e381270ca169bc70a221a2da6a8e6b095531e7af60fb7a5aa`; services, routes, modes, and staging smoke pass.
+- Live Playwright verified the opaque picker with `localtest@housevo.us` and the real public Scheduler transition at 390×844 without moving mail or submitting a booking.
+- Corrected the staging STARTTLS probe for OpenSSL 3, which emits the certificate chain on stderr for this path. The probe now captures both streams and requires the certificate plus verification code 0; a static integration guard prevents the stderr-discard regression.
+- The next P1 was physically reproduced: a message-row checkbox click also navigates into that message.

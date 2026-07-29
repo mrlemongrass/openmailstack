@@ -44,10 +44,14 @@ check_tls_endpoint() {
     local server_name="$2"
 
     if [[ "${endpoint}" == *":587" ]]; then
-        if openssl s_client -starttls smtp -connect "${endpoint}" -servername "${server_name}" < /dev/null 2>/dev/null | grep -q "BEGIN CERTIFICATE"; then
+        local tls_output
+        local tls_status=0
+        tls_output=$(openssl s_client -starttls smtp -connect "${endpoint}" -servername "${server_name}" < /dev/null 2>&1) || tls_status=$?
+        if grep -q "BEGIN CERTIFICATE" <<< "${tls_output}" \
+            && grep -q "Verify return code: 0 (ok)" <<< "${tls_output}"; then
             pass "TLS handshake OK (STARTTLS SMTP): ${endpoint}"
         else
-            fail "TLS handshake failed (STARTTLS SMTP): ${endpoint}"
+            fail "TLS handshake failed (STARTTLS SMTP): ${endpoint} (openssl exit ${tls_status})"
         fi
     else
         if openssl s_client -connect "${endpoint}" -servername "${server_name}" < /dev/null 2>/dev/null | grep -q "BEGIN CERTIFICATE"; then

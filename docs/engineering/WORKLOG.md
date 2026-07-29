@@ -6457,3 +6457,40 @@ Fix the highest-priority Scheduler audit finding so a mobile guest who selects a
 ### Next recommended task
 
 Fix Mail checkbox click propagation so bulk selection cannot open the clicked message, then verify mouse, keyboard, and mobile selection behavior.
+
+## 2026-07-29 — UI audit production rollout and STARTTLS smoke compatibility
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Release commit: `f5fa2258`
+Starting git state: clean and one commit ahead of `origin/main`
+Ending git state: release commit pushed and deployed; staging-smoke compatibility repair ready for commit
+
+### Selected task
+
+Push and deploy the reviewed opaque Mail Move picker plus public Scheduler mobile transition behind a recoverable frontend snapshot, then prove the live UI and operational gates before continuing the prioritized UI backlog.
+
+### Deployment and rollback
+
+- Re-ran 48/48 frontend tests, ESLint, the TypeScript/Vite production build, repository lint/integration, memory hygiene, and diff hygiene on the exact release commit.
+- Pushed `f5fa2258` to `origin/main`.
+- Captured the complete pre-deploy webroot in root-only rollback archive `/var/backups/openmailstack/ui-audit-f5fa2258-20260729T210348Z/webroot-before.tar.gz`; SHA-256 `cc833b16fd51e1de49c26cdc6298d1660b6af37c66bd3abf5e0ffb7ac750323d`.
+- Deployed only the static frontend through `functions/deploy_webmail_frontend.sh`; no backend restart, schema, mailbox, calendar, booking, session, or configuration mutation was required.
+
+### Live proof
+
+- Repository and live `index.html` hashes both equal `3fdc1d716b5ea51e381270ca169bc70a221a2da6a8e6b095531e7af60fb7a5aa`; content-only frontend comparison is empty, and the webroot is normalized to root-owned `0755/0644`.
+- Nginx, `openmailstack`, and the Scheduler worker are active with `NRestarts=0`; Nginx syntax, public root, unauthenticated auth boundary, public Scheduler route, and ActiveSync OPTIONS pass.
+- Authenticated live Playwright with `localtest@housevo.us` computed the Move picker as opaque `rgb(17, 24, 39)` with no backdrop filter and confirmed filter autofocus.
+- Live public Scheduler Playwright at 390×844 selected a real slot without booking it, moved the app root to `scrollTop=6761`, kept the full 378 px details form visible, and focused the labelled form container with zero console errors.
+- The same authenticated run reproduced the next P1 exactly: clicking the first message-row checkbox selected it and navigated from `/mail/inbox` to `/mail/inbox/19`.
+
+### STARTTLS smoke correction
+
+- The first complete staging smoke falsely reported local SMTP STARTTLS failure even though a direct OpenSSL handshake negotiated TLS 1.3, verified the `mail.housevo.us` certificate, and returned verification code 0.
+- The minimized old pipeline failed five out of five times because OpenSSL 3 emitted the STARTTLS certificate chain on stderr while the script discarded stderr before searching stdout.
+- Added a red integration guard, then changed the SMTP probe to capture both streams and require both a PEM certificate and `Verify return code: 0 (ok)`. Repository integration and the complete live staging smoke now pass.
+
+### Next task
+
+Fix the reproduced Mail checkbox click propagation without changing row navigation, bulk selection, message flags, or mailbox state.

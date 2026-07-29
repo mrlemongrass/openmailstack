@@ -7,7 +7,7 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 
 ## 2026-07-29 Suite Playwright Audit
 
-The desktop suite is generally coherent and usable. The largest current gaps are mobile creation workflows, plus one Mail selection bug. Playwright evidence for this pass is stored locally under `output/playwright/` and contains no authenticated production user data.
+The desktop suite is generally coherent and usable. The largest current gaps are mobile creation workflows. Playwright evidence for this pass is stored locally under `output/playwright/` and contains no authenticated production user data.
 
 ### Resolved in this cycle
 
@@ -15,12 +15,12 @@ The desktop suite is generally coherent and usable. The largest current gaps are
 |---------|---------|------------|-------|
 | Mail | The Move-to-folder picker inherited the shared translucent glass background, allowing message content to show through in both dark and light themes. | Added a dedicated opaque, theme-aware picker surface while preserving the shared glass treatment elsewhere. | Computed backgrounds are opaque in dark (`rgb(17, 24, 39)`), light (`rgb(255, 255, 255)`), and high-contrast (`rgb(5, 5, 5)`); focus, filtering, and Escape-to-close pass in Playwright. |
 | Public Scheduler / mobile | Selecting a time left the booking form below the complete mobile slot list, with no transition to show that the next step was ready. | On viewports up to 680 px, a selected slot now scrolls the details form into view and focuses its labelled container. The transition is smooth by default and immediate when reduced motion is requested; desktop behavior is unchanged. | At 390×844, Playwright observed the full 378 px form in the viewport, `#root.scrollTop` moving from 0 to 6761, and the form receiving programmatic focus. Reduced-motion and desktop branches were verified separately with zero public-page console errors. |
+| Mail | Clicking a message-row checkbox also opened the message. | The checkbox now stops its originating click before it reaches row navigation and exposes a subject-based accessible label. | Authenticated Playwright verified mouse and Space-key toggles at desktop and 390×844 while the route remained `/mail/inbox`; clicking the message subject still opened `/mail/inbox/19`. |
 
 ### Prioritized open findings
 
 | Priority | Surface | Finding | User impact | Source evidence |
 |----------|---------|---------|-------------|-----------------|
-| P1 | Mail | Clicking a row checkbox also opens that message. | Bulk selection unexpectedly changes context and makes triage feel unreliable. | `MessageRow.tsx` stops the checkbox `change` event, but the originating `click` still reaches the row navigation handler. |
 | P1 | Contacts / mobile | The virtualized contact grid remains hard-coded to three columns while the sidebar is removed. Cards are clipped horizontally, and there is no mobile New Contact entry point. | Contacts beyond the first visible card are difficult to discover or reach; users cannot create a contact from the populated mobile list. | `ContactGrid.tsx` uses `repeat(3, 1fr)` at every width; `ContactsLayout.tsx` omits `ContactSidebar` on mobile. |
 | P2 | Calendar / mobile | Month event chips truncate from the leading time, leaving labels such as `10:00…` with no visible event title. | Users cannot identify events at a glance in the primary mobile month view. | `MonthView.tsx` renders `presentation.text` in a very narrow seven-column grid. |
 | P2 | Notes / mobile | The populated mobile list has no New Note action, and numeric false values render as stray `0`/`00` metadata. | Creation is unavailable from the common populated state and cards look broken. | `NotesLayout.tsx` omits `NotesSidebar`; `NoteCard` uses numeric `is_pinned`/`is_locked` values directly in conditional rendering. |

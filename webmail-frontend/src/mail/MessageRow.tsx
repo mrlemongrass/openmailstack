@@ -48,7 +48,9 @@ export function MessageRow({
       }}
       onClick={(e) => { if (e.shiftKey && !selectionDisabled) onSelect(message.uid, true); else onClick(message.uid); }}>
       <input type="checkbox" checked={isSelected} disabled={selectionDisabled}
+        aria-label={`Select ${message.subject || 'message'}`}
         title={selectionDisabled ? 'Open a result to act on its folder' : undefined}
+        onClick={(e) => e.stopPropagation()}
         onChange={(e) => { e.stopPropagation(); onSelect(message.uid, false); }}
         style={{ flexShrink: 0 }} />
       <button onClick={(e) => { e.stopPropagation(); onStar(message.uid); }}

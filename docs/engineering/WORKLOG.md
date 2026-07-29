@@ -6494,3 +6494,30 @@ Push and deploy the reviewed opaque Mail Move picker plus public Scheduler mobil
 ### Next task
 
 Fix the reproduced Mail checkbox click propagation without changing row navigation, bulk selection, message flags, or mailbox state.
+
+## 2026-07-29 — Mail checkbox navigation isolation
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `fb9b3b47`
+Ending git state: focused Mail implementation, regression, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] Clicking a message-row checkbox changes selection without opening the message.
+- [x] Space toggles a focused checkbox without navigation.
+- [x] The checkbox has a useful accessible label.
+- [x] Clicking the message content still opens the message.
+- [x] Desktop and 390×844 behavior are verified without mutating mailbox state.
+
+### Changes and proof
+
+- `MessageRow.tsx` now stops the checkbox `click` event as well as its `change` event and labels the control with the message subject.
+- The focused regression failed before implementation and passes after the two-line component repair.
+- Authenticated Playwright reproduced the old live route change to `/mail/inbox/19`, then verified the current code stays on `/mail/inbox` for mouse and Space-key checkbox toggles at desktop and mobile widths.
+- Clicking the subject still opens `/mail/inbox/19`, preserving ordinary row navigation.
+- No message action API was called and no mailbox content, flags, folders, or settings changed.
+
+### Next task
+
+Repair the Contacts mobile grid and provide an obvious mobile New Contact action.

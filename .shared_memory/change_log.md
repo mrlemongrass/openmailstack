@@ -1178,3 +1178,10 @@ Future entry template:
 - Live Playwright verified the opaque picker with `localtest@housevo.us` and the real public Scheduler transition at 390×844 without moving mail or submitting a booking.
 - Corrected the staging STARTTLS probe for OpenSSL 3, which emits the certificate chain on stderr for this path. The probe now captures both streams and requires the certificate plus verification code 0; a static integration guard prevents the stderr-discard regression.
 - The next P1 was physically reproduced: a message-row checkbox click also navigates into that message.
+
+## 2026-07-29 — Mail Checkbox Navigation Isolation
+
+- Message-row checkboxes now stop their click before it reaches the row navigation handler and include a subject-based accessible label.
+- A focused regression failed before the fix and now protects both the click-isolation and labelling contracts.
+- Authenticated Playwright with `localtest@housevo.us` verified mouse and Space-key selection on desktop plus 390×844 without leaving `/mail/inbox`; ordinary subject clicks still open the message.
+- No message was moved, deleted, starred, or otherwise mutated. Full release checks and deployment remain part of the final priority-backlog rollout.

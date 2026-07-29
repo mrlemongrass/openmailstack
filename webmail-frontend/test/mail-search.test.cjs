@@ -325,6 +325,13 @@ test('move picker renders destinations and completes a selected-folder workflow'
   assert.equal(closed, true);
 });
 
+test('message row checkbox selects without bubbling into message navigation', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../src/mail/MessageRow.tsx'), 'utf8');
+
+  assert.match(source, /<input type="checkbox"[\s\S]*aria-label=\{`Select \$\{message\.subject \|\| 'message'\}`\}/);
+  assert.match(source, /<input type="checkbox"[\s\S]*onClick=\{\(e\) => e\.stopPropagation\(\)\}[\s\S]*onChange=/);
+});
+
 test('mail search identities and route lookups remain folder-qualified when UIDs collide', () => {
   const {
     groupMessagesByFolder,

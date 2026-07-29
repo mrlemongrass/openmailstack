@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameMonth, isSameDay, getWeek } from 'date-fns';
 import type { useCalendar } from '../hooks/useCalendar';
 import type { CalendarEvent } from '../../shared/types';
+import { useMediaQuery } from '../../shared/hooks/useMediaQuery';
 import { calendarEventPresentation } from '../calendarTime';
 
 export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
+  const isMobile = useMediaQuery('(max-width: 767px)');
   const monthStart = startOfMonth(cal.currentDate);
   const monthEnd = endOfMonth(cal.currentDate);
   const startDate = startOfWeek(monthStart);
@@ -96,7 +98,7 @@ export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                           background: `${cal.calendars.find((c) => c.id === evt.calendarId)?.color || '#3B82F6'}33`,
                           color: 'var(--text-primary)', overflow: 'hidden',
                           textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 1 }}>
-                        {presentation.text}
+                        {isMobile ? presentation.compactText : presentation.text}
                       </div>
                       );
                     })}

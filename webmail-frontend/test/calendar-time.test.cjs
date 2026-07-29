@@ -6,6 +6,10 @@ const ts = require('typescript');
 
 const sourcePath = path.join(__dirname, '../src/calendar/calendarTime.ts');
 const source = fs.readFileSync(sourcePath, 'utf8');
+const monthViewSource = fs.readFileSync(
+  path.join(__dirname, '../src/calendar/views/MonthView.tsx'),
+  'utf8',
+);
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -66,9 +70,11 @@ test('recurring events use human labels without leaking raw RRULE text', () => {
   assert.equal(recurrenceSummary('COUNT=3;FREQ=MONTHLY'), 'Repeats every month');
   assert.equal(recurrenceSummary('FREQ=YEARLY;COUNT=2'), 'Repeats every year');
   assert.equal(presentation.text, '17:00 OMS macOS DST Weekly');
+  assert.equal(presentation.compactText, 'OMS macOS DST Weekly');
   assert.equal(presentation.title, '17:00 OMS macOS DST Weekly\nRepeats every week');
   assert.doesNotMatch(presentation.text, /FREQ=|UNTIL=/);
   assert.doesNotMatch(presentation.title, /FREQ=|UNTIL=/);
+  assert.match(monthViewSource, /isMobile \? presentation\.compactText : presentation\.text/);
 });
 
 test('editing an event preserves its existing UID without adding another suffix', () => {

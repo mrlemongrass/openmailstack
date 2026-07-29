@@ -387,10 +387,10 @@ export function recurrenceSummary(
 export function calendarEventPresentation(
   event: Pick<CalendarEvent, 'title' | 'start' | 'isAllDay' | 'location' | 'recurrence' | 'recurrenceLabel'>,
   clockFormat: '12h' | '24h'
-): { text: string; title: string } {
+): { text: string; compactText: string; title: string } {
   const text = `${event.isAllDay ? '' : `${formatWallTime(event.start, clockFormat)} `}${event.title}${event.location ? ` — ${event.location}` : ''}`;
   const repeat = recurrenceSummary(event.recurrence, event.recurrenceLabel);
-  return { text, title: repeat ? `${text}\n${repeat}` : text };
+  return { text, compactText: event.title, title: repeat ? `${text}\n${repeat}` : text };
 }
 
 export function formatHourLabel(hour: number, clockFormat: '12h' | '24h'): string {

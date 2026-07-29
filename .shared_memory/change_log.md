@@ -1192,3 +1192,10 @@ Future entry template:
 - The populated list and empty state expose New Contact directly; the populated-list action opens the existing editor without requiring the desktop-only sidebar.
 - A focused regression covers the responsive column, row-spacing, and editor-wiring contracts.
 - Authenticated Playwright at 390×844 verified zero horizontal overflow, 358 px cards with 90 px row spacing, and editor launch without saving contact data.
+
+## 2026-07-29 — Calendar Mobile Month Event Identity
+
+- Mobile month chips now render the event title first instead of truncating inside the leading time.
+- Full time, title, location, and recurrence context remain in the accessible label and tooltip; desktop rendering remains time-first.
+- The focused calendar regression covers the compact presentation and responsive wiring.
+- Authenticated Playwright verified both existing event chips at 390 px and unchanged full labels at 1440 px without mutating calendar data.

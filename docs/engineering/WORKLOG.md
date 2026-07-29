@@ -6547,3 +6547,28 @@ Ending git state: focused Contacts implementation, regression, audit, and memory
 ### Next task
 
 Repair Calendar mobile month chips so the event title remains identifiable in narrow day cells.
+
+## 2026-07-29 — Calendar mobile month event identity
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `4f0fa6a`
+Ending git state: focused Calendar implementation, regression, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] A narrow mobile month chip leads with the event title rather than its time.
+- [x] The full time, title, location, and recurrence context remain available to assistive technology and pointer users.
+- [x] Desktop month chips preserve the existing full time-first text.
+- [x] No calendar event is created, edited, dragged, or deleted during validation.
+
+### Changes and proof
+
+- `calendarEventPresentation` now returns an explicit title-only compact string alongside its full visible and accessible presentations.
+- `MonthView.tsx` selects that compact string only at the suite mobile breakpoint.
+- The focused calendar regression failed before the compact presentation existed, then passed after the helper and responsive wiring were added.
+- Authenticated Playwright at 390 px observed title-first event strings in both existing narrow chips while their full time/location titles remained intact; at 1440 px, the same chips retained their complete time-first text.
+
+### Next task
+
+Repair Notes mobile creation access and numeric false indicators.

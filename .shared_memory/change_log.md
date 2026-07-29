@@ -1241,3 +1241,11 @@ Future entry template:
 - The five copy buttons now have distinct protocol-specific accessible names.
 - A focused regression covers the responsive layout hooks, wrapping, mobile geometry, and copy labelling.
 - Authenticated Playwright verified five 332 px rows inside a 366 px panel at 390×844, clear endpoint/copy separation, no overflow, and unchanged 1440×900 desktop geometry without mutating suite data.
+
+## 2026-07-29 — Priority UI Independent Review Remediation
+
+- Standards/Spec review found incomplete Admin drawer focus behavior, fixed-height Contacts virtualization risk, Admin/login fallback-preview divergence, and duplicated mobile picker styling.
+- Admin's modal drawer now moves and traps focus, closes on Escape, restores Menu focus, and inerts dashboard content.
+- Contacts virtual rows measure rendered height. A 60-contact long-field fixture produced 122 px rows, 7320 px total height, no overlap, and no overflow.
+- Admin Branding preview now exactly matches custom-logo and no-login-logo branches; a blank-logo fixture rendered the original Mail fallback even with a separate app icon.
+- Settings and Scheduler share one mobile section-picker style. Focused regressions and authenticated/fixture-backed Playwright passed without mutation requests.

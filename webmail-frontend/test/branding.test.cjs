@@ -22,6 +22,7 @@ testModule._compile(compiled, sourcePath);
 
 const { cacheBranding, readCachedBranding, resolveBrandingPresentation } = testModule.exports;
 const indexCss = fs.readFileSync(path.resolve(__dirname, '../src/index.css'), 'utf8');
+const brandingPanelSource = fs.readFileSync(path.resolve(__dirname, '../src/admin/BrandingPanel.tsx'), 'utf8');
 
 const imageSourcePath = path.resolve(__dirname, '../src/admin/branding-image.ts');
 const imageSource = fs.readFileSync(imageSourcePath, 'utf8');
@@ -118,6 +119,14 @@ test('the real sign-in consumer renders saved branding instead of a hardcoded pr
   assert.match(markup, /class="login-logo-image"/);
   assert.match(indexCss, /\.login-logo-surface\s*\{[\s\S]*background:\s*linear-gradient/);
   assert.doesNotMatch(markup, />OpenMailStack</);
+});
+
+test('Admin branding preview mirrors the login logo and fallback paths', () => {
+  assert.match(brandingPanelSource, /branding\.loginLogoDataUrl \? \(/);
+  assert.match(brandingPanelSource, /className="login-logo-surface"[\s\S]*className="login-logo-image"/);
+  assert.match(brandingPanelSource, /className="login-logo-fallback"[\s\S]*<Mail size=\{24\} color="white" \/>/);
+  assert.doesNotMatch(brandingPanelSource, /loginLogoDataUrl \|\| branding\.appIconDataUrl/);
+  assert.match(indexCss, /\.login-logo-fallback\s*\{[\s\S]*linear-gradient\(135deg, var\(--accent-primary\), var\(--accent-purple\)\)/);
 });
 
 test('the real authenticated header renders the saved site name', () => {

@@ -72,12 +72,7 @@ export function LoginPage({ login, branding }: {
               />
             </span>
           ) : (
-            <div style={{
-              width: 48, height: 48, borderRadius: 12,
-              background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-purple))',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              margin: '0 auto 16px',
-            }}>
+            <div className="login-logo-fallback">
               <Mail size={24} color="white" />
             </div>
           )}

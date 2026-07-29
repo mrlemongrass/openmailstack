@@ -6735,3 +6735,29 @@ Ending git state: focused Sync implementation, regression, audit, and memory cha
 ### Next task
 
 Run the complete frontend/repository test gates, independent Standards and Spec review, then push, back up, deploy, and verify the full priority batch live.
+
+## 2026-07-29 — Priority-batch independent review remediation
+
+Agent/tool: Codex, Standards review, Spec review, and Playwright
+Branch: `main`
+Starting git state: clean at `ba1dd4b`
+Ending git state: review fixes and regressions ready for final release commit
+
+### Review findings resolved
+
+- Admin mobile drawer focus now transfers to its dedicated close button, remains trapped within the modal navigation, closes on Escape, restores focus to Menu, and marks the dashboard content inert while open.
+- Contacts virtual rows now use TanStack's real-element measurement with an indexed row ref and measured bottom spacing; the 90 px value is only an initial estimate.
+- Admin Branding preview now branches exactly like the login page: a configured login logo receives the light surface, while no login logo renders the original gradient Mail tile even if an app icon exists.
+- Settings and Scheduler mobile section pickers now share one `mobile-section-navigation` style instead of duplicating the label/select design rules.
+
+### Proof
+
+- Focused regressions cover the dialog/focus/Escape/inert contract, measured contact rows, exact branding fallback, and shared picker styling.
+- Authenticated Playwright at 390×844 moved focus from Menu to Close Admin menu, wrapped Shift+Tab from Close to Spam and Tab back to Close, then used Escape to hide the drawer and restore Menu focus.
+- A GET-only fixture rendered 60 contacts with long names, email addresses, organizations, and job titles. Every row measured 122 px, virtual height was 7320 px, no adjacent rows overlapped, and document width remained 390 px.
+- A GET-only blank-login-logo branding fixture retained a distinct app icon but rendered the Mail fallback with no logo image/surface, matching the real sign-in behavior.
+- No contact, Admin, branding, Scheduler, or Settings mutation request was sent.
+
+### Next task
+
+Rerun all release gates, commit the review remediation, push the complete batch, and deploy with rollback evidence.

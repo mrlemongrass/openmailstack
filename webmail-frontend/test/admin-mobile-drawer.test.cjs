@@ -14,6 +14,14 @@ test('mobile Admin navigation uses an opaque, labelled drawer', () => {
   assert.match(routesSource, /aria-expanded=\{sidebarOpen\}/);
   assert.match(routesSource, /aria-controls="admin-navigation"/);
   assert.match(routesSource, /aria-label="Close Admin menu"/);
+  assert.match(routesSource, /aria-label="Close Admin menu"[\s\S]*autoFocus/);
+  assert.match(routesSource, /role=\{open \? 'dialog' : undefined\}/);
+  assert.match(routesSource, /aria-modal=\{open \|\| undefined\}/);
+  assert.match(routesSource, /event\.key === 'Escape'[\s\S]*closeSidebar\(\)/);
+  assert.match(routesSource, /!drawer\.contains\(document\.activeElement\)[\s\S]*event\.shiftKey \? last : first/);
+  assert.match(routesSource, /event\.key !== 'Tab'[\s\S]*last\.focus\(\)[\s\S]*first\.focus\(\)/);
+  assert.match(routesSource, /window\.requestAnimationFrame\(\(\) => menuButtonRef\.current\?\.focus\(\)\)/);
+  assert.match(routesSource, /<main inert=\{sidebarOpen \|\| undefined\}/);
   assert.match(
     routesSource,
     /@media \(max-width: 768px\)[\s\S]*\.admin-sidebar\s*\{[\s\S]*background:\s*var\(--surface-color\)\s*!important/,

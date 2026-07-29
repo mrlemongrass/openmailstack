@@ -24,7 +24,7 @@ test('mobile Settings replaces the fixed sidebar with a complete section picker'
   assert.match(navigationSource, /export const settingsNavGroups/);
   assert.match(panelSource, /import \{ settingsNavGroups \} from '\.\/settingsNavigation'/);
   assert.match(routesSource, /className="settings-desktop-navigation"/);
-  assert.match(routesSource, /className="settings-mobile-navigation"/);
+  assert.match(routesSource, /className="settings-mobile-navigation mobile-section-navigation"/);
   assert.match(routesSource, /aria-label="Settings section"/);
   assert.match(routesSource, /<optgroup key=\{group\.title\} label=\{group\.title\}>/);
   assert.match(
@@ -32,4 +32,5 @@ test('mobile Settings replaces the fixed sidebar with a complete section picker'
     /@media \(max-width: 767px\)[\s\S]*\.settings-desktop-navigation\s*\{[\s\S]*display:\s*none[\s\S]*\.settings-mobile-navigation\s*\{[\s\S]*display:\s*grid/,
   );
   assert.match(indexCss, /\.settings-layout-content\s*\{[\s\S]*min-width:\s*0/);
+  assert.match(indexCss, /\.mobile-section-navigation select\s*\{[\s\S]*background:\s*var\(--surface-color\)/);
 });

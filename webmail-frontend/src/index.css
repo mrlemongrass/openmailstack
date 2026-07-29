@@ -505,6 +505,26 @@ body {
   display: none;
 }
 
+.mobile-section-navigation span {
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mobile-section-navigation select {
+  width: 100%;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--surface-color);
+  color: var(--text-primary);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .settings-layout-content {
   flex: 1;
   min-width: 0;
@@ -539,26 +559,6 @@ body {
     padding: 10px 12px;
     border-bottom: 1px solid var(--border-glass);
     background: var(--bg-glass);
-  }
-
-  .settings-mobile-navigation span {
-    color: var(--text-secondary);
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .settings-mobile-navigation select {
-    width: 100%;
-    border: 1px solid var(--border-glass);
-    border-radius: var(--radius-md);
-    background: var(--surface-color);
-    color: var(--text-primary);
-    padding: 10px 12px;
-    font: inherit;
-    font-size: 0.9rem;
-    font-weight: 600;
   }
 
   .settings-layout-content .settings-content-stack {
@@ -1078,6 +1078,17 @@ body {
   box-shadow: 0 8px 24px rgba(2, 6, 23, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
+.login-logo-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-purple));
+}
+
 .login-logo-image {
   display: block;
   width: auto;
@@ -1092,18 +1103,14 @@ body {
   padding: 6px 10px;
 }
 
-.branding-login-card .branding-logo.large {
+.branding-login-card .login-logo-image {
   width: auto;
   max-width: 180px;
   height: 64px;
 }
 
-.branding-logo.large,
-.branding-logo-icon.large {
-  width: 72px;
-  height: 72px;
-  object-fit: contain;
-  color: var(--accent-primary);
+.branding-login-card .login-logo-fallback {
+  margin-bottom: 0;
 }
 
 .branding-login-card span {

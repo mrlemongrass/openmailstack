@@ -189,10 +189,16 @@ export function ContactGrid({ contacts: c, density, isMobile = false, onNewConta
             const startIdx = isListMode ? vr.index : vr.index * cols;
             const rowContacts = isListMode ? c.contacts.slice(startIdx, startIdx + 1) : c.contacts.slice(startIdx, startIdx + cols);
             return (
-              <div key={vr.key} style={{
+              <div
+                key={vr.key}
+                ref={virtualizer.measureElement}
+                data-index={vr.index}
+                style={{
                 position: 'absolute', top: 0, left: 0, width: '100%',
                 transform: `translateY(${vr.start}px)`,
                 display: 'grid', gridTemplateColumns: isListMode ? '1fr' : `repeat(${cols}, 1fr)`, gap: isListMode ? 8 : 16,
+                paddingBottom: isListMode ? 8 : 16,
+                boxSizing: 'border-box',
               }}>
                 {rowContacts.map((contact) => (
                   <ContactCard key={contact.id} contact={contact}

@@ -454,7 +454,7 @@ function SettingsLayout() {
       <nav className="settings-desktop-navigation" aria-label="Settings sections">
         <SettingsSidebar activeTab={normalizedTab} onTabChange={handleTabChange} />
       </nav>
-      <label className="settings-mobile-navigation">
+      <label className="settings-mobile-navigation mobile-section-navigation">
         <span>Settings section</span>
         <select
           aria-label="Settings section"

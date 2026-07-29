@@ -402,7 +402,7 @@ export function SchedulerRoutes() {
       <nav className="scheduler-desktop-navigation" aria-label="Scheduler sections">
         {tabs.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}><item.icon size={17} />{item.label}</button>)}
       </nav>
-      <label className="scheduler-mobile-navigation">
+      <label className="scheduler-mobile-navigation mobile-section-navigation">
         <span>Scheduler section</span>
         <select aria-label="Scheduler section" value={tab} onChange={event => setTab(event.target.value as SchedulerTab)}>
           {tabs.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}

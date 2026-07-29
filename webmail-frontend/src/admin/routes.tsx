@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useCallback, useMemo } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Routes, Route, NavLink, Outlet, Navigate } from 'react-router';
 import {
   LayoutDashboard, Globe, Mail, Forward, GitMerge, Shield,
@@ -64,7 +64,15 @@ const NAV_ITEMS: NavItem[] = [
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
-function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+function Sidebar({
+  open,
+  onClose,
+  sidebarRef,
+}: {
+  open: boolean;
+  onClose: () => void;
+  sidebarRef: React.RefObject<HTMLElement | null>;
+}) {
   return (
     <>
       {/* Mobile overlay */}
@@ -79,7 +87,13 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           className="sidebar-overlay"
         />
       )}
-      <aside id="admin-navigation" style={{
+      <aside
+        id="admin-navigation"
+        ref={sidebarRef}
+        role={open ? 'dialog' : undefined}
+        aria-modal={open || undefined}
+        aria-labelledby="admin-navigation-title"
+        style={{
         width: 240,
         minWidth: 240,
         height: '100%',
@@ -91,7 +105,9 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
         padding: '12px 0',
         transition: 'transform 0.2s ease',
         zIndex: 100,
-      }} className={`admin-sidebar${open ? ' open' : ''}`}>
+        }}
+        className={`admin-sidebar${open ? ' open' : ''}`}
+      >
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -100,16 +116,19 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           borderBottom: '1px solid rgba(255,255,255,0.06)',
           marginBottom: 8,
         }}>
-          <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Admin Panel</h2>
-          <button
-            type="button"
-            className="btn btn-secondary admin-sidebar-close"
-            aria-label="Close Admin menu"
-            onClick={onClose}
-            style={{ display: 'none', padding: 6 }}
-          >
-            <X size={18} />
-          </button>
+          <h2 id="admin-navigation-title" style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>Admin Panel</h2>
+          {open && (
+            <button
+              type="button"
+              className="btn btn-secondary admin-sidebar-close"
+              aria-label="Close Admin menu"
+              onClick={onClose}
+              autoFocus
+              style={{ display: 'none', padding: 6 }}
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
         <nav aria-label="Admin sections" style={{ flex: 1 }}>
           {NAV_ITEMS.map(item => (
@@ -151,11 +170,54 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 function AdminLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  const closeSidebar = useCallback(() => {
+    setSidebarOpen(false);
+    window.requestAnimationFrame(() => menuButtonRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    if (!sidebarOpen || !sidebarRef.current) return;
+
+    const drawer = sidebarRef.current;
+    const focusable = Array.from(
+      drawer.querySelectorAll<HTMLElement>('a[href], button:not([disabled])'),
+    );
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeSidebar();
+        return;
+      }
+      if (event.key !== 'Tab' || focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!drawer.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+        return;
+      }
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [closeSidebar, sidebarOpen]);
 
   return (
     <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      <main style={{
+      <Sidebar open={sidebarOpen} onClose={closeSidebar} sidebarRef={sidebarRef} />
+      <main inert={sidebarOpen || undefined} style={{
         flex: 1,
         overflowY: 'auto',
         padding: '20px 24px',
@@ -164,8 +226,9 @@ function AdminLayout() {
         {/* Mobile menu toggle */}
         <button
           type="button"
+          ref={menuButtonRef}
           className="btn btn-secondary sidebar-toggle"
-          onClick={() => setSidebarOpen(v => !v)}
+          onClick={() => setSidebarOpen(true)}
           aria-expanded={sidebarOpen}
           aria-controls="admin-navigation"
           style={{

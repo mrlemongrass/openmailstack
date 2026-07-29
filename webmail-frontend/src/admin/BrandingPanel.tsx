@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle2, Image, RotateCcw, Save, Trash2, Upload } from 'lucide-react';
+import { CheckCircle2, Image, Mail, RotateCcw, Save, Trash2, Upload } from 'lucide-react';
 import { defaultBranding, resolveBrandingPresentation, type BrandingSettings } from '../branding';
 import {
   brandingImageRecommendations,
@@ -193,9 +193,19 @@ export function BrandingPanel({ branding, saving, status, statusIsError, dirty, 
           style={branding.loginBackgroundDataUrl ? { backgroundImage: `linear-gradient(rgba(7, 12, 20, 0.38), rgba(7, 12, 20, 0.68)), url(${branding.loginBackgroundDataUrl})` } : undefined}
         >
           <div className="branding-login-card">
-            <div className="login-logo-surface">
-              <BrandingLogo branding={branding} size="large" />
-            </div>
+            {branding.loginLogoDataUrl ? (
+              <span className="login-logo-surface">
+                <img
+                  className="login-logo-image"
+                  src={branding.loginLogoDataUrl}
+                  alt={`${presentation.appName} logo`}
+                />
+              </span>
+            ) : (
+              <div className="login-logo-fallback">
+                <Mail size={24} color="white" />
+              </div>
+            )}
             <strong>{presentation.loginTitle}</strong>
             <span>{presentation.loginSubtitle}</span>
           </div>
@@ -264,14 +274,6 @@ function BrandingImageField({
       </div>
     </div>
   );
-}
-
-function BrandingLogo({ branding, size }: { branding: BrandingSettings; size: 'small' | 'large' }) {
-  const logo = branding.loginLogoDataUrl || branding.appIconDataUrl;
-  if (logo) {
-    return <img className={`branding-logo ${size}`} src={logo} alt="" />;
-  }
-  return <Image className={`branding-logo-icon ${size}`} />;
 }
 
 const recommendedSize = (field: BrandingImageKey) => {

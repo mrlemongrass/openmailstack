@@ -11,10 +11,14 @@ const schedulerCss = fs.readFileSync(
   path.join(__dirname, '../src/scheduler/scheduler.css'),
   'utf8',
 );
+const indexCss = fs.readFileSync(
+  path.join(__dirname, '../src/index.css'),
+  'utf8',
+);
 
 test('mobile Scheduler exposes every owner section without horizontal discovery', () => {
   assert.match(routesSource, /className="scheduler-desktop-navigation"/);
-  assert.match(routesSource, /className="scheduler-mobile-navigation"/);
+  assert.match(routesSource, /className="scheduler-mobile-navigation mobile-section-navigation"/);
   assert.match(routesSource, /aria-label="Scheduler section"/);
   assert.match(routesSource, /<option key=\{item\.id\} value=\{item\.id\}>\{item\.label\}<\/option>/);
   assert.match(schedulerCss, /\.scheduler-mobile-navigation\s*\{[\s\S]*display:\s*none/);
@@ -22,6 +26,7 @@ test('mobile Scheduler exposes every owner section without horizontal discovery'
     schedulerCss,
     /@media \(max-width: 767px\)[\s\S]*\.scheduler-sidebar \.scheduler-desktop-navigation\s*\{[\s\S]*display:\s*none[\s\S]*\.scheduler-mobile-navigation\s*\{[\s\S]*display:\s*grid/,
   );
+  assert.match(indexCss, /\.mobile-section-navigation select\s*\{[\s\S]*background:\s*var\(--surface-color\)/);
 });
 
 test('mobile Scheduler public actions stack without cramped wrapping', () => {

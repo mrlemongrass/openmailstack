@@ -21,7 +21,12 @@ test('mobile contacts use one column and expose the contact editor', () => {
   assert.match(
     contactGridSource,
     /isMobile \? 90/,
-    'mobile virtualized rows should use the compact single-column card height',
+    'mobile virtualized rows should start with a compact single-column estimate',
+  );
+  assert.match(
+    contactGridSource,
+    /ref=\{virtualizer\.measureElement\}[\s\S]*data-index=\{vr\.index\}[\s\S]*paddingBottom: isListMode \? 8 : 16/,
+    'virtualized rows should measure their actual rendered height and retain row spacing',
   );
   assert.match(
     contactGridSource,

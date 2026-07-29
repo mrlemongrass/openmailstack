@@ -193,7 +193,9 @@ export function BrandingPanel({ branding, saving, status, statusIsError, dirty, 
           style={branding.loginBackgroundDataUrl ? { backgroundImage: `linear-gradient(rgba(7, 12, 20, 0.38), rgba(7, 12, 20, 0.68)), url(${branding.loginBackgroundDataUrl})` } : undefined}
         >
           <div className="branding-login-card">
-            <BrandingLogo branding={branding} size="large" />
+            <div className="login-logo-surface">
+              <BrandingLogo branding={branding} size="large" />
+            </div>
             <strong>{presentation.loginTitle}</strong>
             <span>{presentation.loginSubtitle}</span>
           </div>

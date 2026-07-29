@@ -6625,3 +6625,30 @@ Ending git state: focused Scheduler owner implementation, regression, audit, and
 ### Next task
 
 Improve dark-login tenant-logo contrast without changing uploaded branding assets.
+
+## 2026-07-29 — Dark-login tenant-logo contrast
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `dd6baac`
+Ending git state: focused login/branding implementation, regression, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] The current dark tenant mark is immediately legible on the sign-in card.
+- [x] The uploaded branding image and saved branding settings remain unchanged.
+- [x] The presentation works at desktop and 390 px without horizontal overflow.
+- [x] Admin's branding preview matches the real sign-in treatment.
+- [x] The fallback product icon remains unchanged when no custom logo exists.
+
+### Changes and proof
+
+- `AuthGate.tsx` places only custom sign-in logos inside a dedicated brand surface and applies a named image class; the fallback icon path is unchanged.
+- `index.css` adds a high-contrast light gradient plate and subtle image drop shadow with bounded sizing, plus matching preview dimensions.
+- `BrandingPanel.tsx` reuses that surface in the Admin preview instead of showing a materially different result.
+- The focused branding regression failed before the new sign-in structure and CSS existed, then passed after implementation.
+- At 1440×900, Playwright computed a 260×90 gradient surface and the image shadow; visual review confirmed the unchanged HouseVo mark is now clear. At 390×844, the surface remained 260 px within a 390 px document with no horizontal overflow.
+
+### Next task
+
+Run authenticated desktop/mobile checks across Settings, Admin, and Sync to refresh the remaining suite UX baseline before the final release validation and deployment.

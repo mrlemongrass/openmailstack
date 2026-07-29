@@ -1213,3 +1213,10 @@ Future entry template:
 - Mobile public-link actions now stack at full width; desktop keeps its icon sidebar and inline actions.
 - A focused regression covers control visibility, every option, and the mobile action grid. Playwright caught an initial CSS-specificity miss, which is now included in the regression.
 - Authenticated fixture-backed Playwright verified 390×844 selection/overflow and 1440×900 desktop preservation without changing Scheduler data or entitlement.
+
+## 2026-07-29 — Dark Login Logo Contrast
+
+- Custom login logos now render on a bounded light brand surface with a subtle image shadow; the uploaded image and saved branding values are unchanged.
+- Admin's branding preview reuses the same surface, while the no-custom-logo fallback icon path remains unchanged.
+- The branding regression covers the real sign-in classes and contrast-surface CSS.
+- Playwright verified the current HouseVo mark at 1440×900 and a 260 px surface inside the 390 px mobile document without overflow.

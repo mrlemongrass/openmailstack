@@ -967,6 +967,40 @@ body {
   gap: 10px;
 }
 
+.login-logo-surface {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto 16px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(232, 236, 244, 0.9));
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.login-logo-image {
+  display: block;
+  width: auto;
+  max-width: min(220px, 100%);
+  height: 72px;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 1px rgba(15, 23, 42, 0.38));
+}
+
+.branding-login-card .login-logo-surface {
+  margin-bottom: 0;
+  padding: 6px 10px;
+}
+
+.branding-login-card .branding-logo.large {
+  width: auto;
+  max-width: 180px;
+  height: 64px;
+}
+
 .branding-logo.large,
 .branding-logo-icon.large {
   width: 72px;

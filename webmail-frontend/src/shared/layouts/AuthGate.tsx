@@ -64,11 +64,13 @@ export function LoginPage({ login, branding }: {
       <div className="glass-panel" style={{ width: 400, padding: 40 }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           {presentation.loginLogoDataUrl ? (
-            <img
-              src={presentation.loginLogoDataUrl}
-              alt={`${presentation.appName} logo`}
-              style={{ display: 'block', width: 'auto', maxWidth: 220, height: 72, objectFit: 'contain', margin: '0 auto 16px' }}
-            />
+            <span className="login-logo-surface">
+              <img
+                className="login-logo-image"
+                src={presentation.loginLogoDataUrl}
+                alt={`${presentation.appName} logo`}
+              />
+            </span>
           ) : (
             <div style={{
               width: 48, height: 48, borderRadius: 12,

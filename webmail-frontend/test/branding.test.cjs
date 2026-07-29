@@ -21,6 +21,7 @@ testModule.paths = module.paths;
 testModule._compile(compiled, sourcePath);
 
 const { cacheBranding, readCachedBranding, resolveBrandingPresentation } = testModule.exports;
+const indexCss = fs.readFileSync(path.resolve(__dirname, '../src/index.css'), 'utf8');
 
 const imageSourcePath = path.resolve(__dirname, '../src/admin/branding-image.ts');
 const imageSource = fs.readFileSync(imageSourcePath, 'utf8');
@@ -113,6 +114,9 @@ test('the real sign-in consumer renders saved branding instead of a hardcoded pr
 
   assert.match(markup, /House Vo Webmail/);
   assert.match(markup, /House Vo logo/);
+  assert.match(markup, /class="login-logo-surface"/);
+  assert.match(markup, /class="login-logo-image"/);
+  assert.match(indexCss, /\.login-logo-surface\s*\{[\s\S]*background:\s*linear-gradient/);
   assert.doesNotMatch(markup, />OpenMailStack</);
 });
 

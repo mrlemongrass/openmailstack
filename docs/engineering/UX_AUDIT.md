@@ -7,7 +7,7 @@ OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin,
 
 ## 2026-07-29 Suite Playwright Audit
 
-The desktop suite is generally coherent and usable. The largest current gaps are mobile creation workflows. Playwright evidence for this pass is stored locally under `output/playwright/` and contains no authenticated production user data.
+The desktop suite is generally coherent and usable. This pass found and repaired several mobile layout and workflow gaps. Playwright evidence is stored locally under `output/playwright/` and contains no authenticated production user data.
 
 ### Resolved in this cycle
 
@@ -21,6 +21,7 @@ The desktop suite is generally coherent and usable. The largest current gaps are
 | Notes / mobile | The populated list had no creation action, and numeric false flags rendered as stray `0`/`00` text. Opening the editor also contacted hard-coded public WebRTC signaling endpoints by default. | Mobile now exposes New Note above populated cards, normalizes numeric flags before rendering, and enables WebRTC only when an operator explicitly configures signaling endpoints. The empty-state copy no longer promises unconfigured collaboration. | A populated 390×844 fixture showed the primary action, no numeric artifacts, no overflow, and a working editor. A fresh editor open produced zero console errors and no signaling requests; existing content still initialized through the local Yjs/Quill binding. |
 | Scheduler owner / mobile | Six owner tabs lived in an unlabelled horizontal overflow strip, hiding later destinations, while public-link actions competed for one row. | Mobile now uses a labelled section picker containing every destination and stacks the public-link actions at full width. Desktop retains the icon sidebar and inline actions. | At 390×844, Playwright confirmed the desktop tabs hidden, all six picker options visible, 328 px action columns, zero horizontal overflow, and a successful Profile transition. At 1440 px the desktop grid returned and the mobile picker was hidden. |
 | Login / dark | The dark tenant logo nearly disappeared against the dark translucent sign-in card. | The unchanged uploaded mark now sits on a restrained light logo surface with a subtle shadow; the Admin branding preview uses the same treatment. | Playwright at 1440×900 computed the 260×90 light gradient surface and image drop shadow, with a visibly legible mark. At 390×844, the 260 px surface stayed within the 390 px document with no horizontal overflow. |
+| Settings / mobile | The fixed 220 px desktop section sidebar remained visible at 390 px, leaving only 170 px for settings content and clipping the controls. | Mobile now replaces the sidebar with a labelled, grouped section picker generated from the same navigation model; desktop keeps its existing sidebar. | Authenticated Playwright at 390×844 measured a 390 px picker and content area with no overflow, then selected Signatures and reached `/settings/mail_signatures`. At 1440 px the desktop sidebar returned, the picker hid, and content measured 1220 px. |
 
 ### Prioritized open findings
 

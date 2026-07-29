@@ -1220,3 +1220,10 @@ Future entry template:
 - Admin's branding preview reuses the same surface, while the no-custom-logo fallback icon path remains unchanged.
 - The branding regression covers the real sign-in classes and contrast-surface CSS.
 - Playwright verified the current HouseVo mark at 1440×900 and a 260 px surface inside the 390 px mobile document without overflow.
+
+## 2026-07-29 — Settings Mobile Section Navigation
+
+- The 220 px desktop Settings sidebar no longer remains visible at mobile widths and squeeze content into the remaining 170 px.
+- Mobile uses a labelled, grouped section picker generated from the same Settings navigation model; desktop retains its sidebar.
+- A focused regression covers the shared navigation model, accessible picker, route selection, and responsive CSS.
+- Authenticated Playwright verified full-width 390×844 content, no overflow, and a Signatures route transition without changing any setting; the 1440×900 sidebar layout remains intact.

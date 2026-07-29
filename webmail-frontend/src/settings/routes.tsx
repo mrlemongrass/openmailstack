@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Routes, Route } from 'react-router';
 import { SettingsContent, SettingsSidebar } from './SettingsPanel';
+import { settingsNavGroups } from './settingsNavigation';
 import { normalizeSettingsTab, type SettingsTab } from './tabs';
 import {
   getUserSettings,
@@ -449,18 +450,25 @@ function SettingsLayout() {
   const normalizedTab = normalizeSettingsTab(tab);
 
   return (
-    <div style={{ flex: 1, display: 'flex' }}>
-      <nav style={{
-        width: 220,
-        flexShrink: 0,
-        borderRight: '1px solid var(--border-glass)',
-        overflowY: 'auto',
-        padding: '12px 8px',
-        background: 'var(--bg-glass)',
-      }}>
+    <div className="settings-layout">
+      <nav className="settings-desktop-navigation" aria-label="Settings sections">
         <SettingsSidebar activeTab={normalizedTab} onTabChange={handleTabChange} />
       </nav>
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <label className="settings-mobile-navigation">
+        <span>Settings section</span>
+        <select
+          aria-label="Settings section"
+          value={normalizedTab}
+          onChange={event => handleTabChange(event.target.value as SettingsTab)}
+        >
+          {settingsNavGroups.map(group => (
+            <optgroup key={group.title} label={group.title}>
+              {group.items.map(item => <option key={item.tab} value={item.tab}>{item.label}</option>)}
+            </optgroup>
+          ))}
+        </select>
+      </label>
+      <div className="settings-layout-content">
         <SettingsLoader />
       </div>
     </div>

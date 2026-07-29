@@ -6652,3 +6652,30 @@ Ending git state: focused login/branding implementation, regression, audit, and 
 ### Next task
 
 Run authenticated desktop/mobile checks across Settings, Admin, and Sync to refresh the remaining suite UX baseline before the final release validation and deployment.
+
+## 2026-07-29 — Settings mobile section navigation
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `2572859`
+Ending git state: focused Settings implementation, regression, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] Mobile Settings content uses the full viewport instead of sharing it with the 220 px desktop sidebar.
+- [x] Every Settings destination remains discoverable through a labelled, grouped mobile control.
+- [x] Selecting a destination changes the route and rendered pane without changing any setting.
+- [x] Desktop retains its existing section sidebar.
+- [x] The 390×844 layout has no horizontal overflow.
+
+### Changes and proof
+
+- `SettingsLayout` now renders desktop and mobile navigation from the exported shared Settings group model.
+- At the suite mobile breakpoint, the desktop sidebar hides and a full-width labelled section picker appears above the content.
+- The focused regression failed before the responsive navigation existed and now covers shared options, accessible labelling, route selection, and the desktop/mobile CSS switch.
+- Authenticated Playwright at 390×844 measured a 390 px picker and content area with no overflow, selected Signatures, and reached `/settings/mail_signatures`. At 1440×900, the desktop sidebar returned, the picker hid, and the content area measured 1220 px.
+- No appearance, mail, contact, security, or account setting was changed during validation.
+
+### Next task
+
+Inspect authenticated Admin desktop/mobile navigation and content for the next bounded UX defect.

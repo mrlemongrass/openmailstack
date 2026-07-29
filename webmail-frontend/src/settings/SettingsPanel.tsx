@@ -1,9 +1,10 @@
 import React, { useState, lazy, Suspense, type ReactNode } from 'react';
-import { CalendarDays, Check, Copy, Filter, Lock, Mail, Palette, PenTool, Plus, Send, ShieldAlert, SlidersHorizontal, Smartphone, Trash2, Users } from 'lucide-react';
+import { Check, Copy, Filter, PenTool, Plus, Trash2 } from 'lucide-react';
 
 const ReactQuill = lazy(() => import('react-quill-new'));
 import type { AppearancePreferences, AccentColor, DensityMode, FontScale, RadiusMode, ThemeMode } from './appearance';
 import { normalizeSettingsTab, type SettingsTab } from './tabs';
+import { settingsNavGroups } from './settingsNavigation';
 import type { CalendarUserSettings, ContactsUserSettings, MailUserSettings } from './settingsApi';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
@@ -120,42 +121,6 @@ interface SettingsContentProps {
   onCopySetupValue: (fieldKey: string, value: string) => void;
 }
 
-const navGroups: { title: string; items: { tab: SettingsTab; label: string; icon: typeof Mail }[] }[] = [
-  {
-    title: 'Personalization',
-    items: [
-      { tab: 'appearance', label: 'Appearance', icon: Palette },
-    ],
-  },
-  {
-    title: 'Mail',
-    items: [
-      { tab: 'mail_identity', label: 'Identity & Compose', icon: Mail },
-      { tab: 'mail_signatures', label: 'Signatures', icon: PenTool },
-      { tab: 'mail_reading', label: 'Reading', icon: SlidersHorizontal },
-      { tab: 'mail_forwarding', label: 'Forwarding', icon: Send },
-      { tab: 'mail_vacation', label: 'Auto-Responder', icon: Send },
-      { tab: 'mail_filters', label: 'Filters', icon: Filter },
-      { tab: 'mail_spam', label: 'Spam & Senders', icon: ShieldAlert },
-    ],
-  },
-  {
-    title: 'Apps',
-    items: [
-      { tab: 'calendar_defaults', label: 'Calendar', icon: CalendarDays },
-      { tab: 'contacts_display', label: 'Contacts', icon: Users },
-      { tab: 'sync_devices', label: 'Sync & Devices', icon: Smartphone },
-    ],
-  },
-  {
-    title: 'Account',
-    items: [
-      { tab: 'account_password', label: 'Security', icon: Lock },
-      { tab: 'advanced', label: 'Advanced', icon: SlidersHorizontal },
-    ],
-  },
-];
-
 const accentOptions: { value: AccentColor; label: string; color: string }[] = [
   { value: 'blue', label: 'Blue', color: '#3B82F6' },
   { value: 'cyan', label: 'Cyan', color: '#06B6D4' },
@@ -218,7 +183,7 @@ export function SettingsSidebar({ activeTab, onTabChange }: SettingsSidebarProps
 
   return (
     <>
-      {navGroups.map(group => (
+      {settingsNavGroups.map(group => (
         <div key={group.title} className="settings-nav-group">
           <div className="sidebar-section-title">{group.title}</div>
           {group.items.map(item => {

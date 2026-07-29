@@ -59,6 +59,7 @@ Last updated: 2026-07-29
 - ✅ Notes mobile creation and false indicators: populated mobile Notes exposes New Note, converts numeric pin/lock flags to booleans before JSX rendering, and has no horizontal overflow. Hard-coded public Yjs signaling was removed; WebRTC is opt-in through `VITE_OMS_NOTES_SIGNALING_URLS`, and default editor validation makes no signaling request.
 - ✅ Scheduler owner mobile discovery: the owner app replaces the overflowing six-tab strip with a labelled mobile section picker and stacks public booking-link actions. Fixture-backed Playwright confirms every destination, Profile selection, zero overflow, and unchanged desktop navigation.
 - ✅ Dark-login tenant-logo contrast: the unchanged uploaded mark now renders on a light, bounded brand surface with a subtle image shadow, and the Admin branding preview matches. Desktop/mobile Playwright confirms legibility and no overflow.
+- ✅ Settings mobile navigation: the fixed 220 px desktop sidebar no longer clips mobile panes. A labelled grouped picker exposes every section at 390 px, route selection and zero overflow are verified, and the desktop sidebar remains unchanged.
 
 ## Remaining High-Priority Risks
 

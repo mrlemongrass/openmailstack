@@ -1303,3 +1303,13 @@ Future entry template:
 - Focused regressions, the 68-test frontend suite, ESLint, build, repository lint, and integration pass.
 - Pushed and deployed `b7ffd3b4`; authenticated live Playwright at 390×844 and 1440×900 verified section transitions, zero document overflow, draft preservation, and desktop parity without saving Scheduler data.
 - Live `index.html` matches the repository at SHA-256 `ae5774f261345d415805ce7da330627dd02c307d6c267f60157ec828e07dccba`, post-deploy staging smoke passes, and the root-only rollback archive is stored under `/var/backups/openmailstack/scheduler-editor-b7ffd3b4-20260730T010752Z/`.
+
+## 2026-07-29 — Scheduler Five-Priority UX Completion
+
+- Reconciled `ROADMAP.md`, hardened default availability validation/save/publish feedback, completed and cleaned up a live first-use booking lifecycle, reviewed all remaining owner surfaces, unified modal focus/isolation behavior, and introduced consumed typography/spacing tokens.
+- Durable rule: Scheduler `active=false` means intentionally paused as well as non-bookable; never treat it alone as deletion. Owner queries now exclude only rows with an `event_type.delete` audit tombstone, so paused event types stay visible and recoverable while booking-retained deletions stay hidden.
+- Durable rule: modal teardown must restore `inert`/`aria-hidden` background state before returning focus; nested dialogs keep the outer lifecycle open while temporarily suspending its trap/isolation.
+- Availability rejects empty/non-finite/out-of-range times, explains publish-only validation beside the disabled Publish action, and preserves client-only drafts across owner-section navigation.
+- Live first-use cleanup removed every public/user-visible test artifact and restored availability to unpublished. Required cancelled-booking, archived-workflow, soft-retained-event, and audit history remain inactive by design.
+- Frontend 80/80, backend 205/208 with 3 documented optional skips, ESLint/build, repository lint/integration, exact artifact checks, live Playwright, and staging smoke pass.
+- Released through `0f2c6c68`. Final paired rollback: `/var/backups/openmailstack/ui-review-0f2c6c6-20260730T040600Z/`; backend SHA-256 `6868ed133a162c800c44e625910644d914962feeed2aae3cc68874af9263a32a`, frontend SHA-256 `ea2b3887d0317b85a0e233a4c583df66a3d7878fabff6d4e43995b79be36f4b3`.

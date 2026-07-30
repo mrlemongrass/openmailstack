@@ -6972,3 +6972,78 @@ Ending git state: focused Scheduler frontend, regression, audit, and memory chan
 ### Next task
 
 Audit Scheduler default-availability creation and publishing at mobile and desktop widths, then repair the highest-value bounded workflow defect.
+
+## 2026-07-29 — Scheduler five-priority UX completion and live release
+
+Agent/tool: Codex with Playwright, Standards review, and Spec review
+Branch: `main`
+Starting git state: clean at `8cdfc522`
+Released code commit: `0f2c6c68`
+
+### Acceptance criteria
+
+- [x] Reconcile `ROADMAP.md` with shipped Contacts and Notes behavior.
+- [x] Make default availability creation/publishing understandable and safe on mobile and desktop, including invalid/empty times and precise save feedback.
+- [x] Complete a disposable first-use event, booking, Calendar, notification, cancellation, and user-visible cleanup lifecycle.
+- [x] Review Bookings, Workflows, and Tools for overflow, hidden actions, draft loss, and keyboard/focus behavior.
+- [x] Give Compose, Calendar, Contacts, Scheduler, and shared confirmation dialogs one focus-containment, background-isolation, Escape, nesting, and trigger-restoration contract.
+- [x] Establish and consume a shared typography/spacing scale without introducing responsive regressions.
+- [x] Resolve independent Standards and Spec findings before the final release.
+
+### Roadmap and default availability
+
+- `ROADMAP.md` now records Contacts as shipped, identifies the implemented quick actions/detail/birthdays/trash/selective export/activity/sharing work, and distinguishes live Yjs editing from the remaining self-hosted Notes signaling and clipboard-image-paste gaps.
+- Availability now validates required names, finite/ranged time values, end-before-start, overlapping weekly/override windows, empty custom-hour overrides, and publishing without weekly hours.
+- Empty time controls can no longer turn into `NaN` and bypass comparison-based validation. Invalid controls expose `aria-invalid`, the alert explains the exact day/date, and both Save and Publish stay disabled.
+- Publish-only requirements are displayed inside the unpublished callout instead of silently disabling its primary action. Dirty, saving, success, failure, and all-saved states use a polite live region; clean/invalid saves remain disabled.
+- Time inputs use five-minute steps, date overrides have descriptive labels, and the mobile publish callout gives its copy and action full width.
+- Live Playwright at 390×844 cleared a Monday time without saving: the alert reported `Monday needs valid start and end times`, both time controls became invalid, Save and Publish were disabled, the publish callout repeated the reason, and document width remained exactly 390 px. Reload restored the saved state.
+
+### First-use lifecycle and cleanup
+
+- Created temporary event type `OMS UX E2E 20260729 2005` at slug `oms-ux-e2e-20260729-2005`, published the default availability, and booked 09:00 America/Phoenix on 2026-07-30 as `OMS E2E Guest`.
+- Booking `136a25d3-d5fd-4979-8b7a-81f9383d4e97` reached the public confirmation state, appeared under owner Bookings, projected into Calendar, and produced both owner and guest confirmation messages.
+- Cancellation moved the booking to Cancelled, removed the Calendar projection, produced the cancellation messages, and made the public event URL unavailable.
+- Restored default availability to unpublished, deleted the event type through the UI, and permanently removed all four temporary notification messages from Inbox and Trash. The product intentionally retains the cancelled booking, archived workflow, soft-retained event row, and audit events as non-active history; no active/public event, Calendar item, notification message, workflow, or published availability remains.
+- The owner API now excludes event-type deletion tombstones while retaining intentionally inactive event types for editing/reactivation. Live read-only proof returned `events: []`, zero active workflows, the test booking as `cancelled`, and default availability as unpublished.
+
+### Owner surfaces and dialog consistency
+
+- Bookings, Workflows, and Tools passed real 390×844 and 1440×900 reviews with no document or panel overflow and all actions reachable. Long Tools content stays internally scrollable.
+- Availability, Workflows, Tools, and Profile are mounted after first visit and hidden between sections, so client-only form edits survive navigation. Live Tools and Workflow probes confirmed draft survival; the temporary server-created workflow was archived afterward.
+- `useModalFocus` replaces duplicated focus code across Compose, Calendar, Contacts, Scheduler event/booking dialogs, and `ConfirmDialog`. It traps Tab/Shift+Tab, handles Escape, isolates background branches with `inert` plus `aria-hidden`, supports a temporarily inactive outer dialog during nested confirmation, and restores the exact prior trigger.
+- The final live probe caught and fixed cleanup ordering: background isolation is now removed before trigger focus is restored. Scheduler returned focus to New event; nested Compose made the outer dialog inert while confirmation was active, then restored the prior field and removed the isolation attributes.
+
+### Typography and spacing
+
+- Extended the existing root scale with 2xs, md, base, page-title, control-padding, and section-gap tokens.
+- Shared body typography, inputs, buttons, mobile section pickers, Settings hierarchy, Compose/Calendar/Contacts dialog chrome, and primary Scheduler hierarchy now consume those tokens.
+- Live computed styles report the Inter stack and a 23.2 px page-title token. Scheduler measured 390/390 px document geometry on mobile and 1440/1440 px with a 1230/1230 px main pane on desktop.
+
+### Independent review remediation
+
+- Standards review caught that `active` represented both an intentionally paused event and a booking-retained deletion. The frontend no longer filters every inactive event; the owner store excludes only rows with a durable `event_type.delete` audit tombstone, while paused events remain visible with an Inactive badge.
+- Standards review also caught the unexplained disabled Publish action; publish-specific errors are now visible in its callout.
+- Spec review caught empty-time `NaN` validation and missing tracked E2E/owner-surface proof. Finite/range checks and focused regressions were added, and this entry records the exact live lifecycle, cleanup boundary, viewport, focus, and overflow evidence.
+
+### Automated and operational proof
+
+- Frontend: 80/80 tests passed; ESLint and the production TypeScript/Vite build passed.
+- Backend: 208 tests ran, 205 passed, and 3 optional database/Express/concurrency proofs were skipped by their documented environment gates; no failures occurred.
+- Repository Bash syntax lint passed; ShellCheck is not installed and was explicitly skipped by the repository runner.
+- Integration passed, including the 80-test frontend rerun, Scheduler documentation/Phase 1/Phase 3 guards, Rspamd recovery/map checks, and installer dry run.
+- Post-deploy staging smoke passed all required services, listeners, configuration checks, functional Rspamd scan, TLS/STARTTLS, web/API boundaries, and DKIM checks. Existing Postfix deprecation and Rspamd timeout advisories remain non-blocking.
+- Repository/live Scheduler store source/runtime/map hashes match exactly. Repository/live `index.html` SHA-256 is `5d1b68be5cd1676dbbf22e85923ffae8d7708e88bf23b2b1ac71454c65e31cae`, and checksum-mode frontend rsync reports no drift.
+- Nginx, OpenMailStack, Scheduler worker, Dovecot, Postfix, Rspamd, and Fail2ban are active/running with `NRestarts=0`; the post-restart OpenMailStack warning journal is empty.
+- Live browser checks reported zero console errors and did not submit any data after cleanup.
+
+### Deployment and rollback
+
+- Pushed commits `1279ff1` through `0f2c6c68`. Frontend-only slices were deployed behind incremental root-only webroot snapshots; the final review release installed only the four affected Scheduler store artifacts, restarted only `openmailstack`, and deployed the tested static frontend.
+- Final paired rollback directory: `/var/backups/openmailstack/ui-review-0f2c6c6-20260730T040600Z/`.
+- Backend archive SHA-256: `6868ed133a162c800c44e625910644d914962feeed2aae3cc68874af9263a32a`.
+- Frontend archive SHA-256: `ea2b3887d0317b85a0e233a4c583df66a3d7878fabff6d4e43995b79be36f4b3`.
+
+### Next task
+
+Complete a disposable Scheduler Workflow first-use lifecycle: create and publish a bounded workflow, trigger it from a temporary booking, verify job/delivery/notification state, then cancel/archive and remove every user-visible artifact while retaining required audit history.

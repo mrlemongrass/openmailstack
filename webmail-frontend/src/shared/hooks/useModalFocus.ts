@@ -70,6 +70,7 @@ export function useModalFocus<T extends HTMLElement>({
   onClose: () => void;
 }) {
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const restoreIsolationRef = useRef<(() => void) | null>(null);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -83,6 +84,7 @@ export function useModalFocus<T extends HTMLElement>({
       : activeElement;
 
     return () => {
+      restoreIsolationRef.current?.();
       const returnFocus = returnFocusRef.current;
       returnFocusRef.current = null;
       if (returnFocus?.isConnected) returnFocus.focus();
@@ -103,6 +105,13 @@ export function useModalFocus<T extends HTMLElement>({
       (initialFocusable[0] || dialog).focus();
     }
     const restoreIsolation = isolateDialog(dialog);
+    const restoreActiveIsolation = () => {
+      restoreIsolation();
+      if (restoreIsolationRef.current === restoreActiveIsolation) {
+        restoreIsolationRef.current = null;
+      }
+    };
+    restoreIsolationRef.current = restoreActiveIsolation;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -137,7 +146,7 @@ export function useModalFocus<T extends HTMLElement>({
     document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      restoreIsolation();
+      restoreActiveIsolation();
     };
   }, [active, dialogRef, onClose]);
 }

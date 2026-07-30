@@ -19,6 +19,7 @@ test('shared modal focus hook traps focus, isolates background, and restores foc
   assert.match(hookSource, /event\.key === 'Escape'/);
   assert.match(hookSource, /event\.key !== 'Tab'/);
   assert.match(hookSource, /previousFocusedElement/);
+  assert.match(hookSource, /restoreIsolationRef\.current\?\.\(\)/);
   assert.match(hookSource, /returnFocus\.focus\(\)/);
   assert.doesNotMatch(hookSource, /onCloseRef\.current/);
 });

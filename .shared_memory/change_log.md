@@ -1295,3 +1295,10 @@ Future entry template:
 - Authenticated live Playwright at 390×844 verified opaque full-screen creation dialogs, labelled timed Calendar controls, visible Contacts actions, and a `200` Contacts activity response.
 - The enabled Scheduler owner app exposes all six mobile destinations, reaches Profile, publishes `/scheduler/localtest`, and keeps the owned `Local Test <localtest@housevo.us>` sender selected.
 - Root-only rollback archives and checksums are stored in `/var/backups/openmailstack/ui-creation-126d17b7-20260730T005042Z/`.
+
+## 2026-07-29 — Scheduler Event-Type Editor UX
+
+- Replaced the clipped mobile event-type settings strip with the shared labelled section picker; all five destinations are directly discoverable while desktop keeps its tabs.
+- Backdrop clicks no longer discard event-type drafts. Close, Cancel, and Escape remain explicit exit paths.
+- Focused regressions, the 68-test frontend suite, ESLint, build, repository lint, and integration pass.
+- Authenticated Playwright at 390×844 and 1440×900 verified section transitions, zero document overflow, draft preservation, and desktop parity without saving Scheduler data.

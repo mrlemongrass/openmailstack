@@ -6936,3 +6936,31 @@ Deployed commit: `126d17b7`
 ### Next task
 
 Audit the newly enabled live Scheduler event-type creation workflow at mobile and desktop widths, then repair the highest-value bounded UX defect.
+
+## 2026-07-29 — Scheduler event-type editor navigation and draft safety
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `9bcd9394`
+Ending git state: focused Scheduler frontend, regression, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] Mobile exposes Setup, Availability, Limits, Public, and Advanced without horizontal discovery.
+- [x] Desktop retains the established five-tab editor navigation.
+- [x] Clicking outside the dialog cannot discard an in-progress event-type draft.
+- [x] Close, Cancel, and Escape remain intentional dismissal paths.
+- [x] The editor stays opaque, fits 390×844 without document overflow, and does not save test data.
+
+### Changes and proof
+
+- Replaced the 468 px horizontally scrolling settings strip inside the 318 px mobile content area with the suite's labelled, opaque section picker. The same shared section model drives the preserved desktop tabs and mobile options.
+- Removed backdrop dismissal from the Scheduler event-type editor and gave the close action a workflow-specific accessible name.
+- Added focused regressions for complete mobile section discovery, responsive desktop/mobile navigation, and explicit dismissal behavior.
+- Frontend tests pass 68/68; ESLint, production build, repository lint, integration, and `git diff --check` pass. Shellcheck remains unavailable and was skipped by the repository lint runner.
+- Authenticated Playwright through the real backend measured an opaque 354×824 dialog within the 390×844 viewport and no document overflow. Public and Advanced were directly selectable, a typed title survived an outside click, Escape closed the draft, the desktop tabs returned at 1440×900, and the browser reported zero post-login errors.
+- No event type, booking, profile, or availability data was submitted.
+
+### Next task
+
+Audit Scheduler default-availability creation and publishing at mobile and desktop widths, then repair the highest-value bounded workflow defect.

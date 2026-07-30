@@ -603,6 +603,9 @@
   color: var(--accent-primary);
   font-weight: 700;
 }
+.scheduler-editor-mobile-navigation {
+  display: none;
+}
 .scheduler-editor-section {
   min-height: 245px;
 }
@@ -1215,6 +1218,14 @@
   .scheduler-modal {
     max-height: calc(100vh - 20px);
     padding: 16px;
+  }
+  .scheduler-editor-tabs {
+    display: none;
+  }
+  .scheduler-editor-mobile-navigation {
+    display: grid;
+    gap: 5px;
+    margin: -4px 0 18px;
   }
   .scheduler-schedule-choice {
     grid-template-columns: 1fr;

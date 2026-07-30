@@ -29,8 +29,16 @@ import { WorkflowsPanel } from './WorkflowsPanel';
 import './scheduler.css';
 
 type SchedulerTab = 'events' | 'bookings' | 'availability' | 'workflows' | 'tools' | 'profile';
+type SchedulerEditorSection = 'setup' | 'availability' | 'limits' | 'public' | 'advanced';
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DEFAULT_WINDOWS: SchedulerWindow[] = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMinute: 540, endMinute: 1020 }));
+const SCHEDULER_EDITOR_SECTIONS: Array<{ id: SchedulerEditorSection; label: string }> = [
+  { id: 'setup', label: 'Setup' },
+  { id: 'availability', label: 'Availability' },
+  { id: 'limits', label: 'Limits' },
+  { id: 'public', label: 'Public' },
+  { id: 'advanced', label: 'Advanced' },
+];
 
 const minutesToTime = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 const timeToMinutes = (value: string) => {
@@ -57,7 +65,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
   onSaved: (close?: boolean) => Promise<void> | void;
 }) {
   const { showToast } = useToast();
-  const [section, setSection] = useState<'setup' | 'availability' | 'limits' | 'public' | 'advanced'>('setup');
+  const [section, setSection] = useState<SchedulerEditorSection>('setup');
   const [form, setForm] = useState<Partial<SchedulerEventType>>({
     title: event?.title || '', slug: event?.slug || '', description: event?.description || '',
     durationMinutes: event?.durationMinutes || 30, intervalMinutes: event?.intervalMinutes || 30,
@@ -243,11 +251,17 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
           : 'No active private link.';
 
   return (
-    <div className="scheduler-modal-backdrop" onMouseDown={onClose}>
-      <form className="scheduler-modal" role="dialog" aria-modal="true" aria-labelledby="event-editor-title" onSubmit={submit} onMouseDown={eventMouse => eventMouse.stopPropagation()}>
-        <header><div><h2 id="event-editor-title">{form.id ? 'Edit event type' : 'New event type'}</h2><p>Choose the service length, schedule, calendar rules, and booking limits.</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button></header>
+    <div className="scheduler-modal-backdrop">
+      <form className="scheduler-modal" role="dialog" aria-modal="true" aria-labelledby="event-editor-title" onSubmit={submit}>
+        <header><div><h2 id="event-editor-title">{form.id ? 'Edit event type' : 'New event type'}</h2><p>Choose the service length, schedule, calendar rules, and booking limits.</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close event type editor"><X size={18} /></button></header>
         {error && <ErrorBanner error={error} />}
-        <nav className="scheduler-editor-tabs" aria-label="Event type settings">{(['setup', 'availability', 'limits', 'public', 'advanced'] as const).map(item => <button type="button" className={section === item ? 'active' : ''} onClick={() => setSection(item)} key={item}>{item[0].toUpperCase() + item.slice(1)}</button>)}</nav>
+        <nav className="scheduler-editor-tabs" aria-label="Event type settings">{SCHEDULER_EDITOR_SECTIONS.map(item => <button type="button" className={section === item.id ? 'active' : ''} onClick={() => setSection(item.id)} key={item.id}>{item.label}</button>)}</nav>
+        <label className="scheduler-editor-mobile-navigation mobile-section-navigation">
+          <span>Event type settings</span>
+          <select aria-label="Event type settings" value={section} onChange={eventChange => setSection(eventChange.target.value as SchedulerEditorSection)}>
+            {SCHEDULER_EDITOR_SECTIONS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </label>
         {section === 'setup' && <div className="scheduler-form-grid">
           <label className="span-2">Title<input autoFocus required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Hair coloring" /></label>
           <label>Booking link<input value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value })} placeholder="hair-coloring" /></label>

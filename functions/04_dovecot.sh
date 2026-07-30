@@ -51,6 +51,40 @@ chmod 0600 "${DOVECOT_MASTER_SECRET_FILE}"
 chown root:dovecot "${DOVECOT_MASTER_USERS_FILE}"
 chmod 0640 "${DOVECOT_MASTER_USERS_FILE}"
 
+echo -e "Preparing app-password and two-factor authentication tables..."
+MYSQL_PWD="${POSTFIXADMIN_DB_PASSWORD}" mysql \
+    --protocol=TCP \
+    --host=127.0.0.1 \
+    --user="${POSTFIXADMIN_DB_USER}" \
+    "${POSTFIXADMIN_DB_NAME}" <<'SQL'
+CREATE TABLE IF NOT EXISTS account_security (
+    username VARCHAR(255) NOT NULL PRIMARY KEY,
+    totp_secret_ciphertext TEXT NULL,
+    totp_secret_iv VARBINARY(12) NULL,
+    totp_secret_tag VARBINARY(16) NULL,
+    pending_totp_ciphertext TEXT NULL,
+    pending_totp_iv VARBINARY(12) NULL,
+    pending_totp_tag VARBINARY(16) NULL,
+    recovery_code_hashes JSON NULL,
+    totp_enabled_at DATETIME NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS app_passwords (
+    id CHAR(36) NOT NULL PRIMARY KEY,
+    username VARCHAR(255) NOT NULL,
+    label VARCHAR(80) NOT NULL,
+    secret_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    prefix VARCHAR(24) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at DATETIME NULL,
+    revoked_at DATETIME NULL,
+    UNIQUE KEY uq_app_password_secret_hash (secret_hash),
+    KEY idx_app_password_owner (username, revoked_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+SQL
+
 DOVECOT_PROTOCOLS="imap lmtp sieve"
 if openmailstack_package_installed "dovecot-pop3d"; then
     DOVECOT_PROTOCOLS="imap pop3 lmtp sieve"
@@ -73,7 +107,7 @@ if [[ "$DOVECOT_VERSION" == "2.4" ]]; then
     # ==========================================
     
     # Clean up the old ext file if it exists from a previous run
-    rm -f /etc/dovecot/dovecot-sql.conf.ext
+    rm -f /etc/dovecot/dovecot-sql.conf.ext /etc/dovecot/dovecot-app-passwords-sql.conf.ext
 
     cat <<EOF > /etc/dovecot/local.conf
 protocols = ${DOVECOT_PROTOCOLS}
@@ -106,7 +140,11 @@ passdb passwd-file {
 }
 
 passdb sql {
-  query = SELECT username AS user, password FROM mailbox WHERE username = '%{user}' AND active = '1'
+  query = SELECT NULL AS password, 'Y' AS nopassword, ap.username AS user FROM app_passwords ap INNER JOIN mailbox m ON m.username = ap.username AND m.active = '1' INNER JOIN account_security s ON s.username = ap.username AND s.totp_enabled_at IS NOT NULL WHERE ap.username = '%{user}' AND ap.revoked_at IS NULL AND ap.secret_hash = SHA2('%{password}', 256)
+}
+
+passdb sql {
+  query = SELECT username AS user, password FROM mailbox WHERE username = '%{user}' AND active = '1' AND ('%{master_user}' <> '' OR NOT EXISTS (SELECT 1 FROM account_security s WHERE s.username = mailbox.username AND s.totp_enabled_at IS NOT NULL))
 }
 
 userdb sql {
@@ -213,12 +251,21 @@ else
 driver = mysql
 connect = host=127.0.0.1 dbname=${POSTFIXADMIN_DB_NAME} user=${POSTFIXADMIN_DB_USER} password=${POSTFIXADMIN_DB_PASSWORD}
 default_pass_scheme = BLF-CRYPT
-password_query = SELECT username AS user, password FROM mailbox WHERE username = '%u' AND active = '1'
+password_query = SELECT username AS user, password FROM mailbox WHERE username = '%u' AND active = '1' AND ('%{master_user}' <> '' OR NOT EXISTS (SELECT 1 FROM account_security s WHERE s.username = mailbox.username AND s.totp_enabled_at IS NOT NULL))
 user_query = SELECT maildir, 5000 AS uid, 5000 AS gid FROM mailbox WHERE username = '%u' AND active = '1'
 EOF
 
     chown root:root /etc/dovecot/dovecot-sql.conf.ext
     chmod 600 /etc/dovecot/dovecot-sql.conf.ext
+
+    cat <<EOF > /etc/dovecot/dovecot-app-passwords-sql.conf.ext
+driver = mysql
+connect = host=127.0.0.1 dbname=${POSTFIXADMIN_DB_NAME} user=${POSTFIXADMIN_DB_USER} password=${POSTFIXADMIN_DB_PASSWORD}
+password_query = SELECT NULL AS password, 'Y' AS nopassword, ap.username AS user FROM app_passwords ap INNER JOIN mailbox m ON m.username = ap.username AND m.active = '1' INNER JOIN account_security s ON s.username = ap.username AND s.totp_enabled_at IS NOT NULL WHERE ap.username = '%u' AND ap.revoked_at IS NULL AND ap.secret_hash = SHA2('%w', 256)
+EOF
+
+    chown root:root /etc/dovecot/dovecot-app-passwords-sql.conf.ext
+    chmod 600 /etc/dovecot/dovecot-app-passwords-sql.conf.ext
 
     cat <<EOF > /etc/dovecot/local.conf
 protocols = ${DOVECOT_PROTOCOLS}
@@ -240,6 +287,11 @@ passdb {
   args = ${DOVECOT_MASTER_USERS_FILE}
   master = yes
   pass = yes
+}
+
+passdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-app-passwords-sql.conf.ext
 }
 
 passdb {

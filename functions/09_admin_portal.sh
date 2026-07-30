@@ -109,11 +109,16 @@ systemctl restart nginx || true
 
 # 4. Interactive Admin Account Setup
 echo -e "\n${CYAN}Admin Portal Account Setup${NC}"
-echo "1) Create a new Admin account"
-echo "2) Make an existing user an Admin"
+echo "1) Create a legacy-only Admin account"
+echo "2) Make an existing mailbox user an Admin (recommended; supports modern two-factor authentication)"
+DEFAULT_ADMIN_OPT=1
+MAILBOX_COUNT=$(mysql -u "$POSTFIXADMIN_DB_USER" -p"$POSTFIXADMIN_DB_PASSWORD" "$POSTFIXADMIN_DB_NAME" -se "SELECT COUNT(*) FROM mailbox")
+if [[ "$MAILBOX_COUNT" -gt 0 ]]; then
+    DEFAULT_ADMIN_OPT=2
+fi
 while true; do
-    read -p "Select option (1-2) [default: 1]: " ADMIN_OPT
-    ADMIN_OPT=${ADMIN_OPT:-1}
+    read -p "Select option (1-2) [default: ${DEFAULT_ADMIN_OPT}]: " ADMIN_OPT
+    ADMIN_OPT=${ADMIN_OPT:-${DEFAULT_ADMIN_OPT}}
     if [[ "$ADMIN_OPT" =~ ^[12]$ ]]; then
         break
     fi
@@ -147,6 +152,8 @@ if [[ "$ADMIN_OPT" == "1" ]]; then
         echo ""
         if [[ -z "$ADMIN_PASSWORD" ]]; then
             echo "Password cannot be empty."
+        elif (( ${#ADMIN_PASSWORD} < 12 || ${#ADMIN_PASSWORD} > 128 )); then
+            echo "Password must be between 12 and 128 characters."
         elif [[ "$ADMIN_PASSWORD" != "$ADMIN_PASSWORD_CONFIRM" ]]; then
             echo "Passwords do not match. Please try again."
         else
@@ -154,12 +161,7 @@ if [[ "$ADMIN_OPT" == "1" ]]; then
         fi
     done
     
-    # Hash password using doveadm
-    ADMIN_HASH=$(doveadm pw -s SHA512-CRYPT -p "$ADMIN_PASSWORD" 2>/dev/null || echo "")
-    if [[ -z "$ADMIN_HASH" ]]; then
-        # Fallback if doveadm fails during dry-runs or permission issues
-        ADMIN_HASH=$(ADMIN_PASSWORD="$ADMIN_PASSWORD" php -r 'echo password_hash(getenv("ADMIN_PASSWORD"), PASSWORD_DEFAULT);')
-    fi
+    ADMIN_HASH=$(ADMIN_PASSWORD="$ADMIN_PASSWORD" php -r 'echo password_hash(getenv("ADMIN_PASSWORD"), PASSWORD_BCRYPT, ["cost" => 12]);')
     
     mysql -u "$POSTFIXADMIN_DB_USER" -p"$POSTFIXADMIN_DB_PASSWORD" "$POSTFIXADMIN_DB_NAME" -e "
         INSERT IGNORE INTO admin (username, password, superadmin, active) VALUES ('$ADMIN_USER_SQL', '$ADMIN_HASH', 1, 1);
@@ -198,6 +200,7 @@ if [[ "$ADMIN_OPT" == "1" ]]; then
         );
     "
     echo -e "${GREEN}New Admin account '$ADMIN_USER' created successfully!${NC}"
+    echo -e "${YELLOW}This legacy-only account cannot use the modern app or two-factor authentication. Promote a mailbox-backed account for production administration.${NC}"
 fi
 
 # Build Sudoers Bridge for Upgrade System

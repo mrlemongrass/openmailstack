@@ -11,6 +11,7 @@ function loadConfig(overrides = {}, omitted = []) {
     NODE_ENV: 'production',
     OMS_DB_PASSWORD: 'unit-test-db-password',
     OMS_SESSION_SECRET: 'a'.repeat(64),
+    OMS_ACCOUNT_SECURITY_KEY: 'b'.repeat(64),
     ...overrides,
   };
   for (const key of omitted) delete env[key];
@@ -33,6 +34,16 @@ test('production requires an explicit strong session secret', () => {
 
   const valid = loadConfig();
   assert.equal(valid.status, 0, valid.stderr);
+});
+
+test('production requires a dedicated account-security encryption key', () => {
+  const missing = loadConfig({}, ['OMS_ACCOUNT_SECURITY_KEY']);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /OMS_ACCOUNT_SECURITY_KEY/);
+
+  const weak = loadConfig({ OMS_ACCOUNT_SECURITY_KEY: 'too-short' });
+  assert.notEqual(weak.status, 0);
+  assert.match(weak.stderr, /OMS_ACCOUNT_SECURITY_KEY/);
 });
 
 test('delegated credential configuration rejects incomplete user/password pairs', () => {

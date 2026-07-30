@@ -5,6 +5,7 @@ export declare const serverConfig: {
     defaultDomain: string;
     sessionTtlMs: number;
     sessionSecret: string;
+    accountSecurityKey: string;
     cookieSecure: boolean;
     uploadLimitBytes: number;
     webhookSecret: string;

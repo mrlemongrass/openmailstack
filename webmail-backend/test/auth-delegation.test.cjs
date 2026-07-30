@@ -3,6 +3,7 @@ const test = require('node:test');
 
 process.env.OMS_DB_PASSWORD = 'unit-test-db-password';
 process.env.OMS_SESSION_SECRET = 's'.repeat(64);
+process.env.OMS_ACCOUNT_SECURITY_KEY = 'a'.repeat(64);
 process.env.OMS_IMAP_MASTER_USER = 'oms-internal';
 process.env.OMS_IMAP_MASTER_PASS = 'delegated-secret';
 process.env.OMS_SMTP_MASTER_USER = 'oms-internal';

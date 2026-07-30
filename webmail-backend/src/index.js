@@ -70,6 +70,7 @@ const scheduled_send_1 = require("./scheduled-send");
 const calendar_subscription_1 = require("./calendar-subscription");
 const router_1 = require("./scheduler/router");
 const auth_1 = require("./auth");
+const account_security_1 = require("./account-security");
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
 exports.io = new socket_io_1.Server(server, {
@@ -110,6 +111,7 @@ exports.io.on('connection', (socket) => {
 (0, notes_utils_1.ensureRemindersSchema)().catch(err => console.error('Failed to initialize reminders schema:', err));
 (0, notes_utils_1.ensureAttachmentsSchema)().catch(err => console.error('Failed to initialize attachments schema:', err));
 (0, eas_mail_sync_1.ensureEasMailSyncSchema)().catch(err => console.error('Failed to initialize EAS mail sync schema:', err));
+(0, account_security_1.ensureAccountSecuritySchema)().catch(err => console.error('Failed to initialize account security schema:', err));
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(security_1.securityHeaders);

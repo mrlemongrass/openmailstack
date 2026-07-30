@@ -235,7 +235,8 @@ function SyncView() {
         <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 24, lineHeight: 1.6,
           padding: '12px 16px', borderRadius: 'var(--radius-md)',
           background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>
-          <strong>Authentication:</strong> Use your full email address and password.
+          <strong>Authentication:</strong> Use your full email address. If two-factor authentication is enabled,
+          create an app password in Settings → Security; otherwise use your account password.
           On most devices, choose <strong>Manual Setup</strong> and enter the server
           addresses shown above. Your username is your email address.
         </p>

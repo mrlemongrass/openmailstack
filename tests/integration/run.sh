@@ -64,11 +64,13 @@ test_postfixadmin_dns_guard_defaults() {
 test_secret_handling_guards() {
     local pfa_file="${PROJECT_ROOT}/functions/02_postfixadmin.sh"
     local rspamd_file="${PROJECT_ROOT}/functions/05_rspamd_clamav.sh"
+    local admin_installer="${PROJECT_ROOT}/functions/09_admin_portal.sh"
 
     assert_contains "${pfa_file}" "POSTFIXADMIN_SETUP_PASSWORD=\"\${POSTFIXADMIN_SETUP_PASSWORD}\" php <<'PHP'"
     assert_not_contains "${pfa_file}" "php -r \"echo password_hash('"
     assert_contains "${rspamd_file}" "printf '%s\\n' \"\${POSTFIXADMIN_SETUP_PASSWORD}\" | rspamadm pw -e"
     assert_not_contains "${rspamd_file}" "rspamadm pw -e -p"
+    assert_not_contains "${admin_installer}" 'doveadm pw -s SHA512-CRYPT -p'
     pass "Secrets are not passed on command arguments in hashing paths"
 }
 
@@ -192,6 +194,10 @@ test_auth_hardening_guards() {
     node "${PROJECT_ROOT}/tests/integration/auth_hardening_guard.cjs"
 }
 
+test_admin_rbac_guards() {
+    node "${PROJECT_ROOT}/tests/integration/admin_rbac_guard.cjs"
+}
+
 test_dry_run_local() {
     if [[ "$(uname -s)" != "Linux" ]]; then
         echo "[skip] Local dry-run integration requires Linux."
@@ -235,6 +241,7 @@ test_scheduler_documentation_guards
 test_scheduler_phase1_guards
 test_scheduler_phase3_guards
 test_auth_hardening_guards
+test_admin_rbac_guards
 test_dry_run_local
 
 echo "[ok] Integration checks completed."

@@ -30,6 +30,10 @@ const sessionSecret = explicitSessionSecret || (process.env.NODE_ENV === 'produc
 if (process.env.NODE_ENV === 'production' && sessionSecret.length < 32) {
     throw new Error('Production requires OMS_SESSION_SECRET with at least 32 characters');
 }
+const accountSecurityKey = optional('OMS_ACCOUNT_SECURITY_KEY', process.env.NODE_ENV === 'production' ? '' : sessionSecret);
+if (process.env.NODE_ENV === 'production' && accountSecurityKey.length < 32) {
+    throw new Error('Production requires OMS_ACCOUNT_SECURITY_KEY with at least 32 characters');
+}
 exports.serverConfig = {
     host: optional('OMS_WEBMAIL_HOST', '127.0.0.1'),
     port: parseNumber('OMS_WEBMAIL_PORT', 20000),
@@ -37,6 +41,7 @@ exports.serverConfig = {
     defaultDomain: optional('OMS_DEFAULT_DOMAIN'),
     sessionTtlMs: parseNumber('OMS_SESSION_TTL_SECONDS', 8 * 60 * 60) * 1000,
     sessionSecret,
+    accountSecurityKey,
     cookieSecure: parseBoolean('OMS_COOKIE_SECURE', process.env.NODE_ENV === 'production'),
     uploadLimitBytes: parseNumber('OMS_UPLOAD_LIMIT_BYTES', 25 * 1024 * 1024),
     webhookSecret: optional('OMS_WEBHOOK_SECRET'),

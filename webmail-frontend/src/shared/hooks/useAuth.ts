@@ -8,8 +8,14 @@ interface AuthState {
   isAuthenticated: boolean;
 }
 
+export interface LoginResult {
+  success: boolean;
+  requiresTwoFactor?: boolean;
+  error?: string;
+}
+
 export function useAuth(): AuthState & {
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string, secondFactor?: string) => Promise<LoginResult>;
   logout: () => Promise<void>;
   fetchMe: () => Promise<void>;
 } {
@@ -47,14 +53,26 @@ export function useAuth(): AuthState & {
     return () => window.clearTimeout(timer);
   }, [fetchMe]);
 
-  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
+  const login = useCallback(async (
+    email: string,
+    password: string,
+    secondFactor?: string,
+  ): Promise<LoginResult> => {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: email, password }),
+      body: JSON.stringify({ username: email, password, secondFactor }),
     });
-    if (res.ok) { await fetchMe(); return true; }
-    return false;
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      await fetchMe();
+      return { success: true };
+    }
+    return {
+      success: false,
+      requiresTwoFactor: Boolean(data.requiresTwoFactor),
+      error: typeof data.error === 'string' ? data.error : undefined,
+    };
   }, [fetchMe]);
 
   const logout = useCallback(async () => {

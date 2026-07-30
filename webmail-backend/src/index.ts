@@ -62,6 +62,7 @@ import { startScheduledSender } from './scheduled-send';
 import { startCalendarSubscriptionWorker } from './calendar-subscription';
 import { schedulerRouter } from './scheduler/router';
 import { getSession, initializeSessionStore, requireSession } from './auth';
+import { ensureAccountSecuritySchema } from './account-security';
 
 const app = express();
 const server = http.createServer(app);
@@ -103,6 +104,7 @@ ensureNotesSchema().catch(err => console.error('Failed to initialize notes schem
 ensureRemindersSchema().catch(err => console.error('Failed to initialize reminders schema:', err));
 ensureAttachmentsSchema().catch(err => console.error('Failed to initialize attachments schema:', err));
 ensureEasMailSyncSchema().catch(err => console.error('Failed to initialize EAS mail sync schema:', err));
+ensureAccountSecuritySchema().catch(err => console.error('Failed to initialize account security schema:', err));
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(securityHeaders);

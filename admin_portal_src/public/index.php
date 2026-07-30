@@ -1,4 +1,13 @@
 <?php
+ini_set('session.use_strict_mode', '1');
+session_name('oms_legacy_admin');
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/SOGo/admin/',
+    'secure' => true,
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
 session_start();
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));

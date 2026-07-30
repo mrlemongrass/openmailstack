@@ -5,6 +5,7 @@ import { Mail } from 'lucide-react';
 import { Spinner } from '../components/Spinner';
 import { resolveBrandingPresentation, type BrandingSettings } from '../../branding';
 import { useBranding } from '../../branding-context';
+import type { LoginResult } from '../hooks/useAuth';
 
 export function AuthGate() {
   const { isLoading, isAuthenticated, login } = useAuth();
@@ -29,11 +30,13 @@ export function AuthGate() {
 }
 
 export function LoginPage({ login, branding }: {
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string, secondFactor?: string) => Promise<LoginResult>;
   branding: BrandingSettings;
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [secondFactor, setSecondFactor] = useState('');
+  const [requiresTwoFactor, setRequiresTwoFactor] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const presentation = resolveBrandingPresentation(branding);
@@ -43,8 +46,17 @@ export function LoginPage({ login, branding }: {
     setError('');
     setSubmitting(true);
     try {
-      const ok = await login(email, password);
-      if (!ok) setError('Invalid email or password.');
+      const result = await login(
+        email,
+        password,
+        requiresTwoFactor ? secondFactor : undefined,
+      );
+      if (result.requiresTwoFactor) {
+        setRequiresTwoFactor(true);
+        setError(result.error === 'Invalid authentication code' ? result.error : '');
+      } else if (!result.success) {
+        setError(result.error || 'Invalid email or password.');
+      }
     } catch {
       setError('Connection failed. Please try again.');
     } finally {
@@ -93,20 +105,64 @@ export function LoginPage({ login, branding }: {
             </div>
           )}
 
-          <input type="email" className="glass-input" placeholder="Email address"
-            value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus
-            autoComplete="username"
-            style={{ width: '100%', marginBottom: 12 }} />
+          {requiresTwoFactor ? (
+            <>
+              <div style={{
+                color: 'var(--text-secondary)', fontSize: '0.86rem',
+                marginBottom: 14, overflowWrap: 'anywhere',
+              }}>
+                Signing in as <strong style={{ color: 'var(--text-primary)' }}>{email}</strong>
+              </div>
+              <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                Authentication or recovery code
+                <input
+                  type="text"
+                  className="glass-input"
+                  value={secondFactor}
+                  onChange={(e) => setSecondFactor(e.target.value)}
+                  required
+                  autoFocus
+                  autoComplete="one-time-code"
+                  inputMode="text"
+                  style={{ width: '100%', marginTop: 8, marginBottom: 16 }}
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <input type="email" className="glass-input" placeholder="Email address"
+                value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus
+                autoComplete="username"
+                style={{ width: '100%', marginBottom: 12 }} />
 
-          <input type="password" className="glass-input" placeholder="Password"
-            value={password} onChange={(e) => setPassword(e.target.value)} required
-            autoComplete="current-password"
-            style={{ width: '100%', marginBottom: 24 }} />
+              <input type="password" className="glass-input" placeholder="Password"
+                value={password} onChange={(e) => setPassword(e.target.value)} required
+                autoComplete="current-password"
+                style={{ width: '100%', marginBottom: 24 }} />
+            </>
+          )}
 
           <button type="submit" className="btn btn-primary" disabled={submitting}
             style={{ width: '100%' }}>
-            {submitting ? <><Spinner size={14} /> Signing in...</> : 'Sign In'}
+            {submitting
+              ? <><Spinner size={14} /> Signing in...</>
+              : requiresTwoFactor ? 'Verify and Sign In' : 'Sign In'}
           </button>
+          {requiresTwoFactor && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={submitting}
+              onClick={() => {
+                setRequiresTwoFactor(false);
+                setSecondFactor('');
+                setError('');
+              }}
+              style={{ width: '100%', marginTop: 8 }}
+            >
+              Use a different account
+            </button>
+          )}
         </form>
       </div>
     </div>

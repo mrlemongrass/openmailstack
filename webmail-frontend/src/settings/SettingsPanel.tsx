@@ -9,6 +9,7 @@ import type { CalendarUserSettings, ContactsUserSettings, MailUserSettings } fro
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
 import { supportedTimeZones } from '../calendar/calendarTime';
+import { AccountSecurityControls } from './AccountSecurityControls';
 
 interface Rule {
   id: string;
@@ -1326,15 +1327,16 @@ function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentPro
         <form onSubmit={handlePasswordSubmit} className="settings-form-grid" style={{ marginTop: '16px' }}>
           <label className="settings-field">
             <span>Current Password</span>
-            <input type="password" required className="glass-input" value={passwords.current} onChange={event => onPasswordChange({ ...passwords, current: event.target.value })} disabled={pwSaving} />
+            <input type="password" required className="glass-input" value={passwords.current} onChange={event => onPasswordChange({ ...passwords, current: event.target.value })} disabled={pwSaving} autoComplete="current-password" />
           </label>
           <label className="settings-field">
             <span>New Password</span>
-            <input type="password" required className="glass-input" value={passwords.new} onChange={event => onPasswordChange({ ...passwords, new: event.target.value })} disabled={pwSaving} />
+            <input type="password" required minLength={12} maxLength={128} className="glass-input" value={passwords.new} onChange={event => onPasswordChange({ ...passwords, new: event.target.value })} disabled={pwSaving} autoComplete="new-password" />
+            <small>Use 12–128 characters. Changing it revokes all sessions and app passwords.</small>
           </label>
           <label className="settings-field">
             <span>Confirm New Password</span>
-            <input type="password" required className="glass-input" value={passwords.confirm} onChange={event => onPasswordChange({ ...passwords, confirm: event.target.value })} disabled={pwSaving} />
+            <input type="password" required minLength={12} maxLength={128} className="glass-input" value={passwords.confirm} onChange={event => onPasswordChange({ ...passwords, confirm: event.target.value })} disabled={pwSaving} autoComplete="new-password" />
             {mismatch && <small style={{ color: 'var(--danger-color)' }}>Passwords do not match.</small>}
           </label>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -1346,6 +1348,8 @@ function AccountSecurityPane({ passwords, onPasswordChange }: SettingsContentPro
           </div>
         </form>
       </section>
+
+      <AccountSecurityControls />
 
       <section className="settings-section">
         <h3>Active Sessions</h3>

@@ -56,6 +56,8 @@ const admin_settings_1 = require("./admin-settings");
 const branding_1 = require("./branding");
 const search_worker_1 = require("./search-worker");
 const rspamd_health_1 = require("./rspamd-health");
+const password_verification_1 = require("./password-verification");
+const account_security_1 = require("./account-security");
 exports.apiRouter = (0, express_1.Router)();
 // Auth failure log for fail2ban integration
 const AUTH_LOG = '/var/log/openmailstack/auth.log';
@@ -620,10 +622,15 @@ const quotaInputToBytes = async (value, domain, fallbackBytes = 0) => {
     return Math.max(0, parsed);
 };
 const hashMailboxPassword = async (password) => {
-    if (!password)
-        throw new Error('Password is required');
+    if (password.length < 12 || password.length > 128) {
+        throw new Error('Password must be between 12 and 128 characters');
+    }
     const hash = await bcryptjs_1.default.hash(password, 12);
     return hash.replace('$2b$', '$2y$');
+};
+const verifyPrimaryMailboxPassword = async (username, password) => {
+    const [rows] = await db_1.pool.query('SELECT password FROM mailbox WHERE username = ? AND active = 1 LIMIT 1', [username]);
+    return (0, password_verification_1.verifyStoredPassword)(password, rows[0]?.password);
 };
 const deriveDomainFromAddress = (address) => {
     if (address.startsWith('@'))
@@ -908,27 +915,29 @@ exports.apiRouter.get('/branding', async (_req, res) => {
     }
 });
 exports.apiRouter.post('/auth/login', async (req, res) => {
-    const { username, password } = req.body;
+    const { username, password, secondFactor } = req.body;
     const normalizedUsername = (0, config_1.normalizeMailboxUsername)(username || '');
     const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     try {
-        const [rows] = await db_1.pool.query('SELECT password FROM mailbox WHERE username = ? AND active = 1', [normalizedUsername]);
-        if (rows.length === 0) {
-            logAuthFailure(clientIp, normalizedUsername, 'unknown user');
-            return res.status(401).json({ success: false, error: 'Invalid credentials' });
-        }
-        const dbHash = rows[0].password;
-        // Dovecot sometimes stores bcrypt hashes starting with $2y$
-        let isValid = false;
-        if (dbHash.startsWith('$2y$') || dbHash.startsWith('$2a$') || dbHash.startsWith('$2b$')) {
-            isValid = await bcryptjs_1.default.compare(password, dbHash);
-        }
-        else {
-            // For now, if it's some other format we can't parse easily with bcryptjs, we'll reject or mock
-            // In a real scenario we'd handle Dovecot SHA512-CRYPT
-            isValid = false;
-        }
+        const isValid = await verifyPrimaryMailboxPassword(normalizedUsername, password);
         if (isValid) {
+            if (await (0, account_security_1.isTwoFactorEnabled)(normalizedUsername)) {
+                if (!secondFactor) {
+                    return res.status(401).json({
+                        success: false,
+                        requiresTwoFactor: true,
+                        error: 'Authentication code required',
+                    });
+                }
+                if (!await (0, account_security_1.verifyAccountSecondFactor)(normalizedUsername, String(secondFactor))) {
+                    logAuthFailure(clientIp, normalizedUsername, 'invalid second factor');
+                    return res.status(401).json({
+                        success: false,
+                        requiresTwoFactor: true,
+                        error: 'Invalid authentication code',
+                    });
+                }
+            }
             // The modern Admin app is global-only until domain-admin scoping is implemented.
             const [adminRows] = await db_1.pool.query('SELECT superadmin FROM admin WHERE username = ? AND active = 1 LIMIT 1', [normalizedUsername]);
             const isAdmin = adminRows.length > 0 && (0, auth_1.hasGlobalAdminAccess)(adminRows[0]);
@@ -941,7 +950,8 @@ exports.apiRouter.post('/auth/login', async (req, res) => {
         }
     }
     catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        console.error('Authentication failed unexpectedly:', err);
+        res.status(500).json({ success: false, error: 'Authentication is temporarily unavailable' });
     }
 });
 exports.apiRouter.post('/auth/logout', async (req, res) => {
@@ -951,6 +961,88 @@ exports.apiRouter.post('/auth/logout', async (req, res) => {
 exports.apiRouter.get('/auth/me', requireAuth, (req, res) => {
     res.json({ success: true, user: { username: req.user.username, isAdmin: req.user.isAdmin } });
 });
+exports.apiRouter.get('/account/security', requireAuth, async (req, res) => {
+    try {
+        const summary = await (0, account_security_1.getAccountSecuritySummary)(req.user.username);
+        res.json({ success: true, ...summary });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.post('/account/2fa/setup', requireAuth, async (req, res) => {
+    try {
+        if (await (0, account_security_1.isTwoFactorEnabled)(req.user.username)) {
+            return res.status(400).json({ success: false, error: 'Two-factor authentication is already enabled' });
+        }
+        if (!await verifyPrimaryMailboxPassword(req.user.username, req.body?.currentPassword)) {
+            return res.status(400).json({ success: false, error: 'Current password is incorrect' });
+        }
+        const setup = await (0, account_security_1.beginTotpSetup)(req.user.username);
+        res.json({ success: true, ...setup });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.post('/account/2fa/confirm', requireAuth, async (req, res) => {
+    try {
+        const rawSessionId = String(req.cookies?.[auth_1.SESSION_COOKIE] || '');
+        const currentSessionHash = crypto_1.default.createHash('sha256').update(rawSessionId).digest('hex');
+        const recoveryCodes = await (0, account_security_1.confirmTotpSetup)(req.user.username, String(req.body?.code || ''), currentSessionHash);
+        res.json({ success: true, recoveryCodes });
+    }
+    catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.post('/account/2fa/disable', requireAuth, async (req, res) => {
+    try {
+        if (!await verifyPrimaryMailboxPassword(req.user.username, req.body?.currentPassword)) {
+            return res.status(400).json({ success: false, error: 'Current password is incorrect' });
+        }
+        if (!await (0, account_security_1.verifyAccountSecondFactor)(req.user.username, String(req.body?.code || ''))) {
+            return res.status(400).json({ success: false, error: 'Invalid authentication code' });
+        }
+        await (0, account_security_1.disableTwoFactor)(req.user.username);
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.post('/account/app-passwords', requireAuth, async (req, res) => {
+    try {
+        if (!await (0, account_security_1.isTwoFactorEnabled)(req.user.username)) {
+            return res.status(400).json({ success: false, error: 'Enable two-factor authentication first' });
+        }
+        if (!await verifyPrimaryMailboxPassword(req.user.username, req.body?.currentPassword)) {
+            return res.status(400).json({ success: false, error: 'Current password is incorrect' });
+        }
+        if (!await (0, account_security_1.verifyAccountSecondFactor)(req.user.username, String(req.body?.code || ''))) {
+            return res.status(400).json({ success: false, error: 'Invalid authentication code' });
+        }
+        const appPassword = await (0, account_security_1.createAppPassword)(req.user.username, req.body?.label);
+        res.status(201).json({ success: true, appPassword });
+    }
+    catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.post('/account/app-passwords/:id/revoke', requireAuth, async (req, res) => {
+    try {
+        if (!await verifyPrimaryMailboxPassword(req.user.username, req.body?.currentPassword)) {
+            return res.status(400).json({ success: false, error: 'Current password is incorrect' });
+        }
+        const revoked = await (0, account_security_1.revokeAppPassword)(req.user.username, String(req.params.id));
+        if (!revoked)
+            return res.status(404).json({ success: false, error: 'App password not found' });
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 exports.apiRouter.post('/account/password', requireAuth, async (req, res) => {
     const { current, new: newPassword } = req.body;
     const normalizedUsername = req.user.username;
@@ -959,26 +1051,34 @@ exports.apiRouter.post('/account/password', requireAuth, async (req, res) => {
         if (securitySettings?.allowUserPasswordChange === false) {
             return res.status(403).json({ success: false, error: 'Password changes are disabled by your administrator.' });
         }
-        const [rows] = await db_1.pool.query('SELECT password FROM mailbox WHERE username = ? AND active = 1', [normalizedUsername]);
-        if (rows.length === 0) {
-            return res.status(401).json({ success: false, error: 'User not found' });
-        }
-        const dbHash = rows[0].password;
-        let isValid = false;
-        if (dbHash.startsWith('$2y$') || dbHash.startsWith('$2a$') || dbHash.startsWith('$2b$')) {
-            isValid = await bcryptjs_1.default.compare(current, dbHash);
-        }
-        else {
-            return res.status(400).json({ success: false, error: 'Unsupported password hash format' });
-        }
-        if (!isValid) {
+        if (!await verifyPrimaryMailboxPassword(normalizedUsername, current)) {
             return res.status(400).json({ success: false, error: 'Current password incorrect' });
         }
-        const newHash = await bcryptjs_1.default.hash(newPassword, 10);
+        if (typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 128) {
+            return res.status(400).json({ success: false, error: 'New password must be between 12 and 128 characters' });
+        }
+        const newHash = await bcryptjs_1.default.hash(newPassword, 12);
         const dovecotCompatHash = newHash.replace(/^\$2b\$/, '$2y$');
-        await db_1.pool.query('UPDATE mailbox SET password = ?, modified = NOW() WHERE username = ?', [dovecotCompatHash, normalizedUsername]);
+        const connection = await db_1.pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            await connection.query('UPDATE mailbox SET password = ?, modified = NOW() WHERE username = ?', [dovecotCompatHash, normalizedUsername]);
+            await connection.query('UPDATE app_passwords SET revoked_at = NOW() WHERE username = ? AND revoked_at IS NULL', [normalizedUsername]);
+            await connection.query('DELETE FROM webmail_sessions WHERE username = ?', [normalizedUsername]);
+            await connection.commit();
+        }
+        catch (error) {
+            await connection.rollback();
+            throw error;
+        }
+        finally {
+            connection.release();
+        }
         await (0, auth_1.clearSession)(req, res);
-        res.json({ success: true, message: 'Password updated successfully. Please log in again.' });
+        res.json({
+            success: true,
+            message: 'Password updated and app passwords revoked. Please log in again.',
+        });
     }
     catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -2344,6 +2444,10 @@ exports.apiRouter.delete('/admin/domains/:domain', requireAuth, requireAdmin, as
     try {
         const domain = requireValidDomain(req.params.domain);
         await withTransaction(async (connection) => {
+            await connection.query('DELETE ap FROM app_passwords ap INNER JOIN mailbox m ON m.username = ap.username WHERE m.domain = ?', [domain]);
+            await connection.query('DELETE s FROM account_security s INNER JOIN mailbox m ON m.username = s.username WHERE m.domain = ?', [domain]);
+            await connection.query('DELETE ws FROM webmail_sessions ws INNER JOIN mailbox m ON m.username = ws.username WHERE m.domain = ?', [domain]);
+            await connection.query('DELETE mc FROM mailbox_credentials mc INNER JOIN mailbox m ON m.username = mc.username WHERE m.domain = ?', [domain]);
             await connection.query('DELETE FROM mailbox WHERE domain = ?', [domain]);
             await connection.query('DELETE FROM alias WHERE domain = ?', [domain]);
             await connection.query('DELETE FROM alias_domain WHERE alias_domain = ? OR target_domain = ?', [domain, domain]);
@@ -2764,6 +2868,10 @@ exports.apiRouter.put('/admin/mailboxes/:username', requireAuth, requireAdmin, a
             if (config_1.schedulerConfig.enabled && active === 0) {
                 await connection.query('UPDATE scheduler_mailbox_entitlements SET enabled = 0, published = 0 WHERE username = ?', [oldUsername]);
             }
+            if (active === 0) {
+                await connection.query('UPDATE app_passwords SET revoked_at = NOW() WHERE username = ? AND revoked_at IS NULL', [oldUsername]);
+                await connection.query('DELETE FROM webmail_sessions WHERE username = ?', [oldUsername]);
+            }
             if (hasMailboxProfileFields(req.body)) {
                 await upsertMailboxProfile(connection, oldUsername, req.body, req.user.username);
             }
@@ -2788,6 +2896,8 @@ exports.apiRouter.post('/admin/mailboxes/:username/password', requireAuth, requi
         await withTransaction(async (connection) => {
             await connection.query('UPDATE mailbox SET password = ?, modified = NOW() WHERE username = ?', [hash, username]);
             await connection.query('UPDATE admin SET password = ?, modified = NOW() WHERE username = ?', [hash, username]);
+            await connection.query('UPDATE app_passwords SET revoked_at = NOW() WHERE username = ? AND revoked_at IS NULL', [username]);
+            await connection.query('DELETE FROM webmail_sessions WHERE username = ?', [username]);
         });
         await logAdminAction(req, 'mailbox.password_reset', 'mailbox', username);
         res.json({ success: true });
@@ -2803,6 +2913,10 @@ exports.apiRouter.delete('/admin/mailboxes/:username', requireAuth, requireAdmin
             if (config_1.schedulerConfig.enabled) {
                 await connection.query('UPDATE scheduler_mailbox_entitlements SET enabled = 0, published = 0 WHERE username = ?', [username]);
             }
+            await connection.query('DELETE FROM app_passwords WHERE username = ?', [username]);
+            await connection.query('DELETE FROM account_security WHERE username = ?', [username]);
+            await connection.query('DELETE FROM webmail_sessions WHERE username = ?', [username]);
+            await connection.query('DELETE FROM mailbox_credentials WHERE username = ?', [username]);
             await connection.query('DELETE FROM mailbox WHERE username = ?', [username]);
             await connection.query('DELETE FROM alias WHERE address = ? AND goto = ?', [username, username]);
         });

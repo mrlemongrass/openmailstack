@@ -61,12 +61,12 @@ function audit_log_api($pdo, $admin, $domain, $action, $data) {
 }
 
 function hash_password($password) {
-    $escaped_pwd = escapeshellarg($password);
-    $hash = trim(shell_exec("PATH=/usr/bin:/bin doveadm pw -s SHA512-CRYPT -p $escaped_pwd 2>/dev/null"));
-    if (empty($hash)) {
-        $salt = substr(str_shuffle('./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'), 0, 16);
-        $hash = '{SHA512-CRYPT}' . crypt($password, '$6$' . $salt . '$');
+    $length = strlen($password);
+    if ($length < 12 || $length > 128) {
+        throw new Exception('Password must be between 12 and 128 characters');
     }
+    $hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
+    if ($hash === false) throw new Exception('Password hashing failed');
     return $hash;
 }
 
@@ -105,6 +105,10 @@ try {
         if (empty($domain)) throw new Exception("Missing domain in path");
         
         $pdo->beginTransaction();
+        $pdo->prepare("DELETE ap FROM app_passwords ap INNER JOIN mailbox m ON m.username = ap.username WHERE m.domain = ?")->execute([$domain]);
+        $pdo->prepare("DELETE s FROM account_security s INNER JOIN mailbox m ON m.username = s.username WHERE m.domain = ?")->execute([$domain]);
+        $pdo->prepare("DELETE ws FROM webmail_sessions ws INNER JOIN mailbox m ON m.username = ws.username WHERE m.domain = ?")->execute([$domain]);
+        $pdo->prepare("DELETE mc FROM mailbox_credentials mc INNER JOIN mailbox m ON m.username = mc.username WHERE m.domain = ?")->execute([$domain]);
         $stmt = $pdo->prepare("DELETE FROM mailbox WHERE domain = ?");
         $stmt->execute([$domain]);
         $stmt = $pdo->prepare("DELETE FROM alias WHERE domain = ?");
@@ -152,7 +156,8 @@ try {
         $updates = [];
         $params = [];
         
-        if (isset($input['password']) && !empty($input['password'])) {
+        $password_changed = isset($input['password']) && !empty($input['password']);
+        if ($password_changed) {
             $updates[] = "password = ?";
             $params[] = hash_password($input['password']);
         }
@@ -173,6 +178,10 @@ try {
         $sql = "UPDATE mailbox SET " . implode(", ", $updates) . " WHERE username = ?";
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
+        if ($password_changed) {
+            $pdo->prepare("UPDATE app_passwords SET revoked_at = NOW() WHERE username = ? AND revoked_at IS NULL")->execute([$email]);
+            $pdo->prepare("DELETE FROM webmail_sessions WHERE username = ?")->execute([$email]);
+        }
         
         if (isset($input['active'])) {
             $stmt = $pdo->prepare("UPDATE alias SET active = ?, modified = NOW() WHERE address = ?");
@@ -186,6 +195,10 @@ try {
         $email = $matches[1];
         if (empty($email)) throw new Exception("Missing email in path");
         
+        $pdo->prepare("DELETE FROM app_passwords WHERE username = ?")->execute([$email]);
+        $pdo->prepare("DELETE FROM account_security WHERE username = ?")->execute([$email]);
+        $pdo->prepare("DELETE FROM webmail_sessions WHERE username = ?")->execute([$email]);
+        $pdo->prepare("DELETE FROM mailbox_credentials WHERE username = ?")->execute([$email]);
         $stmt = $pdo->prepare("DELETE FROM mailbox WHERE username = ?");
         $stmt->execute([$email]);
         
@@ -200,6 +213,7 @@ try {
         echo json_encode(['error' => "Endpoint not found: $method /api_v1.php/$route"]);
     }
 } catch (Exception $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
     http_response_code(400);
     echo json_encode(['error' => $e->getMessage()]);
 }

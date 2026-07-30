@@ -1,4 +1,13 @@
 <?php
+ini_set('session.use_strict_mode', '1');
+session_name('oms_legacy_admin');
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/SOGo/admin/',
+    'secure' => true,
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
 session_start();
 require_once __DIR__ . '/../config.php';
 
@@ -20,36 +29,43 @@ if ($action === 'login') {
     $password = $_POST['password'] ?? '';
     
     // Check Admin First
-    $stmt = $pdo->prepare("SELECT password FROM admin WHERE username = ? AND active = 1");
+    $stmt = $pdo->prepare("SELECT a.password, EXISTS(SELECT 1 FROM account_security s WHERE s.username = a.username AND s.totp_enabled_at IS NOT NULL) AS totp_enabled FROM admin a WHERE a.username = ? AND a.active = 1");
     $stmt->execute([$username]);
-    $hash = $stmt->fetchColumn();
+    $account = $stmt->fetch(PDO::FETCH_ASSOC);
+    $hash = $account['password'] ?? false;
+    $totp_enabled = !empty($account['totp_enabled']);
     $role = 'admin';
     
     // If not admin, check Mailbox
     if (!$hash) {
-        $stmt = $pdo->prepare("SELECT password FROM mailbox WHERE username = ? AND active = 1");
+        $stmt = $pdo->prepare("SELECT m.password, EXISTS(SELECT 1 FROM account_security s WHERE s.username = m.username AND s.totp_enabled_at IS NOT NULL) AS totp_enabled FROM mailbox m WHERE m.username = ? AND m.active = 1");
         $stmt->execute([$username]);
-        $hash = $stmt->fetchColumn();
+        $account = $stmt->fetch(PDO::FETCH_ASSOC);
+        $hash = $account['password'] ?? false;
+        $totp_enabled = !empty($account['totp_enabled']);
         $role = 'user';
     }
     
     $success = false;
     if ($hash) {
-        if (strpos($hash, '{') === 0) {
-            $escaped_pwd = escapeshellarg($password);
-            $escaped_hash = escapeshellarg($hash);
-            $verify = trim(shell_exec("PATH=/usr/bin:/bin doveadm pw -t $escaped_hash -p $escaped_pwd 2>/dev/null"));
-            if (strpos(strtolower($verify), 'ok') !== false || strpos(strtolower($verify), 'verified') !== false) {
-                $success = true;
-            }
+        if (str_starts_with($hash, '{SHA512-CRYPT}')) {
+            $stored = substr($hash, strlen('{SHA512-CRYPT}'));
+            $computed = crypt($password, $stored);
+            $success = is_string($computed) && hash_equals($stored, $computed);
+        } elseif (str_starts_with($hash, '{BLF-CRYPT}')) {
+            $success = password_verify($password, substr($hash, strlen('{BLF-CRYPT}')));
         } else {
-            if (password_verify($password, $hash)) {
-                $success = true;
-            }
+            $success = password_verify($password, $hash);
         }
     }
     
-    if ($success) {
+    if ($success && $totp_enabled) {
+        echo json_encode([
+            'success' => false,
+            'error' => 'Two-factor authentication is enabled. Sign in through the modern OpenMailStack app.',
+        ]);
+    } elseif ($success) {
+        session_regenerate_id(true);
         $_SESSION['role'] = $role;
         $_SESSION['username'] = $username;
         if ($role === 'admin') {
@@ -87,23 +103,45 @@ if ($is_admin) {
 }
 
 function hash_password($password) {
-    // Handling the necessary doveadm hashing
-    $escaped_pwd = escapeshellarg($password);
-    // Assuming standard Dovecot path and SHA512-CRYPT scheme
-    $hash = trim(shell_exec("PATH=/usr/bin:/bin doveadm pw -s SHA512-CRYPT -p $escaped_pwd 2>/dev/null"));
-    if (empty($hash)) {
-        // Fallback if doveadm fails (e.g. permission issue on testing)
-        // Usually PHP password_hash with BCRYPT works if Dovecot config uses BLF-CRYPT
-        // We'll use SHA512 manually as fallback
-        $salt = substr(str_shuffle('./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'), 0, 16);
-        $hash = '{SHA512-CRYPT}' . crypt($password, '$6$' . $salt . '$');
+    $length = strlen($password);
+    if ($length < 12 || $length > 128) {
+        throw new Exception('Password must be between 12 and 128 characters');
     }
+    $hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
+    if ($hash === false) throw new Exception('Password hashing failed');
     return $hash;
 }
 
 function audit_log($pdo, $admin, $domain, $action, $data) {
     $stmt = $pdo->prepare("INSERT INTO log (timestamp, username, domain, action, data) VALUES (NOW(), ?, ?, ?, ?)");
     $stmt->execute([$admin, $domain, $action, $data]);
+}
+
+function require_superadmin($is_superadmin) {
+    if (!$is_superadmin) throw new Exception('Superadmin access required');
+}
+
+function address_domain($address) {
+    if (str_starts_with($address, '@')) return substr($address, 1);
+    $separator = strrpos($address, '@');
+    return $separator === false ? '' : substr($address, $separator + 1);
+}
+
+function require_domain_access($pdo, $username, $domain, $is_superadmin) {
+    if ($is_superadmin) return;
+    if (empty($domain)) throw new Exception('Domain is required');
+    $stmt = $pdo->prepare("SELECT 1 FROM domain_admins WHERE username = ? AND domain = ? AND active = 1");
+    $stmt->execute([$username, $domain]);
+    if (!$stmt->fetchColumn()) throw new Exception('Unauthorized for this domain');
+}
+
+function authorized_quarantine_record($pdo, $username, $uuid, $is_superadmin) {
+    $stmt = $pdo->prepare("SELECT recipient, file_path FROM quarantine_log WHERE uuid = ?");
+    $stmt->execute([$uuid]);
+    $record = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$record) throw new Exception('Quarantine message not found');
+    require_domain_access($pdo, $username, address_domain($record['recipient']), $is_superadmin);
+    return $record;
 }
 
 try {
@@ -123,12 +161,16 @@ try {
             $password = $_POST['password'] ?? '';
             if (empty($password)) throw new Exception('Missing password');
             $hashed = hash_password($password);
+            $pdo->beginTransaction();
             $stmt = $pdo->prepare("UPDATE mailbox SET password = ?, modified = NOW() WHERE username = ?");
             $stmt->execute([$hashed, $_SESSION['username']]);
             if ($is_admin) {
                 $stmt = $pdo->prepare("UPDATE admin SET password = ?, modified = NOW() WHERE username = ?");
                 $stmt->execute([$hashed, $_SESSION['username']]);
             }
+            $pdo->prepare("UPDATE app_passwords SET revoked_at = NOW() WHERE username = ? AND revoked_at IS NULL")->execute([$_SESSION['username']]);
+            $pdo->prepare("DELETE FROM webmail_sessions WHERE username = ?")->execute([$_SESSION['username']]);
+            $pdo->commit();
             audit_log($pdo, $_SESSION['username'], 'USER', 'change_password', "User changed their own password");
             echo json_encode(['success' => true]);
             break;
@@ -169,7 +211,7 @@ try {
         // ADMIN ONLY ENDPOINTS BELOW
         // ==========================================
         case 'get_system_health':
-            if (!$is_admin) throw new Exception('Unauthorized');
+            require_superadmin($is_superadmin);
             $services = ['nginx', 'postfix', 'dovecot', 'mariadb', 'rspamd', 'redis-server', 'clamav-daemon'];
             $status = [];
             foreach ($services as $srv) {
@@ -202,13 +244,13 @@ try {
             break;
 
         case 'get_audit_logs':
-            if (!$is_admin) throw new Exception('Unauthorized');
+            require_superadmin($is_superadmin);
             $stmt = $pdo->query("SELECT timestamp, username, domain, action, data FROM log ORDER BY timestamp DESC LIMIT 500");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
 
         case 'get_rspamd_password':
-            if (!$is_admin) throw new Exception('Unauthorized');
+            require_superadmin($is_superadmin);
             $pass = defined('RSPAMD_PASS') ? RSPAMD_PASS : 'Unknown';
             echo json_encode(['success' => true, 'password' => $pass]);
             break;
@@ -247,13 +289,7 @@ try {
         case 'get_dns_records':
             $domain = $_POST['domain'] ?? '';
             if (empty($domain)) throw new Exception('Domain cannot be empty');
-            
-            // Security check for non-superadmins
-            if (!$is_superadmin) {
-                $stmt = $pdo->prepare("SELECT 1 FROM domain_admins WHERE username = ? AND domain = ?");
-                $stmt->execute([$_SESSION['username'], $domain]);
-                if (!$stmt->fetch()) throw new Exception('Unauthorized to view this domain');
-            }
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             
             $hostname = gethostname();
             $records = [];
@@ -307,12 +343,7 @@ try {
         case 'verify_domain':
             $domain = $_POST['domain'] ?? '';
             if (empty($domain)) throw new Exception('Domain cannot be empty');
-            
-            if (!$is_superadmin) {
-                $stmt = $pdo->prepare("SELECT 1 FROM domain_admins WHERE username = ? AND domain = ?");
-                $stmt->execute([$_SESSION['username'], $domain]);
-                if (!$stmt->fetch()) throw new Exception('Unauthorized');
-            }
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             
             $stmt = $pdo->prepare("SELECT token FROM domain_verification WHERE domain = ?");
             $stmt->execute([$domain]);
@@ -346,14 +377,13 @@ try {
         case 'delete_domain':
             $domain = $_POST['domain'] ?? '';
             if ($domain === 'ALL') throw new Exception('Cannot delete ALL domain placeholder');
-            
-            if (!$is_superadmin) {
-                $stmt = $pdo->prepare("SELECT 1 FROM domain_admins WHERE username = ? AND domain = ?");
-                $stmt->execute([$_SESSION['username'], $domain]);
-                if (!$stmt->fetch()) throw new Exception('Unauthorized to delete this domain');
-            }
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             
             $pdo->beginTransaction();
+            $pdo->prepare("DELETE ap FROM app_passwords ap INNER JOIN mailbox m ON m.username = ap.username WHERE m.domain = ?")->execute([$domain]);
+            $pdo->prepare("DELETE s FROM account_security s INNER JOIN mailbox m ON m.username = s.username WHERE m.domain = ?")->execute([$domain]);
+            $pdo->prepare("DELETE ws FROM webmail_sessions ws INNER JOIN mailbox m ON m.username = ws.username WHERE m.domain = ?")->execute([$domain]);
+            $pdo->prepare("DELETE mc FROM mailbox_credentials mc INNER JOIN mailbox m ON m.username = mc.username WHERE m.domain = ?")->execute([$domain]);
             $pdo->prepare("DELETE FROM mailbox WHERE domain = ?")->execute([$domain]);
             $pdo->prepare("DELETE FROM alias WHERE domain = ?")->execute([$domain]);
             $pdo->prepare("DELETE FROM domain_admins WHERE domain = ?")->execute([$domain]);
@@ -388,6 +418,7 @@ try {
             }
             if (!preg_match('/^[a-zA-Z0-9_.-]+$/', $username)) throw new Exception('Invalid username format');
             if (!preg_match('/^[a-zA-Z0-9.-]+$/', $domain)) throw new Exception('Invalid domain format');
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             
             // If quota is -1, inherit from domain.quota
             if ($quota === -1) {
@@ -427,6 +458,7 @@ try {
             $new_domain = explode('@', $new_username)[1] ?? '';
             
             if ($domain !== $new_domain) throw new Exception('Cannot move mailbox to a different domain');
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             $new_local_part = explode('@', $new_username)[0];
             
             // If quota is -1, inherit from domain.quota
@@ -455,7 +487,12 @@ try {
         case 'delete_mailbox':
             $email = $_POST['email'] ?? '';
             $domain = explode('@', $email)[1] ?? '';
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             $pdo->beginTransaction();
+            $pdo->prepare("DELETE FROM app_passwords WHERE username = ?")->execute([$email]);
+            $pdo->prepare("DELETE FROM account_security WHERE username = ?")->execute([$email]);
+            $pdo->prepare("DELETE FROM webmail_sessions WHERE username = ?")->execute([$email]);
+            $pdo->prepare("DELETE FROM mailbox_credentials WHERE username = ?")->execute([$email]);
             $pdo->prepare("DELETE FROM mailbox WHERE username = ?")->execute([$email]);
             // Remove self alias
             $pdo->prepare("DELETE FROM alias WHERE address = ? AND goto = ?")->execute([$email, $email]);
@@ -469,6 +506,7 @@ try {
             $password = $_POST['password'] ?? '';
             $domain = explode('@', $email)[1] ?? '';
             if (empty($email) || empty($password)) throw new Exception('Missing fields');
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             $hashed = hash_password($password);
             
             $pdo->beginTransaction();
@@ -478,6 +516,8 @@ try {
             // Sync to admin table if they are an admin
             $stmt = $pdo->prepare("UPDATE admin SET password = ?, modified = NOW() WHERE username = ?");
             $stmt->execute([$hashed, $email]);
+            $pdo->prepare("UPDATE app_passwords SET revoked_at = NOW() WHERE username = ? AND revoked_at IS NULL")->execute([$email]);
+            $pdo->prepare("DELETE FROM webmail_sessions WHERE username = ?")->execute([$email]);
             $pdo->commit();
 
             audit_log($pdo, $_SESSION['admin_username'], $domain, 'change_password', "Changed password for $email");
@@ -504,6 +544,8 @@ try {
             if (empty($address) || empty($goto) || empty($domain)) throw new Exception('Missing fields');
             if (!filter_var($address, FILTER_VALIDATE_EMAIL) && !preg_match('/^@[a-zA-Z0-9.-]+$/', $address)) throw new Exception('Invalid address format');
             if (!preg_match('/^[a-zA-Z0-9.-]+$/', $domain)) throw new Exception('Invalid domain format');
+            if (address_domain($address) !== $domain) throw new Exception('Alias address must belong to the selected domain');
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             
             $stmt = $pdo->prepare("INSERT INTO alias (address, goto, domain, active) VALUES (?, ?, ?, 1)");
             $stmt->execute([$address, $goto, $domain]);
@@ -518,6 +560,9 @@ try {
             
             if (empty($old_address) || empty($new_address) || empty($goto)) throw new Exception('Missing fields');
             $domain = explode('@', $old_address)[1] ?? '';
+            $new_domain = address_domain($new_address);
+            if ($new_domain !== $domain) throw new Exception('Cannot move an alias to a different domain');
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             
             $stmt = $pdo->prepare("UPDATE alias SET address = ?, goto = ?, modified = NOW() WHERE address = ?");
             $stmt->execute([$new_address, $goto, $old_address]);
@@ -530,6 +575,7 @@ try {
             $address = $_POST['address'] ?? '';
             $goto = $_POST['goto'] ?? '';
             $domain = explode('@', $address)[1] ?? '';
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             $stmt = $pdo->prepare("DELETE FROM alias WHERE address = ? AND goto = ?");
             $stmt->execute([$address, $goto]);
             audit_log($pdo, $_SESSION['admin_username'], $domain, 'delete_alias', "Deleted alias $address -> $goto");
@@ -542,6 +588,7 @@ try {
             $goto = $_POST['goto'] ?? '';
             if (empty($domain) || empty($goto)) throw new Exception('Missing fields');
             if (!preg_match('/^[a-zA-Z0-9.-]+$/', $domain)) throw new Exception('Invalid domain format');
+            require_domain_access($pdo, $_SESSION['username'], $domain, $is_superadmin);
             
             // Catchall is typically stored as @domain.com -> user@domain.com
             $address = '@' . $domain;
@@ -553,11 +600,13 @@ try {
 
         // --- Cross Domain Aliasing (alias_domain) ---
         case 'get_domain_aliases':
+            require_superadmin($is_superadmin);
             $stmt = $pdo->query("SELECT alias_domain, target_domain FROM alias_domain ORDER BY alias_domain ASC");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
 
         case 'add_domain_alias':
+            require_superadmin($is_superadmin);
             $alias_domain = $_POST['alias_domain'] ?? '';
             $target_domain = $_POST['target_domain'] ?? '';
             if (empty($alias_domain) || empty($target_domain)) throw new Exception('Missing fields');
@@ -569,6 +618,7 @@ try {
             break;
 
         case 'delete_domain_alias':
+            require_superadmin($is_superadmin);
             $alias_domain = $_POST['alias_domain'] ?? '';
             $stmt = $pdo->prepare("DELETE FROM alias_domain WHERE alias_domain = ?");
             $stmt->execute([$alias_domain]);
@@ -577,12 +627,13 @@ try {
 
         // --- Admins ---
         case 'get_admins':
-            if (!$is_admin) throw new Exception('Unauthorized');
+            require_superadmin($is_superadmin);
             $stmt = $pdo->query("SELECT username, active, modified FROM admin ORDER BY username ASC");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
 
         case 'add_admin':
+            require_superadmin($is_superadmin);
             $username = $_POST['username'] ?? '';
             if (empty($username)) throw new Exception('Missing fields');
             if (!filter_var($username, FILTER_VALIDATE_EMAIL)) throw new Exception('Invalid email format');
@@ -600,6 +651,7 @@ try {
             break;
 
         case 'delete_admin':
+            require_superadmin($is_superadmin);
             $username = $_POST['username'] ?? '';
             $stmt = $pdo->prepare("DELETE FROM admin WHERE username = ?");
             $stmt->execute([$username]);
@@ -614,6 +666,7 @@ try {
             break;
 
         case 'change_admin_password':
+            require_superadmin($is_superadmin);
             $username = $_POST['username'] ?? '';
             $password = $_POST['password'] ?? '';
             if (empty($username) || empty($password)) throw new Exception('Missing fields');
@@ -626,12 +679,13 @@ try {
 
         // --- API Keys ---
         case 'get_api_keys':
-            if (!$is_admin) throw new Exception('Unauthorized');
+            require_superadmin($is_superadmin);
             $stmt = $pdo->query("SELECT id, description, created_at, last_used FROM api_keys ORDER BY created_at DESC");
             echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
             break;
 
         case 'create_api_key':
+            require_superadmin($is_superadmin);
             $description = $_POST['description'] ?? '';
             if (empty($description)) throw new Exception('Missing description');
             
@@ -649,6 +703,7 @@ try {
             break;
 
         case 'delete_api_key':
+            require_superadmin($is_superadmin);
             $id = $_POST['id'] ?? '';
             if (empty($id)) throw new Exception('Missing ID');
             
@@ -661,7 +716,7 @@ try {
 
         // --- System & Updates ---
         case 'check_updates':
-            if (!$is_admin) throw new Exception('Unauthorized');
+            require_superadmin($is_superadmin);
             $current_version = file_exists('/var/www/openmailstack-admin/VERSION') 
                 ? trim(file_get_contents('/var/www/openmailstack-admin/VERSION')) 
                 : '0.1.0';
@@ -713,6 +768,7 @@ try {
             break;
             
         case 'run_upgrade':
+            require_superadmin($is_superadmin);
             audit_log($pdo, $_SESSION['admin_username'], 'ALL', 'system_upgrade', "Triggered system upgrade via Web Panel");
             
             $output = shell_exec('sudo /usr/local/bin/openmailstack-upgrade.sh 2>&1');
@@ -735,21 +791,17 @@ try {
             break;
             
         case 'view_quarantine':
-            if (!$is_admin) throw new Exception('Unauthorized');
             $uuid = $_POST['uuid'] ?? '';
-            $stmt = $pdo->prepare("SELECT file_path FROM quarantine_log WHERE uuid = ?");
-            $stmt->execute([$uuid]);
-            $file = $stmt->fetchColumn();
+            $record = authorized_quarantine_record($pdo, $_SESSION['username'], $uuid, $is_superadmin);
+            $file = $record['file_path'];
             if (!$file || !file_exists($file)) throw new Exception("Quarantine file not found");
             echo json_encode(['success' => true, 'content' => file_get_contents($file)]);
             break;
             
         case 'delete_quarantine':
-            if (!$is_admin) throw new Exception('Unauthorized');
             $uuid = $_POST['uuid'] ?? '';
-            $stmt = $pdo->prepare("SELECT file_path FROM quarantine_log WHERE uuid = ?");
-            $stmt->execute([$uuid]);
-            $file = $stmt->fetchColumn();
+            $record = authorized_quarantine_record($pdo, $_SESSION['username'], $uuid, $is_superadmin);
+            $file = $record['file_path'];
             if ($file && file_exists($file)) unlink($file);
             $pdo->prepare("DELETE FROM quarantine_log WHERE uuid = ?")->execute([$uuid]);
             audit_log($pdo, $_SESSION['username'], 'ALL', 'delete_quarantine', "Deleted quarantined email UUID $uuid");
@@ -757,11 +809,8 @@ try {
             break;
             
         case 'release_quarantine':
-            if (!$is_admin) throw new Exception('Unauthorized');
             $uuid = $_POST['uuid'] ?? '';
-            $stmt = $pdo->prepare("SELECT recipient, file_path FROM quarantine_log WHERE uuid = ?");
-            $stmt->execute([$uuid]);
-            $q = $stmt->fetch(PDO::FETCH_ASSOC);
+            $q = authorized_quarantine_record($pdo, $_SESSION['username'], $uuid, $is_superadmin);
             if (!$q || !file_exists($q['file_path'])) throw new Exception("Quarantine file not found");
             
             // Release via sendmail
@@ -825,5 +874,6 @@ try {
             break;
     }
 } catch (Exception $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
     echo json_encode(['success' => false, 'error' => $e->getMessage()]);
 }

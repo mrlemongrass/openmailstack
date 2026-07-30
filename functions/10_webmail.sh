@@ -57,6 +57,14 @@ if (( ${#SESSION_SECRET} < 32 )); then
     echo -e "${RED}Error: OMS_SESSION_SECRET must contain at least 32 characters.${NC}" >&2
     exit 1
 fi
+ACCOUNT_SECURITY_KEY="${OMS_ACCOUNT_SECURITY_KEY:-$(existing_env_value OMS_ACCOUNT_SECURITY_KEY)}"
+if [[ -z "${ACCOUNT_SECURITY_KEY}" ]]; then
+    ACCOUNT_SECURITY_KEY="$(openssl rand -hex 32)"
+fi
+if (( ${#ACCOUNT_SECURITY_KEY} < 32 )); then
+    echo -e "${RED}Error: OMS_ACCOUNT_SECURITY_KEY must contain at least 32 characters.${NC}" >&2
+    exit 1
+fi
 if [[ ! -s "${DOVECOT_MASTER_SECRET_FILE}" ]]; then
     echo -e "${RED}Error: Dovecot master secret is missing; run functions/04_dovecot.sh first.${NC}" >&2
     exit 1
@@ -169,6 +177,7 @@ render_backend_env() {
             write_env_line "OMS_PUBLIC_BASE_URL" "${PUBLIC_BASE_URL}"
             write_env_line "OMS_DEFAULT_DOMAIN" "${DEFAULT_DOMAIN}"
             write_env_line "OMS_SESSION_SECRET" "${SESSION_SECRET}"
+            write_env_line "OMS_ACCOUNT_SECURITY_KEY" "${ACCOUNT_SECURITY_KEY}"
             write_env_line "OMS_COOKIE_SECURE" "${OMS_COOKIE_SECURE:-true}"
             write_env_line "OMS_UPLOAD_LIMIT_BYTES" "${OMS_UPLOAD_LIMIT_BYTES:-26214400}"
             write_env_line "ENABLE_OMS_SCHEDULER" "${SCHEDULER_ENABLED}"

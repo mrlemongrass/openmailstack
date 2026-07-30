@@ -201,6 +201,7 @@ export declare class SchedulerWorkflowRepository {
     private reconcileJobScoped;
     listNotifications(ownerUsername: string, limit?: number): Promise<any[]>;
     markNotificationRead(ownerUsername: string, notificationId: string): Promise<void>;
+    dismissNotification(ownerUsername: string, notificationId: string): Promise<void>;
     captureForBooking(db: Queryable, input: SchedulerBookingWorkflowInput, lifecycleTrigger?: 'booking.requested' | 'booking.confirmed'): Promise<number>;
     activateCapturedForBooking(db: Queryable, input: SchedulerBookingWorkflowInput): Promise<number>;
     rescheduleForBooking(db: Queryable, input: SchedulerBookingWorkflowInput): Promise<number>;

@@ -53,6 +53,10 @@ test('workflow builder presents the complete Phase 3 automation surface', () => 
   assert.match(source, /Choose provider/);
   assert.match(source, /In-app notifications/);
   assert.match(source, /Mark read/);
+  assert.match(source, /Dismiss/);
+  assert.match(source, /dismissSchedulerNotification/);
+  assert.match(source, /disabled=\{busy \|\| selected\.currentVersion === null\}/);
+  assert.match(source, /Publish a version before enabling this workflow\./);
   assert.match(source, /const toggleWorkflow = async[\s\S]*catch \(toggleError\)/);
   assert.match(source, /const archiveWorkflow = async[\s\S]*catch \(archiveError\)/);
   const adminSource = fs.readFileSync(path.resolve(__dirname, '../src/admin/SchedulerDeliveryPanel.tsx'), 'utf8');

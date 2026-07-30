@@ -126,6 +126,25 @@ test('hardDelete permanently deletes by UID without attempting a Trash move', as
   assert.equal(moved, false);
 });
 
+test('delete from Trash permanently deletes instead of moving back to Trash', async () => {
+  const { ImapService } = require('../src/imap.js');
+  const service = Object.create(ImapService.prototype);
+  let deleted;
+  let moved = false;
+  service.client = {
+    mailboxOpen: async () => ({}),
+    list: async () => [{ path: 'Trash' }],
+    messageDelete: async (sequence, options) => { deleted = { sequence, options }; },
+    messageMove: async () => { moved = true; },
+    mailboxClose: async () => {},
+  };
+
+  await service.messageAction('Trash', [42], 'delete');
+
+  assert.deepEqual(deleted, { sequence: '42', options: { uid: true } });
+  assert.equal(moved, false);
+});
+
 test('direct IMAP authentication bypasses configured master credentials', () => {
   const { ImapService } = require('../src/imap.js');
   const { imapConfig } = require('../src/config.js');

@@ -567,6 +567,10 @@ export class ImapService {
                 } else {
                     trashFolder = existingTrash.path;
                 }
+                if (folderPath.toLowerCase() === trashFolder.toLowerCase()) {
+                    await this.client.messageDelete(sequence, { uid: true });
+                    return null;
+                }
                 const moveResult = await this.client.messageMove(sequence, trashFolder, { uid: true });
                 return { targetFolder: trashFolder, uidMap: moveResult && moveResult.uidMap ? Object.fromEntries(moveResult.uidMap) : null };
             } else if (action === 'archive') {

@@ -17,6 +17,7 @@ import {
   archiveSchedulerWorkflow,
   cloneSchedulerWorkflow,
   createSchedulerWorkflow,
+  dismissSchedulerNotification,
   getSchedulerDeliveryProviders,
   getSchedulerNotifications,
   getSchedulerWorkflowOperations,
@@ -275,6 +276,23 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
     }
   };
 
+  const dismissNotification = async (notificationId: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      await dismissSchedulerNotification(notificationId);
+      await load();
+    } catch (notificationError) {
+      setError(
+        notificationError instanceof Error
+          ? notificationError.message
+          : "Unable to dismiss notification",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleWorkflow = async (enabled: boolean) => {
     if (!selected) return;
     setBusy(true);
@@ -472,17 +490,28 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
                       <strong>{notification.title}</strong>
                       <p>{notification.body}</p>
                     </div>
-                    {!notification.readAt && (
+                    <div className="scheduler-notification-actions">
+                      {!notification.readAt && (
+                        <button
+                          className="btn btn-secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            void markNotificationRead(notification.id)
+                          }
+                        >
+                          Mark read
+                        </button>
+                      )}
                       <button
-                        className="btn btn-secondary"
+                        className="btn btn-ghost"
                         disabled={busy}
                         onClick={() =>
-                          void markNotificationRead(notification.id)
+                          void dismissNotification(notification.id)
                         }
                       >
-                        Mark read
+                        Dismiss
                       </button>
-                    )}
+                    </div>
                   </article>
                 ))}
               </div>
@@ -1098,13 +1127,18 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
                       <input
                         type="checkbox"
                         checked={selected.enabled}
-                        disabled={busy}
+                        disabled={busy || selected.currentVersion === null}
                         onChange={(event) =>
                           void toggleWorkflow(event.target.checked)
                         }
                       />
                       <span>Workflow enabled</span>
                     </label>
+                    {selected.currentVersion === null && (
+                      <small className="scheduler-publish-hint">
+                        Publish a version before enabling this workflow.
+                      </small>
+                    )}
                     <button
                       className="btn btn-ghost danger"
                       type="button"

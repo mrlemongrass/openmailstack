@@ -1215,6 +1215,39 @@ export class SchedulerWorkflowRepository {
         if (result.affectedRows !== 1) throw new Error('Notification not found');
     }
 
+    async dismissNotification(ownerUsername: string, notificationId: string): Promise<void> {
+        const connection = await this.pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [rows]: any = await connection.query(
+                `SELECT tenant_key FROM scheduler_in_app_notifications
+                 WHERE id=? AND recipient_username=? FOR UPDATE`,
+                [notificationId, ownerUsername],
+            );
+            if (!rows.length) throw new Error('Notification not found');
+            await connection.query(
+                'DELETE FROM scheduler_in_app_notifications WHERE id=? AND recipient_username=?',
+                [notificationId, ownerUsername],
+            );
+            await writeSchedulerAudit(
+                connection,
+                rows[0].tenant_key,
+                'user',
+                ownerUsername,
+                'workflow_notification.dismiss',
+                'scheduler_in_app_notification',
+                notificationId,
+                {},
+            );
+            await connection.commit();
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
     async captureForBooking(
         db: Queryable,
         input: SchedulerBookingWorkflowInput,

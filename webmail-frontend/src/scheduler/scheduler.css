@@ -2243,6 +2243,17 @@
   color: var(--text-secondary);
   white-space: pre-wrap;
 }
+.scheduler-notification-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+.scheduler-publish-hint {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
 @media (max-width: 980px) {
   .public-booking-layout {
     grid-template-columns: 280px 1fr;
@@ -2342,5 +2353,12 @@
   }
   .scheduler-operation-list > article {
     grid-template-columns: 1fr;
+  }
+  .scheduler-notification-list article {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .scheduler-notification-actions {
+    flex-wrap: wrap;
   }
 }

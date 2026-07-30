@@ -498,6 +498,16 @@ exports.schedulerRouter.post('/scheduler/v1/notifications/:id/read', authenticat
         ownerError(res, error);
     }
 });
+exports.schedulerRouter.delete('/scheduler/v1/notifications/:id', authenticatedInstalled, auth_1.requireSession, async (req, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        await workflows.dismissNotification(req.user.username, req.params.id);
+        res.json({ success: true });
+    }
+    catch (error) {
+        ownerError(res, error);
+    }
+});
 exports.schedulerRouter.get('/admin/scheduler/v1/mailboxes', authenticatedInstalled, auth_1.requireSession, auth_1.requireAdminSession, async (_req, res) => {
     try {
         const mailboxes = await store.listAdminMailboxes();

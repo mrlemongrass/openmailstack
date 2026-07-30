@@ -487,6 +487,14 @@ schedulerRouter.post('/scheduler/v1/notifications/:id/read', authenticatedInstal
     } catch (error) { ownerError(res, error); }
 });
 
+schedulerRouter.delete('/scheduler/v1/notifications/:id', authenticatedInstalled, requireSession, async (req: any, res) => {
+    try {
+        await store.requireOwner(req.user.username);
+        await workflows.dismissNotification(req.user.username, req.params.id);
+        res.json({ success: true });
+    } catch (error) { ownerError(res, error); }
+});
+
 schedulerRouter.get('/admin/scheduler/v1/mailboxes', authenticatedInstalled, requireSession, requireAdminSession, async (_req, res) => {
     try {
         const mailboxes = await store.listAdminMailboxes();

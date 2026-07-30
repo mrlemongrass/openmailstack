@@ -174,6 +174,24 @@ test('Phase 3 Express routes enforce sessions, tenant scope, admin scope, notifi
         assert.equal((await request(port, `/api/scheduler/v1/notifications/${ownNotificationId}/read`, {
             method: 'POST', cookie: ownerACookie, body: {},
         })).status, 200);
+        assert.equal((await request(port, `/api/scheduler/v1/notifications/${otherNotificationId}`, {
+            method: 'DELETE', cookie: ownerACookie,
+        })).status, 404);
+        assert.equal((await request(port, `/api/scheduler/v1/notifications/${ownNotificationId}`, {
+            method: 'DELETE', cookie: ownerACookie,
+        })).status, 200);
+        const ownNotifications = await request(port, '/api/scheduler/v1/notifications', {
+            cookie: ownerACookie,
+        });
+        assert.equal(
+            ownNotifications.json.notifications.some(item => item.id === ownNotificationId),
+            false,
+        );
+        const [[retainedDeliveryJob]] = await pool.query(
+            'SELECT id FROM scheduler_jobs WHERE id=?',
+            [deliveredJobId],
+        );
+        assert.equal(retainedDeliveryJob.id, deliveredJobId);
 
         const preferences = new SchedulerContactPreferenceRepository(
             pool, new SchedulerSecretBox('scheduler-route-test-secret-key-material'),

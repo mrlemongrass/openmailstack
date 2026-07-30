@@ -454,6 +454,12 @@ export async function markSchedulerNotificationRead(id: string): Promise<void> {
   });
 }
 
+export async function dismissSchedulerNotification(id: string): Promise<void> {
+  await request(`/api/scheduler/v1/notifications/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export async function reconcileSchedulerWorkflowJob(
   id: string,
   action: "retry" | "delivered" | "cancel",

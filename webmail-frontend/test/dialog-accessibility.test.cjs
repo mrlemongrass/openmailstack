@@ -26,6 +26,7 @@ test('Compose, Calendar, Contacts, and Scheduler use one modal focus contract', 
     assert.match(source, /useModalFocus/);
     assert.doesNotMatch(source, /const focusable = Array\.from/);
   }
+  assert.match(composeSource, /open: mail\.isComposing,[\s\S]*active: mail\.isComposing && !showCloseConfirm/);
 });
 
 test('Scheduler booking details and shared confirmations are labelled modal dialogs', () => {

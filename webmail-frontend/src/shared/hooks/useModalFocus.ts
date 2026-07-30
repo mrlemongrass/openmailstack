@@ -50,10 +50,12 @@ const isolateDialog = (dialog: HTMLElement) => {
 export function useModalFocus<T extends HTMLElement>({
   dialogRef,
   open,
+  active = open,
   onClose,
 }: {
   dialogRef: RefObject<T | null>;
   open: boolean;
+  active?: boolean;
   onClose: () => void;
 }) {
   const onCloseRef = useRef(onClose);
@@ -68,8 +70,17 @@ export function useModalFocus<T extends HTMLElement>({
   wasOpenRef.current = open;
 
   useEffect(() => {
+    if (!open) return;
+    return () => {
+      const returnFocus = returnFocusRef.current;
+      returnFocusRef.current = null;
+      if (returnFocus?.isConnected) returnFocus.focus();
+    };
+  }, [open]);
+
+  useEffect(() => {
     const dialog = dialogRef.current;
-    if (!open || !dialog) return;
+    if (!active || !dialog) return;
 
     const activeElement = document.activeElement;
     if (!returnFocusRef.current && activeElement instanceof HTMLElement && !dialog.contains(activeElement)) {
@@ -116,9 +127,6 @@ export function useModalFocus<T extends HTMLElement>({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
       restoreIsolation();
-      const returnFocus = returnFocusRef.current;
-      returnFocusRef.current = null;
-      if (returnFocus?.isConnected) returnFocus.focus();
     };
-  }, [dialogRef, open]);
+  }, [active, dialogRef]);
 }

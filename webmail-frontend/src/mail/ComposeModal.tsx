@@ -194,7 +194,8 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   };
   useModalFocus({
     dialogRef,
-    open: mail.isComposing && !showCloseConfirm,
+    open: mail.isComposing,
+    active: mail.isComposing && !showCloseConfirm,
     onClose: handleClose,
   });
 

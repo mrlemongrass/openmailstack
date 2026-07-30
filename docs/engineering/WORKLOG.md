@@ -6797,3 +6797,33 @@ Ending git state: deployed priority UI batch with rollback and live-browser proo
 ### Next task
 
 Continue with the next bounded UX pass on authenticated compose/reply and event/contact creation workflows, using disposable records or explicit mutation approval for end-to-end saves.
+
+## 2026-07-29 — Compose and inline-reply mobile workflow
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `1ef3f42c`
+Ending git state: focused Compose/Reply implementation, regressions, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] Compose retains recipient focus while controlled inputs and draft status rerender.
+- [x] Mobile Compose is an opaque, labelled full-screen modal with reachable primary and secondary actions.
+- [x] Recipient autocomplete does not render duplicate emails or duplicate React keys.
+- [x] Inline reply keeps Send visually primary and secondary actions readable at 390 px.
+- [x] Desktop Compose preserves its established bottom-right layout.
+
+### Changes and proof
+
+- Removed the rerendering callback ref that focused the overlay instead of the active field. To now receives initial focus, and Tab/Escape handling remains inside the labelled modal.
+- Added an opaque `var(--surface-color)` Compose surface and popovers. At mobile widths, the composer fills `100dvh`, uses safe-area-aware footer spacing, and groups tools, draft status, and send actions.
+- Case-insensitive recipient deduplication collapses repeated personal/directory entries while preserving the available display name.
+- Inline reply uses a two-column mobile action grid with a full-width Send row.
+- Three focused Compose regressions and one inline-reply regression pass; frontend lint and production build pass.
+- Authenticated local Playwright at 390×844 typed `local` continuously into To, rendered one matching `localtest@housevo.us` suggestion, and reported zero console errors after the deduplication reload.
+- Playwright screenshots confirm the full-screen mobile composer and readable inline-reply action hierarchy. No message or reply was sent.
+- Live Scheduler owner navigation was rechecked after entitlement enablement: all six mobile destinations and Profile work on the real `localtest@housevo.us` account, with its owned sender identity selected.
+
+### Next task
+
+Inspect Calendar event creation at desktop and mobile widths, then repair the highest-value bounded creation-flow defect.

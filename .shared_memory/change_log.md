@@ -1257,3 +1257,11 @@ Future entry template:
 - Repository/live `index.html` SHA-256 values match at `00702f30e2831de5f15c47327d8affd15348e5ad5f037be6611c83f686777e33`; checksum-mode rsync found no drift.
 - Live Playwright with `localtest@housevo.us` verified Mail, Contacts, Calendar, Notes, login, Settings, Admin, Sync Setup, and the public Scheduler booking transition at 390×844 without mutation requests or console errors. Scheduler owner navigation remained fixture-backed because that account's live entitlement is disabled.
 - Root-only rollback archive: `/var/backups/openmailstack/ui-priority-d1aaa6b0-20260729T222131Z/webroot-before.tar.gz`; SHA-256 `419752dd7e8cb9ba752390d2e5c1c65ae33bc73cd1d9c42e57d04377336605a3`.
+
+## 2026-07-29 — Compose and Reply Mobile Workflow
+
+- Removed Compose's focus-stealing overlay ref and added labelled modal semantics, keyboard containment, an opaque surface, opaque popovers, and a safe-area-aware full-screen mobile layout.
+- Grouped footer tools/status/actions keep Send reachable; inline reply now uses a full-width Send row above readable Send & Archive and Rich editor actions.
+- Recipient autocomplete deduplicates email addresses case-insensitively, eliminating duplicate suggestions and React-key errors.
+- Focused regressions, frontend lint/build, and authenticated local Playwright pass. The browser typed continuously into To, rendered one matching suggestion, and reported zero console errors without sending mail.
+- Authenticated live Scheduler owner validation now replaces the earlier fixture-only gap: the enabled `localtest@housevo.us` account exposes all six mobile destinations, reaches Profile, and uses its owned sender identity.

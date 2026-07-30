@@ -26,6 +26,24 @@ interface ContactSuggestion {
   email: string;
 }
 
+export function uniqueContactSuggestions(
+  contacts: Array<Pick<Contact, 'name' | 'email'>>,
+): ContactSuggestion[] {
+  const byEmail = new Map<string, ContactSuggestion>();
+  contacts.forEach((contact) => {
+    const email = contact.email?.trim();
+    if (!email) return;
+    const key = email.toLowerCase();
+    const existing = byEmail.get(key);
+    if (!existing) {
+      byEmail.set(key, { name: contact.name?.trim() || '', email });
+    } else if (!existing.name && contact.name?.trim()) {
+      existing.name = contact.name.trim();
+    }
+  });
+  return Array.from(byEmail.values());
+}
+
 /** Extract the fragment the user is currently typing (after the last comma). */
 function getFragmentInfo(value: string): { prefix: string; fragment: string } {
   const lastComma = value.lastIndexOf(',');
@@ -42,6 +60,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Image previews
   const imagePreviews = useMemo(() => (
@@ -63,9 +82,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   useEffect(() => {
     api.fetchContacts(500, 0).then((data) => {
       if (data.contacts) {
-        setAllContacts((data.contacts as Contact[])
-          .filter((c) => c.email)
-          .map((c) => ({ name: c.name || '', email: c.email })));
+        setAllContacts(uniqueContactSuggestions(data.contacts as Contact[]));
       }
     }).catch(() => {});
   }, []);
@@ -194,6 +211,34 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     mail.setIsComposing(false);
   };
 
+  const handleDialogKeyDown = (event: React.KeyboardEvent) => {
+    if (showCloseConfirm) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      handleClose();
+      return;
+    }
+    if (event.key !== 'Tab' || !dialogRef.current) return;
+
+    const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )).filter((element) => element.offsetParent !== null);
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!dialogRef.current.contains(document.activeElement)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); };
   const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragOver(false); };
   const handleDrop = (e: React.DragEvent) => {
@@ -208,14 +253,17 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const fromOptions = identities.length > 0 ? identities : [{ address: mail.composeFrom, name: '' }];
 
   return (
-    <div className="compose-modal-overlay" style={{ position: 'fixed', inset: 0, zIndex: 1000,
-      background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: 20 }}
+    <div className="compose-modal-overlay"
       onDragOver={handleDragOver} onDragEnter={handleDragOver}
       onDragLeave={handleDragLeave} onDrop={handleDrop}
-      onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); handleClose(); } }}
-      tabIndex={-1} ref={(el) => el?.focus()}>
-      <div className="glass-panel" style={{ width: 'min(650px, 100%)', maxHeight: '85vh', display: 'flex',
-        flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
+      onKeyDown={handleDialogKeyDown}>
+      <div
+        ref={dialogRef}
+        className="glass-panel compose-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="compose-dialog-title"
+      >
         {/* Drop overlay */}
         {isDragOver && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 10,
@@ -228,18 +276,18 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           </div>
         )}
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '12px 16px', borderBottom: '1px solid var(--border-glass)' }}>
-          <span style={{ fontWeight: 600 }}>New Message</span>
-          <button className="btn btn-ghost" onClick={handleClose} style={{ padding: 4 }}>
+        <div className="compose-header">
+          <span id="compose-dialog-title" style={{ fontWeight: 600 }}>New Message</span>
+          <button className="btn btn-ghost" aria-label="Close message composer" onClick={handleClose} style={{ padding: 4 }}>
             <X size={18} />
           </button>
         </div>
         {/* Recipient fields — outside scroll area so autocomplete dropdowns aren't clipped */}
-        <div style={{ padding: '16px 16px 0', display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
+        <div className="compose-recipient-fields">
           {/* From selector (#12) */}
           {fromOptions.length > 1 && (
             <select className="glass-select glass-input" value={mail.composeFrom}
+              aria-label="From"
               onChange={(e) => mail.setComposeFrom(e.target.value)}
               style={{ fontSize: '0.85rem', padding: '8px 12px' }}>
               {fromOptions.map((a: MailIdentity) => (
@@ -251,13 +299,14 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           )}
           <div style={{ position: 'relative' }}>
             <input className="glass-input" placeholder="To" value={mail.composeTo}
+              autoFocus
               onChange={(e) => handleFieldChange(e.target.value, 'to')}
               onKeyDown={(e) => handleFieldKeyDown(e, 'to')}
               onFocus={() => { clearBlurTimer(); const { fragment } = getFragmentInfo(mail.composeTo); if (fragment.length >= 2) handleFieldChange(mail.composeTo, 'to'); }}
               onBlur={handleFieldBlur}
               autoComplete="off" style={{ width: '100%' }} />
             {autocompleteField === 'to' && suggestions.length > 0 && (
-              <div className="glass-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+              <div className="glass-panel compose-popover" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
                 marginTop: 2, maxHeight: 200, overflow: 'auto', padding: 4 }}>
                 {suggestions.map((s, i) => (
                   <div key={s.email}
@@ -284,7 +333,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                 onBlur={handleFieldBlur}
                 autoComplete="off" style={{ width: '100%' }} />
               {autocompleteField === 'cc' && suggestions.length > 0 && (
-                <div className="glass-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                <div className="glass-panel compose-popover" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
                   marginTop: 2, maxHeight: 200, overflow: 'auto', padding: 4 }}>
                   {suggestions.map((s, i) => (
                     <div key={s.email}
@@ -312,7 +361,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                 onBlur={handleFieldBlur}
                 autoComplete="off" style={{ width: '100%' }} />
               {autocompleteField === 'bcc' && suggestions.length > 0 && (
-                <div className="glass-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                <div className="glass-panel compose-popover" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
                   marginTop: 2, maxHeight: 200, overflow: 'auto', padding: 4 }}>
                   {suggestions.map((s, i) => (
                     <div key={s.email}
@@ -339,6 +388,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             onChange={(e) => mail.setComposeSubject(e.target.value)} />
           {mail.signatures && mail.signatures.length > 0 && (
             <select className="glass-select glass-input" value={mail.composeSignature}
+              aria-label="Signature"
               onChange={(e) => {
                 const sig = mail.signatures.find((s: Signature) => s.id === e.target.value);
                 mail.setComposeSignature(e.target.value);
@@ -353,7 +403,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           )}
         </div>
         {/* Scrollable body area — textarea + attachments + previews */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
+        <div className="compose-body">
           <textarea className="glass-input" placeholder="Write your message..."
             value={mail.composeBody} onChange={(e) => mail.setComposeBody(e.target.value)}
             style={{ flex: 1, minHeight: 180, resize: 'vertical' }} />
@@ -418,113 +468,117 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           </div>
         )}
         {/* Footer */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8,
-          padding: '12px 16px', borderTop: mail.composeError ? 'none' : '1px solid var(--border-glass)', flexWrap: 'wrap' }}>
-          <label className="btn btn-ghost" style={{ cursor: 'pointer' }}>
-            <Paperclip size={16} />
-            <input type="file" multiple hidden onChange={(e) => {
-              if (e.target.files) mail.setComposeAttachments((prev) => [...prev, ...Array.from(e.target.files!)]);
-            }} />
-          </label>
-          {/* Templates (#13) */}
-          <div style={{ position: 'relative' }}>
-            <button className="btn btn-ghost" onClick={() => setShowTemplates(!showTemplates)}
-              style={{ fontSize: '0.8rem' }} title="Templates">
-              <FileText size={16} /> Templates
-            </button>
-            {showTemplates && (
-              <div style={{ position: 'absolute', bottom: '100%', left: 0, zIndex: 50, marginBottom: 4, minWidth: 220 }}
-                onClick={(e) => e.stopPropagation()}>
-                <div className="glass-panel" style={{ padding: 8, maxHeight: 200, overflow: 'auto' }}>
-                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)',
-                    padding: '4px 8px', marginBottom: 4 }}>Insert Template</div>
-                  {templates.map((t) => (
-                    <div key={t.name} className="nav-item" style={{ padding: '6px 10px', cursor: 'pointer',
-                      borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}
-                      onClick={() => { mail.setComposeBody((prev) => prev + '\n\n' + t.content); setShowTemplates(false); }}>
-                      {t.name}
+        <div className="compose-footer" style={{ borderTop: mail.composeError ? 'none' : undefined }}>
+          <div className="compose-footer-tools">
+            <label className="btn btn-ghost" aria-label="Attach files" style={{ cursor: 'pointer' }}>
+              <Paperclip size={16} />
+              <input type="file" multiple hidden onChange={(e) => {
+                if (e.target.files) mail.setComposeAttachments((prev) => [...prev, ...Array.from(e.target.files!)]);
+              }} />
+            </label>
+            {/* Templates (#13) */}
+            <div style={{ position: 'relative' }}>
+              <button className="btn btn-ghost" onClick={() => setShowTemplates(!showTemplates)}
+                style={{ fontSize: '0.8rem' }} title="Templates">
+                <FileText size={16} /> Templates
+              </button>
+              {showTemplates && (
+                <div style={{ position: 'absolute', bottom: '100%', left: 0, zIndex: 50, marginBottom: 4, minWidth: 220 }}
+                  onClick={(e) => e.stopPropagation()}>
+                  <div className="glass-panel compose-popover" style={{ padding: 8, maxHeight: 200, overflow: 'auto' }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)',
+                      padding: '4px 8px', marginBottom: 4 }}>Insert Template</div>
+                    {templates.map((t) => (
+                      <div key={t.name} className="nav-item" style={{ padding: '6px 10px', cursor: 'pointer',
+                        borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}
+                        onClick={() => { mail.setComposeBody((prev) => prev + '\n\n' + t.content); setShowTemplates(false); }}>
+                        {t.name}
+                      </div>
+                    ))}
+                    {templates.length === 0 && (
+                      <div style={{ padding: 8, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                        No templates saved yet.
+                      </div>
+                    )}
+                    <div style={{ borderTop: '1px solid var(--border-glass)', margin: '4px 0' }} />
+                    <div className="nav-item" style={{ padding: '6px 10px', cursor: 'pointer',
+                      borderRadius: 'var(--radius-sm)', fontSize: '0.85rem', color: 'var(--accent-primary)' }}
+                      onClick={() => {
+                        const name = prompt('Template name:');
+                        if (name) {
+                          const updated = [...templates.filter((t) => t.name !== name), { name, content: mail.composeBody }];
+                          setTemplates(updated);
+                          saveUserSettings('templates', { templates: updated })
+                            .then((settings) => setTemplates(settings.templates))
+                            .catch(() => {});
+                          setShowTemplates(false);
+                        }
+                      }}>
+                      + Save current as template
                     </div>
-                  ))}
-                  {templates.length === 0 && (
-                    <div style={{ padding: 8, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                      No templates saved yet.
-                    </div>
-                  )}
-                  <div style={{ borderTop: '1px solid var(--border-glass)', margin: '4px 0' }} />
-                  <div className="nav-item" style={{ padding: '6px 10px', cursor: 'pointer',
-                    borderRadius: 'var(--radius-sm)', fontSize: '0.85rem', color: 'var(--accent-primary)' }}
-                    onClick={() => {
-                      const name = prompt('Template name:');
-                      if (name) {
-                        const updated = [...templates.filter((t) => t.name !== name), { name, content: mail.composeBody }];
-                        setTemplates(updated);
-                        saveUserSettings('templates', { templates: updated })
-                          .then((settings) => setTemplates(settings.templates))
-                          .catch(() => {});
-                        setShowTemplates(false);
-                      }
-                    }}>
-                    + Save current as template
                   </div>
                 </div>
-              </div>
+              )}
+            </div>
+          </div>
+          <div className="compose-footer-status" aria-live="polite">
+            {mail.composeAttachments.length > 0 && (
+              <span>
+                {mail.composeAttachments.length} file{mail.composeAttachments.length !== 1 ? 's' : ''}
+              </span>
+            )}
+            {mail.draftSaveStatus && (
+              <span style={{ color: mail.draftSaveStatus === 'error'
+                ? 'var(--danger)' : 'var(--text-secondary)' }}>
+                {mail.draftSaveStatus === 'saving' ? 'Saving...' : mail.draftSaveStatus === 'saved' ? 'Saved' : 'Error'}
+              </span>
             )}
           </div>
-          <div style={{ flex: 1 }} />
-          {mail.composeAttachments.length > 0 && (
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              {mail.composeAttachments.length} file{mail.composeAttachments.length !== 1 ? 's' : ''}
-            </span>
-          )}
-          {mail.draftSaveStatus && (
-            <span style={{ fontSize: '0.75rem', color: mail.draftSaveStatus === 'error'
-              ? 'var(--danger)' : 'var(--text-secondary)' }}>
-              {mail.draftSaveStatus === 'saving' ? 'Saving...' : mail.draftSaveStatus === 'saved' ? 'Saved' : 'Error'}
-            </span>
-          )}
-          {/* Schedule send (#3) */}
-          <div style={{ position: 'relative' }}>
-            <button className="btn btn-ghost" onClick={() => setShowSchedule(!showSchedule)}
-              style={{ fontSize: '0.8rem' }} title="Schedule send">
-              <Clock size={16} />
-            </button>
-            {showSchedule && (
-              <div style={{ position: 'absolute', bottom: '100%', right: 0, zIndex: 50, marginBottom: 4, minWidth: 260 }}
-                onClick={(e) => e.stopPropagation()}>
-                <div className="glass-panel" style={{ padding: 12 }}>
-                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Schedule Send</div>
-                  <input type="date" className="glass-input" value={scheduleDate}
-                    onChange={(e) => setScheduleDate(e.target.value)}
-                    style={{ width: '100%', marginBottom: 8, fontSize: '0.85rem' }} />
-                  <input type="time" className="glass-input" value={scheduleTime}
-                    onChange={(e) => setScheduleTime(e.target.value)}
-                    style={{ width: '100%', marginBottom: 8, fontSize: '0.85rem' }} />
-                  <button className="btn btn-primary" style={{ width: '100%', fontSize: '0.85rem' }}
-                    disabled={!scheduleDate || !scheduleTime || mail.sending}
-                    onClick={() => {
-                      const [h, m] = scheduleTime.split(':').map(Number);
-                      const sendAt = new Date(scheduleDate);
-                      sendAt.setHours(h || 0, m || 0, 0, 0);
-                      setShowSchedule(false);
-                      setScheduleDate('');
-                      setScheduleTime('');
-                      mail.handleSend(sendAt);
-                    }}>
-                    Schedule
-                  </button>
+          <div className="compose-footer-actions">
+            {/* Schedule send (#3) */}
+            <div style={{ position: 'relative' }}>
+              <button className="btn btn-ghost" onClick={() => setShowSchedule(!showSchedule)}
+                style={{ fontSize: '0.8rem' }} title="Schedule send">
+                <Clock size={16} />
+              </button>
+              {showSchedule && (
+                <div style={{ position: 'absolute', bottom: '100%', right: 0, zIndex: 50, marginBottom: 4, minWidth: 260 }}
+                  onClick={(e) => e.stopPropagation()}>
+                  <div className="glass-panel compose-popover" style={{ padding: 12 }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Schedule Send</div>
+                    <input type="date" className="glass-input" value={scheduleDate}
+                      onChange={(e) => setScheduleDate(e.target.value)}
+                      style={{ width: '100%', marginBottom: 8, fontSize: '0.85rem' }} />
+                    <input type="time" className="glass-input" value={scheduleTime}
+                      onChange={(e) => setScheduleTime(e.target.value)}
+                      style={{ width: '100%', marginBottom: 8, fontSize: '0.85rem' }} />
+                    <button className="btn btn-primary" style={{ width: '100%', fontSize: '0.85rem' }}
+                      disabled={!scheduleDate || !scheduleTime || mail.sending}
+                      onClick={() => {
+                        const [h, m] = scheduleTime.split(':').map(Number);
+                        const sendAt = new Date(scheduleDate);
+                        sendAt.setHours(h || 0, m || 0, 0, 0);
+                        setShowSchedule(false);
+                        setScheduleDate('');
+                        setScheduleTime('');
+                        mail.handleSend(sendAt);
+                      }}>
+                      Schedule
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+            <button className="btn btn-primary" disabled={mail.sending || sizeExceedsBlock}
+              onClick={() => { setDidSend(true); mail.handleSend(); }}>
+              <Send size={16} /> {mail.sending ? <><Spinner size={14} /> Sending...</> : 'Send'}
+            </button>
+            <button className="btn btn-ghost" disabled={mail.sending || sizeExceedsBlock}
+              onClick={() => { setDidSend(true); mail.handleSendAndArchive(); }}
+              style={{ fontSize: '0.8rem' }} title="Send & Archive">
+              <Archive size={14} />
+            </button>
           </div>
-          <button className="btn btn-primary" disabled={mail.sending || sizeExceedsBlock}
-            onClick={() => { setDidSend(true); mail.handleSend(); }}>
-            <Send size={16} /> {mail.sending ? <><Spinner size={14} /> Sending...</> : 'Send'}
-          </button>
-          <button className="btn btn-ghost" disabled={mail.sending || sizeExceedsBlock}
-            onClick={() => { setDidSend(true); mail.handleSendAndArchive(); }}
-            style={{ fontSize: '0.8rem' }} title="Send & Archive">
-            <Archive size={14} />
-          </button>
         </div>
       </div>
       {showCloseConfirm && (

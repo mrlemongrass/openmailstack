@@ -39,7 +39,7 @@ export function InlineReply({
         }}
       />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="inline-reply-actions">
           <button className="btn btn-primary" disabled={!replyText.trim() || replySending}
             onClick={onSend} style={{ fontSize: '0.85rem', padding: '6px 14px' }}>
             <Send size={14} /> {replySending ? <><Spinner size={12} /> Sending...</> : 'Send'}

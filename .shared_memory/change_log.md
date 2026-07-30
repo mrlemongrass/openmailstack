@@ -1265,3 +1265,11 @@ Future entry template:
 - Recipient autocomplete deduplicates email addresses case-insensitively, eliminating duplicate suggestions and React-key errors.
 - Focused regressions, frontend lint/build, and authenticated local Playwright pass. The browser typed continuously into To, rendered one matching suggestion, and reported zero console errors without sending mail.
 - Authenticated live Scheduler owner validation now replaces the earlier fixture-only gap: the enabled `localtest@housevo.us` account exposes all six mobile destinations, reaches Profile, and uses its owned sender identity.
+
+## 2026-07-29 — Calendar Event Editor Workflow
+
+- Reworked the event editor into an opaque, labelled dialog with trapped focus, Escape handling, explicit dismissal, named controls, and no accidental outside-click data loss.
+- Mobile timed inputs stack cleanly inside a `100dvh` sheet while the safe-area-aware action footer remains reachable.
+- Calendar guest autocomplete now shares Compose's case-insensitive email deduplication helper and uses an opaque popover.
+- Focused regressions and the frontend production build pass. Authenticated local Playwright verified mobile and desktop states with zero console errors.
+- A uniquely named temporary event was created through the real backend, reopened, deleted, and confirmed absent without adding a guest or sending an invitation.

@@ -5,6 +5,7 @@ import { format } from 'date-fns';
 import * as api from '../shared/api';
 import { useToast } from '../shared/components/Toast';
 import type { Contact } from '../shared/types';
+import { uniqueContactSuggestions } from '../shared/contactSuggestions';
 import {
   addWallDays,
   convertWallDateTimeZone,
@@ -49,6 +50,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const [guestInput, setGuestInput] = useState('');
   const [guests, setGuests] = useState<string[]>([]);
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Contact autocomplete for guest field
   const [guestSuggestions, setGuestSuggestions] = useState<{ name: string; email: string }[]>([]);
@@ -60,9 +62,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   useEffect(() => {
     api.fetchContacts(500, 0).then((data) => {
       if (data.contacts) {
-        setAllGuestContacts((data.contacts as Contact[])
-          .filter((c) => c.email)
-          .map((c) => ({ name: c.name || '', email: c.email })));
+        setAllGuestContacts(uniqueContactSuggestions(data.contacts as Contact[]));
       }
     }).catch(() => {});
   }, []);
@@ -193,22 +193,53 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
     }
   };
 
+  const handleDialogKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      if (guestSuggestions.length > 0) return;
+      event.preventDefault();
+      cal.setIsEventModalOpen(false);
+      return;
+    }
+    if (event.key !== 'Tab' || !dialogRef.current) return;
+
+    const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )).filter((element) => element.offsetParent !== null);
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!dialogRef.current.contains(document.activeElement)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.7)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-      onClick={(e) => { if (e.target === e.currentTarget) cal.setIsEventModalOpen(false); }}>
-      <div className="glass-panel" style={{ width: 'min(600px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div className="event-modal-overlay" onKeyDown={handleDialogKeyDown}>
+      <div
+        ref={dialogRef}
+        className="glass-panel event-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="event-dialog-title"
+      >
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '12px 16px', borderBottom: '1px solid var(--border-glass)' }}>
-          <span style={{ fontWeight: 600 }}>{isEditing ? 'Edit Event' : 'New Event'}</span>
+        <div className="event-dialog-header">
+          <span id="event-dialog-title" style={{ fontWeight: 600 }}>{isEditing ? 'Edit Event' : 'New Event'}</span>
           <div style={{ display: 'flex', gap: 4 }}>
             {isEditing && cal.editingEvent?.id && <button className="btn btn-danger" onClick={async () => { await cal.deleteEvent(cal.editingEvent!.id!, cal.editingEvent!.calendarId || 0); showToast({ type: 'success', message: 'Event deleted' }); cal.setIsEventModalOpen(false); }} style={{ padding: '4px 10px' }}><Trash2 size={14} /> Delete</button>}
-            <button className="btn btn-ghost" onClick={() => cal.setIsEventModalOpen(false)} style={{ padding: 4 }}><X size={18} /></button>
+            <button className="btn btn-ghost" aria-label="Close event editor" onClick={() => cal.setIsEventModalOpen(false)} style={{ padding: 4 }}><X size={18} /></button>
           </div>
         </div>
         {/* Body */}
-        <div style={{ flex: 1, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="event-dialog-body">
           {cal.eventError && <div style={{ padding: '8px 12px', borderRadius: 'var(--radius-md)', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)', fontSize: '0.8rem' }}>{cal.eventError}</div>}
 
           <input className="glass-input" placeholder="Event title" autoFocus
@@ -235,8 +266,9 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="event-time-fields">
             <input type={evt.isAllDay ? 'date' : 'datetime-local'} className="glass-input"
+              aria-label={evt.isAllDay ? 'Event date' : 'Start date and time'}
               value={evt.start ? format(evt.start as Date, evt.isAllDay ? 'yyyy-MM-dd' : "yyyy-MM-dd'T'HH:mm") : ''}
               onChange={(e) => cal.setNewEvent((prev) => {
                 const start = parseWallInput(e.target.value, Boolean(evt.isAllDay));
@@ -247,7 +279,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                 };
               })}
               style={{ flex: 1, fontSize: '0.85rem' }} />
-            {!evt.isAllDay && <input type="datetime-local" className="glass-input"
+            {!evt.isAllDay && <input type="datetime-local" className="glass-input" aria-label="End date and time"
               value={evt.end ? format(evt.end as Date, "yyyy-MM-dd'T'HH:mm") : ''}
               onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, end: new Date(e.target.value) }))}
               style={{ flex: 1, fontSize: '0.85rem' }} />}
@@ -287,6 +319,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
           {/* Calendar selector */}
           {cal.calendars.length > 0 && (
             <select className="glass-select glass-input" value={evt.calendarId || cal.calendars[0]?.id}
+              aria-label="Calendar"
               onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, calendarId: parseInt(e.target.value) }))}
               style={{ fontSize: '0.85rem' }}>
               {cal.calendars.map((c) => (
@@ -320,9 +353,9 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                 onBlur={handleGuestBlur}
                 autoComplete="off"
                 style={{ flex: 1, fontSize: '0.85rem' }} />
-              <button className="btn btn-ghost" onClick={handleAddGuest}><Plus size={14} /></button>
+              <button className="btn btn-ghost" aria-label="Add guest" onClick={handleAddGuest}><Plus size={14} /></button>
               {guestSuggestions.length > 0 && (
-                <div className="glass-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 48, zIndex: 50,
+                <div className="glass-panel event-popover" style={{ position: 'absolute', top: '100%', left: 0, right: 48, zIndex: 50,
                   marginTop: 2, maxHeight: 160, overflow: 'auto', padding: 4 }}>
                   {guestSuggestions.map((s, i) => (
                     <div key={s.email}
@@ -357,7 +390,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
           {/* #10 Event attachments */}
           <div>
-            <label className="btn btn-ghost" style={{ cursor: 'pointer', fontSize: '0.8rem' }}>
+            <label className="btn btn-ghost" aria-label="Attach files" style={{ cursor: 'pointer', fontSize: '0.8rem' }}>
               <Paperclip size={14} /> Attach files
               <input type="file" multiple hidden onChange={(e) => {
                 if (e.target.files) setAttachmentFiles((prev) => [...prev, ...Array.from(e.target.files!)]);
@@ -422,8 +455,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
           )}
         </div>
         {/* Footer */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8,
-          padding: '12px 16px', borderTop: '1px solid var(--border-glass)' }}>
+        <div className="event-dialog-footer">
           <button className="btn btn-ghost" onClick={() => cal.setIsEventModalOpen(false)}>Cancel</button>
           <button className="btn btn-primary" onClick={handleSave} disabled={cal.eventSaving}>
             <Save size={14} /> {cal.eventSaving ? 'Saving...' : 'Save Event'}

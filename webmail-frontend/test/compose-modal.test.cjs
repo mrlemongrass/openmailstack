@@ -9,6 +9,18 @@ const { renderToStaticMarkup } = require('react-dom/server');
 
 const componentPath = path.resolve(__dirname, '../src/mail/ComposeModal.tsx');
 
+function loadTypeScriptModule(sourcePath) {
+  const source = fs.readFileSync(sourcePath, 'utf8');
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    fileName: sourcePath,
+  }).outputText;
+  const loadedModule = new Module(sourcePath, module);
+  loadedModule.paths = module.paths;
+  loadedModule._compile(compiled, sourcePath);
+  return loadedModule.exports;
+}
+
 function loadComposeModule() {
   const source = fs.readFileSync(componentPath, 'utf8');
   const compiled = ts.transpileModule(source, {
@@ -45,6 +57,9 @@ function loadComposeModule() {
         getUserSettings: async () => ({ templates: [] }),
         saveUserSettings: async () => ({ templates: [] }),
       };
+    }
+    if (id === '../shared/contactSuggestions') {
+      return loadTypeScriptModule(path.resolve(__dirname, '../src/shared/contactSuggestions.ts'));
     }
     return Module.prototype.require.call(componentModule, id);
   };
@@ -125,7 +140,9 @@ test('mobile compose uses an opaque full-screen sheet with grouped actions', () 
 });
 
 test('compose autocomplete deduplicates case-insensitive email matches', () => {
-  const { uniqueContactSuggestions } = loadComposeModule();
+  const { uniqueContactSuggestions } = loadTypeScriptModule(
+    path.resolve(__dirname, '../src/shared/contactSuggestions.ts'),
+  );
 
   assert.deepEqual(uniqueContactSuggestions([
     { name: '', email: 'LOCALTEST@housevo.us' },

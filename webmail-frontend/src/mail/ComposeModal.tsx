@@ -7,6 +7,7 @@ import type { useMail } from './hooks/useMail';
 import * as api from '../shared/api';
 import type { Contact, Signature, MailIdentity } from '../shared/types';
 import { getUserSettings, saveUserSettings, type MessageTemplate } from '../settings/settingsApi';
+import { uniqueContactSuggestions, type ContactSuggestion } from '../shared/contactSuggestions';
 
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB warning
 const BLOCK_SIZE = 50 * 1024 * 1024; // 50MB block
@@ -19,29 +20,6 @@ function stripHtml(html: string): string {
 
 function totalSize(files: File[]): number {
   return files.reduce((sum, f) => sum + f.size, 0);
-}
-
-interface ContactSuggestion {
-  name: string;
-  email: string;
-}
-
-export function uniqueContactSuggestions(
-  contacts: Array<Pick<Contact, 'name' | 'email'>>,
-): ContactSuggestion[] {
-  const byEmail = new Map<string, ContactSuggestion>();
-  contacts.forEach((contact) => {
-    const email = contact.email?.trim();
-    if (!email) return;
-    const key = email.toLowerCase();
-    const existing = byEmail.get(key);
-    if (!existing) {
-      byEmail.set(key, { name: contact.name?.trim() || '', email });
-    } else if (!existing.name && contact.name?.trim()) {
-      existing.name = contact.name.trim();
-    }
-  });
-  return Array.from(byEmail.values());
 }
 
 /** Extract the fragment the user is currently typing (after the last comma). */

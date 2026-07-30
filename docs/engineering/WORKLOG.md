@@ -6827,3 +6827,31 @@ Ending git state: focused Compose/Reply implementation, regressions, audit, and 
 ### Next task
 
 Inspect Calendar event creation at desktop and mobile widths, then repair the highest-value bounded creation-flow defect.
+
+## 2026-07-29 — Calendar event editor workflow
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `0762b854`
+Ending git state: focused Calendar implementation, regressions, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] The event editor uses an opaque, labelled dialog with keyboard containment and explicit dismissal.
+- [x] Mobile timed fields remain readable and the primary actions stay reachable within `100dvh`.
+- [x] Date, calendar, guest, attachment, and close controls expose useful accessible names.
+- [x] Contact autocomplete does not repeat the same email address.
+- [x] A real temporary event can be created, reopened, deleted, and confirmed absent.
+
+### Changes and proof
+
+- `EventModal.tsx` now uses an accessible dialog structure, focus trapping and Escape handling, labelled controls, explicit Cancel/Close actions, shared contact deduplication, and no draft-losing backdrop click.
+- `index.css` gives the editor and guest suggestions opaque surfaces, separates the header/body/footer, stacks timed fields on mobile, and keeps a safe-area-aware action footer visible.
+- The shared `contactSuggestions.ts` helper now serves Compose and Calendar, so both workflows apply the same case-insensitive email deduplication.
+- Focused Calendar and Compose regressions pass, and the production frontend build succeeds.
+- Authenticated local Playwright through the real backend verified 390×844 all-day, timed, expanded-options, and autocomplete states plus the 1440×900 desktop dialog. The outside-click test kept the draft open and the browser reported zero console errors.
+- `OMS UX Calendar Temp 20260729-1718` was created, reopened, deleted, and confirmed absent; no guest was added and no invitation was sent.
+
+### Next task
+
+Inspect and repair the highest-value bounded Contacts creation-flow defect at desktop and mobile widths.

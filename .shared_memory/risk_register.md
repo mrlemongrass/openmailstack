@@ -62,6 +62,7 @@ Last updated: 2026-07-29
 - ✅ Settings mobile navigation: the fixed 220 px desktop sidebar no longer clips mobile panes. A labelled grouped picker exposes every section at 390 px, route selection and zero overflow are verified, and the desktop sidebar remains unchanged.
 - ✅ Admin mobile drawer: the off-canvas navigation uses an opaque theme surface, modal semantics, explicit close control, hidden closed state, trapped focus, Escape close, and trigger-focus restoration. All 14 destinations remain labelled and reachable without overflow; desktop stays static.
 - ✅ Sync mobile endpoints: reduced mobile gutters and wrapping keep long CalDAV/CardDAV values clear of their copy actions. All five copy controls have distinct protocol names, no overflow occurs at 390 px, and desktop geometry is unchanged.
+- ✅ Calendar event editor: the opaque labelled dialog keeps timed fields and actions reachable on mobile, deduplicates guest suggestions, and no longer discards a draft on an outside click. A disposable create/reopen/delete cycle passed through the real backend and left no temporary event behind.
 
 ## Remaining High-Priority Risks
 

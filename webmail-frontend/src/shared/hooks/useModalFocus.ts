@@ -58,16 +58,23 @@ export function useModalFocus<T extends HTMLElement>({
 }) {
   const onCloseRef = useRef(onClose);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
   onCloseRef.current = onClose;
+  if (open && !wasOpenRef.current) {
+    returnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  }
+  wasOpenRef.current = open;
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!open || !dialog) return;
 
     const activeElement = document.activeElement;
-    returnFocusRef.current = activeElement instanceof HTMLElement && !dialog.contains(activeElement)
-      ? activeElement
-      : null;
+    if (!returnFocusRef.current && activeElement instanceof HTMLElement && !dialog.contains(activeElement)) {
+      returnFocusRef.current = activeElement;
+    }
 
     const initialFocusable = focusableElements(dialog);
     if (!dialog.contains(document.activeElement)) {

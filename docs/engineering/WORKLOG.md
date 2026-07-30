@@ -6855,3 +6855,31 @@ Ending git state: focused Calendar implementation, regressions, audit, and memor
 ### Next task
 
 Inspect and repair the highest-value bounded Contacts creation-flow defect at desktop and mobile widths.
+
+## 2026-07-29 — Contacts editor and activity workflow
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Starting git state: clean at `a2e5e17`
+Ending git state: focused Contacts frontend/backend implementation, regressions, audit, and memory changes ready to commit
+
+### Acceptance criteria
+
+- [x] Mobile Contacts keeps Cancel and Save fully visible while the form body scrolls independently.
+- [x] The editor is an opaque, labelled dialog with connected field labels, initial focus, keyboard containment, and explicit dismissal.
+- [x] First and last name fields stack at 390 px while desktop retains the two-column layout.
+- [x] Contact detail activity returns indexed mail and owner-scoped upcoming meetings without querying nonexistent tables.
+- [x] A real temporary contact can be created, opened, moved to trash, and confirmed absent.
+
+### Changes and proof
+
+- `ContactEditModal.tsx` now uses a dedicated dialog structure instead of the constrained Sync setup modal. The full-screen mobile sheet has a scrollable body, persistent safe-area footer, explicit Cancel/Close, focus handling, and labels connected to every field.
+- `index.css` adds opaque Contacts editor surfaces and preserves the centered desktop card while stacking name fields on mobile.
+- The contact activity route now reads recent mail from `mail_search_index`, finds attendee events only through Calendars owned by the authenticated user, parses actual iCalendar data, expands recurring events, and handles contacts without usable email addresses.
+- The route regression failed against the nonexistent `messages`, `events_occurrences`, and `event_attendees` queries, then passed against the real storage contract. The focused frontend editor regression also failed before the layout and semantics repair, then passed.
+- Authenticated local Playwright verified the editor at 390×844 and 1440×900. `OMS UX Contact Temp 20260729-1726` was created, opened, moved to trash, and confirmed absent; the contact list returned from three records to two.
+- The pre-fix detail open reproduced two 500 responses naming the missing `messages` table. Live post-fix activity verification remains part of the deployment gate because the local frontend proxies the currently deployed backend.
+
+### Next task
+
+Run complete release gates and independent review, then push, back up, deploy, and verify the compose, Calendar, and Contacts batch live.

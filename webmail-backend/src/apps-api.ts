@@ -405,44 +405,75 @@ appsApiRouter.get('/contacts/:id/activity', async (req: Request, res: Response) 
         if (contactRows.length === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
 
         const contact = contactRows[0];
-        const emails: string[] = [contact.email];
+        const emailCandidates: unknown[] = [contact.email];
         if (contact.emails_json) {
-            const parsed = typeof contact.emails_json === 'string' ? JSON.parse(contact.emails_json) : contact.emails_json;
+            let parsed = contact.emails_json;
+            if (typeof parsed === 'string') {
+                try {
+                    parsed = JSON.parse(parsed);
+                } catch {
+                    parsed = [];
+                }
+            }
             if (Array.isArray(parsed)) {
                 for (const item of parsed) {
-                    if (item.value && !emails.includes(item.value)) emails.push(item.value);
+                    emailCandidates.push(item?.value);
                 }
             }
         }
-        const emailPlaceholders = emails.map(() => '?').join(',');
+        const emails = Array.from(new Set(emailCandidates
+            .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+            .map((value) => value.trim().toLowerCase())));
+        if (emails.length === 0) {
+            return res.json({ success: true, emails: [], meetings: [] });
+        }
 
+        const mailPredicates = emails.map(() => (
+            `(LOCATE(?, LOWER(COALESCE(sender, ''))) > 0
+              OR LOCATE(?, LOWER(COALESCE(recipients, ''))) > 0)`
+        )).join(' OR ');
         const [emailRows]: any = await pool.query(
-            `SELECT subject, received_at, id, snippet(subject, body) AS snippet
-             FROM messages
-             WHERE username = ? AND (from_addr IN (${emailPlaceholders}) OR to_addrs REGEXP ? OR cc_addrs REGEXP ?)
-             ORDER BY received_at DESC LIMIT 20`,
-            [user, ...emails, emails.join('|'), emails.join('|')]
+            `SELECT subject, sent_at AS received_at, id, COALESCE(preview, '') AS snippet
+             FROM mail_search_index
+             WHERE username = ? AND (${mailPredicates})
+             ORDER BY sent_at DESC LIMIT 20`,
+            [user, ...emails.flatMap((email) => [email, email])]
         );
 
-        const [meetingRows]: any = await pool.query(
-            `SELECT e.uid AS id, e.ical_data, MIN(eo.start) AS start
+        const attendeePredicates = emails.map(() => (
+            `LOCATE(CONCAT('mailto:', ?), LOWER(e.ical_data)) > 0`
+        )).join(' OR ');
+        const [eventRows]: any = await pool.query(
+            `SELECT e.uid, e.ical_data
              FROM events e
-             JOIN events_occurrences eo ON eo.event_id = e.id
-             JOIN event_attendees ea ON ea.event_id = e.id
-             WHERE ea.email IN (${emailPlaceholders}) AND eo.start >= NOW()
-             GROUP BY e.id, e.uid, e.ical_data
-             ORDER BY eo.start ASC LIMIT 10`,
-            [...emails]
+             JOIN calendars c ON c.id = e.calendar_id
+             WHERE c.user_id = ? AND (${attendeePredicates})
+             LIMIT 200`,
+            [user, ...emails]
         );
 
-        const meetings = meetingRows.map((r: any) => {
-            const titleMatch = r.ical_data?.match(/SUMMARY:([^\r\n]*)/);
-            return {
-                id: r.id,
-                title: titleMatch ? titleMatch[1].trim() : 'Meeting',
-                start: r.start,
-            };
-        });
+        const now = new Date();
+        const expansionEnd = new Date(now);
+        expansionEnd.setUTCFullYear(expansionEnd.getUTCFullYear() + 2);
+        const meetings = eventRows.flatMap((row: any) => {
+            try {
+                const parsed = parseIcalEvent(row.uid, row.ical_data || '');
+                const occurrences = parsed.recurrence
+                    ? expandRecurringEvent(parsed, now, expansionEnd)
+                    : [parsed];
+                return occurrences
+                    .filter((occurrence) => new Date(occurrence.end || occurrence.start) >= now)
+                    .map((occurrence) => ({
+                        id: occurrence.occurrenceId || row.uid,
+                        title: occurrence.title || 'Meeting',
+                        start: new Date(occurrence.start).toISOString(),
+                    }));
+            } catch {
+                return [];
+            }
+        }).sort((left: any, right: any) => (
+            new Date(left.start).getTime() - new Date(right.start).getTime()
+        )).slice(0, 10);
 
         res.json({ success: true, emails: emailRows, meetings });
     } catch (e: any) {

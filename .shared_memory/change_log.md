@@ -1273,3 +1273,10 @@ Future entry template:
 - Calendar guest autocomplete now shares Compose's case-insensitive email deduplication helper and uses an opaque popover.
 - Focused regressions and the frontend production build pass. Authenticated local Playwright verified mobile and desktop states with zero console errors.
 - A uniquely named temporary event was created through the real backend, reopened, deleted, and confirmed absent without adding a guest or sending an invitation.
+
+## 2026-07-29 — Contacts Editor and Activity Workflow
+
+- Replaced the constrained Sync-derived contact editor with an opaque, labelled Contacts dialog whose mobile form scrolls independently above a persistent safe-area action footer.
+- Connected every field label, named the close control, added initial focus and keyboard containment, prevented outside-click dismissal, and stacked the name fields at the mobile breakpoint.
+- Replaced the broken activity queries against nonexistent mail/calendar tables with `mail_search_index` and owner-scoped `events`/`calendars` queries plus real iCalendar parsing and recurrence expansion.
+- Focused frontend and HTTP route regressions pass. Authenticated local Playwright verified mobile/desktop layout and a disposable create/open/trash cycle; the list returned to its original count.

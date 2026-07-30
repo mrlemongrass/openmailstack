@@ -63,6 +63,7 @@ Last updated: 2026-07-29
 - ✅ Admin mobile drawer: the off-canvas navigation uses an opaque theme surface, modal semantics, explicit close control, hidden closed state, trapped focus, Escape close, and trigger-focus restoration. All 14 destinations remain labelled and reachable without overflow; desktop stays static.
 - ✅ Sync mobile endpoints: reduced mobile gutters and wrapping keep long CalDAV/CardDAV values clear of their copy actions. All five copy controls have distinct protocol names, no overflow occurs at 390 px, and desktop geometry is unchanged.
 - ✅ Calendar event editor: the opaque labelled dialog keeps timed fields and actions reachable on mobile, deduplicates guest suggestions, and no longer discards a draft on an outside click. A disposable create/reopen/delete cycle passed through the real backend and left no temporary event behind.
+- ✅ Contacts editor: the full-screen mobile dialog keeps its actions visible, labels every field, and avoids outside-click draft loss. Contact detail activity now targets the real mail index and owner-scoped Calendar tables; live post-deploy verification must confirm the prior duplicate 500 responses are gone.
 
 ## Remaining High-Priority Risks
 

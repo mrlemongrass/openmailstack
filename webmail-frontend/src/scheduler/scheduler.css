@@ -884,6 +884,26 @@
   font-size: 0.75rem;
   text-align: right;
 }
+.availability-save span.error {
+  color: var(--danger);
+}
+.availability-validation {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--border-glass));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface-color));
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+.availability-validation ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+}
+.availability-workspace [aria-invalid="true"] {
+  border-color: color-mix(in srgb, var(--danger) 70%, var(--border-glass));
+}
 .availability-callout {
   display: flex;
   align-items: center;
@@ -1264,6 +1284,16 @@
   .availability-save {
     align-items: flex-end;
     flex-direction: column-reverse;
+  }
+  .availability-callout {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    align-items: start;
+  }
+  .availability-callout .btn {
+    grid-column: 1 / -1;
+    justify-content: center;
+    width: 100%;
   }
   .availability-toolbar {
     grid-template-columns: 1fr;

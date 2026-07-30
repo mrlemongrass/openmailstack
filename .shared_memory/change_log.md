@@ -1287,3 +1287,11 @@ Future entry template:
 - Removed the unordered 200-event cutoff that could hide a real upcoming meeting before iCalendar parsing and recurrence expansion.
 - Calendar guest and attachment removals are labelled keyboard-operable buttons.
 - Permanently removed the disposable Contacts record and ignored local `.playwright-cli/` artifacts.
+
+## 2026-07-29 — Creation Workflow Batch Deployed
+
+- Pushed and deployed the Compose/reply, Calendar editor, Contacts editor/activity, and independent-review remediation batch through `126d17b7`.
+- Backend artifacts and the frontend `index.html` match the repository; `openmailstack` remains active with `NRestarts=0`, nginx validates, and post-deploy staging smoke passes.
+- Authenticated live Playwright at 390×844 verified opaque full-screen creation dialogs, labelled timed Calendar controls, visible Contacts actions, and a `200` Contacts activity response.
+- The enabled Scheduler owner app exposes all six mobile destinations, reaches Profile, publishes `/scheduler/localtest`, and keeps the owned `Local Test <localtest@housevo.us>` sender selected.
+- Root-only rollback archives and checksums are stored in `/var/backups/openmailstack/ui-creation-126d17b7-20260730T005042Z/`.

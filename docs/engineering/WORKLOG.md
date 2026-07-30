@@ -6909,3 +6909,30 @@ Ending git state: focused review fixes and proof ready for release commit
 ### Next task
 
 Rerun release gates, commit the remediation, push, back up, deploy, and complete live browser and service verification.
+
+## 2026-07-29 — Creation-workflow production deployment
+
+Agent/tool: Codex with Playwright
+Branch: `main`
+Deployed commit: `126d17b7`
+
+### Acceptance criteria
+
+- [x] Repository and live backend artifacts match byte-for-byte with readable service ownership and modes.
+- [x] The production frontend matches the reviewed build with normalized webroot permissions.
+- [x] Core services, listeners, configuration, TLS, web endpoints, DKIM, and Scheduler worker pass after deployment.
+- [x] Mobile Compose, Calendar, Contacts, and Scheduler owner flows pass against the live account without submitting data.
+- [x] The formerly failing contact activity request returns `200` on the live backend.
+
+### Deployment and proof
+
+- Created root-only rollback archives in `/var/backups/openmailstack/ui-creation-126d17b7-20260730T005042Z/` before deployment. SHA-256: frontend `67fdb27087af17493242c5296e044667ae773aa5016046a59b177c94be60c6bf`; backend `b73d21afe625b2bc890560d368328984439658961528fbe684143c3a9654602e`.
+- Installed only the five reviewed `apps-api` source/runtime artifacts as `openmailstack:openmailstack` mode `0644`, restarted `openmailstack` once, and verified `active/running`, `NRestarts=0`, no warning journal entries, and matching repository/live hashes.
+- The standard frontend deploy helper rebuilt and published the reviewed Vite output. Repository/live `index.html` SHA-256 values match at `09673f71560bd8aeb5b3dbeb49c8bfe234c5298abb616efb783bfd0e78cee8ac`; content-checksum rsync found no drift after intentional `0755`/`0644` normalization.
+- Post-deploy staging smoke passed every required service, listener, configuration, functional Rspamd scan, TLS, web endpoint, authentication boundary, and DKIM check. Existing Postfix deprecation and Rspamd timeout advisories remain non-blocking.
+- Authenticated live Playwright at 390×844 measured Compose, Calendar, and Contacts dialogs at the full viewport with opaque `rgb(17, 24, 39)` surfaces and reachable actions. Timed Calendar fields had explicit accessible names, and Contacts activity returned `GET /api/apps/contacts/5/activity => 200 OK`.
+- Live Scheduler exposed all six owner destinations, transitioned to Profile, showed `https://webmail.housevo.us/scheduler/localtest`, and retained `Local Test <localtest@housevo.us>` as the owned notification sender. No message, event, contact, booking, or profile change was submitted.
+
+### Next task
+
+Audit the newly enabled live Scheduler event-type creation workflow at mobile and desktop widths, then repair the highest-value bounded UX defect.

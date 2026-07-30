@@ -312,3 +312,7 @@ Validation:
 - UID searches use bounded numeric windows. Body checks fetch at most 1 MiB and
   use unknown-aware evaluation so sufficient non-Body criteria still decide a
   rule; the UI reports only messages with genuinely undecidable Body rules.
+- This workflow is deployed from `e76fe4e568d1466548f264157f9c00eb996d56a5`.
+  The production artifacts match the release, the additive ledger is empty,
+  and an authenticated preview-only live run completed without mailbox
+  mutation or browser errors.

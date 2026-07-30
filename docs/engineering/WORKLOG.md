@@ -7316,8 +7316,31 @@ remain higher severity; ordinary visual polish ranks below it.
 
 ### Deployment
 
-Pending final commit, guarded backup, live proof, exact-artifact comparison,
-service checks, staging smoke, and cleanup.
+- Committed and pushed as `e76fe4e568d1466548f264157f9c00eb996d56a5`.
+  The root-only pre-deploy rollback snapshot is
+  `/var/backups/openmailstack/20260730T151403Z-e76fe4e5/`.
+- Deployed backend artifacts match the committed generated JavaScript exactly:
+  `api.js` SHA-256
+  `0c4e6101da2d4875a3910b318426d2f19e0a366f995efedd39ccd172c5f43c85`,
+  `imap.js`
+  `a594eb825726d4e6d6458aefd2eecb7338c0065264bea624d49740e1d7556578`,
+  `rule-run-ledger.js`
+  `7cc4efe8f414c5ff1e8ef0a3da27e357250c1870b665af8f55bab0ca3511d515`,
+  and `sieve-compiler.js`
+  `163bcc29511ca25b41072fbb62a7f70219496b41def38f359017145774bb4b8f`.
+  The built/deployed frontend `index.html` matches at SHA-256
+  `4f3a9cb8533e6ddeb54eff09fb18aeb6c58284ab733b766cfcb878cb03217a4f`.
+- The additive production ledger has the reviewed unique pending-source index
+  and zero rows after deployment. `openmailstack` is active/running with
+  `NRestarts=0`; Nginx validates and the complete staging smoke passes.
+- Authenticated live Playwright opened the real Filters surface and issued a
+  preview-only run for `localtest@housevo.us`. The endpoint scanned the fixed
+  13-message Inbox snapshot, returned `200`, found zero matches, made zero
+  copies/moves, left the ledger empty, and produced no browser console errors.
+  No saved rule or mailbox content was changed.
+- Public HTTPS returned `200`, the unauthenticated session boundary returned
+  `401`, ActiveSync `OPTIONS` returned `200`, IMAP negotiated trusted TLS 1.3
+  for `mail.housevo.us`, and ManageSieve accepted a local connection.
 
 ### Next task
 

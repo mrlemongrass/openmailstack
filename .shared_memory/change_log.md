@@ -1360,3 +1360,11 @@ Future entry template:
 - Desktop/mobile Playwright verified opaque layout, no overflow, 44 px mobile
   reorder targets, dialog isolation/focus wrapping/restoration, and zero
   console errors without mutating mailbox or saved-rule state.
+- Released `e76fe4e568d1466548f264157f9c00eb996d56a5` with root-only
+  rollback `/var/backups/openmailstack/20260730T151403Z-e76fe4e5/`.
+  Backend and frontend artifacts match the release; the additive ledger is
+  empty, the backend has zero automatic restarts, and staging smoke passes.
+- Authenticated production Playwright previewed the real 13-message
+  `localtest@housevo.us` Inbox snapshot with zero matches and zero mutations.
+  The endpoint returned `200`, the ledger stayed empty, and the browser had no
+  console errors.

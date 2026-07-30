@@ -395,6 +395,18 @@ appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Respon
     }
 });
 
+export const contactActivityAddressPattern = (email: string) => {
+    const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const emailCharacters = "a-z0-9.!#$%&'*+/=?^_`{|}~-";
+    return `(^|[^${emailCharacters}])${escaped}([^${emailCharacters}]|$)`;
+};
+
+export const contactActivityAttendeePattern = (email: string) => {
+    const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const emailCharacters = "a-z0-9.!#$%&'*+/=?^_`{|}~-";
+    return `mailto:${escaped}([^${emailCharacters}]|$)`;
+};
+
 appsApiRouter.get('/contacts/:id/activity', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
@@ -429,27 +441,29 @@ appsApiRouter.get('/contacts/:id/activity', async (req: Request, res: Response) 
         }
 
         const mailPredicates = emails.map(() => (
-            `(LOCATE(?, LOWER(COALESCE(sender, ''))) > 0
-              OR LOCATE(?, LOWER(COALESCE(recipients, ''))) > 0)`
+            `(LOWER(COALESCE(sender, '')) REGEXP ?
+              OR LOWER(COALESCE(recipients, '')) REGEXP ?)`
         )).join(' OR ');
         const [emailRows]: any = await pool.query(
             `SELECT subject, sent_at AS received_at, id, COALESCE(preview, '') AS snippet
              FROM mail_search_index
              WHERE username = ? AND (${mailPredicates})
              ORDER BY sent_at DESC LIMIT 20`,
-            [user, ...emails.flatMap((email) => [email, email])]
+            [user, ...emails.flatMap((email) => {
+                const pattern = contactActivityAddressPattern(email);
+                return [pattern, pattern];
+            })]
         );
 
         const attendeePredicates = emails.map(() => (
-            `LOCATE(CONCAT('mailto:', ?), LOWER(e.ical_data)) > 0`
+            `LOWER(e.ical_data) REGEXP ?`
         )).join(' OR ');
         const [eventRows]: any = await pool.query(
             `SELECT e.uid, e.ical_data
              FROM events e
              JOIN calendars c ON c.id = e.calendar_id
-             WHERE c.user_id = ? AND (${attendeePredicates})
-             LIMIT 200`,
-            [user, ...emails]
+             WHERE c.user_id = ? AND (${attendeePredicates})`,
+            [user, ...emails.map(contactActivityAttendeePattern)]
         );
 
         const now = new Date();

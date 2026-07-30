@@ -1279,4 +1279,11 @@ Future entry template:
 - Replaced the constrained Sync-derived contact editor with an opaque, labelled Contacts dialog whose mobile form scrolls independently above a persistent safe-area action footer.
 - Connected every field label, named the close control, added initial focus and keyboard containment, prevented outside-click dismissal, and stacked the name fields at the mobile breakpoint.
 - Replaced the broken activity queries against nonexistent mail/calendar tables with `mail_search_index` and owner-scoped `events`/`calendars` queries plus real iCalendar parsing and recurrence expansion.
-- Focused frontend and HTTP route regressions pass. Authenticated local Playwright verified mobile/desktop layout and a disposable create/open/trash cycle; the list returned to its original count.
+- Focused frontend and HTTP route regressions pass. Authenticated local Playwright verified mobile/desktop layout and a disposable create/open/permanent-delete cycle; the list and Trash returned to their original counts.
+
+## 2026-07-29 — Creation Workflow Review Remediation
+
+- Contact activity now uses exact normalized-address regex boundaries for mail envelopes and iCalendar attendees, preventing prefix-address disclosure.
+- Removed the unordered 200-event cutoff that could hide a real upcoming meeting before iCalendar parsing and recurrence expansion.
+- Calendar guest and attachment removals are labelled keyboard-operable buttons.
+- Permanently removed the disposable Contacts record and ignored local `.playwright-cli/` artifacts.

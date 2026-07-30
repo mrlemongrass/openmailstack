@@ -382,7 +382,8 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                   cal.freeBusy[g] && cal.freeBusy[g].some((b) => new Date(b.start) <= cal.draftWallDateToInstant(evt.end as Date) && new Date(b.end) >= cal.draftWallDateToInstant(evt.start as Date)) ?
                     <span style={{ color: '#f59e0b', fontSize: '0.7rem' }}>⚠ Busy</span> :
                     <span style={{ color: '#10b981', fontSize: '0.7rem' }}>Free</span>}
-                <button className="btn btn-ghost" onClick={() => setGuests(guests.filter((x) => x !== g))}
+                <button type="button" className="btn btn-ghost" aria-label={`Remove guest ${g}`}
+                  onClick={() => setGuests(guests.filter((x) => x !== g))}
                   style={{ padding: '1px 4px' }}><Minus size={12} /></button>
               </div>
             ))}
@@ -402,7 +403,11 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6,
                     padding: '3px 8px', fontSize: '0.75rem', color: 'var(--accent-primary)' }}>
                     <Paperclip size={10} /> {f.name} ({formatBytes(f.size)})
-                    <X size={10} style={{ cursor: 'pointer' }} onClick={() => setAttachmentFiles((prev) => prev.filter((_, j) => j !== i))} />
+                    <button type="button" className="btn btn-ghost" aria-label={`Remove attachment ${f.name}`}
+                      onClick={() => setAttachmentFiles((prev) => prev.filter((_, j) => j !== i))}
+                      style={{ padding: 2, marginLeft: 'auto' }}>
+                      <X size={10} />
+                    </button>
                   </div>
                 ))}
                 {attachmentSize > 0 && <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: 2 }}>Total: {formatBytes(attachmentSize)}</div>}

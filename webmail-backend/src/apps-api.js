@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.appsApiRouter = void 0;
+exports.contactActivityAttendeePattern = exports.contactActivityAddressPattern = exports.appsApiRouter = void 0;
 const express_1 = require("express");
 const db_1 = require("./db");
 const auth_1 = require("./auth");
@@ -394,6 +394,18 @@ exports.appsApiRouter.delete('/contacts/:id/permanent', async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 });
+const contactActivityAddressPattern = (email) => {
+    const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const emailCharacters = "a-z0-9.!#$%&'*+/=?^_`{|}~-";
+    return `(^|[^${emailCharacters}])${escaped}([^${emailCharacters}]|$)`;
+};
+exports.contactActivityAddressPattern = contactActivityAddressPattern;
+const contactActivityAttendeePattern = (email) => {
+    const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const emailCharacters = "a-z0-9.!#$%&'*+/=?^_`{|}~-";
+    return `mailto:${escaped}([^${emailCharacters}]|$)`;
+};
+exports.contactActivityAttendeePattern = contactActivityAttendeePattern;
 exports.appsApiRouter.get('/contacts/:id/activity', async (req, res) => {
     const user = req.username;
     try {
@@ -424,18 +436,20 @@ exports.appsApiRouter.get('/contacts/:id/activity', async (req, res) => {
         if (emails.length === 0) {
             return res.json({ success: true, emails: [], meetings: [] });
         }
-        const mailPredicates = emails.map(() => (`(LOCATE(?, LOWER(COALESCE(sender, ''))) > 0
-              OR LOCATE(?, LOWER(COALESCE(recipients, ''))) > 0)`)).join(' OR ');
+        const mailPredicates = emails.map(() => (`(LOWER(COALESCE(sender, '')) REGEXP ?
+              OR LOWER(COALESCE(recipients, '')) REGEXP ?)`)).join(' OR ');
         const [emailRows] = await db_1.pool.query(`SELECT subject, sent_at AS received_at, id, COALESCE(preview, '') AS snippet
              FROM mail_search_index
              WHERE username = ? AND (${mailPredicates})
-             ORDER BY sent_at DESC LIMIT 20`, [user, ...emails.flatMap((email) => [email, email])]);
-        const attendeePredicates = emails.map(() => (`LOCATE(CONCAT('mailto:', ?), LOWER(e.ical_data)) > 0`)).join(' OR ');
+             ORDER BY sent_at DESC LIMIT 20`, [user, ...emails.flatMap((email) => {
+                const pattern = (0, exports.contactActivityAddressPattern)(email);
+                return [pattern, pattern];
+            })]);
+        const attendeePredicates = emails.map(() => (`LOWER(e.ical_data) REGEXP ?`)).join(' OR ');
         const [eventRows] = await db_1.pool.query(`SELECT e.uid, e.ical_data
              FROM events e
              JOIN calendars c ON c.id = e.calendar_id
-             WHERE c.user_id = ? AND (${attendeePredicates})
-             LIMIT 200`, [user, ...emails]);
+             WHERE c.user_id = ? AND (${attendeePredicates})`, [user, ...emails.map(exports.contactActivityAttendeePattern)]);
         const now = new Date();
         const expansionEnd = new Date(now);
         expansionEnd.setUTCFullYear(expansionEnd.getUTCFullYear() + 2);

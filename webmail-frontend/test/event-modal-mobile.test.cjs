@@ -96,6 +96,7 @@ function renderEventModal() {
 
 test('event creation is an explicit, labelled modal workflow', () => {
   const markup = renderEventModal();
+  const source = fs.readFileSync(componentPath, 'utf8');
 
   assert.match(markup, /class="glass-panel event-dialog"[^>]*role="dialog"/);
   assert.match(markup, /aria-modal="true"/);
@@ -106,6 +107,8 @@ test('event creation is an explicit, labelled modal workflow', () => {
   assert.match(markup, /aria-label="Calendar"/);
   assert.match(markup, /aria-label="Add guest"/);
   assert.match(markup, /class="event-dialog-footer"/);
+  assert.match(source, /aria-label=\{`Remove guest \$\{g\}`\}/);
+  assert.match(source, /aria-label=\{`Remove attachment \$\{f\.name\}`\}/);
 });
 
 test('mobile event creation uses an opaque full-screen sheet', () => {

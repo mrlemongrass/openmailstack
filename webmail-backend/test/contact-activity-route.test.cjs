@@ -59,7 +59,11 @@ require.cache[authPath].exports = {
   },
 };
 
-const { appsApiRouter } = require('../src/apps-api.js');
+const {
+  appsApiRouter,
+  contactActivityAddressPattern,
+  contactActivityAttendeePattern,
+} = require('../src/apps-api.js');
 
 function getJson(port, path) {
   return new Promise((resolve, reject) => {
@@ -103,6 +107,29 @@ test('contact activity uses the real mail index and owner-scoped calendar tables
   assert.match(sql, /FROM mail_search_index/);
   assert.match(sql, /JOIN calendars c ON c\.id = e\.calendar_id/);
   assert.match(sql, /c\.user_id = \?/);
+  assert.match(sql, /REGEXP \?/);
   assert.doesNotMatch(sql, /FROM messages/);
   assert.doesNotMatch(sql, /events_occurrences|event_attendees/);
+  assert.doesNotMatch(sql, /LIMIT 200/);
+
+  const mailQuery = queries.find(query => query.sql.includes('FROM mail_search_index'));
+  const exactAddressPattern = new RegExp(mailQuery.params[1], 'i');
+  assert.match('Friend <friend@example.test>', exactAddressPattern);
+  assert.doesNotMatch('Best Friend <bestfriend@example.test>', exactAddressPattern);
+
+  const eventQuery = queries.find(query => query.sql.includes('FROM events e'));
+  const exactAttendeePattern = new RegExp(eventQuery.params[1], 'i');
+  assert.match('ATTENDEE:mailto:friend@example.test', exactAttendeePattern);
+  assert.doesNotMatch('ATTENDEE:mailto:bestfriend@example.test', exactAttendeePattern);
+});
+
+test('contact activity patterns match complete normalized addresses only', () => {
+  const mailPattern = new RegExp(contactActivityAddressPattern('ann@example.test'), 'i');
+  assert.match('Ann Example <ann@example.test>', mailPattern);
+  assert.match('ann@example.test, Other <other@example.test>', mailPattern);
+  assert.doesNotMatch('Joann Example <joann@example.test>', mailPattern);
+
+  const attendeePattern = new RegExp(contactActivityAttendeePattern('ann@example.test'), 'i');
+  assert.match('ATTENDEE;CN=Ann:mailto:ann@example.test', attendeePattern);
+  assert.doesNotMatch('ATTENDEE:mailto:joann@example.test', attendeePattern);
 });

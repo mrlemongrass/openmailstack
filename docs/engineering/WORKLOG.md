@@ -6869,17 +6869,43 @@ Ending git state: focused Contacts frontend/backend implementation, regressions,
 - [x] The editor is an opaque, labelled dialog with connected field labels, initial focus, keyboard containment, and explicit dismissal.
 - [x] First and last name fields stack at 390 px while desktop retains the two-column layout.
 - [x] Contact detail activity returns indexed mail and owner-scoped upcoming meetings without querying nonexistent tables.
-- [x] A real temporary contact can be created, opened, moved to trash, and confirmed absent.
+- [x] A real temporary contact can be created, opened, permanently deleted, and confirmed absent.
 
 ### Changes and proof
 
 - `ContactEditModal.tsx` now uses a dedicated dialog structure instead of the constrained Sync setup modal. The full-screen mobile sheet has a scrollable body, persistent safe-area footer, explicit Cancel/Close, focus handling, and labels connected to every field.
 - `index.css` adds opaque Contacts editor surfaces and preserves the centered desktop card while stacking name fields on mobile.
-- The contact activity route now reads recent mail from `mail_search_index`, finds attendee events only through Calendars owned by the authenticated user, parses actual iCalendar data, expands recurring events, and handles contacts without usable email addresses.
+- The contact activity route now reads recent mail from `mail_search_index`, matches complete normalized addresses, finds attendee events only through Calendars owned by the authenticated user, parses actual iCalendar data, expands recurring events, and handles contacts without usable email addresses.
 - The route regression failed against the nonexistent `messages`, `events_occurrences`, and `event_attendees` queries, then passed against the real storage contract. The focused frontend editor regression also failed before the layout and semantics repair, then passed.
-- Authenticated local Playwright verified the editor at 390×844 and 1440×900. `OMS UX Contact Temp 20260729-1726` was created, opened, moved to trash, and confirmed absent; the contact list returned from three records to two.
+- Authenticated local Playwright verified the editor at 390×844 and 1440×900. `OMS UX Contact Temp 20260729-1726` was created, opened, moved to trash, then permanently deleted and confirmed absent; the active list returned from three records to two and Trash returned from 23 records to 22.
 - The pre-fix detail open reproduced two 500 responses naming the missing `messages` table. Live post-fix activity verification remains part of the deployment gate because the local frontend proxies the currently deployed backend.
 
 ### Next task
 
 Run complete release gates and independent review, then push, back up, deploy, and verify the compose, Calendar, and Contacts batch live.
+
+## 2026-07-29 — Creation-workflow independent review remediation
+
+Agent/tool: Codex, Standards review, Spec review, and Playwright
+Branch: `main`
+Starting git state: clean at `b5130a5`
+Ending git state: focused review fixes and proof ready for release commit
+
+### Review findings resolved
+
+- Contact activity now compares complete normalized email tokens in mail envelope text and `mailto:` attendee values instead of raw substrings, so `ann@…` cannot match `joann@…`.
+- The owner-scoped event query no longer applies an unordered 200-row cutoff before iCalendar parsing and future-occurrence selection.
+- Calendar guest and attachment removal affordances are now real buttons with item-specific accessible names.
+- The disposable Contacts record was permanently deleted through the product UI rather than left recoverable in Trash.
+- `.playwright-cli/` is ignored as local browser-test output; the generated directory is removed after browser sessions close.
+
+### Proof
+
+- The contact activity HTTP regression now covers exact-address and prefix-address cases, owner scoping, real table names, and the absence of the premature event limit.
+- MariaDB evaluated the generated exact-address pattern as `1` for `Ann <ann@example.test>` and `0` for `Joann <joann@example.test>`.
+- Focused backend and frontend regressions pass after remediation.
+- The product UI reported Trash returning from 23 records to 22 and no longer contained the temporary address.
+
+### Next task
+
+Rerun release gates, commit the remediation, push, back up, deploy, and complete live browser and service verification.

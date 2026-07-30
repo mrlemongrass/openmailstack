@@ -97,6 +97,19 @@ OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integratio
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integration/activesync_contacts_smoke.sh
 ```
 
+Safe Sieve delivery diagnostics:
+
+```bash
+rtk doveadm user <mailbox>
+rtk doveadm sieve list -u <mailbox>
+rtk sieve-test -r <mailbox> <active-source.sieve> <message.eml>
+rtk journalctl -u dovecot --since '10 minutes ago' --no-pager --grep='sieve|fileinto|Failed to retrieve script'
+```
+
+The Dovecot user output must contain an absolute `home` as well as `mail_path`.
+For compilation diagnostics, write `sievec` output to a dedicated temporary
+regular file. Never pass `/dev/null` or another device as the output path.
+
 Authenticated browser validation:
 
 - `localtest@housevo.us` is the established Admin test account for read-only UI and authorization checks.

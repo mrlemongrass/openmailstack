@@ -254,7 +254,7 @@ Agents should verify all paths, sockets, ports, SQL map files, and service confi
 
 ### 4.2 Dovecot
 
-Status: `Authentication and storage paths verified 2026-07-29`
+Status: `Authentication, storage paths, and Sieve delivery verified 2026-07-30`
 
 The live host runs Dovecot 2.4.1. Its ordered passdb list contains a root-owned
 master-user passwd-file, an SQL app-password passdb, and an SQL mailbox-password
@@ -273,6 +273,14 @@ pair from the deterministic Let's Encrypt/self-signed locations. Both hostname
 coverage and certificate/key public-key equality are checked first. The live
 staging smoke verifies port 993 with `mail.housevo.us`, not merely that a TLS
 handshake returns some certificate.
+
+The SQL userdb returns both an absolute `home` and `mail_path`, each rooted at
+`/var/vmail/<domain>/<user>`. This is a delivery invariant, not duplicate
+metadata: the personal Sieve storage is configured beneath `~/sieve`, so LMTP
+and ManageSieve require a resolved per-user home to find the active script.
+`tests/integration/auth_hardening_guard.cjs` prevents the Dovecot 2.4 query from
+dropping either field. A disposable live LMTP delivery on 2026-07-30 exercised
+an active `fileinto` rule and stored the message only in its target mailbox.
 
 Documented responsibilities:
 

@@ -193,7 +193,7 @@ passdb mailbox-passwords {
 }
 
 userdb sql {
-  query = SELECT CONCAT('/var/vmail/', maildir) AS mail_path, 5000 AS uid, 5000 AS gid FROM mailbox WHERE username = '%{user}' AND active = '1'
+  query = SELECT CONCAT('/var/vmail/', maildir) AS home, CONCAT('/var/vmail/', maildir) AS mail_path, 5000 AS uid, 5000 AS gid FROM mailbox WHERE username = '%{user}' AND active = '1'
 }
 
 service lmtp {

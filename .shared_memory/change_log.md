@@ -1337,3 +1337,11 @@ Future entry template:
 - Restored the existing Let's Encrypt paths behind root-only rollback `/var/backups/openmailstack/imap-tls-20260730T110533Z/`; three public hostname checks and the complete staging smoke pass.
 - Commit `20a7018` makes the Dovecot module preserve or recover a hostname-valid, key-matching certificate pair and adds an explicit trusted-hostname check for IMAP port 993.
 - A live idempotency rerun of `functions/04_dovecot.sh` retained the certificate, left Dovecot active with zero automatic restarts, and passed three further public checks.
+
+## 2026-07-30 — Server-Side Sieve Delivery Repaired
+
+- Dovecot 2.4's SQL userdb returned `mail_path` but not an absolute `home`, while personal Sieve storage is configured at `~/sieve`. LMTP therefore could not reliably retrieve the active script and matching mail fell through to Inbox.
+- `functions/04_dovecot.sh` now returns the same absolute virtual-mail path as both `home` and `mail_path`; the auth hardening guard requires both fields.
+- A previously misfiled Inbox message replayed through the active source script routed to its expected folder, proving the rule itself was valid. No historical user message was moved automatically.
+- A disposable `localtest@housevo.us` script and LMTP delivery then produced an explicit Dovecot `fileinto` action, a target-folder hit, and no Inbox hit. The exact message, script, and mailbox were removed.
+- Full repository integration and post-fix staging smoke passed. Dovecot remained active, delegated ManageSieve retrieval passed three consecutive attempts, the post-fix Sieve error journal was empty, and public IMAP retained the valid Let's Encrypt certificate.

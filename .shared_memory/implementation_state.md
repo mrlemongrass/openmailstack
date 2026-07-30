@@ -281,3 +281,14 @@ Validation:
 - `tests/integration/mail_sync_smoke.sh` is an authenticated optional smoke for direct SMTP submission, IMAP receipt, webmail API send/read, and attachment download. It skips unless `OMS_SMOKE_USER` and `OMS_SMOKE_PASSWORD` are set.
 - `tests/integration/activesync_mail_smoke.sh` is an authenticated optional smoke for ActiveSync FolderSync, INBOX mail Sync, seeded-message body/read-state validation, read/unread Change command acknowledgements, IMAP flag verification, and cleanup. It skips unless `OMS_SMOKE_USER` and `OMS_SMOKE_PASSWORD` are set.
 - `tests/integration/activesync_contacts_smoke.sh` is an authenticated optional smoke that seeds a contact through CardDAV, verifies ActiveSync FolderSync exposes Contacts, checks GetItemEstimate, verifies Contacts Sync returns the seeded contact, deletes it, and verifies the next Contacts Sync returns a Delete command. It skips unless `OMS_SMOKE_USER` and `OMS_SMOKE_PASSWORD` are set.
+
+## 2026-07-30 Sieve delivery invariant
+
+- Dovecot's SQL userdb must return both `home` and `mail_path` as the absolute
+  `/var/vmail/<domain>/<user>` path. Personal Sieve storage uses `~/sieve`, so
+  a mail path alone is insufficient for LMTP and ManageSieve script discovery.
+- `functions/04_dovecot.sh` owns this rendering and
+  `tests/integration/auth_hardening_guard.cjs` guards it.
+- Live proof used a disposable `localtest@housevo.us` active script and LMTP
+  message: Dovecot logged `fileinto`, the unique message existed only in the
+  temporary target folder, and all probe state was removed afterward.

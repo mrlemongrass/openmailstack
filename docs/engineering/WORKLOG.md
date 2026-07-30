@@ -7172,3 +7172,54 @@ Fix commit: `20a7018`
 
 - Retry the existing iOS/macOS Mail connection. Native clients may need one manual refresh after their cached certificate error, but no account removal or certificate exception should be required.
 - After confirmation, resume the standalone macOS Mail/Contacts matrix and final iPhone ActiveSync Inbox observation.
+
+## 2026-07-30 — Server-side Sieve delivery incident and Dovecot user-home repair
+
+Agent/tool: Codex with live Dovecot, LMTP, ManageSieve, and repository probes
+Branch: `main`
+Starting git state: `f315d6ac` plus only the bounded Sieve repair during implementation
+
+### Acceptance criteria
+
+- [x] Prove whether the active Sieve script and LMTP delivery path are working before changing a user rule.
+- [x] Reproduce one Inbox fallthrough against the active script without moving or modifying the historical message.
+- [x] Repair the smallest proven configuration defect and add a regression guard.
+- [x] Prove a new matching delivery is filtered outside Inbox with a disposable account and remove all probe state.
+- [x] Re-run repository integration, live staging smoke, service/error-journal checks, and public IMAP TLS verification.
+
+### Impact and diagnosis
+
+- Recent LMTP deliveries included Inbox saves and `Failed to retrieve script 'webmail': Sieve script not found`, while `thang@housevo.us` still had `active.sieve -> webmail.sieve`, a valid compiled binary, readable ownership, and a source script that validated.
+- A read-only replay of recent Inbox UID `7031` through the active source returned `store message in folder: INBOX.Delivered`. This falsified a rule-match defect for that message: it should have been filtered, but Sieve had not run during original LMTP delivery. The historical message was left in place.
+- Dovecot reported the effective home as the literal legacy template `/var/vmail/%d/%n`. The Dovecot 2.4 SQL userdb query returned only `mail_path`; personal Sieve storage is configured beneath `~/sieve`, so LMTP and ManageSieve did not have a resolved per-user home from which to load the active script.
+
+### Repair
+
+- `functions/04_dovecot.sh` now returns `CONCAT('/var/vmail/', maildir)` as both `home` and `mail_path` for active virtual users.
+- `tests/integration/auth_hardening_guard.cjs` requires both selected fields so a later authentication refactor cannot preserve IMAP storage while silently breaking Sieve discovery.
+- A root-only copy of the pre-repair live Dovecot config is stored at `/var/backups/openmailstack/sieve-home-20260730T131211Z/local.conf.before`, SHA-256 `ceaec0c68a307958113811e0efc1ae1aa43bb1252da100384872cebacb43b384`.
+
+### Live proof and cleanup
+
+- After the bounded Dovecot rerun, `doveadm user thang` returned `home=/var/vmail/housevo.us/thang/` and the matching `mail_path`; mailbox debug reported the same resolved home.
+- The active `webmail` script was visible through `doveadm sieve list`, delegated authentication passed for IMAP and Sieve, and three consecutive delegated ManageSieve `GETSCRIPT` attempts returned the complete source.
+- A disposable `localtest@housevo.us` script matched a unique `X-OMS-Sieve-Probe` header. Postfix handed the message to LMTP, Dovecot logged `fileinto action: stored mail into mailbox 'OMS-Sieve-Probe-20260730T1328Z'`, the exact message existed in that mailbox, and no matching Inbox message existed.
+- The disposable message was expunged and the exact script and mailbox were deleted. A final mailbox list returned only the account's pre-existing folders.
+- Dovecot remained active/running with zero automatic restarts. The post-fix journal contained no Sieve retrieval/error entries. Public IMAP still served the hostname-valid Let's Encrypt certificate for `mail.housevo.us`.
+
+### Automated proof
+
+- `bash -n functions/04_dovecot.sh` passed.
+- `node tests/integration/auth_hardening_guard.cjs` passed.
+- `tests/integration/run.sh` passed, including 82/82 frontend tests, Scheduler/auth/RBAC guards, repository lint, and installer dry run.
+- `tests/integration/staging_smoke.sh` passed every service, listener, configuration, Rspamd, TLS/STARTTLS, web/API, and DKIM gate. Existing Postfix deprecation and Rspamd timing advisories remain non-blocking.
+- `git diff --check` passed before documentation.
+
+### Operational diagnostic correction
+
+- During diagnosis, `sievec <source> /dev/null` was mistakenly used as a binary-inspection command. `sievec` replaced `/dev/null` with a regular file. The mistake was reported immediately; `/dev/null` was restored as the root-owned mode `0666` character device with major/minor `1:3`, read/write access was verified as `vmail`, and the services remained active.
+- Durable rule: use `sieve-dump` to inspect a compiled script, `sieve-test` to replay source, and a dedicated temporary regular file for any `sievec` output. Never use a device path as compiled output.
+
+### Next task
+
+Resume the physical-client matrix with exact versions/results for standalone macOS Mail/Contacts, Android plus DAVx5, and Thunderbird. If historical Inbox messages should be reorganized, review exact Message-IDs/UIDs with the owner first rather than applying subject-only moves.

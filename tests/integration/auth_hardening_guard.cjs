@@ -54,6 +54,7 @@ assert.match(dovecot, /ap\.secret_hash = SHA2\('%w', 256\)/);
 assert.match(dovecot, /totp_enabled_at IS NOT NULL/);
 assert.match(dovecot, /'%\{master_user\}' <> ''/);
 assert.match(dovecot, /INNER JOIN account_security s ON s\.username = ap\.username AND s\.totp_enabled_at IS NOT NULL/);
+assert.match(dovecot, /CONCAT\('\/var\/vmail\/', maildir\) AS home, CONCAT\('\/var\/vmail\/', maildir\) AS mail_path/);
 
 assert.match(accountSecurity, /createCipheriv\('aes-256-gcm', securityKey\(\), iv\)/);
 assert.match(accountSecurity, /hashAppPassword\(password\)/);

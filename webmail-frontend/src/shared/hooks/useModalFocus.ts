@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -9,6 +9,17 @@ const FOCUSABLE_SELECTOR = [
   '[contenteditable="true"]',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
+
+let currentFocusedElement: HTMLElement | null = null;
+let previousFocusedElement: HTMLElement | null = null;
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('focusin', event => {
+    if (!(event.target instanceof HTMLElement) || event.target === currentFocusedElement) return;
+    previousFocusedElement = currentFocusedElement;
+    currentFocusedElement = event.target;
+  });
+}
 
 const focusableElements = (dialog: HTMLElement) => Array.from(
   dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
@@ -58,25 +69,25 @@ export function useModalFocus<T extends HTMLElement>({
   active?: boolean;
   onClose: () => void;
 }) {
-  const onCloseRef = useRef(onClose);
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  const wasOpenRef = useRef(false);
-  onCloseRef.current = onClose;
-  if (open && !wasOpenRef.current) {
-    returnFocusRef.current = document.activeElement instanceof HTMLElement
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const dialog = dialogRef.current;
+    const activeElement = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
-  }
-  wasOpenRef.current = open;
+    returnFocusRef.current = dialog?.contains(activeElement) &&
+      currentFocusedElement === activeElement
+      ? previousFocusedElement
+      : activeElement;
 
-  useEffect(() => {
-    if (!open) return;
     return () => {
       const returnFocus = returnFocusRef.current;
       returnFocusRef.current = null;
       if (returnFocus?.isConnected) returnFocus.focus();
     };
-  }, [open]);
+  }, [dialogRef, open]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -97,7 +108,7 @@ export function useModalFocus<T extends HTMLElement>({
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        onCloseRef.current();
+        onClose();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -128,5 +139,5 @@ export function useModalFocus<T extends HTMLElement>({
       document.removeEventListener('keydown', handleKeyDown);
       restoreIsolation();
     };
-  }, [active, dialogRef]);
+  }, [active, dialogRef, onClose]);
 }

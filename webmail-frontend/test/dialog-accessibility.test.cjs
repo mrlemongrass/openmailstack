@@ -18,7 +18,9 @@ test('shared modal focus hook traps focus, isolates background, and restores foc
   assert.match(hookSource, /sibling\.setAttribute\('aria-hidden', 'true'\)/);
   assert.match(hookSource, /event\.key === 'Escape'/);
   assert.match(hookSource, /event\.key !== 'Tab'/);
+  assert.match(hookSource, /previousFocusedElement/);
   assert.match(hookSource, /returnFocus\.focus\(\)/);
+  assert.doesNotMatch(hookSource, /onCloseRef\.current/);
 });
 
 test('Compose, Calendar, Contacts, and Scheduler use one modal focus contract', () => {

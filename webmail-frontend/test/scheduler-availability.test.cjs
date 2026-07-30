@@ -14,10 +14,19 @@ const schedulerCss = fs.readFileSync(
 
 test('availability prevents invalid schedules and reports save state accessibly', () => {
   assert.match(panelSource, /validateAvailabilityDraft/);
+  assert.match(panelSource, /Number\.isFinite\(window\.startMinute\)/);
   assert.match(panelSource, /Availability windows cannot overlap/);
   assert.match(panelSource, /role="alert"/);
   assert.match(panelSource, /aria-live="polite"/);
   assert.match(panelSource, /disabled=\{!isDirty \|\| isSaving \|\| validationMessages\.length > 0\}/);
+});
+
+test('the publish action explains validation that does not block draft saving', () => {
+  assert.match(panelSource, /publishValidationMessages/);
+  assert.match(
+    panelSource,
+    /availability-callout[\s\S]*publishValidationMessages\.map\(message => <span className="availability-callout-error"/,
+  );
 });
 
 test('date override time controls have descriptive labels', () => {

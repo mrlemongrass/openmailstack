@@ -7,16 +7,24 @@ type View = 'week' | 'month' | 'day';
 
 const minutesToTime = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 const timeToMinutes = (value: string) => {
+  if (!value) return Number.NaN;
   const [hours, minutes] = value.split(':').map(Number);
   return hours * 60 + minutes;
 };
+const windowHasValidTimes = (window: { startMinute: number; endMinute: number }) =>
+  Number.isFinite(window.startMinute)
+  && Number.isFinite(window.endMinute)
+  && window.startMinute >= 0
+  && window.endMinute <= 1439;
 const windowHasIssue = (
   window: { startMinute: number; endMinute: number },
   windows: Array<{ startMinute: number; endMinute: number }>,
   index: number,
-) => window.startMinute >= window.endMinute
+) => !windowHasValidTimes(window)
+  || window.startMinute >= window.endMinute
   || windows.some((other, otherIndex) => (
     otherIndex !== index
+    && windowHasValidTimes(other)
     && window.startMinute < other.endMinute
     && other.startMinute < window.endMinute
   ));
@@ -25,10 +33,14 @@ const validateWindowGroup = (
   label: string,
 ) => {
   const messages: string[] = [];
-  if (windows.some(window => window.startMinute >= window.endMinute)) {
+  if (windows.some(window => !windowHasValidTimes(window))) {
+    messages.push(`${label} needs valid start and end times.`);
+  }
+  const validWindows = windows.filter(windowHasValidTimes);
+  if (validWindows.some(window => window.startMinute >= window.endMinute)) {
     messages.push(`${label} must end after it starts.`);
   }
-  const sorted = [...windows].sort((left, right) => left.startMinute - right.startMinute);
+  const sorted = [...validWindows].sort((left, right) => left.startMinute - right.startMinute);
   if (sorted.some((window, index) => index > 0 && window.startMinute < sorted[index - 1].endMinute)) {
     messages.push(`Availability windows cannot overlap for ${label.toLowerCase()}.`);
   }
@@ -86,6 +98,10 @@ export function AvailabilityPanel({ availability, onSaved }: { availability: Sch
 
   const isDirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(savedDraft), [draft, savedDraft]);
   const validationMessages = useMemo(() => validateAvailabilityDraft(draft), [draft]);
+  const publishValidationMessages = useMemo(
+    () => validateAvailabilityDraft({ ...draft, published: true }),
+    [draft],
+  );
   const saveStatus = isSaving ? 'Saving…' : saveError || (isDirty ? status || 'Unsaved changes' : status || 'All changes saved');
   const updateDraft = (nextDraft: SchedulerAvailability) => {
     setDraft(nextDraft);
@@ -172,7 +188,7 @@ export function AvailabilityPanel({ availability, onSaved }: { availability: Sch
 
   return <div className="availability-workspace">
     <div className="scheduler-section-title"><div><h1>Availability</h1><p>Set your normal hours once, then make exceptions for specific dates.</p></div><div className="availability-save"><span className={saveError ? 'error' : ''} role="status" aria-live="polite" aria-atomic="true">{saveStatus}</span><button className="btn btn-primary" type="button" disabled={!isDirty || isSaving || validationMessages.length > 0} onClick={() => void save()}>Save availability</button></div></div>
-    {!draft.published && <section className="availability-callout"><CalendarDays size={20} /><div><strong>Publish your default schedule to start taking bookings</strong><span>Until you create an event type, visitors will be offered a private, system-managed 30-minute booking option.</span></div><button className="btn btn-primary" type="button" disabled={isSaving || validateAvailabilityDraft({ ...draft, published: true }).length > 0} onClick={() => void enableBooking()}>Enable booking now</button></section>}
+    {!draft.published && <section className="availability-callout"><CalendarDays size={20} /><div><strong>Publish your default schedule to start taking bookings</strong><span>Until you create an event type, visitors will be offered a private, system-managed 30-minute booking option.</span>{publishValidationMessages.map(message => <span className="availability-callout-error" key={message}>{message}</span>)}</div><button className="btn btn-primary" type="button" disabled={isSaving || publishValidationMessages.length > 0} onClick={() => void enableBooking()}>Enable booking now</button></section>}
     {validationMessages.length > 0 && <div id="availability-validation" className="availability-validation" role="alert"><strong>Fix before saving</strong><ul>{validationMessages.map(message => <li key={message}>{message}</li>)}</ul></div>}
     <section className="availability-toolbar">
       <div className="segmented-control" aria-label="Availability view">{(['week', 'month', 'day'] as View[]).map(item => <button type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)} key={item}>{item[0].toUpperCase() + item.slice(1)}</button>)}</div>

@@ -939,6 +939,10 @@
   font-size: 0.75rem;
   line-height: 1.45;
 }
+.availability-callout .availability-callout-error {
+  margin-top: 4px;
+  color: #fecaca;
+}
 .availability-toolbar {
   display: grid;
   grid-template-columns: auto minmax(150px, 0.8fr) minmax(220px, 1fr) auto;

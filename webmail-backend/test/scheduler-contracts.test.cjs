@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   SCHEDULER_BOOKING_STATUSES,
@@ -24,3 +26,12 @@ test('outbox event types are unique and include projection boundaries', () => {
   assert.ok(SCHEDULER_OUTBOX_EVENT_TYPES.includes('webhook.deliver'));
 });
 
+test('owner event lists retain inactive types but exclude deletion tombstones', () => {
+  const storeSource = fs.readFileSync(
+    path.join(__dirname, '../src/scheduler/store.ts'),
+    'utf8',
+  );
+  assert.match(storeSource, /includeInactive = true/);
+  assert.match(storeSource, /audit\.action = 'event_type\.delete'/);
+  assert.match(storeSource, /NOT EXISTS/);
+});

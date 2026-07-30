@@ -637,7 +637,16 @@ export class SchedulerStore {
     async listEventTypes(username: string, includeInactive = true): Promise<SchedulerEventType[]> {
         await this.requireOwner(username);
         const [rows]: any = await this.pool.query(
-            `SELECT * FROM scheduler_event_types WHERE owner_username = ? AND system_managed = 0 ${includeInactive ? '' : 'AND active = 1'} ORDER BY created_at`,
+            `SELECT event_type.* FROM scheduler_event_types event_type
+             WHERE event_type.owner_username = ? AND event_type.system_managed = 0
+               AND NOT EXISTS (
+                   SELECT 1 FROM scheduler_audit_events audit
+                   WHERE audit.target_type = 'event_type'
+                     AND audit.target_id = event_type.id
+                     AND audit.action = 'event_type.delete'
+               )
+               ${includeInactive ? '' : 'AND event_type.active = 1'}
+             ORDER BY event_type.created_at`,
             [username]
         );
         const windows = await loadWindows(this.pool, rows.map((row: any) => row.id));
@@ -791,7 +800,18 @@ export class SchedulerStore {
     }
 
     async getOwnedEventType(username: string, id: string): Promise<SchedulerEventType | null> {
-        const [rows]: any = await this.pool.query('SELECT * FROM scheduler_event_types WHERE id = ? AND owner_username = ? AND system_managed = 0 LIMIT 1', [id, username]);
+        const [rows]: any = await this.pool.query(
+            `SELECT event_type.* FROM scheduler_event_types event_type
+             WHERE event_type.id = ? AND event_type.owner_username = ? AND event_type.system_managed = 0
+               AND NOT EXISTS (
+                   SELECT 1 FROM scheduler_audit_events audit
+                   WHERE audit.target_type = 'event_type'
+                     AND audit.target_id = event_type.id
+                     AND audit.action = 'event_type.delete'
+               )
+             LIMIT 1`,
+            [id, username]
+        );
         if (!rows.length) return null;
         const windows = await loadWindows(this.pool, [id]);
         return eventFromRow(rows[0], windows.get(id) || []);

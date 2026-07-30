@@ -30,9 +30,10 @@ test('event editor drafts require an intentional dismissal action', () => {
   assert.doesNotMatch(routesSource, /onMouseDown=\{eventMouse => eventMouse\.stopPropagation\(\)\}/);
 });
 
-test('deleted event types disappear from owner booking-link surfaces', () => {
+test('deleted event types disappear while intentionally inactive event types remain editable', () => {
   assert.match(routesSource, /const activeEvents = state\.events\.filter\(event => event\.active\);/);
   assert.match(routesSource, /activeEvents\.length.*booking/);
-  assert.match(routesSource, /activeEvents\.map\(event => <article/);
-  assert.match(routesSource, /<WorkflowsPanel events=\{activeEvents\}/);
+  assert.match(routesSource, /state\.events\.map\(event => <article/);
+  assert.match(routesSource, /!event\.active && <span className="scheduler-event-badge">Inactive<\/span>/);
+  assert.match(routesSource, /<WorkflowsPanel events=\{state\.events\}/);
 });

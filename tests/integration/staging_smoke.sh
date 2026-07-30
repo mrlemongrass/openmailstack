@@ -46,7 +46,7 @@ check_tls_endpoint() {
     if [[ "${endpoint}" == *":587" ]]; then
         local tls_output
         local tls_status=0
-        tls_output=$(openssl s_client -starttls smtp -connect "${endpoint}" -servername "${server_name}" < /dev/null 2>&1) || tls_status=$?
+        tls_output=$(openssl s_client -starttls smtp -connect "${endpoint}" -servername "${server_name}" -verify_hostname "${server_name}" < /dev/null 2>&1) || tls_status=$?
         if grep -q "BEGIN CERTIFICATE" <<< "${tls_output}" \
             && grep -q "Verify return code: 0 (ok)" <<< "${tls_output}"; then
             pass "TLS handshake OK (STARTTLS SMTP): ${endpoint}"
@@ -54,7 +54,7 @@ check_tls_endpoint() {
             fail "TLS handshake failed (STARTTLS SMTP): ${endpoint} (openssl exit ${tls_status})"
         fi
     else
-        if openssl s_client -connect "${endpoint}" -servername "${server_name}" < /dev/null 2>/dev/null | grep -q "BEGIN CERTIFICATE"; then
+        if openssl s_client -connect "${endpoint}" -servername "${server_name}" -verify_hostname "${server_name}" < /dev/null 2>/dev/null | grep -q "Verify return code: 0 (ok)"; then
             pass "TLS handshake OK: ${endpoint}"
         else
             fail "TLS handshake failed: ${endpoint}"
@@ -120,6 +120,7 @@ pass "Rspamd functional scan"
 echo "Checking TLS endpoints..."
 check_tls_endpoint "127.0.0.1:443" "${MAIL_HOSTNAME}"
 check_tls_endpoint "127.0.0.1:587" "${MAIL_HOSTNAME}"
+check_tls_endpoint "127.0.0.1:993" "${MAIL_HOSTNAME}"
 
 echo "Checking web endpoints..."
 curl -kfsS --resolve "${MAIL_HOSTNAME}:443:127.0.0.1" "https://${MAIL_HOSTNAME}/" >/dev/null

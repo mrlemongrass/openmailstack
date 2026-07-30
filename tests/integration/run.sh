@@ -103,13 +103,19 @@ test_rspamd_milter_timeout_guards() {
 
 test_staging_starttls_output_guard() {
     local staging_smoke="${PROJECT_ROOT}/tests/integration/staging_smoke.sh"
+    local dovecot_installer="${PROJECT_ROOT}/functions/04_dovecot.sh"
 
     assert_contains "${staging_smoke}" 'tls_output=$(openssl s_client -starttls smtp'
+    assert_contains "${staging_smoke}" '-verify_hostname "${server_name}"'
     assert_contains "${staging_smoke}" '2>&1)'
     assert_contains "${staging_smoke}" 'grep -q "BEGIN CERTIFICATE" <<< "${tls_output}"'
     assert_contains "${staging_smoke}" 'grep -q "Verify return code: 0 (ok)" <<< "${tls_output}"'
+    assert_contains "${staging_smoke}" 'check_tls_endpoint "127.0.0.1:993" "${MAIL_HOSTNAME}"'
     assert_not_contains "${staging_smoke}" 'openssl s_client -starttls smtp -connect "${endpoint}" -servername "${server_name}" < /dev/null 2>/dev/null'
-    pass "Staging STARTTLS captures OpenSSL 3 certificate output"
+    assert_contains "${dovecot_installer}" 'dovecot_tls_pair_is_usable'
+    assert_contains "${dovecot_installer}" 'openssl x509 -in "${cert_file}" -noout -checkhost "${MAIL_HOSTNAME}"'
+    assert_contains "${dovecot_installer}" 'ssl_server_cert_file = ${DOVECOT_TLS_CERT_FILE}'
+    pass "Staging TLS verifies SMTP/IMAP hostnames and Dovecot preserves its certificate"
 }
 
 test_mysql_e_reduction_guards() {

@@ -90,6 +90,49 @@ if openmailstack_package_installed "dovecot-pop3d"; then
     DOVECOT_PROTOCOLS="imap pop3 lmtp sieve"
 fi
 
+# A targeted Dovecot rerun must not discard TLS configured by the later security
+# module. Prefer the active, hostname-valid pair; otherwise recover a valid
+# certificate from one of the security module's deterministic locations.
+DOVECOT_TLS_CERT_FILE=""
+DOVECOT_TLS_KEY_FILE=""
+
+dovecot_tls_pair_is_usable() {
+    local cert_file="$1"
+    local key_file="$2"
+    local cert_public_key
+    local key_public_key
+
+    [[ -r "${cert_file}" && -r "${key_file}" ]] || return 1
+    openssl x509 -in "${cert_file}" -noout -checkhost "${MAIL_HOSTNAME}" >/dev/null 2>&1 || return 1
+    cert_public_key=$(openssl x509 -in "${cert_file}" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | sha256sum | awk '{print $1}') || return 1
+    key_public_key=$(openssl pkey -in "${key_file}" -pubout -outform DER 2>/dev/null | sha256sum | awk '{print $1}') || return 1
+    [[ -n "${cert_public_key}" && "${cert_public_key}" == "${key_public_key}" ]]
+}
+
+use_dovecot_tls_pair_if_valid() {
+    local cert_file="$1"
+    local key_file="$2"
+
+    if [[ -z "${DOVECOT_TLS_CERT_FILE}" ]] && dovecot_tls_pair_is_usable "${cert_file}" "${key_file}"; then
+        DOVECOT_TLS_CERT_FILE="${cert_file}"
+        DOVECOT_TLS_KEY_FILE="${key_file}"
+    fi
+}
+
+if [[ -f /etc/dovecot/local.conf ]]; then
+    existing_dovecot_cert=$(awk -F= '/^(ssl_server_cert_file|ssl_cert)[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); sub(/^</, ""); print; exit }' /etc/dovecot/local.conf)
+    existing_dovecot_key=$(awk -F= '/^(ssl_server_key_file|ssl_key)[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); sub(/^</, ""); print; exit }' /etc/dovecot/local.conf)
+    if [[ -n "${existing_dovecot_cert}" && -n "${existing_dovecot_key}" ]]; then
+        use_dovecot_tls_pair_if_valid "${existing_dovecot_cert}" "${existing_dovecot_key}"
+    fi
+fi
+use_dovecot_tls_pair_if_valid \
+    "/etc/letsencrypt/live/${MAIL_HOSTNAME}/fullchain.pem" \
+    "/etc/letsencrypt/live/${MAIL_HOSTNAME}/privkey.pem"
+use_dovecot_tls_pair_if_valid \
+    "/etc/ssl/openmailstack/fullchain.pem" \
+    "/etc/ssl/openmailstack/privkey.pem"
+
 # Determine Dovecot Version (e.g., 2.3 or 2.4)
 DOVECOT_VERSION=$(dovecot --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || echo "unknown")
 if [[ "$DOVECOT_VERSION" == "unknown" ]]; then
@@ -244,6 +287,16 @@ namespace inbox {
 }
 EOF
 
+    if [[ -n "${DOVECOT_TLS_CERT_FILE}" ]]; then
+        cat <<EOF >> /etc/dovecot/local.conf
+
+# --- OpenMailStack SSL ---
+ssl = required
+ssl_server_cert_file = ${DOVECOT_TLS_CERT_FILE}
+ssl_server_key_file = ${DOVECOT_TLS_KEY_FILE}
+EOF
+    fi
+
 else
     # ==========================================
     # Dovecot 2.3 and below Syntax
@@ -395,6 +448,16 @@ namespace inbox {
   }
 }
 EOF
+
+    if [[ -n "${DOVECOT_TLS_CERT_FILE}" ]]; then
+        cat <<EOF >> /etc/dovecot/local.conf
+
+# --- OpenMailStack SSL ---
+ssl = required
+ssl_cert = <${DOVECOT_TLS_CERT_FILE}
+ssl_key = <${DOVECOT_TLS_KEY_FILE}
+EOF
+    fi
 fi
 
 # local.conf can contain SQL credentials on Dovecot 2.4+, so keep it root-only.

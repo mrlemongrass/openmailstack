@@ -76,13 +76,13 @@ substitute for Apple, Android, or Thunderbird client behavior.
 
 ### Live Server Preflight
 
-Last checked: 2026-07-20 against `mail.housevo.us`.
+Last checked: 2026-07-30 against `mail.housevo.us`.
 
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Core services | Pass | `staging_smoke.sh ./config.conf` confirmed `nginx`, `mariadb`, `postfix`, `dovecot`, `rspamd`, `openmailstack`, `redis-server`, and `clamav-daemon` active. |
 | Public listeners | Pass | `staging_smoke.sh ./config.conf` confirmed TCP 25, 80, 443, 587, 993, backend port 20000, and optional 995 listening. |
-| TLS names | Pass | Local TLS check confirmed certificate SANs for `mail.housevo.us`, `autodiscover.housevo.us`, and `webmail.housevo.us`; expires 2026-10-05. |
+| TLS names | Pass after regression repair | Public IMAP, local HTTPS, and SMTP submission hostname verification pass with the Let's Encrypt certificate covering `mail.housevo.us`, `autodiscover.housevo.us`, and `webmail.housevo.us`; it expires 2026-10-05. The staging smoke now checks port 993 explicitly. A targeted Dovecot installer rerun also retained the valid certificate paths. |
 | Public DNS | Pass | External DNS lookup confirmed `housevo.us` MX points to `mail.housevo.us`; `mail`, `autodiscover`, and `webmail` resolve to the public server address. |
 | Web routes | Pass | `/` returns 200; `/api/auth/me` returns 401 unauthenticated; Roundcube `/webmail/` returns 200. |
 | ActiveSync preflight | Pass | `OPTIONS /Microsoft-Server-ActiveSync` returns 200 and advertises EAS 14.0/14.1 commands. |

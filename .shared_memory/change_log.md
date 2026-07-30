@@ -1330,3 +1330,10 @@ Future entry template:
 - Backend 223/226 with 3 documented optional skips, frontend 82/82, lint/build/integration/PHP checks, live Playwright, protocol probes, exact-artifact checks, and staging smoke pass.
 - Released through `701583fd`. Rollback is `/var/backups/openmailstack/auth-2fa-rbac-6f5d51aa-20260730T054937Z/`.
 - Durable Dovecot 2.4 rule: custom-named SQL passdbs use `sql_query`, not `query`. The guarded rollout caught the incorrect key, restored Dovecot in about 39 seconds, and continued only after `doveconf` and service health passed.
+
+## 2026-07-30 — Public IMAP Certificate Regression Repaired
+
+- A targeted Dovecot auth rerun rewrote `local.conf` without the TLS directives normally added later by `functions/07_security.sh`, causing public IMAP to fall back to Debian's self-signed `CN=mail` certificate while SMTP and HTTPS remained valid.
+- Restored the existing Let's Encrypt paths behind root-only rollback `/var/backups/openmailstack/imap-tls-20260730T110533Z/`; three public hostname checks and the complete staging smoke pass.
+- Commit `20a7018` makes the Dovecot module preserve or recover a hostname-valid, key-matching certificate pair and adds an explicit trusted-hostname check for IMAP port 993.
+- A live idempotency rerun of `functions/04_dovecot.sh` retained the certificate, left Dovecot active with zero automatic restarts, and passed three further public checks.

@@ -7137,3 +7137,38 @@ Implementation commits: `6f5d51aa`, `085d33da`, `701583fd`
 ### Next task
 
 Complete the physical-client matrix in `docs/webmail-release-validation.md`, beginning with the first available standalone client, and record exact OS/client versions and outcomes. In parallel, obtain the final physical iPhone Inbox confirmation needed to close the ActiveSync Mail gate.
+
+## 2026-07-30 — Public IMAP certificate incident and installer regression repair
+
+Agent/tool: Codex with public TLS probes and live service diagnostics
+Branch: `main`
+Fix commit: `20a7018`
+
+### Impact
+
+- From the targeted Dovecot authentication rollout at approximately 2026-07-29 22:51 MST until the repair at approximately 2026-07-30 04:05 MST, public IMAP on port 993 served Debian's self-signed `CN=mail` certificate instead of the existing Let's Encrypt certificate for `mail.housevo.us`.
+- iOS and macOS Mail rejected the public IMAP handshake with a certificate error. SMTP submission, LMTP delivery, and the HTTPS web application continued using their valid paths; the incident blocked trusted native-client IMAP access rather than message receipt or webmail.
+
+### Reproduction and root cause
+
+- Three consecutive public-IP probes using SNI `mail.housevo.us` failed `openssl x509 -checkhost`. Port 993 served a self-signed certificate with only `DNS:mail`; port 587 served the valid Let's Encrypt certificate covering `mail.housevo.us`, `autodiscover.housevo.us`, and `webmail.housevo.us`.
+- The active Dovecot config pointed at `/etc/dovecot/private/dovecot.pem`, a symlink to Debian's snake-oil certificate. `/etc/dovecot/local.conf.bak` retained the prior Let's Encrypt paths.
+- Root cause: the targeted `functions/04_dovecot.sh` auth rerun rewrote `local.conf` without TLS directives. A full installer run would later execute `functions/07_security.sh`, but the bounded auth deployment intentionally did not rerun that broader security/firewall module.
+
+### Repair and prevention
+
+- Backed up the affected root-only Dovecot config under `/var/backups/openmailstack/imap-tls-20260730T110533Z/`, restored the existing Let's Encrypt certificate/key paths, validated their public keys match, validated `doveconf`, and restarted Dovecot.
+- `functions/04_dovecot.sh` now preserves the active hostname-valid certificate/key pair when rewriting Dovecot, or recovers a valid pair from the deterministic Let's Encrypt or OpenMailStack self-signed paths. It verifies hostname coverage and certificate/key equality before rendering either Dovecot 2.4 or 2.3 syntax.
+- The staging TLS probe now verifies certificate trust and hostname, and explicitly checks IMAP port 993. The repository integration guard requires both certificate preservation and the IMAP hostname probe.
+
+### Proof
+
+- The original public-IP check changed from three deterministic failures to three passes. Public IMAP now serves the Let's Encrypt certificate for `mail.housevo.us`, valid through 2026-10-05.
+- The complete integration suite passed, including 82/82 frontend regressions and the new TLS guard. Bash syntax/lint passed; ShellCheck was unavailable and skipped.
+- The decisive idempotency test reran `functions/04_dovecot.sh` against production. Its generated `local.conf` retained the Let's Encrypt paths, Dovecot returned active/running with zero automatic restarts, and three more public IMAP hostname checks passed.
+- The complete post-rerun staging smoke passed every service, listener, config, Rspamd, HTTPS, SMTP, IMAP TLS, API boundary, and DKIM gate. Existing Postfix deprecation and Rspamd timing advisories remain non-blocking.
+
+### Remaining physical confirmation
+
+- Retry the existing iOS/macOS Mail connection. Native clients may need one manual refresh after their cached certificate error, but no account removal or certificate exception should be required.
+- After confirmation, resume the standalone macOS Mail/Contacts matrix and final iPhone ActiveSync Inbox observation.

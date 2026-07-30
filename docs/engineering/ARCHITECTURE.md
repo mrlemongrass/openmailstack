@@ -266,6 +266,14 @@ submission, ManageSieve, and CalDAV; the internal master identity remains
 available for bounded backend work. The Dovecot 2.4 custom-named SQL passdbs use
 `sql_query`; the legacy 2.3 rendering retains its compatible syntax.
 
+Public IMAP TLS uses the same hostname-valid certificate selected by the
+security module. `functions/04_dovecot.sh` preserves an existing valid
+certificate/key pair when it rewrites `local.conf`, or recovers the matching
+pair from the deterministic Let's Encrypt/self-signed locations. Both hostname
+coverage and certificate/key public-key equality are checked first. The live
+staging smoke verifies port 993 with `mail.housevo.us`, not merely that a TLS
+handshake returns some certificate.
+
 Documented responsibilities:
 
 - serve IMAP, likely on port 993 for TLS

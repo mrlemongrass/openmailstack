@@ -35,3 +35,11 @@ test('mobile Scheduler public actions stack without cramped wrapping', () => {
     /\.scheduler-public-actions\s*\{\s*display:\s*grid;\s*grid-template-columns:\s*1fr;\s*\}/,
   );
 });
+
+test('Scheduler keeps owner-form drafts mounted while switching sections', () => {
+  assert.match(routesSource, /const \[visitedTabs, setVisitedTabs\]/);
+  assert.match(routesSource, /const selectTab = \(nextTab: SchedulerTab\)/);
+  assert.match(routesSource, /visitedTabs\.has\('availability'\)[\s\S]*hidden=\{tab !== 'availability'\}/);
+  assert.match(routesSource, /visitedTabs\.has\('workflows'\)[\s\S]*hidden=\{tab !== 'workflows'\}/);
+  assert.match(routesSource, /visitedTabs\.has\('tools'\)[\s\S]*hidden=\{tab !== 'tools'\}/);
+});

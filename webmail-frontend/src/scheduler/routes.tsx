@@ -349,6 +349,7 @@ function ProfilePanel({ state, onSaved }: { state: SchedulerState; onSaved: () =
 export function SchedulerRoutes() {
   const { showToast } = useToast();
   const [tab, setTab] = useState<SchedulerTab>('events');
+  const [visitedTabs, setVisitedTabs] = useState<Set<SchedulerTab>>(() => new Set(['events']));
   const [state, setState] = useState<SchedulerState | null>(null);
   const [filter, setFilter] = useState('upcoming');
   const [editor, setEditor] = useState<Partial<SchedulerEventType> | null | undefined>(undefined);
@@ -382,6 +383,10 @@ export function SchedulerRoutes() {
 
   const publicUrl = `${state.publicBaseUrl}/scheduler/${state.entitlement.handle}`;
   const activeEvents = state.events.filter(event => event.active);
+  const selectTab = (nextTab: SchedulerTab) => {
+    setTab(nextTab);
+    setVisitedTabs(current => current.has(nextTab) ? current : new Set([...current, nextTab]));
+  };
   const copyLink = async (url: string, label: string) => {
     try {
       await navigator.clipboard.writeText(url);
@@ -415,11 +420,11 @@ export function SchedulerRoutes() {
     <aside className="scheduler-sidebar">
       <div className="scheduler-app-title"><CalendarClock size={21} /><strong>Scheduler</strong></div>
       <nav className="scheduler-desktop-navigation" aria-label="Scheduler sections">
-        {tabs.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}><item.icon size={17} />{item.label}</button>)}
+        {tabs.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => selectTab(item.id)}><item.icon size={17} />{item.label}</button>)}
       </nav>
       <label className="scheduler-mobile-navigation mobile-section-navigation">
         <span>Scheduler section</span>
-        <select aria-label="Scheduler section" value={tab} onChange={event => setTab(event.target.value as SchedulerTab)}>
+        <select aria-label="Scheduler section" value={tab} onChange={event => selectTab(event.target.value as SchedulerTab)}>
           {tabs.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </label>
@@ -438,10 +443,10 @@ export function SchedulerRoutes() {
         <div className="scheduler-section-title"><div><h1>Bookings</h1><p>Calendar-backed meetings and approval requests</p></div><div className="segmented-control">{['upcoming', 'past', 'cancelled', 'rejected'].map(value => <button className={filter === value ? 'active' : ''} onClick={() => setFilter(value)} key={value}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div></div>
         {state.bookings.length === 0 ? <EmptyState icon={CalendarDays} title={`No ${filter} bookings`} description="" /> : <div className="scheduler-booking-list">{state.bookings.map(booking => <article key={booking.id}><time>{new Date(booking.start).toLocaleDateString([], { month: 'short', day: 'numeric' })}<strong>{new Date(booking.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong></time><div><h3>{booking.event.title}{booking.seriesId && <span className="scheduler-event-badge">Series {booking.seriesIndex}/{booking.seriesCount}</span>}</h3><p>{booking.bookerName} · {booking.bookerEmail}</p></div><span className={`booking-status ${booking.status}`}>{booking.status.replace('_', ' ')}</span><button className="btn btn-secondary" onClick={() => setSelectedBooking(booking)}>View</button>{booking.status === 'requested' && <><button className="btn btn-primary" disabled={reviewingBookingId === booking.id} onClick={() => void reviewBooking(booking.id, 'confirm')}>Approve</button><button className="btn btn-secondary" disabled={reviewingBookingId === booking.id} onClick={() => { if (confirm('Reject this booking request?')) void reviewBooking(booking.id, 'reject'); }}>Reject</button></>}{booking.status === 'confirmed' && <>{currentTime > 0 && new Date(booking.end).getTime() <= currentTime && <><button className="btn btn-secondary" onClick={async () => { await markSchedulerBookingOutcome(booking.id, 'completed'); await load(); }}>Complete</button><button className="btn btn-secondary" onClick={async () => { if (confirm('Mark this guest as a no-show?')) { await markSchedulerBookingOutcome(booking.id, 'no_show'); await load(); } }}>No-show</button></>}<button className="btn btn-secondary" onClick={async () => { if (confirm('Cancel this booking?')) { await cancelSchedulerBooking(booking.id); await load(); } }}>Cancel</button></>}</article>)}</div>}
       </>}
-      {tab === 'availability' && <AvailabilityPanel availability={state.defaultAvailability} onSaved={load} />}
-      {tab === 'workflows' && <WorkflowsPanel events={activeEvents} />}
-      {tab === 'tools' && <SchedulerToolsPanel state={state} onChanged={load} />}
-      {tab === 'profile' && <ProfilePanel state={state} onSaved={load} />}
+      {visitedTabs.has('availability') && <div hidden={tab !== 'availability'}><AvailabilityPanel availability={state.defaultAvailability} onSaved={load} /></div>}
+      {visitedTabs.has('workflows') && <div hidden={tab !== 'workflows'}><WorkflowsPanel events={activeEvents} /></div>}
+      {visitedTabs.has('tools') && <div hidden={tab !== 'tools'}><SchedulerToolsPanel state={state} onChanged={load} /></div>}
+      {visitedTabs.has('profile') && <div hidden={tab !== 'profile'}><ProfilePanel state={state} onSaved={load} /></div>}
     </main>
     {editor !== undefined && <EventEditor event={editor} calendars={state.calendars} defaultAvailability={state.defaultAvailability} onClose={() => setEditor(undefined)} onSaved={async (close = true) => { if (close) setEditor(undefined); await load(); }} />}
     {selectedBooking && <div className="scheduler-modal-backdrop" onMouseDown={() => setSelectedBooking(null)}><section className="scheduler-booking-detail" onMouseDown={event => event.stopPropagation()}><header><div><h2>{selectedBooking.event.title}</h2><p>{selectedBooking.status.replace('_', ' ')}</p></div><button className="icon-button" onClick={() => setSelectedBooking(null)} aria-label="Close"><X size={18} /></button></header><dl><div><dt>Guest</dt><dd>{selectedBooking.bookerName}<span>{selectedBooking.bookerEmail}</span></dd></div>{selectedBooking.bookedByUsername && <div><dt>Booked by</dt><dd>{selectedBooking.bookedByUsername}</dd></div>}<div><dt>When</dt><dd>{new Date(selectedBooking.start).toLocaleString()}<span>{selectedBooking.event.durationMinutes} minutes · {selectedBooking.seats || 1} {(selectedBooking.seats || 1) === 1 ? 'seat' : 'seats'}{selectedBooking.seriesId ? ` · occurrence ${selectedBooking.seriesIndex} of ${selectedBooking.seriesCount}` : ''}</span></dd></div><div><dt>Location</dt><dd>{selectedBooking.event.locationLabel || 'Not specified'}</dd></div>{(selectedBooking.attendees || []).map(attendee => <div key={attendee.email}><dt>Additional guest</dt><dd>{attendee.name || attendee.email}{attendee.name && <span>{attendee.email}</span>}</dd></div>)}{Object.entries(selectedBooking.attribution || {}).map(([key, value]) => <div key={key}><dt>{key.replace('utm_', 'UTM ')}</dt><dd>{value}</dd></div>)}{selectedBooking.bookerNotes && <div><dt>Notes</dt><dd>{selectedBooking.bookerNotes}</dd></div>}{selectedBooking.cancellationReason && <div><dt>Cancellation reason</dt><dd>{selectedBooking.cancellationReason}</dd></div>}{selectedBooking.rescheduleReason && <div><dt>Reschedule reason</dt><dd>{selectedBooking.rescheduleReason}</dd></div>}{(selectedBooking.bookingAnswers || []).map(answer => <div key={answer.questionId}><dt>{answer.label}</dt><dd>{answer.value}</dd></div>)}</dl></section></div>}

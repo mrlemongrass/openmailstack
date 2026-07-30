@@ -254,7 +254,17 @@ Agents should verify all paths, sockets, ports, SQL map files, and service confi
 
 ### 4.2 Dovecot
 
-Status: `Needs Verification`
+Status: `Authentication and storage paths verified 2026-07-29`
+
+The live host runs Dovecot 2.4.1. Its ordered passdb list contains a root-owned
+master-user passwd-file, an SQL app-password passdb, and an SQL mailbox-password
+passdb. App passwords are SHA-256 digests stored in `app_passwords` and are
+accepted only while the matching `account_security` row has two-factor
+authentication enabled. Enabling two-factor authentication blocks the mailbox
+password at Dovecot while leaving named app passwords available to IMAP, SMTP
+submission, ManageSieve, and CalDAV; the internal master identity remains
+available for bounded backend work. The Dovecot 2.4 custom-named SQL passdbs use
+`sql_query`; the legacy 2.3 rendering retains its compatible syntax.
 
 Documented responsibilities:
 
@@ -278,9 +288,8 @@ Previously documented password schemes:
 - `SHA512-CRYPT`
 - Argon2, depending on Dovecot support and configuration
 
-Agents should verify:
+Remaining verification:
 
-- actual Dovecot version
 - enabled protocols
 - password scheme support
 - Maildir path format
@@ -330,7 +339,14 @@ Agents should verify:
 
 ## 5. Admin Portal
 
-Status: `Needs Verification`
+Status: `Authentication and authorization verified 2026-07-29`
+
+The endpoint-by-endpoint inventory is maintained in
+`docs/engineering/ADMIN_RBAC_AUDIT.md`. All 47 modern Node Admin routes require
+an authenticated web session and a fresh active-superadmin database check.
+Legacy PHP actions use explicit policies for global-superadmin operations,
+domain-scoped administration, self-service, and quarantine ownership. The
+modern React Admin remains intentionally superadmin-only.
 
 The custom Admin Portal is documented as living in `admin_portal_src/` and being deployed under something like:
 
@@ -342,7 +358,7 @@ It is intended to provide a simpler management surface over the PostfixAdmin-com
 
 ### 5.1 Backend API: `api.php`
 
-Status: `Needs Verification`
+Status: `RBAC boundary verified 2026-07-29`
 
 Previously documented characteristics:
 
@@ -366,7 +382,7 @@ Previously documented security behavior:
 - their existing hashed mailbox password may be duplicated into the `admin` table
 - plaintext passwords should not be stored
 
-Agents should verify:
+Verified controls:
 
 - current auth flow
 - CSRF protections
@@ -381,7 +397,12 @@ Agents should verify:
 
 ### 5.2 REST integration API: `api_v1.php`
 
-Status: `Needs Verification`
+Status: `Global bearer-key boundary verified 2026-07-29`
+
+This integration API is superadmin-provisioned and global by design. Keys are
+hashed at rest, shown once, revocable, and audited. Per-key domain scopes are not
+implemented; adding scoped integration keys requires a new authorization model,
+not implicit reuse of legacy domain-admin sessions.
 
 The older document describes a stateless JSON API endpoint for external provisioning systems.
 
@@ -406,7 +427,7 @@ Documented capabilities:
 - API keys hashed in database
 - plaintext API key displayed once during creation
 
-Agents should verify:
+Remaining verification or future scope:
 
 - actual endpoint path
 - HTTP methods
@@ -649,7 +670,18 @@ Verified 2026-07-29: the editor always uses a local Yjs/Quill binding, but creat
 
 ### 6.5 Backend architecture
 
-Status: `Needs Verification`
+Status: `Authentication/session boundary verified 2026-07-29`
+
+The modern backend stores opaque sessions in MariaDB and uses a Secure,
+HttpOnly, SameSite=Lax cookie. Production requires a preserved high-entropy
+`OMS_SESSION_SECRET` and a separate `OMS_ACCOUNT_SECURITY_KEY`; the latter
+encrypts TOTP material with AES-256-GCM under a purpose-separated key. Login is
+two-step when two-factor authentication is enabled, accepts TOTP or a
+transactionally consumed recovery code, and retains only the current session
+when 2FA is enabled. Internal Dovecot work uses delegated empty per-user
+credentials; protocol clients use either the mailbox password while 2FA is off
+or an app password while it is on. Mailbox verification supports current
+bcrypt hashes and bounded legacy SHA512-CRYPT verification.
 
 Previously documented backend stack:
 

@@ -1321,3 +1321,12 @@ Future entry template:
 - Production now generates and preserves explicit 64-character session and Dovecot master secrets. Internal IMAP, SMTP, and ManageSieve use the delegated identity; DAV and ActiveSync credential checks explicitly bypass it.
 - Existing sessions and the offline-index registry are sanitized at startup to encrypted empty values. The live cutover preserved 19 sessions and 3 registered users with zero non-empty credential ciphertext rows, and the search worker completed a delegated three-user cycle.
 - Dovecot's raw secret is `root:root 0600`; only its SHA512-CRYPT hash is `root:dovecot 0640`. The live host requires a scoped `PrivateDevices=false` systemd drop-in to avoid its host-specific `226/NAMESPACE` failure while retaining `ProtectSystem=full`.
+
+## 2026-07-29 — Two-Factor Authentication, App Passwords, and Admin RBAC
+
+- Deployed TOTP two-factor authentication with transactionally consumed recovery codes, a separate preserved account-security encryption key, two-step web login, bounded session revocation, and legacy-login protection.
+- Deployed named, show-once, digest-only app passwords. Live disposable probes passed IMAP, SMTP submission verification, ManageSieve, and CalDAV while the primary mailbox password was blocked under enabled 2FA; all probe rows were removed and `localtest@housevo.us` remained unmodified.
+- Audited all 47 modern Admin routes plus every legacy Admin action. Modern routes now require a fresh active-superadmin check; legacy global, domain, self-service, and quarantine policies are explicit. The canonical inventory is `docs/engineering/ADMIN_RBAC_AUDIT.md`.
+- Backend 223/226 with 3 documented optional skips, frontend 82/82, lint/build/integration/PHP checks, live Playwright, protocol probes, exact-artifact checks, and staging smoke pass.
+- Released through `701583fd`. Rollback is `/var/backups/openmailstack/auth-2fa-rbac-6f5d51aa-20260730T054937Z/`.
+- Durable Dovecot 2.4 rule: custom-named SQL passdbs use `sql_query`, not `query`. The guarded rollout caught the incorrect key, restored Dovecot in about 39 seconds, and continued only after `doveconf` and service health passed.

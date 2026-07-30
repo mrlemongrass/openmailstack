@@ -7087,8 +7087,53 @@ Scheduler lifecycle commit: `210ea974`
 ### Remaining gates
 
 - ActiveSync server state proves catch-up exhaustion, sustained no-change polling, and exact saved-UID reconciliation at the checkpoint. Physical iPhone confirmation that the two newest Inbox messages display is still required before closing that gate.
-- App passwords/2FA and the endpoint-by-endpoint Admin RBAC/domain-scope audit remain the next security slice.
+- App passwords/2FA and the endpoint-by-endpoint Admin RBAC/domain-scope audit were completed in the release below.
 
 ### Next task
 
-Implement protocol-capable app passwords and web two-factor authentication, then complete the Admin endpoint RBAC/domain-scoping inventory and close its findings.
+Complete the remaining physical-client matrix with exact client versions and results.
+
+## 2026-07-29 — Production two-factor authentication, app passwords, and Admin RBAC
+
+Agent/tool: Codex with Playwright and live protocol probes
+Branch: `main`
+Implementation commits: `6f5d51aa`, `085d33da`, `701583fd`
+
+### Acceptance criteria
+
+- [x] Add standards-based TOTP setup, confirmation, login, recovery, and disable flows without storing a reusable TOTP secret in plaintext.
+- [x] Add named, revocable, show-once app passwords that work across supported sync protocols and are invalid when 2FA is disabled.
+- [x] Revoke other sessions and app passwords at the intended account-security boundaries.
+- [x] Inventory every modern and legacy Admin endpoint and close domain, global, quarantine, and inactive-admin authorization gaps.
+- [x] Back up, deploy, verify exact artifacts and live services, exercise a disposable protocol lifecycle, and remove all probe state.
+
+### Implementation
+
+- `OMS_ACCOUNT_SECURITY_KEY` is generated and preserved separately from the session secret. TOTP material uses purpose-separated AES-256-GCM encryption; recovery codes and app passwords are stored only as digests. Recovery-code use locks the account-security row transactionally so a code cannot be consumed twice.
+- The web login is now a two-step flow for protected accounts. Enabling 2FA retains the current browser session while revoking other sessions; password changes enforce the current 12–128 character policy and revoke sessions and app passwords.
+- Dovecot has distinct master, app-password, and mailbox-password passdbs. When 2FA is enabled, the primary mailbox password is rejected while named app passwords continue to work for IMAP, SMTP submission, ManageSieve, and CalDAV. The internal delegated identity remains available.
+- Legacy SHA512-CRYPT mailbox hashes are verified through a bounded `doveadm pw -t` child process with the candidate password on stdin, never in a shell or process argument. New modern and legacy password writes use bcrypt.
+- All 47 modern Admin routes require a session plus a fresh active-superadmin lookup. Legacy actions now have explicit global, domain, self-service, and quarantine policies; password resets, deactivation, deletion, and domain deletion revoke affected auth state. The complete inventory is `docs/engineering/ADMIN_RBAC_AUDIT.md`.
+- The legacy PHP session cookie is Secure, HttpOnly, SameSite=Lax and regenerated at login. Password-only legacy login is denied for 2FA-enabled mailbox accounts.
+
+### Automated and live proof
+
+- Backend tests: 226 total, 223 passed, 3 documented optional skips, 0 failures. Frontend regressions: 82/82. ESLint, TypeScript/Vite production build, Bash syntax, repository lint/integration, PHP syntax, and `git diff --check` passed.
+- A disposable live mailbox proved: primary-password acceptance before 2FA; primary-password rejection after enabling it; app-password acceptance through direct IMAP, SMTP verification, ManageSieve, and CalDAV (`207`); and continued internal master authentication. All disposable mailbox, security, app-password, and session rows were removed.
+- Authenticated live Playwright verified the Account Security page at 1440×900 and 390×844, including the protected setup affordance, mobile geometry, and zero console errors. Its exact temporary server-side browser session was deleted without changing `localtest@housevo.us` security settings.
+- Production artifact hashes match the repository for the new security modules, API runtime, frontend entrypoint, and three legacy Admin files. Production secrets are both 64 characters; unauthenticated account-security and Admin requests are denied.
+- Final live state is `two_factor_enabled=0`, `active_app_passwords=0`, and `probe_rows=0`; services are active with zero automatic restarts and clean post-correction error journals. Staging smoke passed services, listeners, configuration, Rspamd, TLS/STARTTLS, web/API boundaries, and DKIM.
+
+### Deployment and rollback
+
+- Root-only rollback material is stored at `/var/backups/openmailstack/auth-2fa-rbac-6f5d51aa-20260730T054937Z/`, including Dovecot, environment, systemd, legacy Admin, backend/frontend, auth-table, and checksum snapshots.
+- The first Dovecot 2.4 custom-passdb rendering used the generic `query` key and was rejected during the guarded restart. It was corrected to the documented named-passdb `sql_query` setting and Dovecot returned active about 39 seconds later, before the backend/frontend cutover continued. No mailbox or production user data was changed during that interruption.
+
+### Remaining gates
+
+- The ActiveSync server checkpoint is exhausted, reconciled, and stable under no-change polling; physical iPhone confirmation that the two newest Inbox messages appear remains required.
+- Standalone macOS Mail/Contacts, Android with DAVx5/Thunderbird, and Thunderbird desktop still require post-fix physical runs with exact versions recorded.
+
+### Next task
+
+Complete the physical-client matrix in `docs/webmail-release-validation.md`, beginning with the first available standalone client, and record exact OS/client versions and outcomes. In parallel, obtain the final physical iPhone Inbox confirmation needed to close the ActiveSync Mail gate.

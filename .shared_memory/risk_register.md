@@ -81,21 +81,16 @@ Last updated: 2026-07-29
 - Full Calendly/Cal.com functional parity is a moving, multi-release target. Track capabilities and acceptance tests rather than claiming blanket parity, recheck official sources each parity release, and distinguish OMS-owned features from third-party services that still charge usage fees.
 - Public Scheduler handle collisions and reserved routes are enforced by normalized validation plus a database-wide unique key. The Admin UI supports alternate handles. Recheck normalization before adding Unicode/IDN handles or organization-level aliases.
 - Scheduler public requests enforce a configured hostname allowlist, generated links use the preferred base URL, and installer scripts add configured aliases to Nginx and certificate SANs. Clean-VM and certificate-renewal testing remain required before treating multi-host routing as release-validated.
-- Production delegated auth is live: the installer owns the Dovecot master passdb and explicit session secret, and stored session/index credential values are empty. Keep the raw master secret `root:root 0600`, its one-way Dovecot hash `root:dovecot 0640`, and all three IMAP/SMTP/Sieve credential pairs aligned. The current host also requires `/etc/systemd/system/dovecot.service.d/openmailstack-host-compat.conf` with `PrivateDevices=false` because systemd otherwise fails before exec with `226/NAMESPACE`; `ProtectSystem=full` remains enabled.
+- Production delegated auth is live: the installer owns the Dovecot master passdb and explicit session secret, and stored session/index credential values are empty. Keep the raw master secret `root:root 0600`, its one-way Dovecot hash `root:dovecot 0640`, and all three IMAP/SMTP/Sieve credential pairs aligned. Preserve and back up `OMS_ACCOUNT_SECURITY_KEY` with the same care as the session secret: losing it prevents TOTP decryption, while disclosure compromises encrypted TOTP material. The current host also requires `/etc/systemd/system/dovecot.service.d/openmailstack-host-compat.conf` with `PrivateDevices=false` because systemd otherwise fails before exec with `226/NAMESPACE`; `ProtectSystem=full` remains enabled.
 - Tasks/notes remain prototype/mock folders in ActiveSync.
 - Physical iPhone Exchange, macOS Mail/Calendar/Contacts, Android plus DAVx5, and Thunderbird rows in `docs/webmail-release-validation.md` need a post-July-10 rerun. The iPhone Exchange receive/send/Sent copy/picture attachment, calendar create/edit/delete, and contact create/edit/delete paths passed for `thang@housevo.us` after the ActiveSync SendMail, CalDAV, and Contacts UX/multi-phone/tombstone fixes. The final contact edit retry changed company to `OpenMailStack Test 2`; web Contacts and macOS Contacts reflected it, and live storage preserved both phone numbers. Scripted smokes pass, but they are not a substitute for the remaining standalone macOS/Android/Thunderbird client rows.
 ## Security and Authorization Areas to Re-check
 
-- `admin_portal_src/public/api.php` has CSRF and many prepared statements, but RBAC/domain scoping should be reviewed endpoint by endpoint. Some admin actions do not obviously re-check domain ownership.
-- `admin_portal_src/public/api_v1.php` is thinner than `api.php`: it has bearer auth and prepared statements but lacks the same strict input validation/domain scoping style. It constructs mailbox `maildir` values from input email parts.
-- Quarantine view/release/delete should verify domain-admin authorization for the selected UUID, not just for list retrieval.
 - The modern React Admin app currently has no domain-admin mode. Keep it superadmin-only until list/mutation endpoints are intentionally scoped by `domain_admins`.
-
-Security and authorization areas to re-check:
-
-- `admin_portal_src/public/api.php` has CSRF and many prepared statements, but RBAC/domain scoping should be reviewed endpoint by endpoint. Some admin actions do not obviously re-check domain ownership.
-- `admin_portal_src/public/api_v1.php` is thinner than `api.php`: it has bearer auth and prepared statements but lacks the same strict input validation/domain scoping style. It constructs mailbox `maildir` values from input email parts.
-- Quarantine view/release/delete should verify domain-admin authorization for the selected UUID, not just for list retrieval.
+- `api_v1.php` bearer keys are intentionally global and unscoped. Do not expose them to domain admins or infer domain scope from request data; add an explicit per-key scope model before offering delegated integration access.
+- Standalone bootstrap-only PHP admins cannot use the mailbox-backed modern TOTP flow. Prefer promoting an existing mailbox-backed administrator; redesign bootstrap identity before claiming universal Admin 2FA.
+- Dovecot 2.4 custom-named SQL passdbs require `sql_query`, not `query`. Keep the installer guard, run `doveconf -n` before restart, and refuse the application cutover unless Dovecot is active.
+- Recovery codes are intentionally shown once and app passwords cannot be retrieved. Account-recovery/support procedures must not weaken those boundaries.
 
 Operational/release risks:
 

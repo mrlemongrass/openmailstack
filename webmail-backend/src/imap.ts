@@ -1,5 +1,10 @@
+import crypto from 'crypto';
 import { ImapFlow, type SearchObject } from 'imapflow';
 import { imapConfig } from './config';
+import type {
+    RuleCopyLedger,
+    RuleCopyLedgerAction,
+} from './rule-run-ledger';
 
 export type MailSearchField = 'all' | 'from' | 'to' | 'subject' | 'body' | 'unread' | 'starred' | 'attachments';
 
@@ -19,6 +24,41 @@ export interface ActiveSyncMailMessage {
     size: number;
     source: Buffer;
     sourceComplete: boolean;
+}
+
+export interface RuleRunRawMessage {
+    uid: number;
+    envelope: any;
+    size: number;
+    source?: Buffer;
+    sourceComplete: boolean;
+}
+
+export interface RuleMovePlan {
+    uid: number;
+    moveFolders: string[];
+}
+
+export interface RuleMoveApplyResult {
+    affected: number;
+    copied: number;
+    moved: number;
+    movedUids: number[];
+}
+
+export class RuleMoveApplyError extends Error {
+    constructor(
+        public result: RuleMoveApplyResult,
+        cause: unknown,
+        public retrySafe = true,
+        public pendingCopies: RuleCopyLedgerAction[] = [],
+    ) {
+        super(retrySafe
+            ? 'A mailbox operation interrupted the rule run. Apply again to reconcile safely, then run a new preview.'
+            : 'A copy operation was interrupted and was not repeated to prevent duplicate mail. Check the preview destinations, then run a new preview.');
+        this.name = 'RuleMoveApplyError';
+        (this as Error & { cause?: unknown }).cause = cause;
+    }
 }
 
 export class ImapService {
@@ -150,6 +190,257 @@ export class ImapService {
 
         await this.client.mailboxClose();
         return { messages, uidNext: currentUidNext, highestModseq, lowestUid, moreAvailable };
+    }
+
+    async getRuleRunBatch(
+        folderPath: string,
+        cursor = 0,
+        maxUid?: number,
+        batchSize = 100,
+        includeBody = false,
+    ) {
+        const mbx = await this.client.mailboxOpen(folderPath);
+        try {
+            const snapshotMaxUid = Number.isInteger(maxUid)
+                ? Math.max(0, Number(maxUid))
+                : Math.max(0, Number(mbx.uidNext || 1) - 1);
+            if (cursor >= snapshotMaxUid) {
+                return {
+                    messages: [] as RuleRunRawMessage[],
+                    nextCursor: snapshotMaxUid,
+                    maxUid: snapshotMaxUid,
+                    uidValidity: String(mbx.uidValidity || ''),
+                    done: true,
+                };
+            }
+
+            const cappedBatchSize = Math.max(1, Math.min(batchSize, 200));
+            const scanEnd = Math.min(
+                snapshotMaxUid,
+                cursor + Math.max(200, cappedBatchSize * 4),
+            );
+            const found = await this.client.search(
+                { uid: `${Math.max(1, cursor + 1)}:${scanEnd}` },
+                { uid: true },
+            );
+            const candidates = (Array.isArray(found) ? found : [])
+                .filter(uid => uid > cursor && uid <= scanEnd)
+                .sort((a, b) => a - b);
+            const batchUids = candidates.slice(0, cappedBatchSize);
+            const messages: RuleRunRawMessage[] = [];
+
+            if (batchUids.length > 0) {
+                const fetchQuery: any = { uid: true, envelope: true, size: true };
+                if (includeBody) {
+                    fetchQuery.source = { start: 0, maxLength: 1024 * 1024 };
+                }
+                for await (const message of this.client.fetch(batchUids, fetchQuery, { uid: true })) {
+                    const size = Number(message.size || message.source?.length || 0);
+                    messages.push({
+                        uid: message.uid,
+                        envelope: message.envelope,
+                        size,
+                        source: message.source,
+                        sourceComplete: !includeBody || Boolean(message.source && message.source.length >= size),
+                    });
+                }
+            }
+
+            const nextCursor = candidates.length > batchUids.length
+                ? batchUids.at(-1) || cursor
+                : scanEnd;
+            return {
+                messages,
+                nextCursor,
+                maxUid: snapshotMaxUid,
+                uidValidity: String(mbx.uidValidity || ''),
+                done: nextCursor >= snapshotMaxUid,
+            };
+        } finally {
+            await this.client.mailboxClose();
+        }
+    }
+
+    async applyRuleMoves(
+        folderPath: string,
+        plans: RuleMovePlan[],
+        operationKey: string,
+        ledger: RuleCopyLedger,
+    ) {
+        const affected = new Set<number>();
+        const result: RuleMoveApplyResult = { affected: 0, copied: 0, moved: 0, movedUids: [] };
+        const normalizedPlans = plans
+            .map(plan => ({
+                uid: plan.uid,
+                destinations: plan.moveFolders
+                    .filter(destination => destination && destination !== folderPath)
+                    .reduce<string[]>((ordered, destination) => (
+                        [...ordered.filter(current => current !== destination), destination]
+                    ), []),
+            }))
+            .filter(plan => Number.isInteger(plan.uid) && plan.uid > 0 && plan.destinations.length > 0);
+        const copyActions: RuleCopyLedgerAction[] = normalizedPlans.flatMap(plan => (
+            plan.destinations.slice(0, -1).map(destination => ({
+                actionKey: crypto
+                    .createHash('sha256')
+                    .update(`${operationKey}\0${plan.uid}\0${destination}`)
+                    .digest('hex'),
+                operationKey,
+                uid: plan.uid,
+                destination,
+            }))
+        ));
+        const actionsByUid = new Map<number, RuleCopyLedgerAction[]>();
+        for (const action of copyActions) {
+            actionsByUid.set(action.uid, [...(actionsByUid.get(action.uid) || []), action]);
+        }
+        let mailboxOpen = false;
+        let operationError: RuleMoveApplyError | null = null;
+        try {
+            await this.client.mailboxOpen(folderPath);
+            mailboxOpen = true;
+            const requestedUids = [...new Set(normalizedPlans.map(plan => plan.uid))];
+            const found = requestedUids.length > 0
+                ? await this.client.search({ uid: requestedUids.join(',') }, { uid: true })
+                : [];
+            if (!Array.isArray(found)) throw new Error('Unable to verify rule-run source messages.');
+            const existingUids = new Set(found.map(Number));
+            const missingUids = requestedUids.filter(uid => !existingUids.has(uid));
+            const missingActions = missingUids.flatMap(uid => actionsByUid.get(uid) || []);
+            if (missingActions.length > 0) await ledger.clear(missingActions);
+            result.movedUids.push(...missingUids);
+
+            const pendingCopies = await ledger.pendingForSourceUids([...existingUids]);
+            if (pendingCopies.length > 0) {
+                pendingCopies.forEach(action => affected.add(action.uid));
+                throw new RuleMoveApplyError(
+                    result,
+                    new Error('A prior copy result is still uncertain.'),
+                    false,
+                    pendingCopies,
+                );
+            }
+
+            const existingCopyActions = copyActions.filter(action => existingUids.has(action.uid));
+            const copiesByDestination = new Map<string, RuleCopyLedgerAction[]>();
+            for (const action of existingCopyActions) {
+                copiesByDestination.set(
+                    action.destination,
+                    [...(copiesByDestination.get(action.destination) || []), action],
+                );
+            }
+            for (const [destination, actions] of copiesByDestination) {
+                const reservation = await ledger.reserve(actions);
+                const completed = actions.filter(action => reservation.completed.has(action.actionKey));
+                for (const action of completed) {
+                    result.copied += 1;
+                    affected.add(action.uid);
+                }
+                if (reservation.blocked.size > 0) {
+                    actions.forEach(action => affected.add(action.uid));
+                    throw new RuleMoveApplyError(
+                        result,
+                        new Error('A prior copy result is still uncertain.'),
+                        false,
+                        reservation.pending,
+                    );
+                }
+                const ready = actions.filter(action => reservation.ready.has(action.actionKey));
+                if (ready.length === 0) continue;
+                ready.forEach(action => affected.add(action.uid));
+                let copied: unknown;
+                try {
+                    copied = await this.client.messageCopy(
+                        ready.map(action => action.uid).join(','),
+                        destination,
+                        { uid: true },
+                    );
+                } catch (err) {
+                    throw new RuleMoveApplyError(result, err, false, ready);
+                }
+                if (!copied) {
+                    throw new RuleMoveApplyError(
+                        result,
+                        new Error('Unable to confirm a continued rule copy.'),
+                        false,
+                        ready,
+                    );
+                }
+                try {
+                    await ledger.complete(ready, reservation.token);
+                } catch (err) {
+                    throw new RuleMoveApplyError(result, err, false, ready);
+                }
+                result.copied += ready.length;
+            }
+
+            const movesByDestination = new Map<string, number[]>();
+            for (const plan of normalizedPlans) {
+                if (!existingUids.has(plan.uid)) continue;
+                const destination = plan.destinations.at(-1);
+                if (!destination) continue;
+                movesByDestination.set(
+                    destination,
+                    [...(movesByDestination.get(destination) || []), plan.uid],
+                );
+            }
+            for (const [destination, uids] of movesByDestination) {
+                try {
+                    const moved = await this.client.messageMove(
+                        uids.join(','),
+                        destination,
+                        { uid: true },
+                    );
+                    if (!moved) throw new Error('Unable to move rule-matched messages.');
+                    result.moved += uids.length;
+                    result.movedUids.push(...uids);
+                    uids.forEach(uid => affected.add(uid));
+                } catch (err) {
+                    const remaining = await this.client.search(
+                        { uid: uids.join(',') },
+                        { uid: true },
+                    );
+                    if (Array.isArray(remaining)) {
+                        const remainingSet = new Set(remaining.map(Number));
+                        const reconciled = uids.filter(uid => !remainingSet.has(uid));
+                        result.moved += reconciled.length;
+                        result.movedUids.push(...reconciled);
+                        reconciled.forEach(uid => affected.add(uid));
+                        const reconciledActions = reconciled.flatMap(uid => actionsByUid.get(uid) || []);
+                        if (reconciledActions.length > 0) {
+                            try { await ledger.clear(reconciledActions); } catch {}
+                        }
+                    }
+                    throw err;
+                }
+                const movedActions = uids.flatMap(uid => actionsByUid.get(uid) || []);
+                if (movedActions.length > 0) {
+                    try {
+                        await ledger.clear(movedActions);
+                    } catch (err) {
+                        console.warn('Failed to clear completed rule-copy ledger rows:', err);
+                    }
+                }
+            }
+        } catch (err) {
+            result.affected = affected.size;
+            operationError = err instanceof RuleMoveApplyError
+                ? err
+                : new RuleMoveApplyError(result, err);
+        } finally {
+            if (mailboxOpen) {
+                try {
+                    await this.client.mailboxClose();
+                } catch (err) {
+                    result.affected = affected.size;
+                    operationError ||= new RuleMoveApplyError(result, err);
+                }
+            }
+        }
+
+        if (operationError) throw operationError;
+        result.affected = affected.size;
+        return result;
     }
 
     async getChangedFlags(folderPath: string, sinceModseq: string) {

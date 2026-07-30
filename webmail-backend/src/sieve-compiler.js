@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.extractJsonFromSieve = extractJsonFromSieve;
 exports.quoteSieveString = quoteSieveString;
 exports.compileSieve = compileSieve;
+const rule_semantics_1 = require("./rule-semantics");
 const JSON_DATA_BASE64_PATTERN = /\/\* JSON_DATA_BASE64: ([A-Za-z0-9_-]+) \*\//;
 const LEGACY_JSON_DATA_PATTERN = /\/\* JSON_DATA: ([\s\S]*?) \*\//;
 function extractJsonFromSieve(script) {
@@ -69,10 +70,10 @@ function compileSieve(jsonData) {
     for (const rule of jsonData.rules || []) {
         if (rule.enabled === false)
             continue;
-        const criteriaStrings = (rule.criteria || [])
+        const criteriaStrings = (0, rule_semantics_1.executableRuleCriteria)(rule)
             .map(compileCriterion)
             .filter((criterion) => Boolean(criterion));
-        const actionStrings = (rule.actions || [])
+        const actionStrings = (0, rule_semantics_1.executableRuleActions)(rule)
             .map(compileAction)
             .filter((action) => Boolean(action));
         if (criteriaStrings.length === 0 || actionStrings.length === 0)
@@ -81,7 +82,10 @@ function compileSieve(jsonData) {
         const operator = rule.condition === 'any' ? 'anyof' : 'allof';
         script += `if ${operator} (${criteriaStrings.join(', ')}) {\n`;
         script += `${actionStrings.join('\n')}\n`;
-        script += `    stop;\n}\n\n`;
+        if (rule.stopProcessing !== false) {
+            script += `    stop;\n`;
+        }
+        script += `}\n\n`;
     }
     if (jsonData.vacation && jsonData.vacation.enabled && jsonData.vacation.body) {
         script += `# Vacation Auto-Responder\n`;

@@ -66,3 +66,31 @@ test('extractJsonFromSieve keeps legacy JSON_DATA compatibility', () => {
     rules: [{ name: 'legacy' }]
   });
 });
+
+test('compileSieve keeps legacy stop behavior and allows an ordered rule to continue', () => {
+  const script = compileSieve({
+    rules: [
+      {
+        name: 'Finance first',
+        criteria: [{ field: 'subject', operator: 'contains', value: 'statement is available' }],
+        actions: [{ type: 'move', folder: 'INBOX.Finance' }]
+      },
+      {
+        name: 'Broad Chase rule',
+        stopProcessing: false,
+        criteria: [{ field: 'from', operator: 'contains', value: 'noreply@chase.com' }],
+        actions: [{ type: 'move', folder: 'INBOX.ADs' }]
+      }
+    ]
+  });
+
+  const financeBlock = script.slice(
+    script.indexOf('# Rule: Finance first'),
+    script.indexOf('# Rule: Broad Chase rule')
+  );
+  const chaseBlock = script.slice(script.indexOf('# Rule: Broad Chase rule'));
+
+  assert.match(financeBlock, /fileinto "INBOX\.Finance";[\s\S]*stop;/);
+  assert.match(chaseBlock, /fileinto "INBOX\.ADs";/);
+  assert.doesNotMatch(chaseBlock, /\bstop;/);
+});

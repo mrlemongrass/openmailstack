@@ -1345,3 +1345,18 @@ Future entry template:
 - A previously misfiled Inbox message replayed through the active source script routed to its expected folder, proving the rule itself was valid. No historical user message was moved automatically.
 - A disposable `localtest@housevo.us` script and LMTP delivery then produced an explicit Dovecot `fileinto` action, a target-folder hit, and no Inbox hit. The exact message, script, and mailbox were removed.
 - Full repository integration and post-fix staging smoke passed. Dovecot remained active, delegated ManageSieve retrieval passed three consecutive attempts, the post-fix Sieve error journal was empty, and public IMAP retained the valid Let's Encrypt certificate.
+
+## 2026-07-30 — Ordered Mail Rules And Existing-Mail Runner
+
+- Added explicit top-down rule priority controls and per-rule Stop/Continue
+  behavior while preserving Stop for existing rules.
+- Added a folder-selectable, preview-first runner for saved rules. Apply is
+  locked to the previewed rules and UID snapshot, runs Move actions only, and
+  reports delivery-only or undecidable Body matches without deleting mail.
+- Shared compiler/manual semantics, bounded UID windows, last-destination
+  ordering, same-folder no-op handling, UIDVALIDITY binding, destination-grouped
+  IMAP operations, and a durable continued-copy ledger close the independent
+  review findings.
+- Desktop/mobile Playwright verified opaque layout, no overflow, 44 px mobile
+  reorder targets, dialog isolation/focus wrapping/restoration, and zero
+  console errors without mutating mailbox or saved-rule state.

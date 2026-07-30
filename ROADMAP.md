@@ -106,6 +106,7 @@ The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day 
 - ✅ M2: Server-Backed Settings Foundation
 - ✅ M2A: Admin Branding Settings (site-wide persistence and automatic image fitting hardened and deployed 2026-07-12)
 - ✅ M3: Mail Settings Product Pass
+- ✅ M3A: Ordered Mail Rules And Existing-Mail Runner — saved rules have explicit top-down priority, per-rule stop/continue behavior, and a preview-first runner for any existing folder. Apply is bound to the previewed rule revision, UIDVALIDITY, and UID snapshot; continued multi-destination actions use durable exact-action recovery.
 - ✅ M4: Calendar Settings Product Pass — System/Home timezone projection and the optional clock are deployed; physical macOS CalDAV and iOS ActiveSync CRUD/DST projection pass.
 - ✅ M5: Contacts Settings Product Pass
 - ✅ M6: Account, Security, And Release Hardening

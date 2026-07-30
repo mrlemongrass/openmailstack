@@ -211,3 +211,433 @@ test('bulk move sends every selected UID to the chosen destination folder', asyn
   assert.equal(result.targetFolder, 'Projects/2026');
   assert.deepEqual(result.uidMap, { 41: 141, 42: 142 });
 });
+
+test('rule runs page through a stable folder UID snapshot', async () => {
+  const calls = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen(folder) {
+      calls.push({ type: 'open', folder });
+      return { uidNext: 51, uidValidity: 9001n };
+    },
+    async mailboxClose() { calls.push({ type: 'close' }); },
+    async search(query, options) {
+      calls.push({ type: 'search', query, options });
+      return [11, 12, 20];
+    },
+    async *fetch(uids, query, options) {
+      calls.push({ type: 'fetch', uids, query, options });
+      for (const uid of uids) {
+        yield { uid, envelope: { subject: `Message ${uid}` }, size: 100 };
+      }
+    },
+  };
+
+  const page = await service.getRuleRunBatch('INBOX', 10, undefined, 2, false);
+
+  assert.equal(page.maxUid, 50);
+  assert.equal(page.uidValidity, '9001');
+  assert.equal(page.nextCursor, 12);
+  assert.equal(page.done, false);
+  assert.deepEqual(page.messages.map(message => message.uid), [11, 12]);
+  assert.deepEqual(calls[1], {
+    type: 'search',
+    query: { uid: '11:50' },
+    options: { uid: true },
+  });
+  assert.equal(calls[2].query.source, undefined);
+});
+
+test('rule-run paging bounds each IMAP search window in sparse large mailboxes', async () => {
+  const searches = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen() { return { uidNext: 100001 }; },
+    async mailboxClose() {},
+    async search(query) {
+      searches.push(query);
+      return [];
+    },
+    async *fetch() {},
+  };
+
+  const page = await service.getRuleRunBatch('INBOX', 10, undefined, 2, false);
+
+  assert.deepEqual(searches, [{ uid: '11:210' }]);
+  assert.equal(page.nextCursor, 210);
+  assert.equal(page.maxUid, 100000);
+  assert.equal(page.done, false);
+});
+
+test('manual rule moves batch continued copies and final moves by destination', async () => {
+  const calls = [];
+  const sourceUids = new Set([41, 42, 43]);
+  const completedCopies = new Set();
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen(folder) { calls.push({ type: 'open', folder }); },
+    async mailboxClose() {},
+    async search(query) {
+      if (query.uid) {
+        return String(query.uid).split(',').map(Number).filter(uid => sourceUids.has(uid));
+      }
+      return [];
+    },
+    async messageCopy(sequence, targetFolder, options) {
+      calls.push({ type: 'copy', sequence, targetFolder, options });
+      return { destination: targetFolder };
+    },
+    async messageMove(sequence, targetFolder, options) {
+      calls.push({ type: 'move', sequence, targetFolder, options });
+      String(sequence).split(',').map(Number).forEach(uid => sourceUids.delete(uid));
+      return { destination: targetFolder };
+    },
+  };
+  const ledger = {
+    async pendingForSourceUids() { return []; },
+    async reserve(actions) {
+      return {
+        token: 'reservation-1',
+        ready: new Set(actions.map(action => action.actionKey)),
+        completed: new Set(),
+        blocked: new Set(),
+      };
+    },
+    async complete(actions) {
+      actions.forEach(action => completedCopies.add(action.actionKey));
+    },
+    async clear() {},
+  };
+
+  const result = await service.applyRuleMoves('INBOX', [
+    { uid: 41, moveFolders: ['Finance'] },
+    { uid: 42, moveFolders: ['Finance', 'Ads'] },
+    { uid: 43, moveFolders: ['INBOX', 'Finance'] },
+  ], 'test-operation', ledger);
+
+  assert.deepEqual(calls, [
+    { type: 'open', folder: 'INBOX' },
+    { type: 'copy', sequence: '42', targetFolder: 'Finance', options: { uid: true } },
+    { type: 'move', sequence: '41,43', targetFolder: 'Finance', options: { uid: true } },
+    { type: 'move', sequence: '42', targetFolder: 'Ads', options: { uid: true } },
+  ]);
+  assert.equal(completedCopies.size, 1);
+  assert.deepEqual(result, {
+    affected: 3,
+    copied: 1,
+    moved: 3,
+    movedUids: [41, 43, 42],
+  });
+});
+
+test('continued rule copies are idempotent when a later move is retried', async () => {
+  const sourceUids = new Set([42]);
+  const completedCopies = new Set();
+  let copyCalls = 0;
+  let failMove = true;
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen() {},
+    async mailboxClose() {},
+    async search(query) {
+      if (query.uid) return String(query.uid).split(',').map(Number).filter(uid => sourceUids.has(uid));
+      return [];
+    },
+    async messageCopy() {
+      copyCalls += 1;
+      return { destination: 'Finance' };
+    },
+    async messageMove(uid, targetFolder) {
+      if (failMove) {
+        failMove = false;
+        throw new Error('temporary move failure');
+      }
+      String(uid).split(',').map(Number).forEach(sourceUid => sourceUids.delete(sourceUid));
+      return { destination: targetFolder };
+    },
+  };
+  const ledger = {
+    async pendingForSourceUids() { return []; },
+    async reserve(actions) {
+      return {
+        token: 'reservation',
+        ready: new Set(actions.filter(action => !completedCopies.has(action.actionKey)).map(action => action.actionKey)),
+        completed: new Set(actions.filter(action => completedCopies.has(action.actionKey)).map(action => action.actionKey)),
+        blocked: new Set(),
+      };
+    },
+    async complete(actions) {
+      actions.forEach(action => completedCopies.add(action.actionKey));
+    },
+    async clear() {},
+  };
+  const plans = [{ uid: 42, moveFolders: ['Finance', 'Ads'] }];
+
+  await assert.rejects(
+    service.applyRuleMoves('INBOX', plans, 'stable-operation', ledger),
+    /Apply again to reconcile safely/,
+  );
+  const retry = await service.applyRuleMoves('INBOX', plans, 'stable-operation', ledger);
+
+  assert.equal(copyCalls, 1);
+  assert.deepEqual(retry, {
+    affected: 1,
+    copied: 1,
+    moved: 1,
+    movedUids: [42],
+  });
+});
+
+test('continued rule copies refuse an ambiguous pending retry instead of duplicating mail', async () => {
+  let copyCalls = 0;
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen() {},
+    async mailboxClose() {},
+    async search() { return [42]; },
+    async messageCopy() { copyCalls += 1; return {}; },
+    async messageMove() { return {}; },
+  };
+  const ledger = {
+    async pendingForSourceUids() { return []; },
+    async reserve(actions) {
+      return {
+        token: 'new-reservation',
+        ready: new Set(),
+        completed: new Set(),
+        blocked: new Set(actions.map(action => action.actionKey)),
+      };
+    },
+    async complete() {},
+    async clear() {},
+  };
+
+  await assert.rejects(
+    service.applyRuleMoves(
+      'INBOX',
+      [{ uid: 42, moveFolders: ['Finance', 'Ads'] }],
+      'stable-operation',
+      ledger,
+    ),
+    error => {
+      assert.match(error.message, /not repeated to prevent duplicate mail/);
+      assert.equal(error.result.affected, 1);
+      return true;
+    },
+  );
+  assert.equal(copyCalls, 0);
+});
+
+test('an older pending copy blocks a rule edited down to one final Move', async () => {
+  let moveCalls = 0;
+  const pending = {
+    actionKey: 'a'.repeat(64),
+    operationKey: 'b'.repeat(32),
+    uid: 42,
+    destination: 'Finance',
+  };
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen() {},
+    async mailboxClose() {},
+    async search() { return [42]; },
+    async messageMove() { moveCalls += 1; return {}; },
+  };
+  const ledger = {
+    async pendingForSourceUids() { return [pending]; },
+    async reserve() { throw new Error('reserve should not run'); },
+    async complete() {},
+    async clear() {},
+  };
+
+  await assert.rejects(
+    service.applyRuleMoves(
+      'INBOX',
+      [{ uid: 42, moveFolders: ['Ads'] }],
+      'stable-operation',
+      ledger,
+    ),
+    error => {
+      assert.equal(error.retrySafe, false);
+      assert.deepEqual(error.pendingCopies, [pending]);
+      return true;
+    },
+  );
+  assert.equal(moveCalls, 0);
+});
+
+test('continued destinations reserve only the copy group being attempted', async () => {
+  const states = new Map();
+  const reservations = [];
+  let copyCalls = 0;
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen() {},
+    async mailboxClose() {},
+    async search() { return [42]; },
+    async messageCopy() {
+      copyCalls += 1;
+      if (copyCalls === 2) throw new Error('second destination interrupted');
+      return {};
+    },
+  };
+  const ledger = {
+    async pendingForSourceUids() { return []; },
+    async reserve(actions) {
+      reservations.push(actions.map(action => action.destination));
+      actions.forEach(action => states.set(action.actionKey, 'pending'));
+      return {
+        token: `group-${reservations.length}`,
+        ready: new Set(actions.map(action => action.actionKey)),
+        completed: new Set(),
+        blocked: new Set(),
+        pending: [],
+      };
+    },
+    async complete(actions) {
+      actions.forEach(action => states.set(action.actionKey, 'completed'));
+    },
+    async clear() {},
+  };
+
+  await assert.rejects(
+    service.applyRuleMoves(
+      'INBOX',
+      [{ uid: 42, moveFolders: ['Finance', 'Statements', 'Ads'] }],
+      'stable-operation',
+      ledger,
+    ),
+    error => {
+      assert.equal(error.retrySafe, false);
+      assert.deepEqual(error.pendingCopies.map(copy => copy.destination), ['Statements']);
+      return true;
+    },
+  );
+  assert.deepEqual(reservations, [['Finance'], ['Statements']]);
+  assert.deepEqual([...states.values()].sort(), ['completed', 'pending']);
+});
+
+test('a failed copy remains pending instead of being retried ambiguously', async () => {
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen() {},
+    async mailboxClose() {},
+    async search() { return [42]; },
+    async messageCopy() { throw new Error('connection lost after COPY'); },
+  };
+  let completed = false;
+  const ledger = {
+    async pendingForSourceUids() { return []; },
+    async reserve(actions) {
+      return {
+        token: 'copy-failure',
+        ready: new Set(actions.map(action => action.actionKey)),
+        completed: new Set(),
+        blocked: new Set(),
+      };
+    },
+    async complete() { completed = true; },
+    async clear() {},
+  };
+
+  await assert.rejects(
+    service.applyRuleMoves(
+      'INBOX',
+      [{ uid: 42, moveFolders: ['Finance', 'Ads'] }],
+      'stable-operation',
+      ledger,
+    ),
+    error => {
+      assert.match(error.message, /not repeated to prevent duplicate mail/);
+      assert.equal(error.result.affected, 1);
+      return true;
+    },
+  );
+  assert.equal(completed, false);
+});
+
+test('a partial grouped move reconciles source UIDs before reporting failure', async () => {
+  const sourceUids = new Set([41, 42]);
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen() {},
+    async mailboxClose() {},
+    async search(query) {
+      return String(query.uid).split(',').map(Number).filter(uid => sourceUids.has(uid));
+    },
+    async messageMove() {
+      sourceUids.delete(41);
+      throw new Error('connection lost during MOVE');
+    },
+  };
+  const ledger = {
+    async pendingForSourceUids() { return []; },
+    async reserve() {
+      return {
+        token: 'move-failure',
+        ready: new Set(),
+        completed: new Set(),
+        blocked: new Set(),
+      };
+    },
+    async complete() {},
+    async clear() {},
+  };
+
+  await assert.rejects(
+    service.applyRuleMoves(
+      'INBOX',
+      [
+        { uid: 41, moveFolders: ['Finance'] },
+        { uid: 42, moveFolders: ['Finance'] },
+      ],
+      'stable-operation',
+      ledger,
+    ),
+    error => {
+      assert.match(error.message, /Apply again to reconcile safely/);
+      assert.equal(error.result.affected, 1);
+      assert.equal(error.result.moved, 1);
+      assert.deepEqual(error.result.movedUids, [41]);
+      return true;
+    },
+  );
+});
+
+test('mailbox-close failures preserve completed move reconciliation', async () => {
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen() {},
+    async mailboxClose() { throw new Error('close failed'); },
+    async search() { return [41]; },
+    async messageMove() { return {}; },
+  };
+  const ledger = {
+    async pendingForSourceUids() { return []; },
+    async reserve() {
+      return {
+        token: 'close-failure',
+        ready: new Set(),
+        completed: new Set(),
+        blocked: new Set(),
+      };
+    },
+    async complete() {},
+    async clear() {},
+  };
+
+  await assert.rejects(
+    service.applyRuleMoves(
+      'INBOX',
+      [{ uid: 41, moveFolders: ['Finance'] }],
+      'stable-operation',
+      ledger,
+    ),
+    error => {
+      assert.equal(error.result.affected, 1);
+      assert.equal(error.result.moved, 1);
+      assert.deepEqual(error.result.movedUids, [41]);
+      return true;
+    },
+  );
+});

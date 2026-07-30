@@ -292,3 +292,23 @@ Validation:
 - Live proof used a disposable `localtest@housevo.us` active script and LMTP
   message: Dovecot logged `fileinto`, the unique message existed only in the
   temporary target folder, and all probe state was removed afterward.
+
+## 2026-07-30 Ordered rules and existing-mail runner
+
+- Saved Mail Filters are ordered top to bottom. Missing `stopProcessing`
+  preserves the legacy Stop default; explicit false continues into later rules.
+- The Sieve compiler and manual evaluator share executable rule semantics.
+  Preview/Apply is available for any existing folder, moves only, and binds one
+  rule revision to one UID snapshot.
+- Continued multi-destination moves use a durable database ledger keyed by
+  UIDVALIDITY, source UID, and destination, independent of later rule edits.
+  Confirmed copies are skipped on retry; uncertain interrupted copies are
+  blocked rather than duplicated until the owner explicitly resolves them as
+  present or missing. Reservations cover only the destination group being
+  attempted, recovery is scoped to the exact displayed actions, and any
+  pending copy blocks a later Move-only edit for that source UID.
+  Destination-grouped IMAP operations avoid per-message mailbox round-trips,
+  and partial successes invalidate/reconcile search state.
+- UID searches use bounded numeric windows. Body checks fetch at most 1 MiB and
+  use unknown-aware evaluation so sufficient non-Body criteria still decide a
+  rule; the UI reports only messages with genuinely undecidable Body rules.

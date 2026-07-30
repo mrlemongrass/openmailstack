@@ -50,6 +50,10 @@ const db_1 = require("./db");
 const auth_1 = require("./auth");
 const config_1 = require("./config");
 const sieve_compiler_1 = require("./sieve-compiler");
+const rule_engine_1 = require("./rule-engine");
+const rule_semantics_1 = require("./rule-semantics");
+const imap_1 = require("./imap");
+const rule_run_ledger_1 = require("./rule-run-ledger");
 const search_index_1 = require("./search-index");
 const user_settings_1 = require("./user-settings");
 const admin_settings_1 = require("./admin-settings");
@@ -1169,6 +1173,235 @@ exports.apiRouter.post('/rules', requireAuth, async (req, res) => {
     catch (err) {
         console.error('Failed to save rules:', err);
         res.status(500).json({ error: err.message });
+    }
+});
+const ruleIdentity = (rule, index) => String(rule.id || rule.name || `rule-${index + 1}`);
+const envelopeAddressText = (addresses) => (Array.isArray(addresses)
+    ? addresses
+        .map(address => {
+        const email = String(address?.address || '');
+        const name = String(address?.name || '');
+        return name && email ? `${name} <${email}>` : email || name;
+    })
+        .filter(Boolean)
+        .join(', ')
+    : '');
+async function getActiveRulesDocument(user, pass) {
+    const client = new managesieve_1.ManageSieveClient(config_1.sieveConfig.host, config_1.sieveConfig.port, config_1.sieveConfig.masterUser, config_1.sieveConfig.masterPass);
+    await client.connect();
+    try {
+        await client.login(user, pass);
+        try {
+            return (0, sieve_compiler_1.extractJsonFromSieve)(await client.getScript('webmail'));
+        }
+        catch {
+            return { rules: [] };
+        }
+    }
+    finally {
+        try {
+            await client.logout();
+        }
+        catch { }
+    }
+}
+exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+    const folder = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';
+    const mode = req.body?.mode === 'apply' ? 'apply' : req.body?.mode === 'preview' ? 'preview' : '';
+    const cursor = req.body?.cursor === undefined ? 0 : Number(req.body.cursor);
+    const requestedMaxUid = req.body?.maxUid === undefined ? undefined : Number(req.body.maxUid);
+    const requestedUidValidity = typeof req.body?.uidValidity === 'string'
+        ? req.body.uidValidity.trim()
+        : '';
+    const requestedRuleRevision = typeof req.body?.ruleRevision === 'string'
+        ? req.body.ruleRevision.trim()
+        : '';
+    const copyResolution = req.body?.copyResolution === 'completed'
+        ? 'completed'
+        : req.body?.copyResolution === 'retry'
+            ? 'retry'
+            : '';
+    const copyActionKeys = Array.isArray(req.body?.copyActionKeys)
+        ? req.body.copyActionKeys.map((value) => String(value))
+        : [];
+    if (!folder
+        || folder.length > 512
+        || !mode
+        || !Number.isInteger(cursor)
+        || cursor < 0
+        || (requestedMaxUid !== undefined && (!Number.isInteger(requestedMaxUid) || requestedMaxUid < 0))
+        || (requestedUidValidity && !/^\d{1,64}$/.test(requestedUidValidity))
+        || requestedRuleRevision.length > 128
+        || (req.body?.copyResolution !== undefined && !copyResolution)
+        || (req.body?.copyActionKeys !== undefined
+            && (!Array.isArray(req.body.copyActionKeys)
+                || copyActionKeys.length < 1
+                || copyActionKeys.length > 200
+                || copyActionKeys.some((key) => !/^[a-f0-9]{64}$/.test(key))))
+        || (copyResolution && copyActionKeys.length === 0)
+        || (!copyResolution && copyActionKeys.length > 0)
+        || (copyResolution && mode !== 'apply')
+        || (cursor > 0 && (!requestedRuleRevision || !requestedUidValidity))
+        || (mode === 'apply' && (requestedMaxUid === undefined
+            || !requestedUidValidity
+            || !requestedRuleRevision))) {
+        return res.status(400).json({ success: false, error: 'Invalid rule-run request.' });
+    }
+    try {
+        const imap = await getPooledImap(user, pass);
+        const folders = await imap.getFolders();
+        const folderPaths = new Set(folders.map((candidate) => String(candidate.path || '')));
+        if (!folderPaths.has(folder)) {
+            return res.status(400).json({ success: false, error: 'Choose an existing source folder.' });
+        }
+        const document = await getActiveRulesDocument(user, pass);
+        const ruleRevision = crypto_1.default
+            .createHash('sha256')
+            .update(JSON.stringify(document.rules || []))
+            .digest('base64url');
+        if (requestedRuleRevision && requestedRuleRevision !== ruleRevision) {
+            return res.status(409).json({
+                success: false,
+                error: 'Rules changed since preview. Preview again before applying.',
+            });
+        }
+        const rules = (Array.isArray(document.rules) ? document.rules : []).filter(rule => rule.enabled !== false);
+        const includesBodyRules = rules.some(rule => ((0, rule_semantics_1.executableRuleCriteria)(rule).some(criterion => criterion.field === 'body')));
+        const page = await imap.getRuleRunBatch(folder, cursor, requestedMaxUid, includesBodyRules ? 25 : 200, includesBodyRules);
+        if (requestedUidValidity && requestedUidValidity !== page.uidValidity) {
+            return res.status(409).json({
+                success: false,
+                error: 'The source folder changed since preview. Preview again before applying.',
+            });
+        }
+        const plans = [];
+        const ruleMatchCounts = new Map();
+        const destinationCounts = new Map();
+        const invalidDestinations = new Set();
+        let matchedMessages = 0;
+        let deliveryOnlyMatches = 0;
+        let bodySkippedMessages = 0;
+        for (const message of page.messages) {
+            let parsed = null;
+            if (includesBodyRules && message.sourceComplete && message.source) {
+                parsed = await require('mailparser').simpleParser(message.source);
+            }
+            const evaluation = (0, rule_engine_1.evaluateRulesForMessage)(rules, {
+                uid: message.uid,
+                subject: String(parsed?.subject || message.envelope?.subject || ''),
+                from: String(parsed?.from?.text || envelopeAddressText(message.envelope?.from)),
+                to: String(parsed?.to?.text || envelopeAddressText(message.envelope?.to)),
+                body: String(parsed?.text || ''),
+                ...(!message.sourceComplete ? { unavailableFields: ['body'] } : {}),
+            });
+            if (evaluation.unevaluatedRuleIds.length > 0)
+                bodySkippedMessages += 1;
+            if (evaluation.matchedRuleIds.length > 0)
+                matchedMessages += 1;
+            if (evaluation.deliveryOnlyActions.length > 0)
+                deliveryOnlyMatches += 1;
+            for (const ruleId of evaluation.matchedRuleIds) {
+                ruleMatchCounts.set(ruleId, (ruleMatchCounts.get(ruleId) || 0) + 1);
+            }
+            const moveFolders = evaluation.moveFolders.filter(destination => {
+                if (destination === folder)
+                    return false;
+                if (folderPaths.has(destination))
+                    return true;
+                invalidDestinations.add(destination);
+                return false;
+            });
+            if (moveFolders.length === 0)
+                continue;
+            plans.push({ uid: message.uid, moveFolders });
+            for (const destination of moveFolders) {
+                destinationCounts.set(destination, (destinationCounts.get(destination) || 0) + 1);
+            }
+        }
+        const reconcileAppliedMoves = async (result) => {
+            if (result.movedUids.length > 0) {
+                await (0, search_index_1.deleteMailSearchRows)(user, folder, result.movedUids);
+            }
+            if (result.affected > 0)
+                await (0, search_worker_1.invalidateSearchIndexSnapshot)(user);
+        };
+        let applyResult = {
+            affected: 0,
+            copied: 0,
+            moved: 0,
+            movedUids: [],
+        };
+        if (mode === 'apply') {
+            const operationKey = crypto_1.default
+                .createHash('sha256')
+                .update(`${user}\0${folder}\0${page.uidValidity}`)
+                .digest('hex')
+                .slice(0, 32);
+            const ledger = new rule_run_ledger_1.RuleRunLedger(user, folder, page.uidValidity);
+            if (copyResolution) {
+                await ledger.resolvePending(operationKey, copyActionKeys, copyResolution);
+            }
+            try {
+                applyResult = await imap.applyRuleMoves(folder, plans, operationKey, ledger);
+            }
+            catch (err) {
+                if (err instanceof imap_1.RuleMoveApplyError) {
+                    await reconcileAppliedMoves(err.result);
+                }
+                throw err;
+            }
+            await reconcileAppliedMoves(applyResult);
+        }
+        const ruleMatches = rules
+            .map((rule, index) => ({
+            id: ruleIdentity(rule, index),
+            name: String(rule.name || `Rule ${index + 1}`),
+            count: ruleMatchCounts.get(ruleIdentity(rule, index)) || 0,
+        }))
+            .filter(rule => rule.count > 0);
+        res.json({
+            success: true,
+            mode,
+            folder,
+            processed: page.messages.length,
+            matchedMessages,
+            affectedMessages: plans.length,
+            appliedMessages: applyResult.affected,
+            copiedMessages: applyResult.copied,
+            movedMessages: applyResult.moved,
+            deliveryOnlyMatches,
+            bodySkippedMessages,
+            invalidDestinations: [...invalidDestinations],
+            ruleMatches,
+            destinations: [...destinationCounts].map(([destination, count]) => ({
+                folder: destination,
+                count,
+            })),
+            ruleRevision,
+            cursor: page.nextCursor,
+            maxUid: page.maxUid,
+            uidValidity: page.uidValidity,
+            done: page.done,
+        });
+    }
+    catch (err) {
+        console.error('Failed to run rules:', err);
+        res.status(500).json({
+            success: false,
+            error: err.message || 'Failed to run rules.',
+            ...(err instanceof imap_1.RuleMoveApplyError
+                ? {
+                    retrySafe: err.retrySafe,
+                    pendingCopies: err.pendingCopies.map(copy => ({
+                        actionKey: copy.actionKey,
+                        uid: copy.uid,
+                        destination: copy.destination,
+                    })),
+                }
+                : {}),
+        });
     }
 });
 exports.apiRouter.get('/quota', requireAuth, async (req, res) => {

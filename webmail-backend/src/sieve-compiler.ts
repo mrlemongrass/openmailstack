@@ -1,36 +1,18 @@
-export interface SieveCriterion {
-    id?: string;
-    field: 'subject' | 'from' | 'to' | 'body' | string;
-    operator: 'contains' | 'not_contains' | 'equals' | string;
-    value: string;
-}
+import {
+    executableRuleActions,
+    executableRuleCriteria,
+    type SieveAction,
+    type SieveCriterion,
+    type SieveRulesDocument,
+} from './rule-semantics';
 
-export interface SieveAction {
-    id?: string;
-    type: 'move' | 'reject' | 'discard' | string;
-    folder?: string;
-}
-
-export interface SieveRule {
-    id?: string;
-    name?: string;
-    enabled?: boolean;
-    condition?: 'any' | 'all' | string;
-    criteria?: SieveCriterion[];
-    actions?: SieveAction[];
-}
-
-export interface SieveVacation {
-    enabled: boolean;
-    subject?: string;
-    body: string;
-    days?: number;
-}
-
-export interface SieveRulesDocument {
-    rules?: SieveRule[];
-    vacation?: SieveVacation;
-}
+export type {
+    SieveAction,
+    SieveCriterion,
+    SieveRule,
+    SieveRulesDocument,
+    SieveVacation,
+} from './rule-semantics';
 
 const JSON_DATA_BASE64_PATTERN = /\/\* JSON_DATA_BASE64: ([A-Za-z0-9_-]+) \*\//;
 const LEGACY_JSON_DATA_PATTERN = /\/\* JSON_DATA: ([\s\S]*?) \*\//;
@@ -103,10 +85,10 @@ export function compileSieve(jsonData: SieveRulesDocument): string {
 
     for (const rule of jsonData.rules || []) {
         if (rule.enabled === false) continue;
-        const criteriaStrings = (rule.criteria || [])
+        const criteriaStrings = executableRuleCriteria(rule)
             .map(compileCriterion)
             .filter((criterion): criterion is string => Boolean(criterion));
-        const actionStrings = (rule.actions || [])
+        const actionStrings = executableRuleActions(rule)
             .map(compileAction)
             .filter((action): action is string => Boolean(action));
 
@@ -116,7 +98,10 @@ export function compileSieve(jsonData: SieveRulesDocument): string {
         const operator = rule.condition === 'any' ? 'anyof' : 'allof';
         script += `if ${operator} (${criteriaStrings.join(', ')}) {\n`;
         script += `${actionStrings.join('\n')}\n`;
-        script += `    stop;\n}\n\n`;
+        if (rule.stopProcessing !== false) {
+            script += `    stop;\n`;
+        }
+        script += `}\n\n`;
     }
 
     if (jsonData.vacation && jsonData.vacation.enabled && jsonData.vacation.body) {

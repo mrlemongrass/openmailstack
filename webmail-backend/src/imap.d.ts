@@ -1,4 +1,5 @@
 import { ImapFlow } from 'imapflow';
+import type { RuleCopyLedger, RuleCopyLedgerAction } from './rule-run-ledger';
 export type MailSearchField = 'all' | 'from' | 'to' | 'subject' | 'body' | 'unread' | 'starred' | 'attachments';
 export interface ActiveSyncMailSnapshot {
     uidValidity: string;
@@ -15,6 +16,29 @@ export interface ActiveSyncMailMessage {
     size: number;
     source: Buffer;
     sourceComplete: boolean;
+}
+export interface RuleRunRawMessage {
+    uid: number;
+    envelope: any;
+    size: number;
+    source?: Buffer;
+    sourceComplete: boolean;
+}
+export interface RuleMovePlan {
+    uid: number;
+    moveFolders: string[];
+}
+export interface RuleMoveApplyResult {
+    affected: number;
+    copied: number;
+    moved: number;
+    movedUids: number[];
+}
+export declare class RuleMoveApplyError extends Error {
+    result: RuleMoveApplyResult;
+    retrySafe: boolean;
+    pendingCopies: RuleCopyLedgerAction[];
+    constructor(result: RuleMoveApplyResult, cause: unknown, retrySafe?: boolean, pendingCopies?: RuleCopyLedgerAction[]);
 }
 export declare class ImapService {
     client: ImapFlow;
@@ -35,6 +59,14 @@ export declare class ImapService {
         lowestUid: number;
         moreAvailable: boolean;
     }>;
+    getRuleRunBatch(folderPath: string, cursor?: number, maxUid?: number, batchSize?: number, includeBody?: boolean): Promise<{
+        messages: RuleRunRawMessage[];
+        nextCursor: number;
+        maxUid: number;
+        uidValidity: string;
+        done: boolean;
+    }>;
+    applyRuleMoves(folderPath: string, plans: RuleMovePlan[], operationKey: string, ledger: RuleCopyLedger): Promise<RuleMoveApplyResult>;
     getChangedFlags(folderPath: string, sinceModseq: string): Promise<{
         changed: {
             uid: number;

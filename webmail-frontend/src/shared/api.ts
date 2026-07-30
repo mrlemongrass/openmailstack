@@ -4,7 +4,7 @@ import type {
   SearchResponse, SearchIndexStatusResponse, SearchIndexRefreshResponse,
   SearchWorkerStatusResponse, SavedSearch,
   SearchField, SearchScope,
-  MailFolder, Signature, Rule,
+  MailFolder, Signature, Rule, RuleRunPageResponse, RuleRunRequest,
   ContactsResponse, Contact, ContactLabel, ContactGroup,
   CalendarsResponse, Calendar, CalendarUpdateResponse, CalendarDeleteResponse,
   CalendarShare,
@@ -148,6 +148,29 @@ export async function fetchRules(): Promise<Rule[]> {
   const res = await fetch('/api/rules');
   const data = await res.json();
   return data.rules || [];
+}
+
+export async function runRulesPage(
+  request: RuleRunRequest,
+  signal?: AbortSignal,
+): Promise<RuleRunPageResponse> {
+  const res = await fetch('/api/rules/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal,
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    const error = new Error(data.error || 'Failed to run mail rules.') as Error & {
+      retrySafe?: boolean;
+      pendingCopies?: Array<{ actionKey: string; uid: number; destination: string }>;
+    };
+    if (typeof data.retrySafe === 'boolean') error.retrySafe = data.retrySafe;
+    if (Array.isArray(data.pendingCopies)) error.pendingCopies = data.pendingCopies;
+    throw error;
+  }
+  return data;
 }
 
 // ---- Contacts ----

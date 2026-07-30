@@ -45,6 +45,7 @@ function SettingsLoader() {
 
   // Rules and folders (loaded separately)
   const [rules, setRules] = useState<Rule[]>([]);
+  const [rulesDirty, setRulesDirty] = useState(false);
   const [folders, setFolders] = useState<MailFolder[]>([]);
 
   // Identities and calendars
@@ -130,6 +131,7 @@ function SettingsLoader() {
         applyAppearancePreferences(appearanceData);
 
         setRules(rulesData);
+        setRulesDirty(false);
         setFolders(foldersData);
 
         const senders = [
@@ -218,29 +220,51 @@ function SettingsLoader() {
       id: Date.now().toString(),
       name: 'New Rule',
       enabled: true,
+      stopProcessing: true,
       condition: 'any',
       criteria: [],
       actions: [],
     };
     setRules((prev) => [...prev, newRule]);
+    setRulesDirty(true);
+    return newRule.id;
   }, []);
 
   const handleUpdateRule = useCallback((id: string, updates: Partial<Rule>) => {
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+    setRulesDirty(true);
   }, []);
 
   const handleDeleteRule = useCallback((id: string) => {
     setRules((prev) => prev.filter((r) => r.id !== id));
+    setRulesDirty(true);
+  }, []);
+
+  const handleMoveRule = useCallback((id: string, direction: 'up' | 'down') => {
+    setRules((current) => {
+      const index = current.findIndex(rule => rule.id === id);
+      const nextIndex = direction === 'up' ? index - 1 : index + 1;
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.length) return current;
+      const reordered = [...current];
+      [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
+      return reordered;
+    });
+    setRulesDirty(true);
   }, []);
 
   const handleSaveRules = useCallback(async () => {
     setSaving(true);
     try {
-      await fetch('/api/rules', {
+      const response = await fetch('/api/rules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rules }),
       });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to save rules');
+      }
+      setRulesDirty(false);
       setSettingsSaveState('saved');
       setTimeout(() => setSettingsSaveState('idle'), 2000);
     } catch (err: unknown) {
@@ -421,6 +445,8 @@ function SettingsLoader() {
       onAddRule={handleAddRule}
       onUpdateRule={handleUpdateRule}
       onDeleteRule={handleDeleteRule}
+      onMoveRule={handleMoveRule}
+      rulesDirty={rulesDirty}
       vacationSettings={vacationSettings}
       onUpdateVacationSettings={handleUpdateVacationSettings}
       onSaveRules={handleSaveRules}

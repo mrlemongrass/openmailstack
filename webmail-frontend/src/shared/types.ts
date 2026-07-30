@@ -9,9 +9,55 @@ export interface Rule {
   id: string;
   name: string;
   enabled: boolean;
+  stopProcessing?: boolean;
   condition: 'any' | 'all';
   criteria: { id: string; field: string; operator: string; value: string }[];
   actions: { id: string; type: string; folder?: string }[];
+}
+
+export interface RuleRunRequest {
+  folder: string;
+  mode: 'preview' | 'apply';
+  cursor: number;
+  maxUid?: number;
+  uidValidity?: string;
+  ruleRevision?: string;
+  copyResolution?: 'completed' | 'retry';
+  copyActionKeys?: string[];
+}
+
+export interface RuleRunCount {
+  folder: string;
+  count: number;
+}
+
+export interface RuleMatchCount {
+  id: string;
+  name: string;
+  count: number;
+}
+
+export interface RuleRunPageResponse {
+  success: boolean;
+  error?: string;
+  mode: 'preview' | 'apply';
+  folder: string;
+  processed: number;
+  matchedMessages: number;
+  affectedMessages: number;
+  appliedMessages: number;
+  copiedMessages: number;
+  movedMessages: number;
+  deliveryOnlyMatches: number;
+  bodySkippedMessages: number;
+  invalidDestinations: string[];
+  ruleMatches: RuleMatchCount[];
+  destinations: RuleRunCount[];
+  ruleRevision: string;
+  cursor: number;
+  maxUid: number;
+  uidValidity: string;
+  done: boolean;
 }
 
 export interface MailFolder {

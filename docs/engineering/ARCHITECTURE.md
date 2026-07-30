@@ -640,6 +640,30 @@ Agents should reclassify each feature as `Implemented`, `Partial`, `Planned`, or
 - search operators
 - SSE or live updates
 
+Verified 2026-07-30: Mail Filters preserve array order as user-visible priority.
+Each executable rule stops later processing unless `stopProcessing=false`;
+legacy rules without the field retain stop behavior. The Sieve compiler and
+manual evaluator share one executable criterion/action contract so Preview
+cannot stop on a rule that delivery-time Sieve would omit.
+
+`POST /api/rules/run` evaluates the active saved `webmail` script against any
+existing IMAP folder. Preview and Apply use one bounded UID snapshot and the
+same UIDVALIDITY plus SHA-256 saved-rule revision. Apply performs only Move
+actions; Reject and Discard remain delivery-time actions. Continued Move
+matches copy into earlier destinations and move to the final destination.
+Copy completion is reserved and recorded by source UIDVALIDITY, UID, and
+destination in the durable `mail_rule_copy_ledger`; that action identity stays
+stable across rule edits. Confirmed copies are skipped on a retry, while an
+uncertain interrupted copy is never repeated automatically. The owner must
+verify the displayed destination/count and explicitly resolve that exact
+pending copy group as present or missing before processing resumes. Only the
+destination group about to be copied is reserved; a pending copy also blocks a
+later edited single-Move rule for the same source UID. Copies and final moves
+are grouped by destination under one source-mailbox session.
+Large-message Body conditions use three-valued evaluation:
+known header matches can still decide `any` rules, while only genuinely
+undecidable rules are reported as skipped.
+
 #### Calendar features to verify
 
 - Month view
@@ -1397,6 +1421,7 @@ During repository intake, agents should answer these questions and update this f
 
 ## 16. Change Log for This Document
 
+- 2026-07-30: Documented verified ordered Sieve rules, per-rule stop/continue behavior, and the bounded preview-first existing-mail runner with rule-revision, UID-snapshot, partial-failure, and large-body safeguards.
 - 2026-07-20: Documented deployed per-device/per-folder ActiveSync Mail delta state, move/delete behavior, bounded filtering/body retrieval, paginated all-mail initial synchronization, authenticated production smoke evidence, and physical iOS paging status.
 - 2026-07-11: Added and live-verified the OMS Scheduler Phase 0/1 architecture, trust boundaries, native calendar projection, installer gating, alias-host routing, and remaining mailbox/client release validation.
 - 2026-07-02: Converted older root-level `TECHNICAL.md` into an agent-safe architecture document. Added status labels, maintenance policy, verification warnings, source-of-truth rules, and known ambiguity list. Reclassified many feature claims as `Needs Verification` to prevent agents from assuming aspirational or partial features are fully implemented.

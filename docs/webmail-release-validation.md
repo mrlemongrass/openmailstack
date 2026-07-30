@@ -205,6 +205,7 @@ Mail:
 - Folder list, message list, read message, delete/archive/spam action.
 - Compose with rich editor, attachment under configured upload limit, draft autosave, send, sent-copy append.
 - Sieve filter create/save/reload, including quotes and backslashes in match values.
+- Ordered Sieve filters: reorder two saved rules, verify priority survives reload, verify default Stop and explicit Continue compile as expected, preview a chosen folder, and Apply against the same saved-rule revision/UIDVALIDITY/UID snapshot. Confirm Reject/Discard remain non-retroactive, same-folder Move is a no-op, a confirmed continued copy is skipped on retry, and an uncertain copy is blocked until the owner resolves it as present or missing.
 
 Calendar:
 

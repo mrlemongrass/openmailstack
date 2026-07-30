@@ -1,5 +1,5 @@
 import React, { useState, lazy, Suspense, type ReactNode } from 'react';
-import { Check, Copy, Filter, PenTool, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Copy, Filter, PenTool, Play, Plus, Trash2 } from 'lucide-react';
 
 const ReactQuill = lazy(() => import('react-quill-new'));
 import type { AppearancePreferences, AccentColor, DensityMode, FontScale, RadiusMode, ThemeMode } from './appearance';
@@ -10,11 +10,13 @@ import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
 import { supportedTimeZones } from '../calendar/calendarTime';
 import { AccountSecurityControls } from './AccountSecurityControls';
+import { RuleRunDialog } from './RuleRunDialog';
 
 interface Rule {
   id: string;
   name: string;
   enabled: boolean;
+  stopProcessing?: boolean;
   condition: 'any' | 'all';
   criteria: { id: string; field: string; operator: string; value: string }[];
   actions: { id: string; type: string; folder?: string }[];
@@ -103,9 +105,11 @@ interface SettingsContentProps {
     smtpPort: string;
   };
   setupMailboxAddress: string;
-  onAddRule: () => void;
+  onAddRule: () => string;
   onUpdateRule: (id: string, updates: Partial<Rule>) => void;
   onDeleteRule: (id: string) => void;
+  onMoveRule: (id: string, direction: 'up' | 'down') => void;
+  rulesDirty: boolean;
   vacationSettings: { enabled: boolean; subject?: string; body: string; days?: number; startDate?: string; endDate?: string };
   onUpdateVacationSettings: (settings: { enabled: boolean; subject?: string; body: string; days?: number; startDate?: string; endDate?: string }) => void;
   onSaveRules: () => void;
@@ -742,10 +746,29 @@ function VacationPane({ vacationSettings, onUpdateVacationSettings, saving, onSa
   );
 }
 
-function FiltersPane({ loading, saving, rules, folders, onAddRule, onUpdateRule, onDeleteRule, onSaveRules }: SettingsContentProps) {
+function FiltersPane({
+  loading,
+  saving,
+  rules,
+  folders,
+  onAddRule,
+  onUpdateRule,
+  onDeleteRule,
+  onMoveRule,
+  onSaveRules,
+  rulesDirty,
+}: SettingsContentProps) {
   const [activeRuleId, setActiveRuleId] = useState<string | null>(null);
-  
+  const [showRunDialog, setShowRunDialog] = useState(false);
+
   const activeRule = rules.find(r => r.id === activeRuleId) || rules[0];
+  const handleAddRule = () => {
+    setActiveRuleId(onAddRule());
+  };
+  const handleMoveRule = (id: string, direction: 'up' | 'down') => {
+    if (!activeRuleId && activeRule) setActiveRuleId(activeRule.id);
+    onMoveRule(id, direction);
+  };
 
   return (
     <div className="settings-page filters-pane">
@@ -754,11 +777,25 @@ function FiltersPane({ loading, saving, rules, folders, onAddRule, onUpdateRule,
         eyebrow="Mail"
         action={(
           <div className="settings-action-row">
-            <button className="btn btn-ghost" type="button" onClick={onAddRule}><Plus size={18} /> Add Rule</button>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={() => setShowRunDialog(true)}
+              disabled={rules.length === 0 || rulesDirty}
+              title={rulesDirty ? 'Save rule changes before running them' : 'Run saved rules on existing mail'}
+            >
+              <Play size={17} /> Run rules
+            </button>
+            <button className="btn btn-ghost" type="button" onClick={handleAddRule}><Plus size={18} /> Add Rule</button>
             <button className="btn btn-primary" type="button" onClick={onSaveRules} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
           </div>
         )}
       />
+      {rulesDirty && (
+        <p className="filter-rule-save-note" role="status">
+          Save your rule changes before running them on existing mail.
+        </p>
+      )}
 
       {loading ? (
         <div className="empty-state">Loading rules...</div>
@@ -766,22 +803,43 @@ function FiltersPane({ loading, saving, rules, folders, onAddRule, onUpdateRule,
         <div className="empty-state glass-panel">
           <Filter className="empty-icon" />
           <h3>No Filter Rules</h3>
-          <button className="btn btn-ghost mt-4" type="button" onClick={onAddRule}>Create Rule</button>
+            <button className="btn btn-ghost mt-4" type="button" onClick={handleAddRule}>Create Rule</button>
         </div>
       ) : (
         <div className="settings-three-pane">
           <div className="settings-list-pane">
-            {rules.map(rule => (
-              <button
-                key={rule.id}
-                type="button"
-                className={`settings-list-item ${activeRule?.id === rule.id ? 'active' : ''}`}
-                onClick={() => setActiveRuleId(rule.id)}
-                style={{ opacity: rule.enabled === false ? 0.5 : 1 }}
-              >
-                {rule.name || 'Untitled Rule'}
-                {rule.enabled === false && <span style={{ fontSize: '0.7rem', marginLeft: '8px', color: 'var(--text-secondary)' }}>(disabled)</span>}
-              </button>
+            <p className="filter-rule-order-hint">Rules run from top to bottom.</p>
+            {rules.map((rule, index) => (
+              <div className="filter-rule-list-row" key={rule.id}>
+                <div className="filter-rule-priority-controls" aria-label={`Priority controls for ${rule.name || 'Untitled Rule'}`}>
+                  <button
+                    type="button"
+                    aria-label={`Move ${rule.name || 'Untitled Rule'} up`}
+                    disabled={index === 0}
+                    onClick={() => handleMoveRule(rule.id, 'up')}
+                  >
+                    <ArrowUp size={13} />
+                  </button>
+                  <span aria-label={`Priority ${index + 1}`}>{index + 1}</span>
+                  <button
+                    type="button"
+                    aria-label={`Move ${rule.name || 'Untitled Rule'} down`}
+                    disabled={index === rules.length - 1}
+                    onClick={() => handleMoveRule(rule.id, 'down')}
+                  >
+                    <ArrowDown size={13} />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className={`settings-list-item ${activeRule?.id === rule.id ? 'active' : ''}`}
+                  onClick={() => setActiveRuleId(rule.id)}
+                  style={{ opacity: rule.enabled === false ? 0.5 : 1 }}
+                >
+                  <span>{rule.name || 'Untitled Rule'}</span>
+                  {rule.enabled === false && <small>Disabled</small>}
+                </button>
+              </div>
             ))}
           </div>
           <div className="settings-detail-pane" style={{ paddingBottom: 0 }}>
@@ -822,6 +880,7 @@ function FiltersPane({ loading, saving, rules, folders, onAddRule, onUpdateRule,
           </div>
         </div>
       )}
+      {showRunDialog && <RuleRunDialog folders={folders} onClose={() => setShowRunDialog(false)} />}
     </div>
   );
 }
@@ -1571,6 +1630,18 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
           <Plus size={14} /> Add Action
         </button>
       </div>
+
+      <label className="rule-processing-option">
+        <input
+          type="checkbox"
+          checked={rule.stopProcessing !== false}
+          onChange={event => onUpdate({ stopProcessing: event.target.checked })}
+        />
+        <span>
+          <strong>Stop processing more rules</strong>
+          <small>When this rule matches, rules below it will not run for that message.</small>
+        </span>
+      </label>
     </div>
   );
 }

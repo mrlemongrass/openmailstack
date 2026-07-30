@@ -7223,3 +7223,104 @@ Starting git state: `f315d6ac` plus only the bounded Sieve repair during impleme
 ### Next task
 
 Resume the physical-client matrix with exact versions/results for standalone macOS Mail/Contacts, Android plus DAVx5, and Thunderbird. If historical Inbox messages should be reorganized, review exact Message-IDs/UIDs with the owner first rather than applying subject-only moves.
+
+## 2026-07-30 — Ordered Mail Rules And Existing-Mail Runner
+
+Agent/tool: Codex with Playwright and independent Standards/Spec reviews
+Branch: `main`
+
+### Priority and acceptance criteria
+
+This was selected as a P1 product-integrity workflow after the Sieve delivery
+repair: it restores user control over already-delivered mail and prevents broad
+rules from silently outranking specific rules. Security incidents and mail loss
+remain higher severity; ordinary visual polish ranks below it.
+
+- [x] Show and persist explicit top-down rule priority.
+- [x] Preserve Stop as the legacy/default behavior and allow an explicit
+  Continue into lower rules.
+- [x] Preview saved rules against Inbox or any chosen existing folder before
+  mutation.
+- [x] Bind Apply to the previewed saved-rule revision, UIDVALIDITY, and mailbox
+  UID ceiling.
+- [x] Apply Move actions only; never retroactively Reject or Discard mail.
+- [x] Make continued multi-destination moves retry-safe after partial failure.
+- [x] Verify desktop/mobile layout, keyboard containment, background isolation,
+  focus restoration, error disclosure, and dirty-rule guidance.
+
+### Implementation
+
+- Filter rows expose numbered priority plus accessible up/down controls. Reorder
+  marks the document dirty, visibly explains why Run is unavailable, and the
+  new-rule action selects the created rule.
+- `stopProcessing=false` omits Sieve `stop;`; a missing field retains the prior
+  stop behavior. Compiler and manual evaluation now consume one executable
+  criterion/action contract, so empty or invalid rules cannot stop only the
+  manual path.
+- `POST /api/rules/run` reads the active saved `webmail` script, verifies source
+  and destination folders, pages a fixed UID snapshot through bounded IMAP
+  search windows, and rejects stale rule revisions.
+- Large messages use unknown-aware Body evaluation: sufficient header criteria
+  can still decide an `any` rule, and the UI reports only genuinely undecidable
+  messages. Same-source Move actions are no-ops.
+- Continue may copy a message into earlier destinations before the final Move.
+  A durable database ledger reserves and records each copy by UIDVALIDITY,
+  source UID, and destination; its action identity intentionally survives rule
+  edits. Confirmed copies are skipped on retry; uncertain interrupted copies
+  are blocked instead of duplicated until the owner explicitly confirms the
+  displayed destination/count is present or missing. Reservations are created
+  only for the destination group being attempted, and recovery is scoped to
+  the exact action keys returned to that owner.
+  Destination-grouped IMAP COPY/MOVE calls replace per-message mailbox
+  round-trips. Partial moves reconcile source/search state and remain safe to
+  Apply again. Apply cannot be presented as browser-stoppable while a server
+  mutation is in progress.
+
+### Proof before deployment
+
+- Backend: 252 tests, 249 passed, 3 optional environment-gated skips, 0 failed.
+  The final focused rule suite passed 38/38 and covers shared semantics,
+  repeated destinations, incomplete Body criteria, bounded sparse-mailbox
+  paging, per-destination durable copy reservations, exact pending recovery,
+  Move-only edit/concurrency guards, grouped mutation, partial search
+  reconciliation, revision/UIDVALIDITY gating, same-folder no-ops, and
+  delivery-only actions.
+- Frontend: 84/84 passed; focused rule tests, ESLint, and the production build
+  pass.
+- Repository Bash lint, integration guards, and `git diff --check` pass.
+- The final ledger schema and its unique pending-source index were created
+  successfully in a disposable `utf8mb4_unicode_ci` MariaDB database; that
+  database was removed and its absence rechecked.
+- Authenticated local Playwright used deterministic API fixtures without saving
+  rules or moving mail. At 1440x900 and 390x844 it verified the priority flow,
+  Stop/Continue state, opaque Preview/Apply dialog, zero horizontal overflow,
+  44x44 mobile reorder targets, focus wrap/background isolation/Escape return,
+  exact interrupted-copy action-key recovery, stacked 44px mobile recovery
+  controls, and a completed recovery. The only browser error responses were
+  the intentional recovery fixture's `500` and the initial unauthenticated
+  session probe's `401`; there were no uncaught application errors.
+
+### Independent review
+
+- The first Standards pass found partial-failure/idempotency, misleading Stop,
+  unbounded IMAP paging, dirty-state disclosure, missing documentation, and
+  duplicated semantics issues. The first Spec pass found repeated-destination,
+  empty-action, and partial Body-rule mismatches.
+- A follow-up Standards pass rejected per-message IMAP keywords as a durable
+  ledger and identified their serial mailbox cost. The implementation now uses
+  a durable server-side ledger plus destination-grouped IMAP operations, with
+  no custom rule-run keywords left on messages.
+- Final Standards and Spec reviews reported no remaining blockers after exact
+  action-key recovery, source-level pending preflight, and per-destination
+  reservation regressions passed.
+
+### Deployment
+
+Pending final commit, guarded backup, live proof, exact-artifact comparison,
+service checks, staging smoke, and cleanup.
+
+### Next task
+
+Resume the physical-client matrix in `docs/webmail-release-validation.md`,
+beginning with standalone macOS Mail/Contacts, while the remaining complex
+ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.

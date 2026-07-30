@@ -29,3 +29,10 @@ test('event editor drafts require an intentional dismissal action', () => {
   assert.doesNotMatch(routesSource, /className="scheduler-modal-backdrop" onMouseDown=\{onClose\}/);
   assert.doesNotMatch(routesSource, /onMouseDown=\{eventMouse => eventMouse\.stopPropagation\(\)\}/);
 });
+
+test('deleted event types disappear from owner booking-link surfaces', () => {
+  assert.match(routesSource, /const activeEvents = state\.events\.filter\(event => event\.active\);/);
+  assert.match(routesSource, /activeEvents\.length.*booking/);
+  assert.match(routesSource, /activeEvents\.map\(event => <article/);
+  assert.match(routesSource, /<WorkflowsPanel events=\{activeEvents\}/);
+});

@@ -56,6 +56,9 @@ function renderEventModal() {
         wallDateToInstant: date => date,
       };
     }
+    if (id === '../shared/hooks/useModalFocus') {
+      return { useModalFocus: () => undefined };
+    }
     return Module.prototype.require.call(componentModule, id);
   };
   componentModule._compile(compiled, componentPath);

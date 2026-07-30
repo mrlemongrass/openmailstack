@@ -3,6 +3,7 @@ import { X, Save } from 'lucide-react';
 import type { Contact } from '../shared/types';
 import * as api from '../shared/api';
 import { useToast } from '../shared/components/Toast';
+import { useModalFocus } from '../shared/hooks/useModalFocus';
 
 export function ContactEditModal({ contact, onClose, onSaved }: {
     contact: Contact;
@@ -15,6 +16,7 @@ export function ContactEditModal({ contact, onClose, onSaved }: {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const dialogRef = useRef<HTMLDivElement>(null);
+    useModalFocus({ dialogRef, open: true, onClose });
 
     const handleChange = (field: string, value: string) => {
         setForm((prev) => ({ ...prev, [field]: value }));
@@ -38,37 +40,9 @@ export function ContactEditModal({ contact, onClose, onSaved }: {
         setSaving(false);
     };
 
-    const handleDialogKeyDown = (event: React.KeyboardEvent) => {
-        if (event.key === 'Escape') {
-            event.preventDefault();
-            onClose();
-            return;
-        }
-        if (event.key !== 'Tab' || !dialogRef.current) return;
-
-        const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
-            'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        )).filter((element) => element.offsetParent !== null);
-        if (focusable.length === 0) return;
-
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (!dialogRef.current.contains(document.activeElement)) {
-            event.preventDefault();
-            (event.shiftKey ? last : first).focus();
-        } else if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault();
-            last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault();
-            first.focus();
-        }
-    };
-
     return (
         <div
             className="contact-modal-overlay"
-            onKeyDown={handleDialogKeyDown}
             onMouseDown={(event) => {
                 if (event.target === event.currentTarget) event.preventDefault();
             }}

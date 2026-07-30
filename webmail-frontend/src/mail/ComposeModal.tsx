@@ -8,6 +8,7 @@ import * as api from '../shared/api';
 import type { Contact, Signature, MailIdentity } from '../shared/types';
 import { getUserSettings, saveUserSettings, type MessageTemplate } from '../settings/settingsApi';
 import { uniqueContactSuggestions, type ContactSuggestion } from '../shared/contactSuggestions';
+import { useModalFocus } from '../shared/hooks/useModalFocus';
 
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB warning
 const BLOCK_SIZE = 50 * 1024 * 1024; // 50MB block
@@ -111,7 +112,12 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex((p) => (p + 1) % suggestions.length); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex((p) => (p - 1 + suggestions.length) % suggestions.length); }
     else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); selectSuggestion(suggestions[selectedIndex]); }
-    else if (e.key === 'Escape') { setSuggestions([]); setAutocompleteField(null); }
+    else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      setSuggestions([]);
+      setAutocompleteField(null);
+    }
   }, [autocompleteField, suggestions, selectedIndex, selectSuggestion]);
 
   const handleFieldBlur = useCallback(() => {
@@ -173,8 +179,6 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     }
   }, [isComposing, signatures, composeSignature, composeBody, setComposeSignature, setComposeBody]);
 
-  if (!mail.isComposing) return null;
-
   const size = totalSize(mail.composeAttachments);
   const sizeExceedsWarning = size > MAX_SIZE;
   const sizeExceedsBlock = size > BLOCK_SIZE;
@@ -188,34 +192,13 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     }
     mail.setIsComposing(false);
   };
+  useModalFocus({
+    dialogRef,
+    open: mail.isComposing && !showCloseConfirm,
+    onClose: handleClose,
+  });
 
-  const handleDialogKeyDown = (event: React.KeyboardEvent) => {
-    if (showCloseConfirm) return;
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      handleClose();
-      return;
-    }
-    if (event.key !== 'Tab' || !dialogRef.current) return;
-
-    const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    )).filter((element) => element.offsetParent !== null);
-    if (focusable.length === 0) return;
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (!dialogRef.current.contains(document.activeElement)) {
-      event.preventDefault();
-      (event.shiftKey ? last : first).focus();
-    } else if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
+  if (!mail.isComposing) return null;
 
   const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); };
   const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragOver(false); };
@@ -233,8 +216,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   return (
     <div className="compose-modal-overlay"
       onDragOver={handleDragOver} onDragEnter={handleDragOver}
-      onDragLeave={handleDragLeave} onDrop={handleDrop}
-      onKeyDown={handleDialogKeyDown}>
+      onDragLeave={handleDragLeave} onDrop={handleDrop}>
       <div
         ref={dialogRef}
         className="glass-panel compose-dialog"

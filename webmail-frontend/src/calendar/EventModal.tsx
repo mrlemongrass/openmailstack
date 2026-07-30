@@ -6,6 +6,7 @@ import * as api from '../shared/api';
 import { useToast } from '../shared/components/Toast';
 import type { Contact } from '../shared/types';
 import { uniqueContactSuggestions } from '../shared/contactSuggestions';
+import { useModalFocus } from '../shared/hooks/useModalFocus';
 import {
   addWallDays,
   convertWallDateTimeZone,
@@ -105,7 +106,11 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
     if (e.key === 'ArrowDown') { e.preventDefault(); setGuestSelectedIndex((p) => (p + 1) % guestSuggestions.length); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setGuestSelectedIndex((p) => (p - 1 + guestSuggestions.length) % guestSuggestions.length); }
     else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); selectGuestSuggestion(guestSuggestions[guestSelectedIndex]); }
-    else if (e.key === 'Escape') { setGuestSuggestions([]); }
+    else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      setGuestSuggestions([]);
+    }
   }, [guestSuggestions, guestSelectedIndex, selectGuestSuggestion, guestInput, guests]);
 
   const handleGuestBlur = useCallback(() => {
@@ -137,6 +142,12 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   }, [cal.isEventModalOpen, cal.newEvent.guests]);
 
   // ── Early return after all hooks ──────────────────────────────────────
+  const closeEventDialog = () => cal.setIsEventModalOpen(false);
+  useModalFocus({
+    dialogRef,
+    open: cal.isEventModalOpen,
+    onClose: closeEventDialog,
+  });
 
   if (!cal.isEventModalOpen) return null;
 
@@ -193,36 +204,8 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
     }
   };
 
-  const handleDialogKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Escape') {
-      if (guestSuggestions.length > 0) return;
-      event.preventDefault();
-      cal.setIsEventModalOpen(false);
-      return;
-    }
-    if (event.key !== 'Tab' || !dialogRef.current) return;
-
-    const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    )).filter((element) => element.offsetParent !== null);
-    if (focusable.length === 0) return;
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (!dialogRef.current.contains(document.activeElement)) {
-      event.preventDefault();
-      (event.shiftKey ? last : first).focus();
-    } else if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-
   return (
-    <div className="event-modal-overlay" onKeyDown={handleDialogKeyDown}>
+    <div className="event-modal-overlay">
       <div
         ref={dialogRef}
         className="glass-panel event-dialog"

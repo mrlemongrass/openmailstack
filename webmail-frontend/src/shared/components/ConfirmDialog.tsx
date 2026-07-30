@@ -1,4 +1,6 @@
+import { useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { useModalFocus } from '../hooks/useModalFocus';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -21,6 +23,9 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus({ dialogRef, open, onClose: onCancel });
+
   if (!open) return null;
 
   return (
@@ -34,7 +39,13 @@ export function ConfirmDialog({
       onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
     >
       <div
+        ref={dialogRef}
         className="glass-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+        aria-describedby="confirm-dialog-message"
+        tabIndex={-1}
         style={{
           maxWidth: 420, width: '100%', padding: 28,
           borderRadius: 'var(--radius-lg)',
@@ -51,10 +62,10 @@ export function ConfirmDialog({
             <AlertTriangle size={20} style={{ color: danger ? 'var(--danger)' : 'var(--accent-primary)' }} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <h3 style={{ margin: '0 0 6px', fontSize: '1rem', fontWeight: 600 }}>
+            <h3 id="confirm-dialog-title" style={{ margin: '0 0 6px', fontSize: '1rem', fontWeight: 600 }}>
               {title}
             </h3>
-            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            <p id="confirm-dialog-message" style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
               {message}
             </p>
           </div>

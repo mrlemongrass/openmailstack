@@ -34,6 +34,9 @@ function renderContactEditor() {
     if (id === '../shared/components/Toast') {
       return { useToast: () => ({ showToast: () => undefined }) };
     }
+    if (id === '../shared/hooks/useModalFocus') {
+      return { useModalFocus: () => undefined };
+    }
     return Module.prototype.require.call(componentModule, id);
   };
   componentModule._compile(compiled, componentPath);

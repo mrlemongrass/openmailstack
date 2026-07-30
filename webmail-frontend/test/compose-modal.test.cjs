@@ -61,6 +61,9 @@ function loadComposeModule() {
     if (id === '../shared/contactSuggestions') {
       return loadTypeScriptModule(path.resolve(__dirname, '../src/shared/contactSuggestions.ts'));
     }
+    if (id === '../shared/hooks/useModalFocus') {
+      return { useModalFocus: () => undefined };
+    }
     return Module.prototype.require.call(componentModule, id);
   };
   componentModule._compile(compiled, componentPath);

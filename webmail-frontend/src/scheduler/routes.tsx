@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CalendarClock, CalendarDays, Clock3, Copy, ExternalLink, Link2, Plus, Settings2, Trash2, Workflow, Wrench, X } from 'lucide-react';
 import { EmptyState } from '../shared/components/EmptyState';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
@@ -26,6 +26,7 @@ import {
 import { AvailabilityPanel } from './AvailabilityPanel';
 import { SchedulerToolsPanel } from './SchedulerToolsPanel';
 import { WorkflowsPanel } from './WorkflowsPanel';
+import { useModalFocus } from '../shared/hooks/useModalFocus';
 import './scheduler.css';
 
 type SchedulerTab = 'events' | 'bookings' | 'availability' | 'workflows' | 'tools' | 'profile';
@@ -65,6 +66,8 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
   onSaved: (close?: boolean) => Promise<void> | void;
 }) {
   const { showToast } = useToast();
+  const dialogRef = useRef<HTMLFormElement>(null);
+  useModalFocus({ dialogRef, open: true, onClose });
   const [section, setSection] = useState<SchedulerEditorSection>('setup');
   const [form, setForm] = useState<Partial<SchedulerEventType>>({
     title: event?.title || '', slug: event?.slug || '', description: event?.description || '',
@@ -118,11 +121,6 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
   const durationHours = Math.floor(durationMinutes / 60);
   const durationMinutePart = durationMinutes % 60;
   const durationValid = Number.isInteger(durationMinutes) && durationMinutes >= 5 && durationMinutes <= 1440;
-  useEffect(() => {
-    const closeOnEscape = (keyboardEvent: KeyboardEvent) => { if (keyboardEvent.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [onClose]);
   useEffect(() => {
     if (!event?.id) return;
     void getSchedulerPrivateLink(event.id).then(state => {
@@ -252,7 +250,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
 
   return (
     <div className="scheduler-modal-backdrop">
-      <form className="scheduler-modal" role="dialog" aria-modal="true" aria-labelledby="event-editor-title" onSubmit={submit}>
+      <form ref={dialogRef} className="scheduler-modal" role="dialog" aria-modal="true" aria-labelledby="event-editor-title" onSubmit={submit}>
         <header><div><h2 id="event-editor-title">{form.id ? 'Edit event type' : 'New event type'}</h2><p>Choose the service length, schedule, calendar rules, and booking limits.</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close event type editor"><X size={18} /></button></header>
         {error && <ErrorBanner error={error} />}
         <nav className="scheduler-editor-tabs" aria-label="Event type settings">{SCHEDULER_EDITOR_SECTIONS.map(item => <button type="button" className={section === item.id ? 'active' : ''} onClick={() => setSection(item.id)} key={item.id}>{item.label}</button>)}</nav>
@@ -358,6 +356,12 @@ export function SchedulerRoutes() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
+  const bookingDialogRef = useRef<HTMLElement>(null);
+  useModalFocus({
+    dialogRef: bookingDialogRef,
+    open: Boolean(selectedBooking),
+    onClose: () => setSelectedBooking(null),
+  });
 
   const load = useCallback(async () => {
     try { setState(await getSchedulerState(filter)); setError(''); }
@@ -449,6 +453,6 @@ export function SchedulerRoutes() {
       {visitedTabs.has('profile') && <div hidden={tab !== 'profile'}><ProfilePanel state={state} onSaved={load} /></div>}
     </main>
     {editor !== undefined && <EventEditor event={editor} calendars={state.calendars} defaultAvailability={state.defaultAvailability} onClose={() => setEditor(undefined)} onSaved={async (close = true) => { if (close) setEditor(undefined); await load(); }} />}
-    {selectedBooking && <div className="scheduler-modal-backdrop" onMouseDown={() => setSelectedBooking(null)}><section className="scheduler-booking-detail" onMouseDown={event => event.stopPropagation()}><header><div><h2>{selectedBooking.event.title}</h2><p>{selectedBooking.status.replace('_', ' ')}</p></div><button className="icon-button" onClick={() => setSelectedBooking(null)} aria-label="Close"><X size={18} /></button></header><dl><div><dt>Guest</dt><dd>{selectedBooking.bookerName}<span>{selectedBooking.bookerEmail}</span></dd></div>{selectedBooking.bookedByUsername && <div><dt>Booked by</dt><dd>{selectedBooking.bookedByUsername}</dd></div>}<div><dt>When</dt><dd>{new Date(selectedBooking.start).toLocaleString()}<span>{selectedBooking.event.durationMinutes} minutes · {selectedBooking.seats || 1} {(selectedBooking.seats || 1) === 1 ? 'seat' : 'seats'}{selectedBooking.seriesId ? ` · occurrence ${selectedBooking.seriesIndex} of ${selectedBooking.seriesCount}` : ''}</span></dd></div><div><dt>Location</dt><dd>{selectedBooking.event.locationLabel || 'Not specified'}</dd></div>{(selectedBooking.attendees || []).map(attendee => <div key={attendee.email}><dt>Additional guest</dt><dd>{attendee.name || attendee.email}{attendee.name && <span>{attendee.email}</span>}</dd></div>)}{Object.entries(selectedBooking.attribution || {}).map(([key, value]) => <div key={key}><dt>{key.replace('utm_', 'UTM ')}</dt><dd>{value}</dd></div>)}{selectedBooking.bookerNotes && <div><dt>Notes</dt><dd>{selectedBooking.bookerNotes}</dd></div>}{selectedBooking.cancellationReason && <div><dt>Cancellation reason</dt><dd>{selectedBooking.cancellationReason}</dd></div>}{selectedBooking.rescheduleReason && <div><dt>Reschedule reason</dt><dd>{selectedBooking.rescheduleReason}</dd></div>}{(selectedBooking.bookingAnswers || []).map(answer => <div key={answer.questionId}><dt>{answer.label}</dt><dd>{answer.value}</dd></div>)}</dl></section></div>}
+    {selectedBooking && <div className="scheduler-modal-backdrop" onMouseDown={() => setSelectedBooking(null)}><section ref={bookingDialogRef} className="scheduler-booking-detail" role="dialog" aria-modal="true" aria-labelledby="booking-detail-title" onMouseDown={event => event.stopPropagation()}><header><div><h2 id="booking-detail-title">{selectedBooking.event.title}</h2><p>{selectedBooking.status.replace('_', ' ')}</p></div><button className="icon-button" onClick={() => setSelectedBooking(null)} aria-label="Close booking details"><X size={18} /></button></header><dl><div><dt>Guest</dt><dd>{selectedBooking.bookerName}<span>{selectedBooking.bookerEmail}</span></dd></div>{selectedBooking.bookedByUsername && <div><dt>Booked by</dt><dd>{selectedBooking.bookedByUsername}</dd></div>}<div><dt>When</dt><dd>{new Date(selectedBooking.start).toLocaleString()}<span>{selectedBooking.event.durationMinutes} minutes · {selectedBooking.seats || 1} {(selectedBooking.seats || 1) === 1 ? 'seat' : 'seats'}{selectedBooking.seriesId ? ` · occurrence ${selectedBooking.seriesIndex} of ${selectedBooking.seriesCount}` : ''}</span></dd></div><div><dt>Location</dt><dd>{selectedBooking.event.locationLabel || 'Not specified'}</dd></div>{(selectedBooking.attendees || []).map(attendee => <div key={attendee.email}><dt>Additional guest</dt><dd>{attendee.name || attendee.email}{attendee.name && <span>{attendee.email}</span>}</dd></div>)}{Object.entries(selectedBooking.attribution || {}).map(([key, value]) => <div key={key}><dt>{key.replace('utm_', 'UTM ')}</dt><dd>{value}</dd></div>)}{selectedBooking.bookerNotes && <div><dt>Notes</dt><dd>{selectedBooking.bookerNotes}</dd></div>}{selectedBooking.cancellationReason && <div><dt>Cancellation reason</dt><dd>{selectedBooking.cancellationReason}</dd></div>}{selectedBooking.rescheduleReason && <div><dt>Reschedule reason</dt><dd>{selectedBooking.rescheduleReason}</dd></div>}{(selectedBooking.bookingAnswers || []).map(answer => <div key={answer.questionId}><dt>{answer.label}</dt><dd>{answer.value}</dd></div>)}</dl></section></div>}
   </div>;
 }

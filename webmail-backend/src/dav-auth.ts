@@ -24,7 +24,7 @@ async function verifyCredentials(user: string, pass: string): Promise<boolean> {
     }
 
     try {
-        const imap = new ImapService(user, pass);
+        const imap = new ImapService(user, pass, false);
         await imap.connect();
         await imap.logout();
         authCache.set(key, now + AUTH_CACHE_TTL_MS);

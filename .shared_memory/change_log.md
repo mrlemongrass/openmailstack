@@ -1313,3 +1313,11 @@ Future entry template:
 - Live first-use cleanup removed every public/user-visible test artifact and restored availability to unpublished. Required cancelled-booking, archived-workflow, soft-retained-event, and audit history remain inactive by design.
 - Frontend 80/80, backend 205/208 with 3 documented optional skips, ESLint/build, repository lint/integration, exact artifact checks, live Playwright, and staging smoke pass.
 - Released through `0f2c6c68`. Final paired rollback: `/var/backups/openmailstack/ui-review-0f2c6c6-20260730T040600Z/`; backend SHA-256 `6868ed133a162c800c44e625910644d914962feeed2aae3cc68874af9263a32a`, frontend SHA-256 `ea2b3887d0317b85a0e233a4c583df66a3d7878fabff6d4e43995b79be36f4b3`.
+
+## 2026-07-29 — Scheduler Workflow Lifecycle and Delegated Authentication
+
+- A disposable live Scheduler workflow ran confirmation email and in-app actions from booking through cancellation. Both jobs completed once, delivery attempts and required audit history remain, and the workflow/event/availability, Calendar projection, in-app notice, and five generated messages were archived, unpublished, removed, dismissed, or permanently deleted as appropriate.
+- Trash deletion now expunges instead of attempting a move back to Trash; Scheduler notifications have an owner-scoped dismiss endpoint; and workflows cannot be enabled before their first published version.
+- Production now generates and preserves explicit 64-character session and Dovecot master secrets. Internal IMAP, SMTP, and ManageSieve use the delegated identity; DAV and ActiveSync credential checks explicitly bypass it.
+- Existing sessions and the offline-index registry are sanitized at startup to encrypted empty values. The live cutover preserved 19 sessions and 3 registered users with zero non-empty credential ciphertext rows, and the search worker completed a delegated three-user cycle.
+- Dovecot's raw secret is `root:root 0600`; only its SHA512-CRYPT hash is `root:dovecot 0640`. The live host requires a scoped `PrivateDevices=false` systemd drop-in to avoid its host-specific `226/NAMESPACE` failure while retaining `ProtectSystem=full`.

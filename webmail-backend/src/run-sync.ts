@@ -1,7 +1,7 @@
 import { pool } from './db';
 import { syncNotesWithImap } from './notes-imap-sync';
 import crypto from 'crypto';
-import { serverConfig } from './config';
+import { delegatedAuthEnabled, serverConfig } from './config';
 
 const getSessionKey = () => crypto.createHash('sha256').update(serverConfig.sessionSecret).digest();
 
@@ -15,13 +15,22 @@ const decryptPassword = (ciphertext: string, iv: Buffer, tag: Buffer) => {
 };
 
 async function main() {
-    const [rows]: any = await pool.query('SELECT username, password_ciphertext, password_iv, password_tag FROM webmail_sessions LIMIT 1');
+    const [rows]: any = delegatedAuthEnabled
+        ? await pool.query('SELECT username FROM mailbox_credentials ORDER BY updated_at DESC LIMIT 1')
+        : await pool.query(
+            `SELECT username, password_ciphertext, password_iv, password_tag
+             FROM webmail_sessions
+             WHERE expires_at > NOW()
+             LIMIT 1`
+        );
     if (rows.length === 0) {
-        console.log("No active sessions found.");
+        console.log("No mailbox is registered for Notes sync.");
         process.exit(0);
     }
     const row = rows[0];
-    const password = decryptPassword(row.password_ciphertext, row.password_iv, row.password_tag);
+    const password = delegatedAuthEnabled
+        ? ''
+        : decryptPassword(row.password_ciphertext, row.password_iv, row.password_tag);
     console.log(`Syncing for ${row.username}...`);
     await syncNotesWithImap(row.username, password);
     console.log("Done.");

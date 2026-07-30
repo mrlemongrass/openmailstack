@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.requireAdminSession = exports.requireSession = exports.clearSession = exports.getSession = exports.createSession = exports.canDemoteGlobalAdmin = exports.hasGlobalAdminAccess = exports.decryptPassword = exports.SESSION_COOKIE = void 0;
+exports.requireAdminSession = exports.requireSession = exports.clearSession = exports.getSession = exports.createSession = exports.canDemoteGlobalAdmin = exports.hasGlobalAdminAccess = exports.decryptPassword = exports.initializeSessionStore = exports.SESSION_COOKIE = void 0;
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("./db");
 const config_1 = require("./config");
@@ -36,10 +36,13 @@ const ensureSessionSchema = async () => {
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
+            await sanitizeStoredMailboxCredentials();
         })().then(() => undefined);
     }
     return schemaPromise;
 };
+const initializeSessionStore = async () => ensureSessionSchema();
+exports.initializeSessionStore = initializeSessionStore;
 const cookieOptions = (maxAgeSeconds) => {
     const options = [
         'HttpOnly',
@@ -73,6 +76,24 @@ const encryptPassword = (password) => {
         tag: cipher.getAuthTag()
     };
 };
+const sanitizeStoredMailboxCredentials = async () => {
+    if (!config_1.delegatedAuthEnabled)
+        return;
+    const [sessionRows] = await db_1.pool.query("SELECT id_hash FROM webmail_sessions WHERE password_ciphertext <> ''");
+    for (const row of sessionRows) {
+        const encryptedPassword = encryptPassword('');
+        await db_1.pool.query(`UPDATE webmail_sessions
+             SET password_ciphertext = ?, password_iv = ?, password_tag = ?
+             WHERE id_hash = ?`, [encryptedPassword.ciphertext, encryptedPassword.iv, encryptedPassword.tag, row.id_hash]);
+    }
+    const [credentialRows] = await db_1.pool.query("SELECT username FROM mailbox_credentials WHERE password_ciphertext <> ''");
+    for (const row of credentialRows) {
+        const encryptedPassword = encryptPassword('');
+        await db_1.pool.query(`UPDATE mailbox_credentials
+             SET password_ciphertext = ?, password_iv = ?, password_tag = ?
+             WHERE username = ?`, [encryptedPassword.ciphertext, encryptedPassword.iv, encryptedPassword.tag, row.username]);
+    }
+};
 const decryptPassword = (ciphertext, iv, tag) => {
     const decipher = crypto_1.default.createDecipheriv('aes-256-gcm', getSessionKey(), iv);
     decipher.setAuthTag(tag);
@@ -103,7 +124,8 @@ const createSession = async (res, data) => {
     await cleanupExpiredSessions();
     const id = crypto_1.default.randomBytes(32).toString('base64url');
     const expiresAt = Date.now() + config_1.serverConfig.sessionTtlMs;
-    const encryptedPassword = encryptPassword(data.password);
+    const sessionPassword = config_1.delegatedAuthEnabled ? '' : data.password;
+    const encryptedPassword = encryptPassword(sessionPassword);
     await db_1.pool.query(`INSERT INTO webmail_sessions
             (id_hash, username, password_ciphertext, password_iv, password_tag, is_admin, expires_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`, [
@@ -115,13 +137,14 @@ const createSession = async (res, data) => {
         data.isAdmin ? 1 : 0,
         toMysqlDate(expiresAt)
     ]);
-    // Also store credentials persistently for offline indexing
+    // This remains a username registry for offline indexing. Delegated
+    // deployments persist only an encrypted empty value, never the mailbox password.
     db_1.pool.query(`INSERT INTO mailbox_credentials (username, password_ciphertext, password_iv, password_tag)
          VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE
          password_ciphertext = VALUES(password_ciphertext),
          password_iv = VALUES(password_iv),
-         password_tag = VALUES(password_tag)`, [data.username, encryptedPassword.ciphertext, encryptedPassword.iv, encryptedPassword.tag]).catch(err => console.error('Failed to store mailbox credentials:', err));
-    const session = { ...data, id, expiresAt };
+         password_tag = VALUES(password_tag)`, [data.username, encryptedPassword.ciphertext, encryptedPassword.iv, encryptedPassword.tag]).catch(err => console.error('Failed to store mailbox credential registry:', err));
+    const session = { ...data, password: sessionPassword, id, expiresAt };
     const maxAge = Math.floor(config_1.serverConfig.sessionTtlMs / 1000);
     res.setHeader('Set-Cookie', `${exports.SESSION_COOKIE}=${encodeURIComponent(id)}; ${cookieOptions(maxAge).join('; ')}`);
     return session;
@@ -156,7 +179,9 @@ const getSession = async (req) => {
         return {
             id,
             username: row.username,
-            password: (0, exports.decryptPassword)(row.password_ciphertext, row.password_iv, row.password_tag),
+            password: config_1.delegatedAuthEnabled
+                ? ''
+                : (0, exports.decryptPassword)(row.password_ciphertext, row.password_iv, row.password_tag),
             isAdmin: isSuperAdmin,
             isSuperAdmin,
             expiresAt

@@ -112,8 +112,8 @@ The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day 
 
 ## 6. Security And Enterprise Readiness 🟡
 
-- 🟡 Replace reversible mailbox-credential storage with Dovecot master-user auth, app passwords, or another delegated credential model (master-user auth implemented as optional env vars; needs Dovecot server-side config).
-- 🟡 Set and document an explicit high-entropy `OMS_SESSION_SECRET` for production.
+- ✅ Replace reversible mailbox-credential storage with delegated Dovecot master-user auth. The installer now creates the root-only raw secret and Dovecot-readable hash, IMAP/SMTP/ManageSieve use the delegated identity, DAV and ActiveSync still validate supplied user credentials directly, and session/offline-index rows retain encrypted empty values rather than mailbox passwords.
+- ✅ Set and document an explicit high-entropy `OMS_SESSION_SECRET` for production. Production startup rejects missing/short values and upgrades generate and preserve a 64-character secret.
 - ❌ Add two-factor authentication or app-password support.
 - ❌ Audit admin RBAC and domain scoping endpoint by endpoint.
 - ✅ Harden ActiveSync contact photos, conflict handling, tombstones, and long-running incremental sync (EAS calendar tombstones, recurrence mapping, Picture sync).

@@ -7,6 +7,7 @@ const mailparser_1 = require("mailparser");
 const pdfParse = require("pdf-parse");
 const search_index_1 = require("./search-index");
 const auth_1 = require("./auth");
+const config_1 = require("./config");
 const getAddressText = (addr) => addr?.text || "";
 const getAttachmentNames = (parsed) => parsed.attachments ? parsed.attachments.map((a) => a.filename).filter(Boolean).join(", ") : "";
 const stripXmlTags = (xml) => xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -298,6 +299,10 @@ const getAvailableUserCredentials = async () => {
         if (seen.has(username))
             continue;
         seen.add(username);
+        if (config_1.delegatedAuthEnabled) {
+            credentials.push({ username, password: '' });
+            continue;
+        }
         try {
             const password = (0, auth_1.decryptPassword)(row.password_ciphertext, row.password_iv, row.password_tag);
             credentials.push({ username, password });

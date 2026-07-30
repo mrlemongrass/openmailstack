@@ -4,6 +4,7 @@ import { simpleParser } from "mailparser";
 const pdfParse = require("pdf-parse");
 import { upsertMailSearchRows, deleteMailSearchRows, ensureMailSearchSchema, MailSearchIndexRow } from "./search-index";
 import { decryptPassword } from "./auth";
+import { delegatedAuthEnabled } from "./config";
 
 const getAddressText = (addr: any) => addr?.text || "";
 const getAttachmentNames = (parsed: any) => parsed.attachments ? parsed.attachments.map((a: any) => a.filename).filter(Boolean).join(", ") : "";
@@ -381,6 +382,10 @@ const getAvailableUserCredentials = async (): Promise<UserCredential[]> => {
         const username = row.username;
         if (seen.has(username)) continue;
         seen.add(username);
+        if (delegatedAuthEnabled) {
+            credentials.push({ username, password: '' });
+            continue;
+        }
         try {
             const password = decryptPassword(row.password_ciphertext, row.password_iv, row.password_tag);
             credentials.push({ username, password });

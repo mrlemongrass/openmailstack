@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
+process.env.OMS_DB_PASSWORD ||= 'unit-test-password';
+
 const username = 'worker@example.test';
 const dbEvents = [];
 const deletedRows = [];

@@ -17,13 +17,20 @@ const decryptPassword = (ciphertext, iv, tag) => {
     ]).toString('utf8');
 };
 async function main() {
-    const [rows] = await db_1.pool.query('SELECT username, password_ciphertext, password_iv, password_tag FROM webmail_sessions LIMIT 1');
+    const [rows] = config_1.delegatedAuthEnabled
+        ? await db_1.pool.query('SELECT username FROM mailbox_credentials ORDER BY updated_at DESC LIMIT 1')
+        : await db_1.pool.query(`SELECT username, password_ciphertext, password_iv, password_tag
+             FROM webmail_sessions
+             WHERE expires_at > NOW()
+             LIMIT 1`);
     if (rows.length === 0) {
-        console.log("No active sessions found.");
+        console.log("No mailbox is registered for Notes sync.");
         process.exit(0);
     }
     const row = rows[0];
-    const password = decryptPassword(row.password_ciphertext, row.password_iv, row.password_tag);
+    const password = config_1.delegatedAuthEnabled
+        ? ''
+        : decryptPassword(row.password_ciphertext, row.password_iv, row.password_tag);
     console.log(`Syncing for ${row.username}...`);
     await (0, notes_imap_sync_1.syncNotesWithImap)(row.username, password);
     console.log("Done.");

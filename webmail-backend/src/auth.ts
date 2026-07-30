@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { pool } from './db';
-import { serverConfig } from './config';
+import { delegatedAuthEnabled, serverConfig } from './config';
 
 export interface WebmailSession {
     id: string;
@@ -42,11 +42,14 @@ const ensureSessionSchema = async () => {
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
+            await sanitizeStoredMailboxCredentials();
         })().then(() => undefined);
     }
 
     return schemaPromise;
 };
+
+export const initializeSessionStore = async () => ensureSessionSchema();
 
 const cookieOptions = (maxAgeSeconds: number): string[] => {
     const options = [
@@ -84,6 +87,36 @@ const encryptPassword = (password: string) => {
     };
 };
 
+const sanitizeStoredMailboxCredentials = async () => {
+    if (!delegatedAuthEnabled) return;
+
+    const [sessionRows]: any = await pool.query(
+        "SELECT id_hash FROM webmail_sessions WHERE password_ciphertext <> ''"
+    );
+    for (const row of sessionRows) {
+        const encryptedPassword = encryptPassword('');
+        await pool.query(
+            `UPDATE webmail_sessions
+             SET password_ciphertext = ?, password_iv = ?, password_tag = ?
+             WHERE id_hash = ?`,
+            [encryptedPassword.ciphertext, encryptedPassword.iv, encryptedPassword.tag, row.id_hash]
+        );
+    }
+
+    const [credentialRows]: any = await pool.query(
+        "SELECT username FROM mailbox_credentials WHERE password_ciphertext <> ''"
+    );
+    for (const row of credentialRows) {
+        const encryptedPassword = encryptPassword('');
+        await pool.query(
+            `UPDATE mailbox_credentials
+             SET password_ciphertext = ?, password_iv = ?, password_tag = ?
+             WHERE username = ?`,
+            [encryptedPassword.ciphertext, encryptedPassword.iv, encryptedPassword.tag, row.username]
+        );
+    }
+};
+
 export const decryptPassword = (ciphertext: string, iv: Buffer, tag: Buffer) => {
     const decipher = crypto.createDecipheriv('aes-256-gcm', getSessionKey(), iv);
     decipher.setAuthTag(tag);
@@ -118,7 +151,8 @@ export const createSession = async (res: any, data: Omit<WebmailSession, 'id' | 
     await cleanupExpiredSessions();
     const id = crypto.randomBytes(32).toString('base64url');
     const expiresAt = Date.now() + serverConfig.sessionTtlMs;
-    const encryptedPassword = encryptPassword(data.password);
+    const sessionPassword = delegatedAuthEnabled ? '' : data.password;
+    const encryptedPassword = encryptPassword(sessionPassword);
 
     await pool.query(
         `INSERT INTO webmail_sessions
@@ -135,7 +169,8 @@ export const createSession = async (res: any, data: Omit<WebmailSession, 'id' | 
         ]
     );
 
-    // Also store credentials persistently for offline indexing
+    // This remains a username registry for offline indexing. Delegated
+    // deployments persist only an encrypted empty value, never the mailbox password.
     pool.query(
         `INSERT INTO mailbox_credentials (username, password_ciphertext, password_iv, password_tag)
          VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE
@@ -143,9 +178,9 @@ export const createSession = async (res: any, data: Omit<WebmailSession, 'id' | 
          password_iv = VALUES(password_iv),
          password_tag = VALUES(password_tag)`,
         [data.username, encryptedPassword.ciphertext, encryptedPassword.iv, encryptedPassword.tag]
-    ).catch(err => console.error('Failed to store mailbox credentials:', err));
+    ).catch(err => console.error('Failed to store mailbox credential registry:', err));
 
-    const session = { ...data, id, expiresAt };
+    const session = { ...data, password: sessionPassword, id, expiresAt };
     const maxAge = Math.floor(serverConfig.sessionTtlMs / 1000);
     res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(id)}; ${cookieOptions(maxAge).join('; ')}`);
     return session;
@@ -189,7 +224,9 @@ export const getSession = async (req: any): Promise<WebmailSession | null> => {
         return {
             id,
             username: row.username,
-            password: decryptPassword(row.password_ciphertext, row.password_iv, row.password_tag),
+            password: delegatedAuthEnabled
+                ? ''
+                : decryptPassword(row.password_ciphertext, row.password_iv, row.password_tag),
             isAdmin: isSuperAdmin,
             isSuperAdmin,
             expiresAt

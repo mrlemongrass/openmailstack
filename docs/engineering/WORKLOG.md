@@ -7047,3 +7047,48 @@ Released code commit: `0f2c6c68`
 ### Next task
 
 Complete a disposable Scheduler Workflow first-use lifecycle: create and publish a bounded workflow, trigger it from a temporary booking, verify job/delivery/notification state, then cancel/archive and remove every user-visible artifact while retaining required audit history.
+
+## 2026-07-29 — Scheduler Workflow lifecycle and production delegated authentication
+
+Agent/tool: Codex with Playwright and live protocol probes
+Branch: `main`
+Starting git state: clean at `521fb680`
+Scheduler lifecycle commit: `210ea974`
+
+### Acceptance criteria
+
+- [x] Publish a disposable Scheduler workflow and trigger it through a real booking.
+- [x] Prove email/in-app job delivery, Calendar projection, cancellation, and bounded cleanup.
+- [x] Configure server-side Dovecot master authentication for IMAP, SMTP submission, and ManageSieve.
+- [x] Preserve active web sessions and offline-index scope without retaining reversible mailbox passwords.
+- [x] Require an explicit high-entropy production session secret.
+- [x] Keep DAV and ActiveSync user-password validation independent of delegated credentials.
+
+### Scheduler lifecycle proof
+
+- Created event `OMS Workflow E2E 20260729 2112` and workflow `OMS Workflow First Use 20260729 2112`, then booked Friday 2026-07-31 at 09:00 America/Phoenix.
+- The confirmation email and in-app actions each completed in one attempt with no alerts. The booking appeared in owner Bookings and Calendar, then cancellation removed the Calendar projection.
+- Cleanup archived/disabled the workflow, deleted the event type, unpublished default availability, dismissed the in-app notice, and permanently removed all five lifecycle messages. The public event is unavailable and the owner profile advertises no meetings.
+- Required cancelled-booking, version, completed-job/attempt, and audit history remain. The notification count is zero and no active/public Scheduler artifact remains.
+- The cleanup pass also fixed permanent deletion from Trash, added an owner-scoped notification-dismiss endpoint, and prevented enabling a workflow before its first published version.
+
+### Delegated-auth implementation and proof
+
+- `functions/04_dovecot.sh` now creates a preserved 64-character raw master secret, writes only a SHA512-CRYPT hash to Dovecot, installs master passdbs for Dovecot 2.4 and legacy 2.3 syntax, and keeps the raw/hash files at `root:root 0600` and `root:dovecot 0640`.
+- `functions/10_webmail.sh` generates/preserves an explicit 64-character `OMS_SESSION_SECRET` and renders matching IMAP/SMTP/Sieve master pairs. Production startup rejects a missing/short secret or incomplete credential pair.
+- SMTP applies the same `user*master` convention as IMAP/ManageSieve. DAV explicitly uses direct IMAP authentication, matching ActiveSync's existing direct credential check.
+- Session initialization runs before password-dependent background workers. Delegated sessions and `mailbox_credentials` registry entries encrypt an empty value; startup sanitizes legacy ciphertext without decrypting it. The search worker and scheduled sender operate with empty per-user passwords through master auth.
+- Live independent probes passed delegated IMAP folder listing, SMTP `verify()`, and ManageSieve login for `localtest@housevo.us`.
+- Live post-cutover proof retained 19 web sessions and 3 offline-index users while both tables reported zero non-empty `password_ciphertext` values. The next background search cycle indexed all three users without decryption errors.
+- The Dovecot restart exposed a host systemd failure before exec (`226/NAMESPACE` on `/dev`). A scoped live drop-in sets only `PrivateDevices=false`; Dovecot remains protected by `ProtectSystem=full` and returned active before the backend cutover.
+- Backend tests passed 212/215 with three documented optional skips before the startup-order follow-up; focused startup/search/auth tests then passed. Bash syntax, the new installer guard, Nginx validation, service health, web HTTP 200, and ActiveSync OPTIONS 200 passed.
+- Root-only rollback material is stored under `live_migration_backups/20260729-auth-hardening/` and includes Dovecot/backend configuration plus the pre-sanitization credential tables.
+
+### Remaining gates
+
+- ActiveSync server state proves catch-up exhaustion, sustained no-change polling, and exact saved-UID reconciliation at the checkpoint. Physical iPhone confirmation that the two newest Inbox messages display is still required before closing that gate.
+- App passwords/2FA and the endpoint-by-endpoint Admin RBAC/domain-scope audit remain the next security slice.
+
+### Next task
+
+Implement protocol-capable app passwords and web two-factor authentication, then complete the Admin endpoint RBAC/domain-scoping inventory and close its findings.

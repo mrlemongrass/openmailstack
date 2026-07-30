@@ -27,6 +27,8 @@ BACKEND_DIR="/opt/openmailstack-backend"
 FRONTEND_DIR="${OPENMAILSTACK_WEB_ROOT:-/var/www/openmailstack}"
 ENV_DIR="/etc/openmailstack"
 ENV_FILE="${ENV_DIR}/webmail-backend.env"
+DOVECOT_MASTER_USER="${OMS_DOVECOT_MASTER_USER:-oms-internal}"
+DOVECOT_MASTER_SECRET_FILE="${OMS_DOVECOT_MASTER_SECRET_FILE:-${ENV_DIR}/dovecot-master.secret}"
 SERVICE_FILE="/etc/systemd/system/openmailstack.service"
 REMEDIATE_SCRIPT="/usr/local/sbin/openmailstack-remediate"
 REMEDIATE_SUDOERS="/etc/sudoers.d/openmailstack-remediate"
@@ -46,6 +48,24 @@ existing_env_value() {
     [[ -f "${ENV_FILE}" ]] || return 0
     sed -n "s/^${key}=\"\([^\"]*\)\"$/\1/p" "${ENV_FILE}" | tail -n 1
 }
+
+SESSION_SECRET="${OMS_SESSION_SECRET:-$(existing_env_value OMS_SESSION_SECRET)}"
+if [[ -z "${SESSION_SECRET}" ]]; then
+    SESSION_SECRET="$(openssl rand -hex 32)"
+fi
+if (( ${#SESSION_SECRET} < 32 )); then
+    echo -e "${RED}Error: OMS_SESSION_SECRET must contain at least 32 characters.${NC}" >&2
+    exit 1
+fi
+if [[ ! -s "${DOVECOT_MASTER_SECRET_FILE}" ]]; then
+    echo -e "${RED}Error: Dovecot master secret is missing; run functions/04_dovecot.sh first.${NC}" >&2
+    exit 1
+fi
+DOVECOT_MASTER_PASSWORD=$(<"${DOVECOT_MASTER_SECRET_FILE}")
+if (( ${#DOVECOT_MASTER_PASSWORD} < 32 )); then
+    echo -e "${RED}Error: Dovecot master secret must contain at least 32 characters.${NC}" >&2
+    exit 1
+fi
 
 SCHEDULER_SECRET_KEY_VERSION="${OMS_SCHEDULER_SECRET_KEY_VERSION:-$(existing_env_value OMS_SCHEDULER_SECRET_KEY_VERSION)}"
 SCHEDULER_SECRET_KEY_VERSION="${SCHEDULER_SECRET_KEY_VERSION:-1}"
@@ -148,6 +168,7 @@ render_backend_env() {
             write_env_line "OMS_WEBMAIL_PORT" "${WEBMAIL_PORT}"
             write_env_line "OMS_PUBLIC_BASE_URL" "${PUBLIC_BASE_URL}"
             write_env_line "OMS_DEFAULT_DOMAIN" "${DEFAULT_DOMAIN}"
+            write_env_line "OMS_SESSION_SECRET" "${SESSION_SECRET}"
             write_env_line "OMS_COOKIE_SECURE" "${OMS_COOKIE_SECURE:-true}"
             write_env_line "OMS_UPLOAD_LIMIT_BYTES" "${OMS_UPLOAD_LIMIT_BYTES:-26214400}"
             write_env_line "ENABLE_OMS_SCHEDULER" "${SCHEDULER_ENABLED}"
@@ -173,13 +194,19 @@ render_backend_env() {
             write_env_line "OMS_IMAP_PORT" "${OMS_IMAP_PORT:-143}"
             write_env_line "OMS_IMAP_SECURE" "${OMS_IMAP_SECURE:-false}"
             write_env_line "OMS_IMAP_REJECT_UNAUTHORIZED" "${OMS_IMAP_REJECT_UNAUTHORIZED:-true}"
+            write_env_line "OMS_IMAP_MASTER_USER" "${OMS_IMAP_MASTER_USER:-${DOVECOT_MASTER_USER}}"
+            write_env_line "OMS_IMAP_MASTER_PASS" "${OMS_IMAP_MASTER_PASS:-${DOVECOT_MASTER_PASSWORD}}"
             write_env_line "OMS_SMTP_HOST" "${OMS_SMTP_HOST:-127.0.0.1}"
             write_env_line "OMS_SMTP_PORT" "${OMS_SMTP_PORT:-587}"
             write_env_line "OMS_SMTP_SECURE" "${OMS_SMTP_SECURE:-false}"
             write_env_line "OMS_SMTP_SERVER_NAME" "${OMS_SMTP_SERVER_NAME:-${MAIL_HOSTNAME}}"
             write_env_line "OMS_SMTP_REJECT_UNAUTHORIZED" "${OMS_SMTP_REJECT_UNAUTHORIZED:-true}"
+            write_env_line "OMS_SMTP_MASTER_USER" "${OMS_SMTP_MASTER_USER:-${DOVECOT_MASTER_USER}}"
+            write_env_line "OMS_SMTP_MASTER_PASS" "${OMS_SMTP_MASTER_PASS:-${DOVECOT_MASTER_PASSWORD}}"
             write_env_line "OMS_SIEVE_HOST" "${OMS_SIEVE_HOST:-127.0.0.1}"
             write_env_line "OMS_SIEVE_PORT" "${OMS_SIEVE_PORT:-4190}"
+            write_env_line "OMS_SIEVE_MASTER_USER" "${OMS_SIEVE_MASTER_USER:-${DOVECOT_MASTER_USER}}"
+            write_env_line "OMS_SIEVE_MASTER_PASS" "${OMS_SIEVE_MASTER_PASS:-${DOVECOT_MASTER_PASSWORD}}"
         } > "${ENV_FILE}"
     )
     chown root:root "${ENV_FILE}"

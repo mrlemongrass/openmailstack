@@ -69,6 +69,7 @@ const search_worker_1 = require("./search-worker");
 const scheduled_send_1 = require("./scheduled-send");
 const calendar_subscription_1 = require("./calendar-subscription");
 const router_1 = require("./scheduler/router");
+const auth_1 = require("./auth");
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
 exports.io = new socket_io_1.Server(server, {
@@ -90,8 +91,15 @@ exports.io.on('connection', (socket) => {
     });
 });
 (0, search_index_1.ensureMailSearchSchema)().catch(err => console.error('Failed to initialize mail search index:', err));
-(0, search_worker_1.startSearchWorker)();
-(0, scheduled_send_1.startScheduledSender)();
+(0, auth_1.initializeSessionStore)()
+    .then(() => {
+    (0, search_worker_1.startSearchWorker)();
+    (0, scheduled_send_1.startScheduledSender)();
+})
+    .catch(err => {
+    console.error('Failed to initialize secure session storage:', err);
+    process.exit(1);
+});
 (0, calendar_subscription_1.startCalendarSubscriptionWorker)();
 (0, user_settings_1.ensureUserSettingsSchema)().catch(err => console.error('Failed to initialize user settings schema:', err));
 (0, admin_settings_1.ensureAdminSettingsSchema)().catch(err => console.error('Failed to initialize admin settings schema:', err));
@@ -114,7 +122,6 @@ app.use(body_parser_1.default.raw({
     limit: `${config_1.serverConfig.uploadLimitBytes}b`
 }));
 const path = __importStar(require("path"));
-const auth_1 = require("./auth");
 app.use('/uploads', (req, res, next) => {
     (0, auth_1.requireSession)(req, res, () => {
         next();

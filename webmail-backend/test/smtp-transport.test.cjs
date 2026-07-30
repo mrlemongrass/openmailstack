@@ -28,3 +28,24 @@ test('core SMTP gives Nodemailer the configured certificate hostname for loopbac
   assert.equal(transporter.options.tls.rejectUnauthorized, true);
   transporter.close();
 });
+
+test('core SMTP uses delegated credentials without retaining the mailbox password', () => {
+  const options = smtpTransportOptions(
+    { user: 'user@example.test', pass: 'mailbox-password' },
+    {
+      host: '127.0.0.1',
+      port: 587,
+      secure: false,
+      serverName: 'mail.example.test',
+      rejectUnauthorized: true,
+      masterUser: 'oms-internal',
+      masterPass: 'delegated-secret',
+    },
+  );
+
+  assert.deepEqual(options.auth, {
+    user: 'user@example.test*oms-internal',
+    pass: 'delegated-secret',
+  });
+  assert.notEqual(options.auth.pass, 'mailbox-password');
+});

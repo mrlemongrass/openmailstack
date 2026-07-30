@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPublicBaseUrl = exports.normalizeMailboxUsername = exports.sieveConfig = exports.smtpTransportOptions = exports.smtpConfig = exports.imapConfig = exports.dbConfig = exports.schedulerConfig = exports.serverConfig = void 0;
+exports.getPublicBaseUrl = exports.normalizeMailboxUsername = exports.delegatedAuthEnabled = exports.sieveConfig = exports.smtpTransportOptions = exports.smtpConfig = exports.imapConfig = exports.dbConfig = exports.schedulerConfig = exports.serverConfig = void 0;
 const parseNumber = (name, fallback) => {
     const raw = process.env[name];
     if (!raw)
@@ -25,13 +25,18 @@ const required = (name) => {
     return value;
 };
 const optional = (name, fallback = '') => process.env[name] || fallback;
+const explicitSessionSecret = optional('OMS_SESSION_SECRET');
+const sessionSecret = explicitSessionSecret || (process.env.NODE_ENV === 'production' ? '' : required('OMS_DB_PASSWORD'));
+if (process.env.NODE_ENV === 'production' && sessionSecret.length < 32) {
+    throw new Error('Production requires OMS_SESSION_SECRET with at least 32 characters');
+}
 exports.serverConfig = {
     host: optional('OMS_WEBMAIL_HOST', '127.0.0.1'),
     port: parseNumber('OMS_WEBMAIL_PORT', 20000),
     publicBaseUrl: optional('OMS_PUBLIC_BASE_URL'),
     defaultDomain: optional('OMS_DEFAULT_DOMAIN'),
     sessionTtlMs: parseNumber('OMS_SESSION_TTL_SECONDS', 8 * 60 * 60) * 1000,
-    sessionSecret: optional('OMS_SESSION_SECRET', required('OMS_DB_PASSWORD')),
+    sessionSecret,
     cookieSecure: parseBoolean('OMS_COOKIE_SECURE', process.env.NODE_ENV === 'production'),
     uploadLimitBytes: parseNumber('OMS_UPLOAD_LIMIT_BYTES', 25 * 1024 * 1024),
     webhookSecret: optional('OMS_WEBHOOK_SECRET'),
@@ -104,16 +109,21 @@ exports.smtpConfig = {
     masterUser: optional('OMS_SMTP_MASTER_USER'),
     masterPass: optional('OMS_SMTP_MASTER_PASS'),
 };
-const smtpTransportOptions = (auth, config = exports.smtpConfig) => ({
-    host: config.host,
-    port: config.port,
-    secure: config.secure,
-    auth,
-    tls: {
-        rejectUnauthorized: config.rejectUnauthorized,
-        ...(config.serverName ? { servername: config.serverName } : {}),
-    },
-});
+const smtpTransportOptions = (auth, config = exports.smtpConfig) => {
+    const delegatedAuth = config.masterUser && config.masterPass
+        ? { user: `${auth.user}*${config.masterUser}`, pass: config.masterPass }
+        : auth;
+    return {
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        auth: delegatedAuth,
+        tls: {
+            rejectUnauthorized: config.rejectUnauthorized,
+            ...(config.serverName ? { servername: config.serverName } : {}),
+        },
+    };
+};
 exports.smtpTransportOptions = smtpTransportOptions;
 exports.sieveConfig = {
     host: optional('OMS_SIEVE_HOST', '127.0.0.1'),
@@ -121,6 +131,17 @@ exports.sieveConfig = {
     masterUser: optional('OMS_SIEVE_MASTER_USER'),
     masterPass: optional('OMS_SIEVE_MASTER_PASS'),
 };
+const validateCredentialPair = (userName, passName, user, pass) => {
+    if (Boolean(user) !== Boolean(pass)) {
+        throw new Error(`${userName} and ${passName} must be configured together`);
+    }
+};
+validateCredentialPair('OMS_IMAP_MASTER_USER', 'OMS_IMAP_MASTER_PASS', exports.imapConfig.masterUser, exports.imapConfig.masterPass);
+validateCredentialPair('OMS_SMTP_MASTER_USER', 'OMS_SMTP_MASTER_PASS', exports.smtpConfig.masterUser, exports.smtpConfig.masterPass);
+validateCredentialPair('OMS_SIEVE_MASTER_USER', 'OMS_SIEVE_MASTER_PASS', exports.sieveConfig.masterUser, exports.sieveConfig.masterPass);
+exports.delegatedAuthEnabled = Boolean(exports.imapConfig.masterUser && exports.imapConfig.masterPass
+    && exports.smtpConfig.masterUser && exports.smtpConfig.masterPass
+    && exports.sieveConfig.masterUser && exports.sieveConfig.masterPass);
 const normalizeMailboxUsername = (rawUser) => {
     let user = rawUser;
     if (user.includes('\\')) {

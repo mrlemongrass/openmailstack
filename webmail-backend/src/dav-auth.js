@@ -22,7 +22,7 @@ async function verifyCredentials(user, pass) {
         return true;
     }
     try {
-        const imap = new imap_1.ImapService(user, pass);
+        const imap = new imap_1.ImapService(user, pass, false);
         await imap.connect();
         await imap.logout();
         authCache.set(key, now + AUTH_CACHE_TTL_MS);

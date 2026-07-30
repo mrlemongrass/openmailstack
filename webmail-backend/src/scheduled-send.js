@@ -40,46 +40,53 @@ const runScheduledSender = async () => {
                 }));
             }
             try {
-                const [sessions] = await db_1.pool.query('SELECT password_ciphertext, password_iv, password_tag FROM webmail_sessions WHERE username = ? LIMIT 1', [username]);
-                if (sessions.length > 0) {
-                    const pass = (0, auth_1.decryptPassword)(sessions[0].password_ciphertext, sessions[0].password_iv, sessions[0].password_tag);
-                    const transporter = nodemailer_1.default.createTransport((0, config_1.smtpTransportOptions)({ user: username, pass }));
-                    await transporter.sendMail(mailOptions);
-                    try {
-                        const { ImapService } = require('./imap');
-                        const imap = new ImapService(username, pass);
-                        await imap.connect();
-                        // Append to Sent
-                        const folders = await imap.getFolders();
-                        let sentFolder = folders.find((f) => f.path.toLowerCase().includes('sent'))?.path;
-                        if (!sentFolder) {
+                let pass = '';
+                if (!config_1.delegatedAuthEnabled) {
+                    const [sessions] = await db_1.pool.query(`SELECT password_ciphertext, password_iv, password_tag
+                         FROM webmail_sessions
+                         WHERE username = ? AND expires_at > NOW()
+                         LIMIT 1`, [username]);
+                    if (sessions.length === 0) {
+                        throw new Error('No active session credential is available');
+                    }
+                    pass = (0, auth_1.decryptPassword)(sessions[0].password_ciphertext, sessions[0].password_iv, sessions[0].password_tag);
+                }
+                const transporter = nodemailer_1.default.createTransport((0, config_1.smtpTransportOptions)({ user: username, pass }));
+                await transporter.sendMail(mailOptions);
+                try {
+                    const { ImapService } = require('./imap');
+                    const imap = new ImapService(username, pass);
+                    await imap.connect();
+                    // Append to Sent
+                    const folders = await imap.getFolders();
+                    let sentFolder = folders.find((f) => f.path.toLowerCase().includes('sent'))?.path;
+                    if (!sentFolder) {
+                        try {
+                            await imap.client.mailboxCreate('Sent');
+                        }
+                        catch (e) { }
+                        sentFolder = 'Sent';
+                    }
+                    const MailComposer = require('nodemailer/lib/mail-composer');
+                    const mail = new MailComposer(mailOptions);
+                    const rawMessage = await mail.compile().build();
+                    await imap.appendMessage(sentFolder, rawMessage, ['\\Seen']);
+                    // Delete draft
+                    if (row.draft_uid) {
+                        let draftsFolder = folders.find((f) => f.path.toLowerCase().includes('draft'))?.path;
+                        if (draftsFolder) {
                             try {
-                                await imap.client.mailboxCreate('Sent');
+                                await imap.messageAction(draftsFolder, [parseInt(row.draft_uid, 10)], 'delete');
                             }
-                            catch (e) { }
-                            sentFolder = 'Sent';
-                        }
-                        const MailComposer = require('nodemailer/lib/mail-composer');
-                        const mail = new MailComposer(mailOptions);
-                        const rawMessage = await mail.compile().build();
-                        await imap.appendMessage(sentFolder, rawMessage, ['\\Seen']);
-                        // Delete draft
-                        if (row.draft_uid) {
-                            let draftsFolder = folders.find((f) => f.path.toLowerCase().includes('draft'))?.path;
-                            if (draftsFolder) {
-                                try {
-                                    await imap.messageAction(draftsFolder, [parseInt(row.draft_uid, 10)], 'delete');
-                                }
-                                catch (e) {
-                                    console.error('Failed to delete sent draft', e);
-                                }
+                            catch (e) {
+                                console.error('Failed to delete sent draft', e);
                             }
                         }
-                        await imap.logout();
                     }
-                    catch (e) {
-                        console.error('Failed IMAP sync after scheduled send:', e);
-                    }
+                    await imap.logout();
+                }
+                catch (e) {
+                    console.error('Failed IMAP sync after scheduled send:', e);
                 }
             }
             catch (err) {

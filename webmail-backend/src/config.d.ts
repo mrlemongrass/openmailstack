@@ -54,6 +54,8 @@ interface SmtpTransportConfig {
     secure: boolean;
     serverName: string;
     rejectUnauthorized: boolean;
+    masterUser?: string;
+    masterPass?: string;
 }
 export declare const smtpTransportOptions: (auth: {
     user: string;
@@ -65,6 +67,7 @@ export declare const sieveConfig: {
     masterUser: string;
     masterPass: string;
 };
+export declare const delegatedAuthEnabled: boolean;
 export declare const normalizeMailboxUsername: (rawUser: string) => string;
 export declare const getPublicBaseUrl: (req: any) => string;
 export {};

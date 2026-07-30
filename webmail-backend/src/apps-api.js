@@ -991,11 +991,8 @@ exports.appsApiRouter.get('/notes', async (req, res) => {
     const user = req.username;
     const pass = req.user?.password;
     try {
-        if (pass) {
-            // Run IMAP sync in background (non-blocking) or foreground?
-            // Let's await it so the response includes fresh notes.
-            await (0, notes_imap_sync_1.syncNotesWithImap)(user, pass);
-        }
+        // Await IMAP sync so the response includes fresh notes.
+        await (0, notes_imap_sync_1.syncNotesWithImap)(user, pass);
         const rows = await (0, notes_utils_1.listNotesWithReminders)(user);
         res.json({ success: true, notes: rows });
     }
@@ -1013,8 +1010,7 @@ exports.appsApiRouter.post('/notes', async (req, res) => {
             title, content, owner: user,
             color, is_pinned, is_locked, folder, labels_json
         });
-        if (pass)
-            (0, notes_imap_sync_1.syncNotesWithImap)(user, pass).catch(e => console.error(e));
+        (0, notes_imap_sync_1.syncNotesWithImap)(user, pass).catch(e => console.error(e));
         res.json({ success: true, note: saved });
     }
     catch (e) {
@@ -1038,8 +1034,7 @@ exports.appsApiRouter.put('/notes/:id', async (req, res) => {
             folder,
             labels_json
         });
-        if (pass)
-            (0, notes_imap_sync_1.syncNotesWithImap)(user, pass).catch(e => console.error(e));
+        (0, notes_imap_sync_1.syncNotesWithImap)(user, pass).catch(e => console.error(e));
         res.json({ success: true, note: saved });
     }
     catch (e) {
@@ -1052,8 +1047,7 @@ exports.appsApiRouter.delete('/notes/:id', async (req, res) => {
     const pass = req.user?.password;
     try {
         await (0, notes_utils_1.deleteNote)(req.params.id, user);
-        if (pass)
-            (0, notes_imap_sync_1.syncNotesWithImap)(user, pass).catch(e => console.error(e));
+        (0, notes_imap_sync_1.syncNotesWithImap)(user, pass).catch(e => console.error(e));
         res.json({ success: true });
     }
     catch (e) {

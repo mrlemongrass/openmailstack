@@ -61,6 +61,7 @@ import { startSearchWorker } from './search-worker';
 import { startScheduledSender } from './scheduled-send';
 import { startCalendarSubscriptionWorker } from './calendar-subscription';
 import { schedulerRouter } from './scheduler/router';
+import { getSession, initializeSessionStore, requireSession } from './auth';
 
 const app = express();
 const server = http.createServer(app);
@@ -83,8 +84,15 @@ io.on('connection', (socket) => {
     });
 });
 ensureMailSearchSchema().catch(err => console.error('Failed to initialize mail search index:', err));
-startSearchWorker();
-startScheduledSender();
+initializeSessionStore()
+    .then(() => {
+        startSearchWorker();
+        startScheduledSender();
+    })
+    .catch(err => {
+        console.error('Failed to initialize secure session storage:', err);
+        process.exit(1);
+    });
 startCalendarSubscriptionWorker();
 ensureUserSettingsSchema().catch(err => console.error('Failed to initialize user settings schema:', err));
 ensureAdminSettingsSchema().catch(err => console.error('Failed to initialize admin settings schema:', err));
@@ -108,7 +116,6 @@ app.use(bodyParser.raw({
 }));
 
 import * as path from 'path';
-import { getSession, requireSession } from './auth';
 app.use('/uploads', (req, res, next) => {
     requireSession(req, res, () => {
         next();

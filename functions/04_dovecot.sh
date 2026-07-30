@@ -26,6 +26,31 @@ echo -e "Installing Dovecot and MySQL modules..."
 openmailstack_install_required_packages dovecot-core dovecot-imapd dovecot-lmtpd dovecot-mysql
 openmailstack_install_optional_packages dovecot-pop3d
 
+DOVECOT_MASTER_USER="${OMS_DOVECOT_MASTER_USER:-oms-internal}"
+DOVECOT_MASTER_SECRET_FILE="${OMS_DOVECOT_MASTER_SECRET_FILE:-/etc/openmailstack/dovecot-master.secret}"
+DOVECOT_MASTER_USERS_FILE="${OMS_DOVECOT_MASTER_USERS_FILE:-/etc/dovecot/passwd.masterusers}"
+install -d -o root -g root -m 0700 "$(dirname "${DOVECOT_MASTER_SECRET_FILE}")"
+if [[ ! -s "${DOVECOT_MASTER_SECRET_FILE}" ]]; then
+    master_secret_tmp=$(mktemp)
+    openssl rand -hex 32 > "${master_secret_tmp}"
+    install -o root -g root -m 0600 "${master_secret_tmp}" "${DOVECOT_MASTER_SECRET_FILE}"
+    rm -f "${master_secret_tmp}"
+fi
+DOVECOT_MASTER_PASSWORD=$(<"${DOVECOT_MASTER_SECRET_FILE}")
+if (( ${#DOVECOT_MASTER_PASSWORD} < 32 )); then
+    echo "Dovecot master secret must contain at least 32 characters." >&2
+    exit 1
+fi
+DOVECOT_MASTER_HASH=$(printf '%s\n' "${DOVECOT_MASTER_PASSWORD}" | openssl passwd -6 -stdin)
+(
+    umask 077
+    printf '%s:{SHA512-CRYPT}%s\n' "${DOVECOT_MASTER_USER}" "${DOVECOT_MASTER_HASH}" > "${DOVECOT_MASTER_USERS_FILE}"
+)
+chown root:root "${DOVECOT_MASTER_SECRET_FILE}"
+chmod 0600 "${DOVECOT_MASTER_SECRET_FILE}"
+chown root:dovecot "${DOVECOT_MASTER_USERS_FILE}"
+chmod 0640 "${DOVECOT_MASTER_USERS_FILE}"
+
 DOVECOT_PROTOCOLS="imap lmtp sieve"
 if openmailstack_package_installed "dovecot-pop3d"; then
     DOVECOT_PROTOCOLS="imap pop3 lmtp sieve"
@@ -55,6 +80,7 @@ protocols = ${DOVECOT_PROTOCOLS}
 
 # disable_plaintext_auth was removed in 2.4. auth_allow_cleartext = no is the new default.
 auth_mechanisms = plain login
+auth_master_user_separator = *
 
 mail_driver = maildir
 mail_path = /var/vmail/%{user | domain}/%{user | username}
@@ -72,6 +98,12 @@ mysql 127.0.0.1 {
 }
 
 passdb_default_password_scheme = BLF-CRYPT
+
+passdb passwd-file {
+  passwd_file_path = ${DOVECOT_MASTER_USERS_FILE}
+  master = yes
+  result_success = continue
+}
 
 passdb sql {
   query = SELECT username AS user, password FROM mailbox WHERE username = '%{user}' AND active = '1'
@@ -193,6 +225,7 @@ protocols = ${DOVECOT_PROTOCOLS}
 
 disable_plaintext_auth = yes
 auth_mechanisms = plain login
+auth_master_user_separator = *
 
 mail_location = maildir:/var/vmail/%domain/%n
 mail_uid = 5000
@@ -201,6 +234,13 @@ first_valid_uid = 5000
 last_valid_uid = 5000
 
 mail_home = /var/vmail/%{user | domain}/%{user | username}
+
+passdb {
+  driver = passwd-file
+  args = ${DOVECOT_MASTER_USERS_FILE}
+  master = yes
+  pass = yes
+}
 
 passdb {
   driver = sql

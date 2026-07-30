@@ -3091,9 +3091,7 @@ exports.apiRouter.post('/notes', requireAuth, async (req, res) => {
             title, content, owner: req.user.username,
             color, is_pinned, is_locked, folder, labels_json
         });
-        if (req.user.password) {
-            (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
-        }
+        (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
         res.json({ success: true, note });
     }
     catch (err) {
@@ -3108,9 +3106,7 @@ exports.apiRouter.put('/notes/:id', requireAuth, async (req, res) => {
             id: req.params.id, owner: req.user.username,
             title, content, color, is_pinned, is_locked, folder, labels_json
         });
-        if (req.user.password) {
-            (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
-        }
+        (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
         res.json({ success: true, note });
     }
     catch (err) {

@@ -1043,11 +1043,8 @@ appsApiRouter.get('/notes', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const pass = (req as any).user?.password;
     try {
-        if (pass) {
-            // Run IMAP sync in background (non-blocking) or foreground?
-            // Let's await it so the response includes fresh notes.
-            await syncNotesWithImap(user, pass);
-        }
+        // Await IMAP sync so the response includes fresh notes.
+        await syncNotesWithImap(user, pass);
         
         const rows = await listNotesWithReminders(user);
         res.json({ success: true, notes: rows });
@@ -1066,7 +1063,7 @@ appsApiRouter.post('/notes', async (req: Request, res: Response) => {
             title, content, owner: user,
             color, is_pinned, is_locked, folder, labels_json
         });
-        if (pass) syncNotesWithImap(user, pass).catch(e => console.error(e));
+        syncNotesWithImap(user, pass).catch(e => console.error(e));
         res.json({ success: true, note: saved });
     } catch (e: any) {
         console.error("POST notes error", e);
@@ -1090,7 +1087,7 @@ appsApiRouter.put('/notes/:id', async (req: Request, res: Response) => {
             folder,
             labels_json
         });
-        if (pass) syncNotesWithImap(user, pass).catch(e => console.error(e));
+        syncNotesWithImap(user, pass).catch(e => console.error(e));
         res.json({ success: true, note: saved });
     } catch (e: any) {
         console.error("PUT notes error", e);
@@ -1103,7 +1100,7 @@ appsApiRouter.delete('/notes/:id', async (req: Request, res: Response) => {
     const pass = (req as any).user?.password;
     try {
         await deleteNote(req.params.id as string, user);
-        if (pass) syncNotesWithImap(user, pass).catch(e => console.error(e));
+        syncNotesWithImap(user, pass).catch(e => console.error(e));
         res.json({ success: true });
     } catch (e: any) {
         console.error("DELETE notes error", e);

@@ -188,6 +188,10 @@ test_scheduler_phase3_guards() {
     node "${PROJECT_ROOT}/tests/integration/scheduler_phase3_guard.cjs"
 }
 
+test_auth_hardening_guards() {
+    node "${PROJECT_ROOT}/tests/integration/auth_hardening_guard.cjs"
+}
+
 test_dry_run_local() {
     if [[ "$(uname -s)" != "Linux" ]]; then
         echo "[skip] Local dry-run integration requires Linux."
@@ -230,6 +234,7 @@ test_mail_message_view_regression
 test_scheduler_documentation_guards
 test_scheduler_phase1_guards
 test_scheduler_phase3_guards
+test_auth_hardening_guards
 test_dry_run_local
 
 echo "[ok] Integration checks completed."

@@ -139,11 +139,13 @@ passdb passwd-file {
   result_success = continue
 }
 
-passdb sql {
+passdb app-passwords {
+  driver = sql
   query = SELECT NULL AS password, 'Y' AS nopassword, ap.username AS user FROM app_passwords ap INNER JOIN mailbox m ON m.username = ap.username AND m.active = '1' INNER JOIN account_security s ON s.username = ap.username AND s.totp_enabled_at IS NOT NULL WHERE ap.username = '%{user}' AND ap.revoked_at IS NULL AND ap.secret_hash = SHA2('%{password}', 256)
 }
 
-passdb sql {
+passdb mailbox-passwords {
+  driver = sql
   query = SELECT username AS user, password FROM mailbox WHERE username = '%{user}' AND active = '1' AND ('%{master_user}' <> '' OR NOT EXISTS (SELECT 1 FROM account_security s WHERE s.username = mailbox.username AND s.totp_enabled_at IS NOT NULL))
 }
 

@@ -25,6 +25,8 @@ assert.match(dovecot, /DOVECOT_MASTER_USERS_FILE=.*passwd\.masterusers/);
 assert.match(dovecot, /openssl passwd -6 -stdin/);
 assert.match(dovecot, /auth_master_user_separator = \*/);
 assert.match(dovecot, /master = yes/);
+assert.match(dovecot, /passdb app-passwords \{\s+driver = sql/);
+assert.match(dovecot, /passdb mailbox-passwords \{\s+driver = sql/);
 assert.match(dovecot, /chmod 0600 "\$\{DOVECOT_MASTER_SECRET_FILE\}"/);
 assert.match(dovecot, /chown root:dovecot "\$\{DOVECOT_MASTER_USERS_FILE\}"/);
 assert.match(dovecot, /chmod 0640 "\$\{DOVECOT_MASTER_USERS_FILE\}"/);

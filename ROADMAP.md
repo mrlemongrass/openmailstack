@@ -1,6 +1,6 @@
 # OpenMailStack Roadmap
 
-Last reviewed: 2026-07-20
+Last reviewed: 2026-07-29
 
 This roadmap tracks the remaining product and release work for the modern OpenMailStack suite. The current product direction is a native React webmail, calendar, and contacts experience backed by the Node/Express sync proxy, while Roundcube and older SOGo-compatible paths remain compatibility or fallback surfaces.
 
@@ -42,35 +42,35 @@ Current note: iOS 26.5.2 Exchange mail/calendar/contacts passed on the live serv
 
 The contacts and notes apps have been extracted into their own directories with routing, hooks, and virtualized views, but still need the full feature pass:
 
-### Contacts (🟡 in progress)
+### Contacts (✅ shipped)
 - ✅ Per-app directory with useContacts hook, ContactSidebar, ContactGrid, ContactSkeleton.
 - ✅ Virtualized contact grid via @tanstack/react-virtual.
 - ✅ Labels and groups sidebar with filtering.
 - ✅ Duplicate detection and merging.
 - ✅ vCard and CSV import/export.
 - ✅ CardDAV and ActiveSync backend.
-- ❌ Quick actions from contact cards (email, call, map address).
-- ❌ Contact detail inline view (read-only panel, not edit modal).
-- ❌ Birthday-to-calendar integration in frontend.
-- ❌ Contact restore/trash.
-- ❌ Selective export (currently exports all).
-- ❌ Contact activity timeline (recent emails with this contact).
-- ❌ Contact sharing.
+- ✅ Quick actions from contact cards (email, call, map address).
+- ✅ Contact detail inline view with explicit edit, share, and delete actions.
+- ✅ Birthday-to-calendar integration through the generated Birthdays calendar.
+- ✅ Contact restore/trash with permanent-delete confirmation.
+- ✅ Selective vCard and CSV export for chosen contacts.
+- ✅ Contact activity timeline for recent email and owner-scoped Calendar activity.
+- ✅ Contact sharing through an owned, generated vCard handoff.
 
 ### Notes (🟡 in progress)
 - ✅ Per-app directory with useNotes hook, NotesSidebar, NotesGrid, NoteSkeleton.
-- ✅ Collaborative editing via Yjs/WebRTC (LiveNoteEditor).
+- 🟡 Yjs-backed rich editing is live; WebRTC collaboration remains opt-in pending self-hosted signaling and authenticated room access.
 - ✅ Pin, lock, color tags, labels, search.
 - ✅ Multi-format import (HTML, PDF, Markdown, JSON) and export (PDF, Markdown, JSON).
 - ✅ Apple Notes IMAP sync and ActiveSync support.
-- ❌ Checklists/todo items in notes.
-- ❌ Image paste and inline display.
-- ❌ Table support and code blocks.
-- ❌ Sort options (currently by updated date only).
-- ❌ Reminders/due dates on notes.
+- ✅ Checklists/todo items in notes.
+- 🟡 Image upload and inline display are implemented; direct clipboard-image paste remains.
+- ✅ Table support and code blocks.
+- ✅ Sort options.
+- ✅ Reminders/due dates on notes.
 - ✅ File attachments on notes.
-- ❌ Undo/redo buttons in editor.
-- ❌ Archive (third state between active and trash).
+- ✅ Undo/redo buttons in editor.
+- ✅ Archive (third state between active and trash).
 
 ## 3. Calendar Hardening ✅ (Revalidated 2026-07-20)
 

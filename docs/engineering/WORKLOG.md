@@ -6961,6 +6961,14 @@ Ending git state: focused Scheduler frontend, regression, audit, and memory chan
 - Authenticated Playwright through the real backend measured an opaque 354×824 dialog within the 390×844 viewport and no document overflow. Public and Advanced were directly selectable, a typed title survived an outside click, Escape closed the draft, the desktop tabs returned at 1440×900, and the browser reported zero post-login errors.
 - No event type, booking, profile, or availability data was submitted.
 
+### Deployment proof
+
+- Pushed and deployed frontend commit `b7ffd3b4` through the standard helper.
+- Repository/live `index.html` SHA-256 values match at `ae5774f261345d415805ce7da330627dd02c307d6c267f60157ec828e07dccba`; content-checksum rsync found no drift, and nginx configuration validates.
+- Post-deploy staging smoke passed all services, listeners, configuration, Rspamd, TLS, endpoint, authentication-boundary, and DKIM checks. Existing Postfix deprecation and Rspamd timeout advisories remain non-blocking.
+- A second authenticated live Playwright pass at 390×844 exposed every section, reached Advanced, preserved `Live preserved scheduler draft` after an outside click, measured document width equal to the 390 px viewport, and reported zero console errors. Escape dismissed the unsaved draft.
+- Root-only rollback archive: `/var/backups/openmailstack/scheduler-editor-b7ffd3b4-20260730T010752Z/webroot-before.tar.gz`; SHA-256 `403f0b5a6b9ac5a16ec54734a9bbb8c1cd6cdc865a42d3b4c100669096ee068e`.
+
 ### Next task
 
 Audit Scheduler default-availability creation and publishing at mobile and desktop widths, then repair the highest-value bounded workflow defect.

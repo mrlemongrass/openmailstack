@@ -1301,4 +1301,5 @@ Future entry template:
 - Replaced the clipped mobile event-type settings strip with the shared labelled section picker; all five destinations are directly discoverable while desktop keeps its tabs.
 - Backdrop clicks no longer discard event-type drafts. Close, Cancel, and Escape remain explicit exit paths.
 - Focused regressions, the 68-test frontend suite, ESLint, build, repository lint, and integration pass.
-- Authenticated Playwright at 390×844 and 1440×900 verified section transitions, zero document overflow, draft preservation, and desktop parity without saving Scheduler data.
+- Pushed and deployed `b7ffd3b4`; authenticated live Playwright at 390×844 and 1440×900 verified section transitions, zero document overflow, draft preservation, and desktop parity without saving Scheduler data.
+- Live `index.html` matches the repository at SHA-256 `ae5774f261345d415805ce7da330627dd02c307d6c267f60157ec828e07dccba`, post-deploy staging smoke passes, and the root-only rollback archive is stored under `/var/backups/openmailstack/scheduler-editor-b7ffd3b4-20260730T010752Z/`.

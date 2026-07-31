@@ -11,7 +11,14 @@ if [[ -z "${SMOKE_USER}" || -z "${SMOKE_PASSWORD}" ]]; then
 fi
 
 tmpdir=$(mktemp -d)
+contact_cleanup_needed=false
+contact_url=
 cleanup() {
+  if [[ "${contact_cleanup_needed}" == "true" && -n "${contact_url}" ]]; then
+    curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X DELETE \
+      -o /dev/null \
+      "${contact_url}" || true
+  fi
   rm -rf "${tmpdir}"
 }
 trap cleanup EXIT
@@ -22,6 +29,17 @@ contact_name="OMS Smoke Contact ${timestamp}"
 contact_email="oms-smoke-${timestamp}@example.invalid"
 addressbook_url="${BASE_URL}/carddav/addressbooks/${SMOKE_USER}/personal/"
 contact_url="${addressbook_url}${contact_uid}.vcf"
+
+status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X OPTIONS \
+  -D "${tmpdir}/options.headers" \
+  -o "${tmpdir}/options.out" \
+  -w '%{http_code}' \
+  "${addressbook_url}")
+if [[ "${status}" != "200" ]] || ! grep -Eqi '^DAV:.*(^|,)[[:space:]]*addressbook([[:space:]]*,|[[:space:]]*$)' "${tmpdir}/options.headers"; then
+  echo "FAIL: CardDAV OPTIONS did not advertise CardDAV support"
+  cat "${tmpdir}/options.headers"
+  exit 1
+fi
 
 vcard_file="${tmpdir}/${contact_uid}.vcf"
 cat > "${vcard_file}" <<VCF
@@ -35,6 +53,7 @@ TEL;TYPE=CELL:+15555550123
 END:VCARD
 VCF
 
+contact_cleanup_needed=true
 status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X PUT \
   -H 'Content-Type: text/vcard; charset=utf-8' \
   --data-binary @"${vcard_file}" \
@@ -58,6 +77,37 @@ if [[ "${status}" != "207" ]] || ! grep -q 'current-user-principal' "${tmpdir}/p
   cat "${tmpdir}/propfind-root.out"
   exit 1
 fi
+
+status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X PROPFIND \
+  -H 'Depth: 0' \
+  -H 'Content-Type: application/xml; charset=utf-8' \
+  -o "${tmpdir}/propfind-principal.out" \
+  -w '%{http_code}' \
+  "${BASE_URL}/carddav/principals/${SMOKE_USER}/")
+if [[ "${status}" != "207" ]] || ! grep -q 'current-user-privilege-set' "${tmpdir}/propfind-principal.out"; then
+  echo "FAIL: CardDAV principal PROPFIND did not return owner privileges"
+  cat "${tmpdir}/propfind-principal.out"
+  exit 1
+fi
+
+status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X PROPFIND \
+  -H 'Depth: 0' \
+  -H 'Content-Type: application/xml; charset=utf-8' \
+  -o "${tmpdir}/propfind-addressbook-capabilities.out" \
+  -w '%{http_code}' \
+  "${addressbook_url}")
+if [[ "${status}" != "207" ]]; then
+  echo "FAIL: CardDAV addressbook capability PROPFIND returned HTTP ${status}"
+  cat "${tmpdir}/propfind-addressbook-capabilities.out"
+  exit 1
+fi
+for privilege in read bind unbind; do
+  if ! grep -q "<D:${privilege}/>" "${tmpdir}/propfind-addressbook-capabilities.out"; then
+    echo "FAIL: CardDAV addressbook PROPFIND omitted ${privilege} privilege"
+    cat "${tmpdir}/propfind-addressbook-capabilities.out"
+    exit 1
+  fi
+done
 
 report_body="${tmpdir}/addressbook-query.xml"
 cat > "${report_body}" <<XML
@@ -115,6 +165,7 @@ if [[ "${status}" != "204" && "${status}" != "404" ]]; then
   cat "${tmpdir}/delete.out"
   exit 1
 fi
+contact_cleanup_needed=false
 
 status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X PROPFIND \
   -H 'Depth: 1' \

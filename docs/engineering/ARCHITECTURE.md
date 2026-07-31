@@ -1153,6 +1153,24 @@ Current ActiveSync Mail interoperability seam, deployed and script-verified 2026
 - Email `FilterType`, `WindowSize`, and AirSyncBase body preferences are honored with UTF-8-safe truncation, protocol window bounds, and a 16 MiB aggregate source-fetch budget. FilterType `0` or an omitted FilterType paginates every eligible item through `MoreAvailable`; once the initial catch-up is complete, unchanged `HIGHESTMODSEQ` polls avoid `SEARCH ALL`.
 - `tests/integration/activesync_mail_smoke.sh` uses the real web message-action API to prove Inbox-to-Junk and Junk-to-Trash deltas, body truncation, read/unread changes, and an empty no-change Sync. The production smoke passed under isolated synthetic-device state. Physical iOS 26.5.2 passed the stale-key reset and continuous all-mail paging after hotfix `bc4f7387`; exhaustion/no-change remains open. Do not repeat a spam move based on subject alone while the IMAP clients and current server UIDs disagree about the two historical examples.
 
+Current CardDAV interoperability seam, locally verified 2026-07-30 and pending
+deployment:
+
+- `webmail-backend/src/carddav.ts` implements native principal/address-book
+  discovery and one owner-only Personal Contacts collection. Its bounded
+  `DAV:current-user-privilege-set` metadata reflects implemented behavior:
+  read access, contact-resource `write-content`, and collection
+  `bind`/`unbind`.
+- OpenMailStack does not currently claim full RFC 3744 `access-control`,
+  mutable ACLs, aggregate `write`, or arbitrary `write-properties` support.
+  The owner metadata is present to make create/edit/delete capability explicit
+  without overstating the protocol surface.
+- `webmail-backend/test/carddav-capabilities.test.cjs` exercises authenticated
+  owner discovery through the real Express router.
+  `tests/integration/carddav_sync_smoke.sh` checks the public capability and
+  CRUD/tombstone lifecycle and deletes its unique remote contact from the EXIT
+  trap if a post-PUT assertion fails.
+
 Agents should locate and document:
 
 - where the SOGo ActiveSync integration lives

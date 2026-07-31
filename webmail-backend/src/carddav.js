@@ -10,6 +10,14 @@ const dav_report_1 = require("./dav-report");
 const contact_utils_1 = require("./contact-utils");
 const router = express_1.default.Router();
 const ADDRESSBOOK_SLUGS = new Set(['personal', 'contacts']);
+const READ_PRIVILEGES = ['read', 'read-current-user-privilege-set'];
+const CONTACT_PRIVILEGES = [...READ_PRIVILEGES, 'write-content'];
+const ADDRESSBOOK_PRIVILEGES = [...READ_PRIVILEGES, 'bind', 'unbind'];
+function currentUserPrivilegeSet(privileges) {
+    return `<D:current-user-privilege-set>${privileges
+        .map(privilege => `<D:privilege><D:${privilege}/></D:privilege>`)
+        .join('')}</D:current-user-privilege-set>`;
+}
 function emitContactsUpdated(user, details = {}) {
     try {
         const { io } = require('./index');
@@ -53,6 +61,7 @@ function responseForAddressBook(user, syncToken, includeChildren) {
         <D:displayname>Personal Contacts</D:displayname>
         <CS:getctag>"${(0, contact_utils_1.xmlEscape)(syncToken)}"</CS:getctag>
         <D:sync-token>http://openmailstack.local/carddav/${(0, contact_utils_1.xmlEscape)(syncToken)}</D:sync-token>
+        ${currentUserPrivilegeSet(ADDRESSBOOK_PRIVILEGES)}
         <C:supported-address-data>
           <C:address-data-type content-type="text/vcard" version="3.0"/>
           <C:address-data-type content-type="text/vcard" version="4.0"/>
@@ -71,6 +80,7 @@ async function contactResourceResponse(user, contact, includeData) {
       <D:prop>
         <D:getetag>${(0, contact_utils_1.xmlEscape)((0, contact_utils_1.contactEtag)(contact))}</D:getetag>
         <D:getcontenttype>text/vcard; charset=utf-8</D:getcontenttype>
+        ${currentUserPrivilegeSet(CONTACT_PRIVILEGES)}
         ${includeData ? `<C:address-data>${(0, contact_utils_1.xmlEscape)(vcard)}</C:address-data>` : ''}
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
@@ -162,6 +172,7 @@ async function handlePropfind(req, res, user) {
       <D:prop>
         <D:current-user-principal><D:href>/carddav/principals/${(0, contact_utils_1.xmlEscape)(user)}/</D:href></D:current-user-principal>
         <D:resourcetype><D:collection/></D:resourcetype>
+        ${currentUserPrivilegeSet(READ_PRIVILEGES)}
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
@@ -180,6 +191,7 @@ async function handlePropfind(req, res, user) {
         <D:displayname>${(0, contact_utils_1.xmlEscape)(user)}</D:displayname>
         <D:principal-URL><D:href>/carddav/principals/${(0, contact_utils_1.xmlEscape)(user)}/</D:href></D:principal-URL>
         <C:addressbook-home-set><D:href>/carddav/addressbooks/${(0, contact_utils_1.xmlEscape)(user)}/</D:href></C:addressbook-home-set>
+        ${currentUserPrivilegeSet(READ_PRIVILEGES)}
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
@@ -215,6 +227,7 @@ ${responseForAddressBook(user, syncToken, contactResponses)}
     <D:propstat>
       <D:prop>
         <D:resourcetype><D:collection/></D:resourcetype>
+        ${currentUserPrivilegeSet(READ_PRIVILEGES)}
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>

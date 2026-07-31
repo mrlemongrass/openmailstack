@@ -7433,3 +7433,64 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   and create/edit/delete or self-send evidence. Then implement Mozilla
   Autoconfiguration before returning to the lower-priority ManageSieve parser
   risk.
+
+## 2026-07-30 — macOS Contacts Default-Account Capability
+
+### Acceptance criteria
+
+- Preserve authenticated CardDAV discovery, contact sync, and existing
+  create/edit/delete behavior.
+- Advertise only owner privileges that the native CardDAV route actually
+  implements: read access, `write-content` on contact resources, and
+  `bind`/`unbind` on the Personal Contacts collection.
+- Add a public-HTTP regression at the Express route seam and strengthen the
+  authenticated production smoke so failures cannot leave an active synthetic
+  contact.
+- Deploy behind a rollback snapshot, prove the public capability response and
+  reversible CardDAV lifecycle, then have the user recheck the physical macOS
+  26.5.2 Default Account menu.
+
+### Diagnosis
+
+- macOS 26.5.2 authenticated as `thang@housevo.us`, discovered the principal
+  and Personal Contacts collection, and completed 4 `OPTIONS`, 21 `PROPFIND`,
+  and 162 contact `GET` requests with only `200`/`207` responses.
+- Contacts showed the account-level `All HouseVo Contacts` list and allowed
+  editing existing cards, but omitted HouseVo from the Default Account menu.
+  This rules out certificate, authentication, disabled-account, and general
+  read-only failures.
+- The CardDAV responses exposed collection type, supported vCard formats, and
+  writable HTTP methods but omitted `DAV:current-user-privilege-set`. The
+  physical-menu cause remains an evidence-backed protocol hypothesis until the
+  post-deploy Mac recheck.
+
+### Implementation and pre-deploy proof
+
+- `webmail-backend/src/carddav.ts` now returns bounded owner privilege metadata
+  on the root, principal, address-book home, Personal Contacts collection, and
+  contact resources. It deliberately does not advertise RFC 3744
+  `access-control`, mutable ACLs, aggregate `write`, or `write-properties`,
+  because those broader contracts are not implemented.
+- `webmail-backend/test/carddav-capabilities.test.cjs` exercises authenticated
+  `OPTIONS` and macOS-shaped `PROPFIND` requests through the real Express
+  router. The test first failed against the old response, then passed after
+  the owner metadata was added.
+- `tests/integration/carddav_sync_smoke.sh` now checks the public capability
+  response. Its EXIT trap deletes the unique remote contact whenever a
+  post-PUT assertion fails, while the normal path still verifies
+  PUT/REPORT/GET/DELETE and both tombstone forms.
+- Backend proof: 253 tests, 250 passed, 3 optional environment-gated skips, 0
+  failed. Frontend proof: 84/84 passed. Repository integration guards, Bash
+  syntax/lint, focused CardDAV test, and `git diff --check` pass.
+- The pre-deploy public smoke failed at the new read-only capability preflight
+  before creating a contact, proving the production response does not yet
+  contain the change.
+
+### Independent review and remaining gate
+
+- Standards review caught and prevented a false full-ACL compliance claim,
+  overbroad `write-properties`, unsafe smoke cleanup, and the missing worklog
+  entry. Spec review independently flagged the overbroad property privilege
+  and correctly kept deployment plus the physical macOS result open.
+- Deployment, exact live-artifact verification, the reversible authenticated
+  public smoke, and the physical macOS Default Account recheck remain pending.

@@ -284,6 +284,41 @@ test('FilterType, WindowSize, and body preferences are normalized to EAS limits'
   assert.throws(() => normalizeMailSyncOptions({ filterType: '6' }), /FilterType/);
 });
 
+test('iOS MIME Fetch without TruncationSize does not reuse the list preview limit', async () => {
+  const listOptions = normalizeMailSyncOptions({
+    bodyType: '1',
+    truncationSize: '500',
+  });
+  const fetchOptions = normalizeMailSyncOptions({ bodyType: '4' }, listOptions);
+  const messageContent = 'EXACT-IOS-MESSAGE-CONTENT';
+  const source = Buffer.from([
+    'From: Sender <sender@example.test>',
+    'To: Recipient <recipient@example.test>',
+    'Subject: iOS MIME fetch',
+    `X-Long: ${'h'.repeat(700)}`,
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    messageContent,
+  ].join('\r\n'));
+  const nodes = await activeSyncMailApplicationData({
+    uid: 9,
+    flags: [],
+    envelope: {},
+    internalDate: new Date('2026-07-31T12:00:00Z'),
+    size: source.length,
+    source,
+    sourceComplete: true,
+  }, fetchOptions);
+  const body = nodes.find(node => node.tag === 'Body');
+  const bodyChild = tag => body.children.find(node => node.tag === tag)?.content;
+
+  assert.equal(fetchOptions.truncationSize, 10 * 1024 * 1024);
+  assert.equal(bodyChild('Type'), '4');
+  assert.match(bodyChild('Data'), new RegExp(messageContent));
+  assert.equal(bodyChild('Truncated'), undefined);
+  assert.equal(normalizeMailSyncOptions({}, listOptions).truncationSize, 500);
+});
+
 test('aggregate source budget reduces large pages and leaves pending work available', () => {
   const largeBody = { windowSize: 512, truncationSize: 10 * 1024 * 1024 };
   assert.equal(effectiveMailSyncWindow(largeBody), 1);

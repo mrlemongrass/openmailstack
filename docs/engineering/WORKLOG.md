@@ -7521,3 +7521,74 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   post-deploy error count is zero.
 - The physical macOS 26.5.2 Default Account menu remains the only acceptance
   gate for this finding.
+
+## 2026-07-31 — iOS Exchange MIME Body Retrieval Hotfix
+
+### Goal and acceptance criteria
+
+- Restore message bodies in the existing iOS Exchange account without changing
+  IMAP mail, mailbox data, sync keys, or unrelated protocol behavior.
+- Reproduce the observed iOS sequence: a Type-1 list preview limited to 500
+  bytes followed by a Type-4 MIME Sync Fetch with no `TruncationSize`.
+- Return the MIME body for that Fetch, keep explicit truncation bounded, retain
+  stored options when the client sends no new body preference, and prevent an
+  old header-only retry response from being served to the active Inbox scope.
+- Require automated tests, exact deployed artifacts, a rollback snapshot,
+  service/route/staging health, and a final physical iPhone body-rendering
+  confirmation.
+
+### Diagnosis
+
+- iOS IMAP rendered the same messages normally, isolating the incident to the
+  ActiveSync representation rather than mailbox storage or delivery.
+- Live ActiveSync request evidence showed ordinary Sync using
+  `BodyPreference Type=1` with `TruncationSize=500`. Opening a message sent a
+  Sync `Fetch` with `MIMESupport=2`, `BodyPreference Type=4`, and no
+  `TruncationSize`.
+- `normalizeMailSyncOptions()` used the persisted 500-byte value as the missing
+  truncation fallback. Read-only inspection of successful live Type-4 Fetch
+  responses found exactly 500 data bytes, `Truncated=1`, and no MIME
+  header/body boundary despite much larger estimated source sizes.
+- Before deployment, the active iPhone Inbox scope had advanced to a small
+  Type-1 no-change response, so it had no old 500-byte MIME response waiting
+  for exact-request replay. No production sync row was changed.
+
+### Implementation
+
+- `webmail-backend/src/eas-mail-sync.ts` now distinguishes an explicitly
+  supplied body preference from a request with no new preference. When the
+  preference is present and `TruncationSize` is omitted, it uses the existing
+  10 MiB bounded complete-content ceiling rather than the persisted preview
+  limit. Explicit limits remain clamped, and no-preference requests retain the
+  stored limit.
+- `webmail-backend/test/eas-mail-sync.test.cjs` adds the red-then-green exact
+  iOS sequence with headers longer than 500 bytes and a body marker after the
+  MIME boundary.
+- `tests/integration/activesync_mail_smoke.sh` now performs the iOS-shaped MIME
+  Fetch, asserts successful command status, body content, no unexpected
+  truncation, and a new sync key before the existing read/unread checks.
+
+### Verification and deployment
+
+- The focused regression failed before the source change with `500 !==
+  10485760`, then passed. Focused ActiveSync tests passed 27/27.
+- Backend tests passed 251/254 with three documented optional environment
+  skips and zero failures. The TypeScript build, Bash syntax, full repository
+  integration including frontend 84/84, and `git diff --check` passed.
+- The authenticated ActiveSync smoke could not run because smoke credentials
+  were not present; the physical iPhone check remains authoritative for this
+  incident.
+- A root-only rollback copy of the prior five `eas-mail-sync` artifacts is at
+  `/var/backups/openmailstack/20260731T203319Z-eas-mime-body/`.
+- Only the five source/generated `eas-mail-sync` artifacts were installed, with
+  `openmailstack:openmailstack` ownership and mode `0644`. Repository/live
+  hashes match exactly, including the unchanged declaration.
+- `openmailstack.service` is active/running with `NRestarts=0`; the post-restart
+  warning journal is empty. Direct and public ActiveSync OPTIONS return `200`,
+  Nginx validation passes, and the complete staging smoke passes.
+
+### Remaining gate
+
+- The user must close and reopen iOS Mail, open an Exchange message, and confirm
+  that the content renders. Keep the iPhone Exchange Mail row open until that
+  physical result is observed.

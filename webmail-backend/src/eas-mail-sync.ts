@@ -60,6 +60,7 @@ const DEFAULT_OPTIONS: MailSyncOptions = {
     bodyType: 1,
     truncationSize: 500,
 };
+const MAX_MAIL_SYNC_BODY_BYTES = 10 * 1024 * 1024;
 
 const integerOption = (value: unknown, fallback: number): number => {
     if (value === undefined || value === null || value === '') return fallback;
@@ -80,8 +81,13 @@ export function normalizeMailSyncOptions(
     const windowSize = Math.max(1, Math.min(512, requestedWindow));
     const requestedBodyType = integerOption(values.bodyType, fallback.bodyType);
     const bodyType = [1, 2, 4].includes(requestedBodyType) ? requestedBodyType : fallback.bodyType;
-    const requestedTruncation = integerOption(values.truncationSize, fallback.truncationSize);
-    const truncationSize = Math.max(0, Math.min(10 * 1024 * 1024, requestedTruncation));
+    const bodyPreferenceSpecified = values.bodyType !== undefined && values.bodyType !== null && values.bodyType !== '';
+    const truncationSizeSpecified = values.truncationSize !== undefined && values.truncationSize !== null && values.truncationSize !== '';
+    const truncationFallback = bodyPreferenceSpecified && !truncationSizeSpecified
+        ? MAX_MAIL_SYNC_BODY_BYTES
+        : fallback.truncationSize;
+    const requestedTruncation = integerOption(values.truncationSize, truncationFallback);
+    const truncationSize = Math.max(0, Math.min(MAX_MAIL_SYNC_BODY_BYTES, requestedTruncation));
 
     return { filterType, windowSize, bodyType, truncationSize };
 }
@@ -228,7 +234,7 @@ export const effectiveMailSyncWindow = (
     reservedBodyItems = 0,
 ): number => {
     const perItemSourceBytes = Math.max(1, Math.min(
-        10 * 1024 * 1024 + 256 * 1024,
+        MAX_MAIL_SYNC_BODY_BYTES + 256 * 1024,
         options.truncationSize + 256 * 1024,
     ));
     const bodyItemBudget = Math.max(1, Math.floor(MAX_MAIL_SYNC_SOURCE_BYTES / perItemSourceBytes));

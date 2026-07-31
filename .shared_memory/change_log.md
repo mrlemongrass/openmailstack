@@ -1400,3 +1400,11 @@ Future entry template:
 - Root-only rollback:
   `/var/backups/openmailstack/carddav-owner-6901d9b-20260731T044940Z/`.
   The physical macOS 26.5.2 Default Account menu recheck remains open.
+
+## 2026-07-31 — iOS Exchange MIME Body Retrieval
+
+- Diagnosed: iOS message-list Sync stored a Type-1 500-byte preview limit, then message-open Sync Fetch requested MIME Type 4 without `TruncationSize`. The backend inherited 500 bytes and returned header-only MIME, producing "This message has no content" while iOS IMAP remained healthy.
+- Fixed: an explicit body preference with no truncation size uses the existing bounded 10 MiB complete-content ceiling. Explicit truncation and requests without a new body preference remain unchanged.
+- Tested: the red-then-green unit covers the exact iOS sequence; the authenticated ActiveSync smoke now Fetches and validates full MIME before read/unread mutations. Backend 251/254 with three optional skips, focused ActiveSync 27/27, full integration/frontend 84/84, TypeScript build, Bash syntax, and diff checks pass.
+- Deployed: the five affected `eas-mail-sync` artifacts match the tested repository. Direct/public EAS OPTIONS, Nginx, active zero-restart backend state, clean warning journal, and complete staging smoke pass. Root-only rollback: `/var/backups/openmailstack/20260731T203319Z-eas-mime-body/`.
+- Remaining: the authenticated smoke was credential-gated in this session. Have the user close/reopen iOS Mail and open an Exchange message while watching ActiveSync logs; do not mark the physical row passed until the body renders.

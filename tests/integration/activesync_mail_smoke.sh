@@ -266,6 +266,52 @@ async function syncMail(syncKey, collectionId = inboxCollectionId) {
   return { ast, nextKey };
 }
 
+async function fetchMailBody(syncKey, serverId) {
+  const request = writeWbxml({
+    tag: 'Sync',
+    page: 0,
+    children: [{
+      tag: 'Collections',
+      page: 0,
+      children: [{
+        tag: 'Collection',
+        page: 0,
+        children: [
+          { tag: 'SyncKey', page: 0, content: syncKey },
+          { tag: 'CollectionId', page: 0, content: inboxCollectionId },
+          { tag: 'GetChanges', page: 0, content: '0' },
+          { tag: 'Options', page: 0, children: [
+            { tag: 'MIMESupport', page: 0, content: '2' },
+            { tag: 'BodyPreference', page: 17, children: [
+              { tag: 'Type', page: 17, content: '4' },
+            ]},
+          ]},
+          { tag: 'Commands', page: 0, children: [{
+            tag: 'Fetch',
+            page: 0,
+            children: [{ tag: 'ServerId', page: 0, content: serverId }],
+          }]},
+        ],
+      }],
+    }],
+  });
+  const ast = await easRequest('Sync', request);
+  const status = descendants(ast, 'Status').find(node => node.page === 0)?.content?.toString();
+  if (status !== '1') throw new Error(`Mail body Fetch returned Status ${status || '(missing)'}`);
+  const responseFetch = descendants(ast, 'Fetch').find(node => text(node, 'ServerId') === serverId);
+  if (!responseFetch || text(responseFetch, 'Status') !== '1') {
+    throw new Error(`Mail body Fetch did not return ${serverId}`);
+  }
+  const appData = child(responseFetch, 'ApplicationData');
+  const bodyNode = descendants(appData, 'Body').find(node => node.page === 17);
+  if (!bodyNode || text(bodyNode, 'Type') !== '4') throw new Error('Mail body Fetch did not return MIME');
+  if (!text(bodyNode, 'Data').includes(bodyPrefix)) throw new Error('Mail body Fetch returned MIME headers without message content');
+  if (child(bodyNode, 'Truncated')) throw new Error('Mail body Fetch without TruncationSize was unexpectedly truncated');
+  const nextKey = descendants(ast, 'SyncKey').find(node => node.page === 0)?.content?.toString();
+  if (!nextKey || nextKey === syncKey) throw new Error(`Mail body Fetch returned invalid SyncKey ${nextKey || '(missing)'}`);
+  return nextKey;
+}
+
 function findSmokeAdd(ast) {
   return descendants(ast, 'Add').find(node => {
     const appData = child(node, 'ApplicationData');
@@ -352,7 +398,8 @@ async function assertSeenState(expectedSeen) {
     if (!bodyNode || text(bodyNode, 'Truncated') !== '1') throw new Error('Mail Sync did not honor body truncation');
     if (Buffer.byteLength(text(bodyNode, 'Data')) > 500) throw new Error('Mail Sync body exceeded requested TruncationSize');
 
-    const readKey = await changeReadFlag(serverId, initial.nextKey, '1');
+    const fetchKey = await fetchMailBody(initial.nextKey, serverId);
+    const readKey = await changeReadFlag(serverId, fetchKey, '1');
     await assertSeenState(true);
     const unreadKey = await changeReadFlag(serverId, readKey, '0');
     await assertSeenState(false);
@@ -386,7 +433,7 @@ async function assertSeenState(expectedSeen) {
     const trashInitial = await syncMail('0', trashCollectionId);
     if (!findSmokeAdd(trashInitial.ast)) throw new Error('Trash Sync did not emit Add for the moved message');
 
-    console.log('PASS: ActiveSync mail smoke completed with Junk/Trash deletes and efficient no-change Sync');
+    console.log('PASS: ActiveSync mail smoke completed with full MIME Fetch, Junk/Trash deletes, and efficient no-change Sync');
   } finally {
     await cleanupSeedMessage().catch(err => {
       console.error(`WARN: cleanup failed: ${err.message}`);

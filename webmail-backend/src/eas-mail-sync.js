@@ -16,6 +16,7 @@ const DEFAULT_OPTIONS = {
     bodyType: 1,
     truncationSize: 500,
 };
+const MAX_MAIL_SYNC_BODY_BYTES = 10 * 1024 * 1024;
 const integerOption = (value, fallback) => {
     if (value === undefined || value === null || value === '')
         return fallback;
@@ -31,8 +32,13 @@ function normalizeMailSyncOptions(values, fallback = DEFAULT_OPTIONS) {
     const windowSize = Math.max(1, Math.min(512, requestedWindow));
     const requestedBodyType = integerOption(values.bodyType, fallback.bodyType);
     const bodyType = [1, 2, 4].includes(requestedBodyType) ? requestedBodyType : fallback.bodyType;
-    const requestedTruncation = integerOption(values.truncationSize, fallback.truncationSize);
-    const truncationSize = Math.max(0, Math.min(10 * 1024 * 1024, requestedTruncation));
+    const bodyPreferenceSpecified = values.bodyType !== undefined && values.bodyType !== null && values.bodyType !== '';
+    const truncationSizeSpecified = values.truncationSize !== undefined && values.truncationSize !== null && values.truncationSize !== '';
+    const truncationFallback = bodyPreferenceSpecified && !truncationSizeSpecified
+        ? MAX_MAIL_SYNC_BODY_BYTES
+        : fallback.truncationSize;
+    const requestedTruncation = integerOption(values.truncationSize, truncationFallback);
+    const truncationSize = Math.max(0, Math.min(MAX_MAIL_SYNC_BODY_BYTES, requestedTruncation));
     return { filterType, windowSize, bodyType, truncationSize };
 }
 function filterTypeCutoff(filterType, now = new Date()) {
@@ -162,7 +168,7 @@ exports.createMailSyncKey = createMailSyncKey;
 exports.MAX_MAIL_SYNC_REPLAY_BYTES = 16 * 1024 * 1024 - 1;
 exports.MAX_MAIL_SYNC_SOURCE_BYTES = 16 * 1024 * 1024;
 const effectiveMailSyncWindow = (options, reservedBodyItems = 0) => {
-    const perItemSourceBytes = Math.max(1, Math.min(10 * 1024 * 1024 + 256 * 1024, options.truncationSize + 256 * 1024));
+    const perItemSourceBytes = Math.max(1, Math.min(MAX_MAIL_SYNC_BODY_BYTES + 256 * 1024, options.truncationSize + 256 * 1024));
     const bodyItemBudget = Math.max(1, Math.floor(exports.MAX_MAIL_SYNC_SOURCE_BYTES / perItemSourceBytes));
     return Math.max(0, Math.min(options.windowSize, bodyItemBudget - reservedBodyItems));
 };

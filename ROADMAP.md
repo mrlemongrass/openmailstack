@@ -1,6 +1,6 @@
 # OpenMailStack Roadmap
 
-Last reviewed: 2026-07-30
+Last reviewed: 2026-07-31
 
 This roadmap tracks the remaining product and release work for the modern OpenMailStack suite. The current product direction is a native React webmail, calendar, and contacts experience backed by the Node/Express sync proxy, while Roundcube and older SOGo-compatible paths remain compatibility or fallback surfaces.
 
@@ -30,13 +30,13 @@ webmail-frontend/src/
 
 ## 1. Real Client Validation
 
-- Validate iPhone Exchange setup for Mail, Calendar, and Contacts. ✅
+- Validate iPhone Exchange setup for Mail, Calendar, and Contacts. 🟡 (Calendar, Contacts, send, and message discovery pass; post-fix message-body rendering recheck pending.)
 - Validate macOS Mail, Calendar, and Contacts through IMAP, CalDAV, and CardDAV. 🟡
 - Validate Android mail and DAV clients such as K-9/Thunderbird and DAVx5. ✅ (Android 11 emulator)
 - Validate Thunderbird IMAP/SMTP, CalDAV, and CardDAV. ✅
 - Record exact setup steps and failures in `docs/webmail-release-validation.md`. ✅
 
-Current note: iOS 26.5.2 Exchange mail/calendar/contacts passed on the live server after the July 2026 protocol fixes. Physical iOS Calendar fixed-zone CRUD, a four-occurrence New York weekly series crossing DST, and recurrence-exception/reminder projection passed against OMS Web and macOS Calendar. On macOS 26.5.2, Calendar CalDAV single-event CRUD, a New York weekly DST series, and recurrence-exception/reminder projection likewise passed through OMS Web and iOS. Thunderbird 140.12.0esr on Debian 13.6 passed IMAP/SMTP, CalDAV, and CardDAV create/edit/delete. Thunderbird Android 21.0 plus DAVx5 4.5.18-ose passed mail, Calendar-provider, and Contacts-provider lifecycles on an Android 11 emulator; exact active test artifacts and the disposable profiles were removed. The remaining real-client gates are standalone macOS Mail and Contacts with exact versions/results. Thunderbird desktop guessed unsafe SMTP settings and Thunderbird Android found no configuration, so Mozilla Autoconfiguration support is the next setup-quality gap after the macOS gates.
+Current note: iOS 26.5.2 Exchange Calendar/Contacts and mail send/discovery passed on the live server after the July 2026 protocol fixes. A July 31 physical retry exposed blank Exchange message bodies: the server inherited the 500-byte list-preview limit when iOS requested MIME without a `TruncationSize`. The bounded fix is deployed and automated/live infrastructure gates pass; physical body rendering remains open until the user retries. Physical iOS Calendar fixed-zone CRUD, a four-occurrence New York weekly series crossing DST, and recurrence-exception/reminder projection passed against OMS Web and macOS Calendar. On macOS 26.5.2, Calendar CalDAV single-event CRUD, a New York weekly DST series, and recurrence-exception/reminder projection likewise passed through OMS Web and iOS. Thunderbird 140.12.0esr on Debian 13.6 passed IMAP/SMTP, CalDAV, and CardDAV create/edit/delete. Thunderbird Android 21.0 plus DAVx5 4.5.18-ose passed mail, Calendar-provider, and Contacts-provider lifecycles on an Android 11 emulator; exact active test artifacts and the disposable profiles were removed. The remaining real-client gates are the iPhone Exchange body-rendering retry plus standalone macOS Mail and Contacts with exact versions/results. Thunderbird desktop guessed unsafe SMTP settings and Thunderbird Android found no configuration, so Mozilla Autoconfiguration support is the next setup-quality gap after the physical gates.
 
 ## 2. Contacts & Notes UI Modernization 🟡
 
@@ -92,6 +92,7 @@ The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day 
 ## 4. Mail Product Work ✅ (2026-06-29)
 
 - 🟡 ActiveSync Mail now has user/device/folder-scoped delta state, source-folder deletes for web moves, destination-folder adds, bounded FilterType/WindowSize/body retrieval, paginated FilterType-0 all-mail sync, and efficient post-catch-up no-change polls. Automated and authenticated production web-to-Junk/web-to-Trash checks pass at `5b9cd89e`; hotfix `bc4f7387` physically advanced iOS 26.5.2 beyond the erroneous 25-message floor into continuous paging. Catch-up exhaustion/no-change and reconciliation of the historical spam-message identities remain before closing the device gate.
+- 🟡 The July 31 MIME-body hotfix stops an explicit iOS `BodyPreference Type=4` request with no `TruncationSize` from inheriting the earlier 500-byte Type-1 preview limit. The exact iOS request shape is covered by unit and authenticated-smoke regressions, the tested artifacts are live behind `/var/backups/openmailstack/20260731T203319Z-eas-mime-body/`, and the physical iPhone body-rendering retry remains the release gate.
 - 🟡 Webmail search interaction, correctness, and the first production performance pass are deployed (2026-07-21): 300 ms debounce plus immediate Enter submission, explicit field/current-folder/all-mail controls, folder-safe Move actions, and bounded partial-result handling remain intact. Commit `4b0eb69d` uses Boolean FULLTEXT for ordinary terms, preserves LIKE semantics for short/quoted/default-stopword terms, aborts superseded requests, consolidates folder status through LIST-STATUS where supported, and serves recent worker-certified complete indexes without synchronous IMAP. Incomplete or failed cycles invalidate older snapshots; certification requires same-cycle move/delete reconciliation. Live Boolean ranking returned 50 bounded rows in about 85 ms, while the removed dual-MATCH shape took about 6.3 seconds on the same production data.
 - ✅ Add a background search indexing worker so search is not dependent on an active web session (mailbox_credentials for offline indexing).
 - ✅ Add richer search operators such as `has:attachment`, `before:`, `after:`, `larger:`, and attachment content search (PDF/Office text extraction).

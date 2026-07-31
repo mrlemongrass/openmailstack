@@ -2,7 +2,7 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-07-30
+Last updated: 2026-07-31
 
 ## Resolved Risks
 
@@ -69,6 +69,7 @@ Last updated: 2026-07-30
 
 ## Remaining High-Priority Risks
 
+- ActiveSync mail body retrieval is deployed but not yet physically closed. When a client supplies a new `BodyPreference` and omits `TruncationSize`, do not inherit an earlier preview limit; iOS uses exactly this Type-1/500 preview followed by Type-4/no-size Fetch sequence. The current implementation uses a 10 MiB safety ceiling, so larger MIME messages remain intentionally truncated, and the physical iPhone retry is still required.
 - The bounded findings from the 2026-07-29 desktop/mobile Playwright audit are resolved. This is not proof that the suite has no other UX defects; keep `docs/engineering/UX_AUDIT.md` current as additional authenticated workflows are reviewed.
 - Notes collaboration is not production-ready merely because WebRTC endpoints can be configured. The operator must provide self-hosted signaling plus an authenticated room-access design before enabling or marketing collaborative notes; default builds deliberately stay local and make no external signaling request.
 - Calendar Track T is release-validated, but the backend and browser retain separate deployable timezone modules, so matching golden vectors must remain synchronized until a shared package can be deployed atomically. The CLDR mapping can drift from future Windows/IANA releases; retain its license and rule validation. Arbitrary custom rules are deliberately not interpreted: unsupported or invalid definitions remain floating with a warning and raw components are retained.

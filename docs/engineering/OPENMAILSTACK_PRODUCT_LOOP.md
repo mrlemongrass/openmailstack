@@ -238,3 +238,7 @@ Before reporting completion:
 - no secrets are touched
 - no unrelated files changed
 - risks are documented
+- mail-runtime changes pass authenticated public IMAPS and ActiveSync before
+  and after deployment; when protocol protection is provisioned, use
+  `functions/protocol_guarded_deploy.sh` so a post-deploy failure restores the
+  previous release automatically

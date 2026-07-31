@@ -1,8 +1,29 @@
 # Implementation State
 
+## 2026-07-31 Mandatory IMAPS And ActiveSync Release Gate
+
+**Status: Provisioned, deployed, and live-validated.** The installed host has a
+dedicated `oms-canary@housevo.us` mailbox, a generated root-only `0600`
+credential file, and a root-only protocol-gate sentinel. The mandatory gate
+submits one unique message through strict public SMTP, retrieves and validates
+its body over strict public IMAPS 993, then exercises ActiveSync full-MIME
+Fetch, read state, Inbox-to-Junk-to-Trash synchronization, and cleanup. Every
+run gets a unique synthetic DeviceId and deletes only that exact state row, so
+retry replay cannot make consecutive releases reuse an old response. Missing
+or exposed credentials and optional-smoke `SKIP` results fail closed.
+
+`functions/10_webmail.sh` and `functions/04_dovecot.sh` refuse direct execution
+when protection is enabled. `functions/protocol_guarded_deploy.sh` runs the
+real public gate before and after either target, retains a root-only snapshot,
+and restores it automatically after deployment or post-gate failure. Repeated
+standalone gates, guarded webmail, and guarded Dovecot passed live. A forced
+webmail post-gate failure restored the prior backend/frontend/config/service
+snapshot exactly, after which the real public gate passed. Final canary mail,
+web sessions, and ActiveSync state were empty.
+
 ## 2026-07-31 iOS Exchange MIME Body Retrieval
 
-**Status: Deployed; physical iPhone confirmation pending.** iOS opens an ActiveSync message with Sync `Fetch`, `MIMESupport=2`, and `BodyPreference Type=4` while omitting `TruncationSize`. The old normalization reused the saved 500-byte Type-1 list-preview limit, so the returned MIME could contain only headers and iOS displayed "This message has no content." A present body preference with no truncation size now uses the existing 10 MiB bounded complete-content ceiling; explicit limits and requests with no new body preference preserve their previous behavior. Unit and authenticated-smoke regressions model the exact iOS sequence. Backend 251/254 with three documented optional skips, focused ActiveSync 27/27, full integration/frontend 84/84, TypeScript build, shell syntax, and diff checks pass. The deployed artifacts match the tested tree; direct/public EAS OPTIONS, Nginx, a clean warning journal, zero automatic restarts, and full staging smoke pass. Rollback: `/var/backups/openmailstack/20260731T203319Z-eas-mime-body/`. The authenticated smoke was credential-gated and the physical message-body retry remains open.
+**Status: Deployed; physical iPhone confirmation pending.** iOS opens an ActiveSync message with Sync `Fetch`, `MIMESupport=2`, and `BodyPreference Type=4` while omitting `TruncationSize`. The old normalization reused the saved 500-byte Type-1 list-preview limit, so the returned MIME could contain only headers and iOS displayed "This message has no content." A present body preference with no truncation size now uses the existing 10 MiB bounded complete-content ceiling; explicit limits and requests with no new body preference preserve their previous behavior. Unit and authenticated-smoke regressions model the exact iOS sequence. Backend 251/254 with three documented optional skips, focused ActiveSync 27/27, full integration/frontend 84/84, TypeScript build, shell syntax, and diff checks pass. The deployed artifacts match the tested tree; direct/public EAS OPTIONS, Nginx, a clean warning journal, zero automatic restarts, and full staging smoke pass. Rollback: `/var/backups/openmailstack/20260731T203319Z-eas-mime-body/`. The dedicated canary now proves this full-MIME path on every guarded release; the physical message-body retry remains open.
 
 ## 2026-07-30 Thunderbird And Android Client Matrix
 

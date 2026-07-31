@@ -51,6 +51,34 @@ Calendar interoperability preflight and guarded test release, 2026-07-20:
 
 Production rollout decision: Calendar Track T is complete for the deployed scope at guarded release `8469e90`. Root-only rollback `/var/backups/openmailstack/calendar-track-t-8469e90-20260720T203554Z` contains the affected backend modules and prior web root. Exact backend/frontend contents, direct/public EAS `200`, public web/auth `200/401`, active zero-restart services after the stable restart, empty post-stable-start warning journal, Nginx, full staging smoke, and the physical macOS/iOS exception-reminder matrix pass. The first restart exposed a manual-deploy permission error because `rsync -a` preserved one generated `0600 root:root` runtime file; normalizing the bounded backend artifacts to `0644` and restarting corrected it.
 
+## Mandatory Installed-Host Mail Gate
+
+Provision once with `rtk bash functions/provision_protocol_canary.sh`. This
+creates a dedicated canary mailbox and a generated root-only credential at
+`/etc/openmailstack/protocol-smoke.env`; neither the password nor message
+content belongs in logs, docs, or commits.
+
+Run `rtk bash tests/integration/protocol_release_gate.sh` after any change that
+can affect IMAP, ActiveSync, SMTP submission, mail routing, TLS, or their public
+proxy. The gate fails when credentials are missing or exposed, when the smoke
+tries to skip, or when either public client seam fails. One disposable message
+must be delivered through strict public SMTP submission, retrieved with its
+body through strict public IMAPS 993, fetched as full MIME through ActiveSync,
+moved through Junk and Trash, and cleaned up with its web session and synthetic
+device state.
+
+For webmail-backend or Dovecot releases, do not run their installer modules
+directly after the sentinel is provisioned. Use:
+
+```bash
+rtk bash functions/protocol_guarded_deploy.sh webmail
+rtk bash functions/protocol_guarded_deploy.sh dovecot
+```
+
+Each command requires a passing pre-deploy gate, creates a root-only rollback
+snapshot, deploys, and requires a passing post-deploy gate. A deployment or
+post-gate failure restores the prior runtime and re-runs the real public gate.
+
 ## Clean VM Gate
 
 Run a fresh install on each supported OS family before release:
@@ -76,7 +104,7 @@ substitute for Apple, Android, or Thunderbird client behavior.
 
 ### Live Server Preflight
 
-Last checked: 2026-07-30 against `mail.housevo.us`.
+Last checked: 2026-07-31 against `mail.housevo.us`.
 
 | Area | Status | Evidence |
 | --- | --- | --- |
@@ -86,13 +114,14 @@ Last checked: 2026-07-30 against `mail.housevo.us`.
 | Public DNS | Pass | External DNS lookup confirmed `housevo.us` MX points to `mail.housevo.us`; `mail`, `autodiscover`, and `webmail` resolve to the public server address. |
 | Web routes | Pass | `/` returns 200; `/api/auth/me` returns 401 unauthenticated; Roundcube `/webmail/` returns 200. |
 | ActiveSync preflight | Pass | `OPTIONS /Microsoft-Server-ActiveSync` returns 200 and advertises EAS 14.0/14.1 commands. |
+| Mandatory public mail gate | Pass | The dedicated `oms-canary@housevo.us` completed strict public IMAPS 993 body retrieval and ActiveSync full-MIME/Junk/Trash synchronization repeatedly. Webmail and Dovecot guarded deployments passed the gate before and after deployment; an intentionally failed webmail post-gate restored an exact rollback snapshot and the real gate passed afterward. Final canary mail, web sessions, and synthetic ActiveSync state were empty. |
 | Calendar timezone test release | Pass operationally | The deployed EAS adapter and timezone codec match the tested repository artifacts; fixed/DST fixtures pass locally, and direct/public `OPTIONS`, web/auth boundaries, Nginx, services, post-restart logs, and full staging smoke pass. Physical Apple-client rows remain separate. |
 | Autodiscover | Pass | `autodiscover.housevo.us` returns MobileSync URL `https://mail.housevo.us/Microsoft-Server-ActiveSync`. |
 | SMTP submission health | Pass | Live submission port returns `220 mail.housevo.us ESMTP Postfix (Debian/GNU)` within the Admin health probe's 8s timeout. |
 | Rspamd filtering health | Pass | The one-minute monitor completes both a normal-worker scan and real Postfix-path Milter transaction, persists cross-probe worker generations, and rate-limits Rspamd-only recovery. Repeated post-deploy probes added zero fatal signals. |
 | Server-side Sieve delivery | Pass after userdb repair | Dovecot's SQL userdb returns an absolute `home` and `mail_path`, the active personal script is visible through delegated ManageSieve, and a disposable `localtest@housevo.us` LMTP message triggered `fileinto` into the temporary target mailbox with no Inbox copy. The message, script, and mailbox were removed after proof. |
 | CalDAV/CardDAV preflight | Pass | `/.well-known/caldav` and `/.well-known/carddav` redirect; unauthenticated `/caldav/` and `/carddav/` return Basic auth challenges. |
-| Authenticated scripted smokes | Pass | `mail_sync_smoke.sh`, `calendar_sync_smoke.sh`, `carddav_sync_smoke.sh`, `activesync_mail_smoke.sh`, and `activesync_contacts_smoke.sh` passed with the local test mailbox; password not recorded. CardDAV now asserts truthful owner capability metadata, cleans its remote contact on every post-PUT failure, and proves post-delete tombstones through stale REPORT and depth-1 PROPFIND responses. |
+| Authenticated scripted smokes | Pass | The installed-host mail gate is mandatory and root-credentialed; the remaining individual mail/calendar/contact scripts stay available for focused diagnostics. CardDAV asserts truthful owner capability metadata, cleans its remote contact on every post-PUT failure, and proves post-delete tombstones through stale REPORT and depth-1 PROPFIND responses. |
 | Scheduler live lifecycle | Pass | A temporary public booking was confirmed, rescheduled, and canceled. Three owned-sender notification jobs completed with three Google SMTP acceptances and three local LMTP deliveries; the Calendar UID was preserved on reschedule, cancel deleted the event and wrote a tombstone, capacity was released, and the slot returned publicly. Physical client observation remains separate. |
 | Real devices | In progress | Physical iPhone Exchange mail send, message discovery, Sent copy, picture attachment, calendar create/edit/delete, and contact create/edit/delete passed for `thang@housevo.us`. On July 31, opening Exchange messages showed "This message has no content" while the same mailbox worked through iOS IMAP. The MIME-fetch fix is deployed; physical body rendering must be retried before Mail returns to Pass. Calendar delete needed a CalDAV namespace-prefix parser fix plus one approved sync-token bump before macOS removed the stale event. Contact delete removed the contact from iPhone and the web app immediately; macOS Contacts cleared the stale local view only after the CardDAV account was removed, Contacts was closed, reopened, and the account was re-added. |
 

@@ -129,6 +129,10 @@ The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day 
 
 ## 8. Installer, Release, And Operations ❌
 
+- ✅ Add a fail-closed installed-host release gate that authenticates through
+  strict public IMAPS 993 and ActiveSync against one disposable canary message.
+  Webmail and Dovecot deployment modules now require the guarded pre/post gate
+  and automatic rollback workflow once the host sentinel is provisioned.
 - ❌ Validate the modern webmail installer path on a clean VM.
 - ❌ Make Nginx route injection idempotent and safe on already-migrated hosts.
 - ✅ Keep generated backend JavaScript in sync while systemd still runs `node src/index.js`.

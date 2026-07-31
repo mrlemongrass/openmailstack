@@ -6,6 +6,11 @@ Last updated: 2026-07-31
 
 ## Resolved Risks
 
+- ✅ IMAP/ActiveSync release regressions escaping route-only checks: the
+  installed-host gate now fails closed on missing credentials or skipped
+  smokes and authenticates through strict public IMAPS plus ActiveSync against
+  the same disposable message. Guarded webmail/Dovecot deploys run it before
+  and after changes and automatically restore the prior snapshot on failure.
 - ✅ Master-user auth: optional OMS_IMAP_MASTER_USER/OMS_SMTP_MASTER_USER/OMS_SIEVE_MASTER_USER env vars implemented. ImapService and ManageSieveClient support Dovecot `{user}*{master}` format when configured. `mailbox_credentials` table stores AES-256-GCM encrypted credentials for offline background indexing.
 - ✅ Earlier real client validation: iPhone, macOS, Android, and Thunderbird were previously confirmed by the user; rerun the physical matrix after the July 10 ActiveSync fixes before treating the current release as device-validated.
 - ✅ ActiveSync calendar tombstones: `calendar_tombstones` table created, EAS Delete inserts tombstones, outgoing sync emits Delete commands for deleted UIDs.
@@ -99,6 +104,13 @@ Last updated: 2026-07-31
 
 Operational/release risks:
 
+- `/etc/openmailstack/protocol-smoke.env` is a persistent production canary
+  credential and must remain `root:root 0600`; never print, commit, or copy it
+  into shell history. When `/etc/openmailstack/protocol-gate.required` exists,
+  use `functions/protocol_guarded_deploy.sh webmail|dovecot`. Do not bypass the
+  sentinel with `OMS_PROTOCOL_GUARDED_DEPLOY`; that variable is internal to the
+  wrapper. Keep the canary out of human mail workflows and inspect exact
+  canary-only state before any manual cleanup.
 - ActiveSync Calendar codepage names are case-sensitive: use `TimeZone` exactly and keep a converter-to-WBXML-writer regression. `ParsedIcalEvent.recurrence.raw` contains the property value without `RRULE:`; re-add that prefix when an EAS partial `Change` omits `Recurrence` and the existing rule is preserved.
 - Use journal event `scheduler.slot_generation_failed` for future public availability incidents. Its `privateAccess` field records only token presence; do not add capability tokens, SQL text, booking answers, or calendar payloads to Scheduler error logs.
 - Legacy calendar tables and additive Scheduler tables can use different `utf8mb4` collations. Treat event UIDs as opaque, case-sensitive identifiers and use binary or explicitly compatible comparisons for cross-table UID joins; keep the mixed-collation disposable database regression when changing Scheduler conflict detection.

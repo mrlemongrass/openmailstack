@@ -176,6 +176,26 @@ test_authenticated_smoke_guards() {
     pass "Authenticated smoke scripts are credential-gated and present"
 }
 
+test_protocol_release_gate() {
+    local gate="${PROJECT_ROOT}/tests/integration/protocol_release_gate.sh"
+    local provisioner="${PROJECT_ROOT}/functions/provision_protocol_canary.sh"
+    local guarded_deploy="${PROJECT_ROOT}/functions/protocol_guarded_deploy.sh"
+    local webmail_deploy="${PROJECT_ROOT}/functions/10_webmail.sh"
+    local dovecot_deploy="${PROJECT_ROOT}/functions/04_dovecot.sh"
+
+    "${PROJECT_ROOT}/tests/integration/protocol_release_gate_test.sh"
+    assert_contains "${gate}" 'OMS_SMOKE_IMAP_PORT="993"'
+    assert_contains "${gate}" 'OMS_SMOKE_IMAP_REJECT_UNAUTHORIZED="true"'
+    assert_contains "${gate}" 'Authenticated public protocol smoke attempted to skip'
+    assert_contains "${gate}" 'Authenticated public protocol smoke reported incomplete cleanup'
+    assert_contains "${provisioner}" 'OMS_SMOKE_PASSWORD'
+    assert_contains "${guarded_deploy}" 'restore_snapshot'
+    assert_contains "${guarded_deploy}" 'Running post-deploy public IMAPS and ActiveSync gate'
+    assert_contains "${webmail_deploy}" 'protocol_guarded_deploy.sh webmail'
+    assert_contains "${dovecot_deploy}" 'protocol_guarded_deploy.sh dovecot'
+    pass "Public IMAPS and ActiveSync release gate is fail-closed and deployment-enforced"
+}
+
 test_mail_message_view_regression() {
     (
         cd "${PROJECT_ROOT}/webmail-frontend"
@@ -242,6 +262,7 @@ test_staging_starttls_output_guard
 test_mysql_e_reduction_guards
 test_modern_webmail_deployment_guards
 test_authenticated_smoke_guards
+test_protocol_release_gate
 test_mail_message_view_regression
 test_scheduler_documentation_guards
 test_scheduler_phase1_guards

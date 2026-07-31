@@ -21,6 +21,12 @@ source "${SCRIPT_DIR}/lib_os.sh"
 source "${SCRIPT_DIR}/lib_scheduler.sh"
 detect_openmailstack_os
 
+PROTOCOL_GATE_REQUIRED_FILE="${OMS_PROTOCOL_GATE_REQUIRED_FILE:-/etc/openmailstack/protocol-gate.required}"
+if [[ -f "${PROTOCOL_GATE_REQUIRED_FILE}" && "${OMS_PROTOCOL_GUARDED_DEPLOY:-0}" != "1" ]]; then
+    echo -e "${RED}Error: protocol protection is enabled; run functions/protocol_guarded_deploy.sh webmail instead.${NC}" >&2
+    exit 1
+fi
+
 BACKEND_SRC="${REPO_DIR}/webmail-backend"
 FRONTEND_SRC="${REPO_DIR}/webmail-frontend"
 BACKEND_DIR="/opt/openmailstack-backend"

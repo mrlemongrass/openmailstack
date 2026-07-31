@@ -219,6 +219,24 @@ A task is done only when:
 - performance was considered for mailbox/search/sync/rendering changes
 - final report includes proof
 
+## Mail protocol release gate
+
+On an installed host with `/etc/openmailstack/protocol-gate.required`, changes
+to the webmail backend, ActiveSync route, Nginx mail routes, or Dovecot are not
+release-ready until the dedicated canary completes both authenticated public
+client paths:
+
+- IMAPS on port 993 with hostname and certificate verification, including the
+  expected message body.
+- ActiveSync over public HTTPS, including full MIME Fetch and reversible
+  Inbox-to-Junk-to-Trash synchronization.
+
+Run `tests/integration/protocol_release_gate.sh` for a standalone check. Deploy
+webmail or Dovecot through `functions/protocol_guarded_deploy.sh`, which runs
+the gate before and after deployment and restores its root-only snapshot when
+the deployment or post-deploy gate fails. A skipped or credentialless smoke is
+a failure, not a pass.
+
 ## Release blocker reference
 
 During normal development, use this file to prioritize work.

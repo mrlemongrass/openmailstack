@@ -8,6 +8,12 @@ SMTP_HOST=${OMS_SMOKE_SMTP_HOST:-127.0.0.1}
 SMTP_PORT=${OMS_SMOKE_SMTP_PORT:-587}
 IMAP_HOST=${OMS_SMOKE_IMAP_HOST:-127.0.0.1}
 IMAP_PORT=${OMS_SMOKE_IMAP_PORT:-143}
+IMAP_SECURE=${OMS_SMOKE_IMAP_SECURE:-false}
+IMAP_SERVER_NAME=${OMS_SMOKE_IMAP_SERVER_NAME:-}
+IMAP_REJECT_UNAUTHORIZED=${OMS_SMOKE_IMAP_REJECT_UNAUTHORIZED:-false}
+SMTP_SERVER_NAME=${OMS_SMOKE_SMTP_SERVER_NAME:-}
+SMTP_REJECT_UNAUTHORIZED=${OMS_SMOKE_SMTP_REJECT_UNAUTHORIZED:-false}
+DEVICE_ID=${OMS_SMOKE_DEVICE_ID:-OMSEASMailSmoke}
 
 if [[ -z "${SMOKE_USER}" || -z "${SMOKE_PASSWORD}" ]]; then
   echo "SKIP: set OMS_SMOKE_USER and OMS_SMOKE_PASSWORD to run authenticated ActiveSync mail smoke checks"
@@ -15,6 +21,8 @@ if [[ -z "${SMOKE_USER}" || -z "${SMOKE_PASSWORD}" ]]; then
 fi
 
 export BASE_URL SMOKE_USER SMOKE_PASSWORD SMTP_HOST SMTP_PORT IMAP_HOST IMAP_PORT
+export IMAP_SECURE IMAP_SERVER_NAME IMAP_REJECT_UNAUTHORIZED SMTP_SERVER_NAME SMTP_REJECT_UNAUTHORIZED
+export DEVICE_ID
 
 node <<'NODE'
 const nodemailer = require('./webmail-backend/node_modules/nodemailer');
@@ -30,11 +38,16 @@ const smtpHost = process.env.SMTP_HOST || '127.0.0.1';
 const smtpPort = Number(process.env.SMTP_PORT || 587);
 const imapHost = process.env.IMAP_HOST || '127.0.0.1';
 const imapPort = Number(process.env.IMAP_PORT || 143);
+const imapSecure = process.env.IMAP_SECURE === 'true';
+const imapServerName = process.env.IMAP_SERVER_NAME || '';
+const imapRejectUnauthorized = process.env.IMAP_REJECT_UNAUTHORIZED === 'true';
+const smtpServerName = process.env.SMTP_SERVER_NAME || '';
+const smtpRejectUnauthorized = process.env.SMTP_REJECT_UNAUTHORIZED === 'true';
 const timestamp = Date.now();
 const subject = `OMS ActiveSync mail smoke ${timestamp}`;
 const bodyPrefix = `ActiveSync mail smoke body ${timestamp}`;
 const body = `${bodyPrefix} ${'x'.repeat(700)}`;
-const deviceId = 'OMSEASMailSmoke';
+const deviceId = process.env.DEVICE_ID || 'OMSEASMailSmoke';
 const inboxCollectionId = Buffer.from('INBOX').toString('base64');
 const junkCollectionId = Buffer.from('Junk').toString('base64');
 const trashCollectionId = Buffer.from('Trash').toString('base64');
@@ -44,15 +57,14 @@ let webmailCookie = '';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function imapClient() {
+  const tls = { rejectUnauthorized: imapRejectUnauthorized };
+  if (imapServerName) tls.servername = imapServerName;
   return new ImapFlow({
     host: imapHost,
     port: imapPort,
-    secure: false,
+    secure: imapSecure,
     auth: { user, pass },
-    tls: {
-      rejectUnauthorized: false,
-      checkServerIdentity: () => undefined,
-    },
+    tls,
     logger: false,
   });
 }
@@ -91,13 +103,15 @@ function descendants(node, tag) {
 }
 
 async function sendSeedMessage() {
+  const tls = { rejectUnauthorized: smtpRejectUnauthorized };
+  if (smtpServerName) tls.servername = smtpServerName;
   const transporter = nodemailer.createTransport({
     host: smtpHost,
     port: smtpPort,
     secure: false,
     requireTLS: smtpPort === 587,
     auth: { user, pass },
-    tls: { rejectUnauthorized: false },
+    tls,
   });
 
   await transporter.sendMail({
@@ -119,7 +133,7 @@ async function findSeedMessage(folder = 'INBOX') {
     for await (const msg of client.fetch(`${start}:*`, { uid: true, flags: true, source: true })) {
       const parsed = await simpleParser(msg.source);
       if (parsed.subject === subject) {
-        matches.push({ uid: msg.uid, flags: Array.from(msg.flags || []) });
+        matches.push({ uid: msg.uid, flags: Array.from(msg.flags || []), text: parsed.text || '' });
       }
     }
     matches.sort((a, b) => b.uid - a.uid);
@@ -188,6 +202,16 @@ async function loginWebmail() {
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.success) throw new Error(`Webmail login failed with HTTP ${response.status}`);
   webmailCookie = cookieFrom(response.headers.get('set-cookie'));
+}
+
+async function logoutWebmail() {
+  if (!webmailCookie) return;
+  const response = await fetch(`${baseUrl}/api/auth/logout`, {
+    method: 'POST',
+    headers: { Cookie: webmailCookie },
+  });
+  if (!response.ok) throw new Error(`Webmail logout failed with HTTP ${response.status}`);
+  webmailCookie = '';
 }
 
 async function webmailMessageAction(folder, uid, action) {
@@ -380,7 +404,10 @@ async function assertSeenState(expectedSeen) {
 (async () => {
   try {
     await sendSeedMessage();
-    await waitForSeedMessage();
+    const seededMessage = await waitForSeedMessage();
+    if (!seededMessage.text.includes(bodyPrefix)) {
+      throw new Error('Public IMAP retrieved the smoke message without its expected body content');
+    }
     await folderSync();
     await loginWebmail();
     const initial = await syncMail('0');
@@ -437,6 +464,9 @@ async function assertSeenState(expectedSeen) {
   } finally {
     await cleanupSeedMessage().catch(err => {
       console.error(`WARN: cleanup failed: ${err.message}`);
+    });
+    await logoutWebmail().catch(err => {
+      console.error(`WARN: session cleanup failed: ${err.message}`);
     });
   }
 })().catch(err => {

@@ -7592,3 +7592,70 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
 - The user must close and reopen iOS Mail, open an Exchange message, and confirm
   that the content renders. Keep the iPhone Exchange Mail row open until that
   physical result is observed.
+## 2026-07-31 — Mandatory Public IMAPS And ActiveSync Release Gate
+
+### Goal and acceptance criteria
+
+- Prevent a webmail/ActiveSync fix from silently breaking IMAP, and prevent a
+  Dovecot/IMAP fix from silently breaking ActiveSync.
+- Use one dedicated canary and one disposable message to authenticate through
+  strict public IMAPS 993 and public ActiveSync HTTPS.
+- Fail closed when credentials are unavailable or a smoke skips, clean exact
+  synthetic state, and make consecutive runs reliable.
+- Require the gate before and after future webmail or Dovecot deployments and
+  restore the previous release automatically on deployment/post-gate failure.
+
+### Diagnosis
+
+- Existing staging checks proved listeners, TLS handshakes, basic HTTP routes,
+  and an unauthenticated ActiveSync `OPTIONS` response. Authenticated smoke
+  scripts were optional and exited successfully with `SKIP` when credentials
+  were absent, so releases could pass without reading a message body through
+  either client protocol.
+- The first real public gate failed because the old smoke assumed cleartext
+  IMAP semantics on port 993. After strict implicit TLS was added, repeating
+  the gate exposed a second issue: the fixed ActiveSync DeviceId replayed a
+  prior SyncKey-0 response. Unique per-run DeviceIds plus exact state cleanup
+  made repeat runs independent.
+
+### Implementation
+
+- `functions/provision_protocol_canary.sh` idempotently provisions the canary,
+  writes only a bcrypt mailbox hash to MariaDB, keeps the generated password in
+  `/etc/openmailstack/protocol-smoke.env` as `root:root 0600`, and enables the
+  host sentinel without printing the password.
+- `tests/integration/protocol_release_gate.sh` requires the secure credential,
+  configures hostname-verified public IMAPS/SMTP/HTTPS, runs the complete
+  ActiveSync mail lifecycle, rejects `SKIP`, and deletes only its unique
+  synthetic device state. The smoke now verifies the expected body through
+  IMAP, the full MIME body through ActiveSync, and logs out its web session.
+- `functions/protocol_guarded_deploy.sh` snapshots bounded runtime/config paths,
+  runs the public gate before and after the selected webmail or Dovecot module,
+  and restores/rechecks the previous release on failure. The protected modules
+  refuse accidental direct execution while the sentinel exists.
+- Integration regressions cover the fail-closed and deployment-enforcement
+  contracts, including rejection of a nominal `PASS` accompanied by incomplete
+  message/session cleanup. Release docs, roadmap, and project shared memory now
+  make this the standard workflow.
+
+### Verification and live proof
+
+- The first TDD gate test failed because no release-gate entry point existed;
+  the endpoint/configuration and fail-closed cases then passed after the
+  implementation. The first public run failed at IMAPS TLS negotiation before
+  the strict port-993 client mode was added.
+- The real gate passed repeatedly after unique-device cleanup. Guarded webmail
+  and Dovecot deployments each passed the public gate before and after the
+  actual deployment.
+- A deliberately failing webmail post-gate triggered automatic rollback. Dry
+  run comparisons and exact file comparisons found no difference from the
+  captured backend, frontend, Nginx, environment, and service-unit snapshot;
+  the restored service and real public gate passed.
+- Backend tests passed 251/254 with three documented optional skips; frontend
+  tests passed 84/84; the full integration suite and focused ShellCheck for the
+  new protocol scripts passed. The repository-wide ShellCheck run additionally
+  exposed older unrelated warnings in installer/security/backup/lint scripts;
+  they were not changed in this bounded fix.
+- Final canary mailbox messages, web sessions, and ActiveSync state all count
+  zero. Root-only webmail and Dovecot rollback snapshots are retained under
+  `/var/backups/openmailstack/`.

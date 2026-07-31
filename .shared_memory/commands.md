@@ -90,6 +90,12 @@ rtk curl -v --connect-timeout 8 --max-time 8 telnet://127.0.0.1:587
 Authenticated client-protocol smokes:
 
 ```bash
+rtk bash functions/provision_protocol_canary.sh
+rtk bash tests/integration/protocol_release_gate.sh
+rtk bash functions/protocol_guarded_deploy.sh webmail
+rtk bash functions/protocol_guarded_deploy.sh dovecot
+
+# Focused optional diagnostics:
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> OMS_SMOKE_IMAP_HOST=127.0.0.1 OMS_SMOKE_IMAP_PORT=143 rtk bash tests/integration/mail_sync_smoke.sh
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integration/calendar_sync_smoke.sh
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> rtk bash tests/integration/carddav_sync_smoke.sh
@@ -135,9 +141,10 @@ rtk curl -fsS -o /dev/null -w '%{http_code}\n' -X OPTIONS --resolve mail.housevo
 
 For the physical DST matrix, create a weekly `America/New_York` series at 09:00 on 2027-03-05 with four occurrences. In `Asia/Baghdad` it should display at 17:00 on March 5/12 and 16:00 on March 19/26 because New York changes offset on March 14. Run create/edit/delete from macOS Calendar over CalDAV and physical iOS over ActiveSync; record exact client versions and do not mark the rows passed from scripted payloads alone.
 
-`mail_sync_smoke.sh` uses an IMAP client configured for cleartext/STARTTLS-style
-port 143, not implicit-TLS IMAPS on 993. Keep real device setup on public IMAPS
-993 with SSL/TLS.
+`protocol_release_gate.sh` is the mandatory installed-host release check and
+uses strict public IMAPS 993 plus public ActiveSync. `mail_sync_smoke.sh` is a
+focused diagnostic configured for cleartext/STARTTLS-style port 143 by default;
+it does not replace the public gate or real-device validation.
 
 Memory maintenance:
 

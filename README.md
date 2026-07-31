@@ -30,7 +30,7 @@ See [docs/webmail-release-validation.md](docs/webmail-release-validation.md) for
 | `webmail-backend/` | Node/Express API, sync proxy, ActiveSync, CalDAV, CardDAV, and app APIs. |
 | `functions/` | Installer modules for the Linux mail stack and modern webmail deployment. |
 | `admin_portal_src/` | Legacy PHP admin/self-service portal surface. |
-| `tests/integration/` | Static installer guards plus optional authenticated mail/calendar/contact protocol smokes. |
+| `tests/integration/` | Static installer guards, the mandatory installed-host IMAPS/ActiveSync gate, and optional authenticated calendar/contact smokes. |
 | `docs/engineering/` | Architecture, quality bar, product loop, release criteria, and worklog. |
 | `docs/product/` | Product plans such as OMS Scheduler. |
 | `.shared_memory/` | Repo-specific implementation notes, commands, risks, and change history for future agents. |
@@ -95,7 +95,24 @@ Notes:
 
 ## Live Validation
 
-Authenticated smokes are opt-in and require a real test mailbox:
+Provision the dedicated protocol canary once on an installed host, then use the
+fail-closed public protocol gate and guarded deployment entry points:
+
+```bash
+rtk bash functions/provision_protocol_canary.sh
+rtk bash tests/integration/protocol_release_gate.sh
+rtk bash functions/protocol_guarded_deploy.sh webmail
+rtk bash functions/protocol_guarded_deploy.sh dovecot
+```
+
+The generated credential remains root-only under `/etc/openmailstack`; it is
+never printed or stored in the repository. The gate uses the same disposable
+message to prove public IMAPS 993 body retrieval and ActiveSync full-MIME sync,
+then removes its mail, web session, and synthetic device state. Once
+provisioned, direct webmail and Dovecot module runs fail closed so releases use
+the guarded pre-check, rollback snapshot, and post-check workflow.
+
+Other authenticated smokes remain opt-in and require a real test mailbox:
 
 ```bash
 OMS_SMOKE_BASE_URL=https://mail.example.com \

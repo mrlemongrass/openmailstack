@@ -19,6 +19,12 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/lib_os.sh"
 detect_openmailstack_os
 
+PROTOCOL_GATE_REQUIRED_FILE="${OMS_PROTOCOL_GATE_REQUIRED_FILE:-/etc/openmailstack/protocol-gate.required}"
+if [[ -f "${PROTOCOL_GATE_REQUIRED_FILE}" && "${OMS_PROTOCOL_GUARDED_DEPLOY:-0}" != "1" ]]; then
+    echo "Error: protocol protection is enabled; run functions/protocol_guarded_deploy.sh dovecot instead." >&2
+    exit 1
+fi
+
 export DEBIAN_FRONTEND=noninteractive
 
 # 1. Install Dovecot

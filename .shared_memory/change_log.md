@@ -1408,3 +1408,21 @@ Future entry template:
 - Tested: the red-then-green unit covers the exact iOS sequence; the authenticated ActiveSync smoke now Fetches and validates full MIME before read/unread mutations. Backend 251/254 with three optional skips, focused ActiveSync 27/27, full integration/frontend 84/84, TypeScript build, Bash syntax, and diff checks pass.
 - Deployed: the five affected `eas-mail-sync` artifacts match the tested repository. Direct/public EAS OPTIONS, Nginx, active zero-restart backend state, clean warning journal, and complete staging smoke pass. Root-only rollback: `/var/backups/openmailstack/20260731T203319Z-eas-mime-body/`.
 - Remaining: the authenticated smoke was credential-gated in this session. Have the user close/reopen iOS Mail and open an Exchange message while watching ActiveSync logs; do not mark the physical row passed until the body renders.
+
+## 2026-07-31 — Mandatory IMAPS And ActiveSync Release Gate
+
+- Added a dedicated `oms-canary@housevo.us` with a generated root-only
+  credential and a fail-closed public release gate. One disposable message now
+  proves strict IMAPS 993 body retrieval and ActiveSync full-MIME Fetch plus
+  Junk/Trash synchronization; exact mail, web-session, and per-run device
+  state cleanup leaves the canary empty.
+- Protected `functions/10_webmail.sh` and `functions/04_dovecot.sh` behind one
+  guarded deployment interface. It requires passing public checks before and
+  after deployment, retains a root-only snapshot, and restores the previous
+  runtime automatically when deployment or the post-gate fails.
+- Repeated live gates and guarded webmail/Dovecot success paths passed. An
+  intentionally failed webmail post-gate restored the prior release exactly,
+  and the real public gate passed after rollback.
+- Regression guards cover missing/exposed credentials, public strict-TLS
+  configuration, unique DeviceIds, exact state cleanup, rejected skips or
+  cleanup warnings, direct deployment refusal, and unsupported guarded targets.

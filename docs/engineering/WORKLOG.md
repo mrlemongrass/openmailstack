@@ -7492,5 +7492,32 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   overbroad `write-properties`, unsafe smoke cleanup, and the missing worklog
   entry. Spec review independently flagged the overbroad property privilege
   and correctly kept deployment plus the physical macOS result open.
-- Deployment, exact live-artifact verification, the reversible authenticated
-  public smoke, and the physical macOS Default Account recheck remain pending.
+- Final Standards and Spec follow-ups reported no remaining implementation
+  blockers after the smoke marked cleanup necessary before PUT and the route
+  regression explicitly prohibited the rejected capability overclaims.
+
+### Deployment and live proof
+
+- Committed and pushed as
+  `6901d9b250a77cd1323bd7943d2b0af79749e8a0`. The root-only rollback
+  snapshot is
+  `/var/backups/openmailstack/carddav-owner-6901d9b-20260731T044940Z/`.
+- Two guarded attempts automatically restored that snapshot before the
+  successful deployment: the first readiness request raced the service
+  listener, and the second used the nonexistent `/api/session` route. The
+  corrected bounded gate uses the repository-standard `/api/auth/me` `401`
+  boundary and passed on its second half-second attempt.
+- The deployed `carddav.js`, source map, declaration, and declaration map are
+  byte-identical to the reviewed build. `carddav.js` SHA-256 is
+  `8b68459a32344f67d4b0760876aaa0c8f68c8698343579e6ab94285ac765e96e`.
+- Public `OPTIONS` still truthfully advertises `1, 2, 3, addressbook`.
+  Principal `PROPFIND` returns `current-user-privilege-set`; Personal Contacts
+  returns `read`, `bind`, and `unbind`, while aggregate `write` and
+  `write-properties` remain absent.
+- The authenticated public CardDAV smoke passed its reversible
+  create/report/get/delete/tombstone lifecycle. No active
+  `oms-smoke-contact-*` row remains. Complete staging smoke passed,
+  `openmailstack` is active/running with `NRestarts=0`, and the targeted
+  post-deploy error count is zero.
+- The physical macOS 26.5.2 Default Account menu remains the only acceptance
+  gate for this finding.

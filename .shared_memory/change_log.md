@@ -1385,3 +1385,18 @@ Future entry template:
   service checks, recent error checks, and zero backend restarts passed.
 - Both Thunderbird variants exposed missing Mozilla Autoconfiguration; manual
   full-address login, IMAP 993 SSL/TLS, and SMTP 587 STARTTLS passed.
+
+## 2026-07-30 — macOS Contacts Owner Capability Metadata
+
+- Released `6901d9b250a77cd1323bd7943d2b0af79749e8a0` with bounded CardDAV
+  owner privileges: `read`, contact `write-content`, and Personal Contacts
+  `bind`/`unbind`.
+- Independent review prevented false full-ACL and arbitrary-property-write
+  claims and made the authenticated smoke remotely self-cleaning even after an
+  ambiguous PUT.
+- The reviewed and deployed CardDAV artifacts match exactly. Public capability
+  and reversible CRUD/tombstone smokes, complete staging smoke, zero active
+  synthetic contacts, zero targeted errors, and `NRestarts=0` pass.
+- Root-only rollback:
+  `/var/backups/openmailstack/carddav-owner-6901d9b-20260731T044940Z/`.
+  The physical macOS 26.5.2 Default Account menu recheck remains open.

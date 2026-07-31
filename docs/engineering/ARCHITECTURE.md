@@ -1153,8 +1153,7 @@ Current ActiveSync Mail interoperability seam, deployed and script-verified 2026
 - Email `FilterType`, `WindowSize`, and AirSyncBase body preferences are honored with UTF-8-safe truncation, protocol window bounds, and a 16 MiB aggregate source-fetch budget. FilterType `0` or an omitted FilterType paginates every eligible item through `MoreAvailable`; once the initial catch-up is complete, unchanged `HIGHESTMODSEQ` polls avoid `SEARCH ALL`.
 - `tests/integration/activesync_mail_smoke.sh` uses the real web message-action API to prove Inbox-to-Junk and Junk-to-Trash deltas, body truncation, read/unread changes, and an empty no-change Sync. The production smoke passed under isolated synthetic-device state. Physical iOS 26.5.2 passed the stale-key reset and continuous all-mail paging after hotfix `bc4f7387`; exhaustion/no-change remains open. Do not repeat a spam move based on subject alone while the IMAP clients and current server UIDs disagree about the two historical examples.
 
-Current CardDAV interoperability seam, locally verified 2026-07-30 and pending
-deployment:
+Current CardDAV interoperability seam, deployed and verified 2026-07-30:
 
 - `webmail-backend/src/carddav.ts` implements native principal/address-book
   discovery and one owner-only Personal Contacts collection. Its bounded
@@ -1170,6 +1169,10 @@ deployment:
   `tests/integration/carddav_sync_smoke.sh` checks the public capability and
   CRUD/tombstone lifecycle and deletes its unique remote contact from the EXIT
   trap if a post-PUT assertion fails.
+- Production artifacts match commit `6901d9b`; the authenticated public
+  lifecycle, complete staging smoke, zero active synthetic contacts, and
+  zero-restart/error service checks pass. Whether macOS 26.5.2 now offers
+  HouseVo as its Default Account remains a physical-client gate.
 
 Agents should locate and document:
 
@@ -1439,6 +1442,9 @@ During repository intake, agents should answer these questions and update this f
 
 ## 16. Change Log for This Document
 
+- 2026-07-30: Documented deployed owner-only CardDAV privilege metadata,
+  truthful non-ACL boundaries, regression coverage, and the remaining physical
+  macOS Default Account gate.
 - 2026-07-30: Documented verified ordered Sieve rules, per-rule stop/continue behavior, and the bounded preview-first existing-mail runner with rule-revision, UID-snapshot, partial-failure, and large-body safeguards.
 - 2026-07-20: Documented deployed per-device/per-folder ActiveSync Mail delta state, move/delete behavior, bounded filtering/body retrieval, paginated all-mail initial synchronization, authenticated production smoke evidence, and physical iOS paging status.
 - 2026-07-11: Added and live-verified the OMS Scheduler Phase 0/1 architecture, trust boundaries, native calendar projection, installer gating, alias-host routing, and remaining mailbox/client release validation.

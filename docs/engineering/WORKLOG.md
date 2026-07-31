@@ -7347,3 +7347,89 @@ remain higher severity; ordinary visual polish ranks below it.
 Resume the physical-client matrix in `docs/webmail-release-validation.md`,
 beginning with standalone macOS Mail/Contacts, while the remaining complex
 ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
+
+## 2026-07-30 — Thunderbird Desktop And Remote Android Client Matrix
+
+### Acceptance criteria
+
+- Run current Thunderbird desktop against production IMAP/SMTP, CalDAV, and
+  CardDAV with exact versions recorded.
+- Run Android mail plus DAVx5 against production using the routed
+  `dev2-debian` client host, including Android-provider create/edit/delete for
+  Calendar and Contacts.
+- Prove server-side stable identifiers and delete tombstones, remove all active
+  test artifacts and cached credentials, and leave production healthy.
+
+### Remote client environment
+
+- `dev2-debian` is Debian 13.6 in a Proxmox LXC. Tailscale routing exposed the
+  live `172.16.x.x` network. The existing SSH identity was tightened from mode
+  `0644` to `0600`; its contents were not changed.
+- A disposable `omsclient` user isolated all profiles and credentials.
+  Thunderbird 140.12.0esr, Xvfb, Openbox, Android command-line tools, Emulator
+  37.1.11, platform-tools 37.0.0, and the API 30/API 36 system images were
+  installed. The Android SDK remains under `/opt/android-sdk` for reuse.
+- Release artifacts were verified before use: DAVx5 4.5.18-ose,
+  Thunderbird Android 21.0, and F-Droid Etar 1.0.56. The API 30 emulator used
+  CPU acceleration because the LXC has no `/dev/kvm`. API 36 repeatedly hit
+  System UI/Launcher ANRs; API 30 completed after cold boot. Etar supplied an
+  event editor because the bundled API 30 Calendar package declared
+  `EditEventActivity` without shipping its implementation.
+
+### Thunderbird desktop result
+
+- Mail passed after manually correcting automatic setup to full username
+  `localtest@housevo.us`, IMAP 993 SSL/TLS, and SMTP 587 STARTTLS. Automatic
+  setup had guessed short username `localtest` and SMTP without encryption.
+- `OMS Thunderbird Matrix 20260730T1520Z` appeared in Inbox UID 29 and Sent UID
+  8. Both exact messages were later subject-verified and expunged.
+- CalDAV discovery found the live calendars. Personal event 1455 retained UID
+  `6777c423-ab92-4a87-8517-e8e525a5f853` through create/edit and emitted the
+  expected tombstone on delete.
+- CardDAV discovery found Personal Contacts. Contact 1509 retained DAV UID
+  `d48307b8-6570-4f48-9af0-0a9d3e60e82d` through create/edit and emitted the
+  expected tombstone on delete.
+
+### Android result
+
+- DAVx5 4.5.18-ose discovered Personal Calendar from
+  `https://mail.housevo.us/.well-known/caldav`. Etar created, edited, and
+  deleted event 1457; UID
+  `b5970849-2731-417c-bbd8-4213d72ab9db` remained stable and
+  `calendar_tombstones` recorded the delete.
+- A second DAVx5 account using
+  `https://mail.housevo.us/.well-known/carddav` discovered Personal Contacts.
+  Android Contacts created, edited, and deleted contact 1510; DAV UID
+  `52bc33ce-50ee-471d-b5e4-b8cfcddf8d60` remained stable, sync tokens advanced
+  54 to 56, and `contact_tombstones` recorded the delete.
+- Thunderbird Android 21.0 reported `Configuration not found`. Manual IMAP 993
+  SSL/TLS and SMTP 587 STARTTLS passed. The self-message
+  `OMS Android Thunderbird Matrix 20260730T1710Z` appeared in Android Inbox and
+  Sent and as server UIDs 30 and 9. Both exact messages were later
+  subject-verified and expunged.
+
+### Cleanup and proof
+
+- Active rows for both test events are absent; the expected protocol
+  tombstones remain. The Android test contact is soft-deleted with the expected
+  tombstone. All four test mail copies search to zero after exact-UID cleanup.
+- The emulator, Thunderbird, Xvfb, and Openbox processes were stopped. The
+  mailbox-password file was shredded, and the disposable `omsclient` user/home
+  was removed, deleting all profiles, AVDs, APKs, screenshots, and cached
+  credentials.
+- Complete staging smoke passed. Public IMAP and SMTP both verify
+  `mail.housevo.us`; HTTPS returns `200`; Nginx, Postfix, Dovecot, and
+  `openmailstack` are active with zero targeted recent errors, and
+  `openmailstack` remains at `NRestarts=0`.
+
+### Product finding and next task
+
+- Mozilla Autoconfiguration is missing. Thunderbird desktop's unsafe SMTP guess
+  and Thunderbird Android's no-configuration result make this a setup-quality
+  and security follow-up: serve and test the provider and well-known
+  `mail/config-v1.1.xml` routes with full-address usernames and encrypted
+  transports.
+- Close the remaining standalone macOS Mail/Contacts rows with exact versions
+  and create/edit/delete or self-send evidence. Then implement Mozilla
+  Autoconfiguration before returning to the lower-priority ManageSieve parser
+  risk.

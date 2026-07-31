@@ -1,6 +1,6 @@
 # OpenMailStack Roadmap
 
-Last reviewed: 2026-07-29
+Last reviewed: 2026-07-30
 
 This roadmap tracks the remaining product and release work for the modern OpenMailStack suite. The current product direction is a native React webmail, calendar, and contacts experience backed by the Node/Express sync proxy, while Roundcube and older SOGo-compatible paths remain compatibility or fallback surfaces.
 
@@ -32,11 +32,11 @@ webmail-frontend/src/
 
 - Validate iPhone Exchange setup for Mail, Calendar, and Contacts. ✅
 - Validate macOS Mail, Calendar, and Contacts through IMAP, CalDAV, and CardDAV. 🟡
-- Validate Android mail and DAV clients such as K-9/Thunderbird and DAVx5. 🟡
-- Validate Thunderbird IMAP/SMTP, CalDAV, and CardDAV. 🟡
+- Validate Android mail and DAV clients such as K-9/Thunderbird and DAVx5. ✅ (Android 11 emulator)
+- Validate Thunderbird IMAP/SMTP, CalDAV, and CardDAV. ✅
 - Record exact setup steps and failures in `docs/webmail-release-validation.md`. ✅
 
-Current note: iOS 26.5.2 Exchange mail/calendar/contacts passed on the live server after the July 2026 protocol fixes. Physical iOS Calendar fixed-zone CRUD, a four-occurrence New York weekly series crossing DST, and recurrence-exception/reminder projection passed against OMS Web and macOS Calendar. On macOS 26.5.2, Calendar CalDAV single-event CRUD, a New York weekly DST series, and recurrence-exception/reminder projection likewise passed through OMS Web and iOS. Standalone macOS Mail/Contacts, Android/DAVx5, and Thunderbird still need their post-fix runs with exact client versions.
+Current note: iOS 26.5.2 Exchange mail/calendar/contacts passed on the live server after the July 2026 protocol fixes. Physical iOS Calendar fixed-zone CRUD, a four-occurrence New York weekly series crossing DST, and recurrence-exception/reminder projection passed against OMS Web and macOS Calendar. On macOS 26.5.2, Calendar CalDAV single-event CRUD, a New York weekly DST series, and recurrence-exception/reminder projection likewise passed through OMS Web and iOS. Thunderbird 140.12.0esr on Debian 13.6 passed IMAP/SMTP, CalDAV, and CardDAV create/edit/delete. Thunderbird Android 21.0 plus DAVx5 4.5.18-ose passed mail, Calendar-provider, and Contacts-provider lifecycles on an Android 11 emulator; exact active test artifacts and the disposable profiles were removed. The remaining real-client gates are standalone macOS Mail and Contacts with exact versions/results. Thunderbird desktop guessed unsafe SMTP settings and Thunderbird Android found no configuration, so Mozilla Autoconfiguration support is the next setup-quality gap after the macOS gates.
 
 ## 2. Contacts & Notes UI Modernization 🟡
 

@@ -2,7 +2,7 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 ## Resolved Risks
 
@@ -85,7 +85,8 @@ Last updated: 2026-07-29
 - Dovecot configuration is rewritten by `functions/04_dovecot.sh`, while certificate selection is normally performed later by `functions/07_security.sh`. Targeted Dovecot reruns must preserve or recover a hostname-valid, key-matching pair; never accept a successful TLS handshake alone as proof. Require `mail.housevo.us` hostname verification on public/local port 993 after every Dovecot change.
 - Dovecot personal Sieve storage is rooted at `~/sieve`. Keep both the absolute `home` and `mail_path` fields in the SQL userdb query; dropping `home` can leave IMAP storage working while LMTP silently falls through without the active filter. After any userdb change, require delegated ManageSieve retrieval plus a disposable LMTP `fileinto` proof, not only `doveconf -n`.
 - Tasks/notes remain prototype/mock folders in ActiveSync.
-- Physical iPhone Exchange, macOS Mail/Calendar/Contacts, Android plus DAVx5, and Thunderbird rows in `docs/webmail-release-validation.md` need a post-July-10 rerun. The iPhone Exchange receive/send/Sent copy/picture attachment, calendar create/edit/delete, and contact create/edit/delete paths passed for `thang@housevo.us` after the ActiveSync SendMail, CalDAV, and Contacts UX/multi-phone/tombstone fixes. The final contact edit retry changed company to `OpenMailStack Test 2`; web Contacts and macOS Contacts reflected it, and live storage preserved both phone numbers. Scripted smokes pass, but they are not a substitute for the remaining standalone macOS/Android/Thunderbird client rows.
+- The post-July-10 iPhone Exchange, macOS Calendar, Thunderbird desktop, and remote Android client runs now pass. Thunderbird 140.12.0esr passed IMAP/SMTP, CalDAV, and CardDAV; Thunderbird Android 21.0 plus DAVx5 4.5.18-ose passed mail and Android Calendar/Contacts provider lifecycles on an Android 11 emulator. Standalone macOS Mail and Contacts remain the only unclosed rows. The Android result is transparently emulator-based because the `dev2-debian` LXC exposes no `/dev/kvm`; require a separate hardware run only if release policy specifically demands physical Android hardware.
+- OpenMailStack does not yet serve Mozilla Autoconfiguration. Thunderbird 140.12.0esr guessed short username `localtest` and SMTP without encryption, while Thunderbird Android 21.0 reported `Configuration not found`. Both clients passed after manual full-address credentials, IMAP 993 SSL/TLS, and SMTP 587 STARTTLS. Add and regression-test `autoconfig.<domain>/mail/config-v1.1.xml` and the domain `/.well-known/autoconfig/mail/config-v1.1.xml` fallback before treating Thunderbird setup as safe and one-step.
 ## Security and Authorization Areas to Re-check
 
 - The modern React Admin app currently has no domain-admin mode. Keep it superadmin-only until list/mutation endpoints are intentionally scoped by `domain_admins`.

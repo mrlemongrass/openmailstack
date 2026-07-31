@@ -1368,3 +1368,20 @@ Future entry template:
   `localtest@housevo.us` Inbox snapshot with zero matches and zero mutations.
   The endpoint returned `200`, the ledger stayed empty, and the browser had no
   console errors.
+
+## 2026-07-30 — Thunderbird And Android Client Matrix
+
+- Thunderbird 140.12.0esr on Debian 13.6 passed IMAP/SMTP self-send plus
+  CalDAV and CardDAV create/edit/delete against the live server.
+- Thunderbird Android 21.0, DAVx5 4.5.18-ose, Android Contacts, and Etar 1.0.56
+  passed mail, Calendar-provider, and Contacts-provider lifecycles on an
+  Android 11 API 30 emulator in `dev2-debian`.
+- Stable server UIDs survived both DAV edits, and the expected Calendar and
+  Contacts tombstones were produced on delete. All active test mail, event,
+  contact, profile, AVD, and cached-credential state was removed.
+- The disposable `omsclient` account/home was deleted. The reusable Android SDK
+  and Debian client packages remain installed without a mailbox profile.
+- Post-cleanup staging smoke, public IMAP/SMTP hostname verification, HTTPS,
+  service checks, recent error checks, and zero backend restarts passed.
+- Both Thunderbird variants exposed missing Mozilla Autoconfiguration; manual
+  full-address login, IMAP 993 SSL/TLS, and SMTP 587 STARTTLS passed.

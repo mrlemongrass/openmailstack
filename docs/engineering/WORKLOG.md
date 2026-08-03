@@ -7798,3 +7798,29 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
 - If HouseVo is still absent, treat aggregate writability as falsified and move
   to read-only local macOS container/source inspection before considering any
   further protocol change.
+
+## 2026-08-03 — macOS CardDAV Aggregate-Writability Physical Result
+
+- The user disabled and re-enabled HouseVo Contacts after deployment of
+  `e468e443`. HouseVo remained absent from Contacts > Settings > General >
+  Default Account.
+- The Contacts sidebar shows `All HouseVo Contacts` but no `Personal` child.
+  Apple documents that CardDAV accounts usually have one Contacts-framework
+  container; the sidebar separately exposes account-wide views and lists, so
+  the missing `Personal` label is not by itself proof that CardDAV collection
+  discovery failed.
+- Live logs prove this attempt performed a fresh successful CardDAV cycle from
+  15:02:40 through 15:04:07 Phoenix time: principal, address-book home, and
+  `/personal/` PROPFINDs plus multiple REPORTs completed without an HTTP or
+  backend error. The Mac therefore consumed the deployed aggregate-write
+  response, and aggregate `DAV:write` is falsified as the deciding picker gate.
+- No further server capability was changed. The exact remaining symptom exists
+  only in the physical macOS UI, so there is no honest agent-runnable Linux
+  feedback loop. The next diagnostic is a read-only `CNContactStore` probe on
+  the Mac that prints only container name/type, default status, opaque local
+  identifier, and group count—never contacts or credentials.
+- If macOS reports HouseVo as `CardDAV`, diagnosis moves to the macOS 26.5.2
+  picker/account policy or local source metadata. If it reports `Unassigned`
+  or omits HouseVo, inspect the local account/container records before changing
+  the server again. Reconsider and likely remove the now-ineffective aggregate
+  compatibility claim once the local classification is known.

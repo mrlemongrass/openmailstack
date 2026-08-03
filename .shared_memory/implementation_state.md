@@ -2,7 +2,7 @@
 
 ## 2026-08-03 macOS CardDAV Owned-Collection Writability
 
-**Status: Deployed and script-verified; physical picker pending.** A privacy-
+**Status: Deployed and script-verified; physical picker failed.** A privacy-
 bounded temporary probe captured the exact DAV property names requested during
 a failed fresh macOS 26.5.2 CardDAV onboarding. The Personal Contacts response
 omitted both `DAV:owner` and the RFC-required `DAV:supported-report-set`.
@@ -17,10 +17,12 @@ existing create/edit/delete behavior; individual contact resources remain
 claim was added. The temporary probe is removed. The red-then-green exact
 macOS route regression, authenticated public CardDAV lifecycle, mandatory
 IMAPS/ActiveSync gate, staging smoke, exact live artifact hash, clean recent
-error check, and zero-restart service state pass. The user must disable and
-re-enable HouseVo Contacts once and recheck Default Account. If the picker is
-still unchanged, inspect the Mac's local Contacts container classification
-instead of adding more server capability guesses.
+error check, and zero-restart service state pass. A fresh physical refresh
+consumed the response but HouseVo remained absent from Default Account; the
+sidebar shows only `All HouseVo Contacts`. Aggregate writability is therefore
+falsified as the deciding gate. Inspect the Mac's local Contacts container
+classification next instead of adding more server capability guesses, then
+reconsider the now-ineffective aggregate compatibility claim.
 
 ## 2026-07-31 Mandatory IMAPS And ActiveSync Release Gate
 

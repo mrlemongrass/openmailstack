@@ -1467,3 +1467,15 @@ Future entry template:
 - Remaining: disable/re-enable HouseVo Contacts once and recheck Default
   Account. If unchanged, inspect local macOS Contacts container classification
   and reconsider the aggregate compatibility claim before further server work.
+
+## 2026-08-03 — macOS Aggregate-Writability Physical Gate Failed
+
+- The user completed the post-`e468e443` disable/re-enable. HouseVo remains
+  absent from Default Account, and the sidebar shows only `All HouseVo
+  Contacts`, without a `Personal` child.
+- Server logs show a fresh principal/home/Personal discovery and repeated
+  reports from 15:02:40 through 15:04:07 with no errors, so macOS consumed the
+  aggregate-write response. That hypothesis is falsified.
+- No server change followed. The next step is a read-only macOS
+  `CNContactStore` container/default probe; do not add another DAV capability
+  guess before local classification is known.

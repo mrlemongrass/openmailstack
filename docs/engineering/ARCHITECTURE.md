@@ -1177,8 +1177,10 @@ Current CardDAV interoperability seam, deployed and verified 2026-08-03:
   trap if a post-PUT assertion fails.
 - Production artifacts match commit `e468e443`; the authenticated public
   lifecycle, complete staging smoke, zero active synthetic contacts, and
-  zero-restart/error service checks pass. Whether macOS 26.5.2 now offers
-  HouseVo as its Default Account remains a physical-client gate.
+  zero-restart/error service checks pass. A fresh macOS 26.5.2 discovery
+  consumed the response but still did not offer HouseVo as its Default
+  Account. The next diagnostic boundary is the Mac's read-only Contacts
+  container classification, not another server capability claim.
 
 Agents should locate and document:
 

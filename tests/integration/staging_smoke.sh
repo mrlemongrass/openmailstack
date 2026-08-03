@@ -135,6 +135,19 @@ else
 fi
 curl -kfsS --resolve "${MAIL_HOSTNAME}:443:127.0.0.1" "https://${MAIL_HOSTNAME}/postfixadmin/" >/dev/null
 pass "PostfixAdmin endpoint reachable"
+AUTOCONFIG_XML=$(curl -kfsS --resolve "${MAIL_HOSTNAME}:443:127.0.0.1" \
+    "https://${MAIL_HOSTNAME}/.well-known/autoconfig/mail/config-v1.1.xml")
+for expected in \
+    '<port>993</port>' \
+    '<socketType>SSL</socketType>' \
+    '<port>587</port>' \
+    '<socketType>STARTTLS</socketType>' \
+    '<username>%EMAILADDRESS%</username>'; do
+    if ! grep -Fq "${expected}" <<< "${AUTOCONFIG_XML}"; then
+        fail "Mozilla autoconfiguration response is missing: ${expected}"
+    fi
+done
+pass "Mozilla autoconfiguration advertises secure mail settings"
 
 echo "Checking DKIM assets..."
 if [[ ! -f /etc/rspamd/local.d/dkim_signing.conf ]]; then

@@ -3,9 +3,9 @@
 openmailstack_scheduler_hosts() {
     local host
     local -A seen=()
-    local candidates="${MAIL_HOSTNAME}"
+    local candidates="${MAIL_HOSTNAME},autoconfig.${FIRST_DOMAIN}"
     if [[ "${ENABLE_OMS_SCHEDULER:-false}" == "true" ]]; then
-        candidates="${MAIL_HOSTNAME},${OMS_SCHEDULER_HOST_ALIASES:-${MAIL_HOSTNAME}}"
+        candidates="${candidates},${OMS_SCHEDULER_HOST_ALIASES:-${MAIL_HOSTNAME}}"
     fi
     candidates="${candidates//,/ }"
     for host in ${candidates}; do

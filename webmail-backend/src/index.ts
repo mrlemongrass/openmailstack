@@ -63,6 +63,7 @@ import { startCalendarSubscriptionWorker } from './calendar-subscription';
 import { schedulerRouter } from './scheduler/router';
 import { getSession, initializeSessionStore, requireSession } from './auth';
 import { ensureAccountSecuritySchema } from './account-security';
+import { createMozillaAutoconfigRouter } from './mail-autoconfig';
 
 const app = express();
 const server = http.createServer(app);
@@ -182,6 +183,15 @@ app.all('/.well-known/caldav', (req, res) => {
 app.all('/.well-known/carddav', (req, res) => {
     res.redirect(301, '/carddav/');
 });
+
+const autoconfigDomain = serverConfig.defaultDomain || 'example.invalid';
+const autoconfigMailHostname = serverConfig.publicBaseUrl
+    ? new URL(serverConfig.publicBaseUrl).hostname
+    : `mail.${autoconfigDomain}`;
+app.use(createMozillaAutoconfigRouter({
+    domain: serverConfig.defaultDomain || 'example.invalid',
+    mailHostname: autoconfigMailHostname,
+}));
 
 app.all(['/autodiscover/autodiscover.xml', '/Autodiscover/Autodiscover.xml'], (req, res) => {
     let email = serverConfig.defaultDomain ? `user@${serverConfig.defaultDomain}` : 'user@example.invalid';

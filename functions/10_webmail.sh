@@ -48,6 +48,7 @@ DEFAULT_DOMAIN="${OMS_DEFAULT_DOMAIN:-${FIRST_DOMAIN}}"
 SCHEDULER_ENABLED="${ENABLE_OMS_SCHEDULER:-false}"
 SCHEDULER_PUBLIC_BASE_URL="${OMS_SCHEDULER_PUBLIC_BASE_URL:-${PUBLIC_BASE_URL}}"
 SCHEDULER_HOST_ALIASES="${OMS_SCHEDULER_HOST_ALIASES:-${MAIL_HOSTNAME}}"
+SCHEDULER_SERVER_NAMES="$(openmailstack_scheduler_server_names)"
 
 existing_env_value() {
     local key="$1"
@@ -93,7 +94,6 @@ if [[ "${SCHEDULER_ENABLED}" == "true" && -z "${SCHEDULER_SECRET_KEYRING}" ]]; t
 fi
 
 if [[ "${SCHEDULER_ENABLED}" == "true" ]]; then
-    SCHEDULER_SERVER_NAMES="$(openmailstack_scheduler_server_names)"
     if [[ ! "${SCHEDULER_PUBLIC_BASE_URL}" =~ ^https://[^/]+$ ]]; then
         echo -e "${RED}Error: OMS_SCHEDULER_PUBLIC_BASE_URL must be an HTTPS origin without a path.${NC}" >&2
         exit 1
@@ -288,17 +288,43 @@ configure_nginx() {
 
     cp -a "${NGINX_CONF}" "${backup}"
     sed '/# --- OpenMailStack Modern Webmail ---/,/# --- End OpenMailStack Modern Webmail ---/d' "${NGINX_CONF}" > "${cleaned}"
-    if [[ "${SCHEDULER_ENABLED}" == "true" ]]; then
-        sed -i "0,/^[[:space:]]*server_name[[:space:]].*;/s//    server_name ${SCHEDULER_SERVER_NAMES};/" "${cleaned}"
-    fi
+    sed -i "0,/^[[:space:]]*server_name[[:space:]].*;/s//    server_name ${SCHEDULER_SERVER_NAMES};/" "${cleaned}"
 
     # Older live deployments predate the managed marker but already own the
-    # webmail/API locations. Preserve those routes and add only Scheduler.
+    # webmail/API locations. Preserve those routes and add only missing routes.
     if ! grep -Fq '# --- OpenMailStack Modern Webmail ---' "${NGINX_CONF}" \
         && grep -Eq '^[[:space:]]*location[[:space:]]+/api/' "${NGINX_CONF}" \
         && grep -Eq '^[[:space:]]*location[[:space:]]+/[[:space:]]*\{' "${NGINX_CONF}"; then
+        : > "${snippet}"
+        if ! grep -Fq 'location = /mail/config-v1.1.xml' "${cleaned}"; then
+            cat >> "${snippet}" <<EOF
+    # --- Mozilla Autoconfiguration Routes ---
+    location = /mail/config-v1.1.xml {
+        proxy_pass http://${WEBMAIL_HOST}:${WEBMAIL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    # --- End Mozilla Autoconfiguration Routes ---
+
+EOF
+        fi
+        if ! grep -Fq 'location = /.well-known/autoconfig/mail/config-v1.1.xml' "${cleaned}"; then
+            cat >> "${snippet}" <<EOF
+    # --- Mozilla Autoconfiguration Well-Known Route ---
+
+    location = /.well-known/autoconfig/mail/config-v1.1.xml {
+        proxy_pass http://${WEBMAIL_HOST}:${WEBMAIL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    # --- End Mozilla Autoconfiguration Well-Known Route ---
+
+EOF
+        fi
         if [[ "${SCHEDULER_ENABLED}" == "true" ]] && ! grep -Eq '^[[:space:]]*location[[:space:]]+\^~[[:space:]]+/scheduler/' "${cleaned}"; then
-            cat > "${snippet}" <<EOF
+            cat >> "${snippet}" <<EOF
     # --- OMS Scheduler Route ---
     location ^~ /scheduler/ {
         root ${FRONTEND_DIR};
@@ -307,6 +333,8 @@ configure_nginx() {
     # --- End OMS Scheduler Route ---
 
 EOF
+        fi
+        if [[ -s "${snippet}" ]]; then
             if ! awk -v snippet="${snippet}" '
                 !inserted && /^[[:space:]]*location[[:space:]]+\/[[:space:]]*\{/ {
                     while ((getline line < snippet) > 0) print line
@@ -317,7 +345,7 @@ EOF
                 END { if (!inserted) exit 2 }
             ' "${cleaned}" > "${candidate}"; then
                 rm -f "${backup}" "${cleaned}" "${candidate}" "${snippet}"
-                echo -e "${RED}Error: Could not add Scheduler to the existing webmail vhost.${NC}" >&2
+                echo -e "${RED}Error: Could not add managed routes to the existing webmail vhost.${NC}" >&2
                 exit 1
             fi
         else
@@ -412,6 +440,20 @@ EOF
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location = /mail/config-v1.1.xml {
+        proxy_pass http://${WEBMAIL_HOST}:${WEBMAIL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location = /.well-known/autoconfig/mail/config-v1.1.xml {
+        proxy_pass http://${WEBMAIL_HOST}:${WEBMAIL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 

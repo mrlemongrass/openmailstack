@@ -71,6 +71,7 @@ const calendar_subscription_1 = require("./calendar-subscription");
 const router_1 = require("./scheduler/router");
 const auth_1 = require("./auth");
 const account_security_1 = require("./account-security");
+const mail_autoconfig_1 = require("./mail-autoconfig");
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
 exports.io = new socket_io_1.Server(server, {
@@ -174,6 +175,14 @@ app.all('/.well-known/caldav', (req, res) => {
 app.all('/.well-known/carddav', (req, res) => {
     res.redirect(301, '/carddav/');
 });
+const autoconfigDomain = config_1.serverConfig.defaultDomain || 'example.invalid';
+const autoconfigMailHostname = config_1.serverConfig.publicBaseUrl
+    ? new URL(config_1.serverConfig.publicBaseUrl).hostname
+    : `mail.${autoconfigDomain}`;
+app.use((0, mail_autoconfig_1.createMozillaAutoconfigRouter)({
+    domain: config_1.serverConfig.defaultDomain || 'example.invalid',
+    mailHostname: autoconfigMailHostname,
+}));
 app.all(['/autodiscover/autodiscover.xml', '/Autodiscover/Autodiscover.xml'], (req, res) => {
     let email = config_1.serverConfig.defaultDomain ? `user@${config_1.serverConfig.defaultDomain}` : 'user@example.invalid';
     if (req.body && req.body.length > 0) {

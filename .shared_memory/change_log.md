@@ -1492,3 +1492,14 @@ Future entry template:
 - The next minimal probe is a user-created disposable contact while `All
   HouseVo Contacts` is selected, followed by web verification and deletion.
   Do not mutate Accounts/Contacts databases or add another DAV capability.
+
+## 2026-08-03 — macOS Sidebar Does Not Select Contact Destination
+
+- The disposable New Contact action saved to iCloud even while `All HouseVo
+  Contacts` was selected. The account sidebar is therefore a filtered view,
+  not an explicit destination selector, and the test never exercised Housevo
+  creation. Remove the iCloud probe card.
+- Added `scripts/diagnostics/macos_contacts_capabilities.py`, which reads only
+  selected HouseVo/iCloud CardDAV properties from the Accounts database in
+  strict read-only mode and redacts every string/binary value. Synthetic
+  decoding/redaction and syntax/help checks pass.

@@ -28,7 +28,11 @@ container, configuration-complete and owned by `com.apple.AddressBook`, with
 the same top-level state flags and zero-group count as iCloud. The remaining
 split is explicit new-contact writability versus macOS 26.5.2's implicit-
 default picker; test one user-created disposable card in the selected Housevo
-scope before inspecting private blobs or changing server metadata.
+scope before inspecting private blobs or changing server metadata. That UI
+test saved to iCloud, proving `All HouseVo Contacts` is only a filtered view and
+does not select a destination. Use the repository's sanitized read-only
+`macos_contacts_capabilities.py` decoder on cached Housevo/iCloud `HomeInfo`
+before any explicit-contact mutation or server change.
 
 ## 2026-07-31 Mandatory IMAPS And ActiveSync Release Gate
 

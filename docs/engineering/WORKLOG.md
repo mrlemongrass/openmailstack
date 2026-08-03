@@ -7850,3 +7850,15 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   isolates the fault to macOS 26.5.2's implicit-default picker. Failure or an
   iCloud destination supplies the missing local write-path error. No server or
   local database mutation was performed by the diagnostic commands.
+- Physical result: Contacts ignored the selected `All HouseVo Contacts` view
+  and saved the disposable card to the current iCloud default. This proves the
+  sidebar row is a filtered account view, not an explicit destination control;
+  it did not exercise Housevo's create path. Delete the iCloud probe card.
+- `scripts/diagnostics/macos_contacts_capabilities.py` is the next read-only
+  loop. It opens only the newest `~/Library/Accounts/Accounts*.sqlite` database
+  in URI `mode=ro` plus `query_only`, selects six HouseVo/iCloud CardDAV
+  capability properties, decodes their NSKeyedArchiver structure, and prints
+  key paths plus Boolean/numeric values. All string/binary values and unsafe
+  dynamic keys are redacted. A synthetic archive proved that `isWritable=true`
+  remains visible while a server URL is replaced by its character count; the
+  script compiles, its help path passes, and `git diff --check` is clean.

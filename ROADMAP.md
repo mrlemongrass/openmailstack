@@ -114,11 +114,15 @@ The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day 
 
 ## 6. Security And Enterprise Readiness 🟡
 
-- ❌ Resolve the production dependency advisories surfaced on 2026-08-03:
-  frontend DOMPurify/React Router/Socket.IO parser and backend
-  `ip-address`/MailParser-linkify/Socket.IO parser. Preserve Node 20 support,
-  verify whether React Router's RSC-only advisory is reachable in this SPA,
-  and rerun both production-only audits plus full release gates.
+- ✅ Resolve the production dependency advisories surfaced on 2026-08-03.
+  DOMPurify, Socket.IO parser, `ip-address`, MailParser/linkify, PostCSS, and
+  brace-expansion are patched on Node 20.19. The backend audit is clean; the
+  frontend audit reports only React Router GHSA-qwww-vcr4-c8h2, whose official
+  advisory applies only to unstable RSC APIs. OpenMailStack is a Vite browser
+  SPA with no RSC API, package, server entrypoint, or action header, enforced
+  by `dependency_security_guard.cjs`. React Router 8.3.0 is deferred because
+  it requires Node 22.22 and React 19.2.7 rather than the supported Node 20
+  baseline.
 - ✅ Replace reversible mailbox-credential storage with delegated Dovecot master-user auth. The installer now creates the root-only raw secret and Dovecot-readable hash, IMAP/SMTP/ManageSieve use the delegated identity, DAV and ActiveSync still validate supplied user credentials directly, and session/offline-index rows retain encrypted empty values rather than mailbox passwords.
 - ✅ Set and document an explicit high-entropy `OMS_SESSION_SECRET` for production. Production startup rejects missing/short values and upgrades generate and preserve a 64-character secret.
 - ✅ Add two-factor authentication and app-password support. TOTP with one-time recovery codes, purpose-separated encrypted secrets, protocol-capable per-device app passwords, session/app-password revocation, and primary-password blocking while 2FA is enabled are deployed and live-validated.

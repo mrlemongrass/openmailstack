@@ -369,3 +369,15 @@ Validation:
   The production artifacts match the release, the additive ledger is empty,
   and an authenticated preview-only live run completed without mailbox
   mutation or browser errors.
+
+## 2026-08-03 Dependency security boundary
+
+- Patched dependency floors are DOMPurify 3.4.12, Socket.IO parser 4.2.7,
+  `ip-address` 10.3.1, linkify 5.0.2/MailParser 3.9.13, PostCSS 8.5.23,
+  and brace-expansion 5.0.9. Current locks resolve newer or equal releases.
+- React Router remains exactly pinned to 7.18.2 because it supports Node 20;
+  the advisory fix in 8.3.0 requires Node 22.22 and React 19.2.7. The advisory
+  applies only to unstable RSC APIs, which this Vite browser SPA does not use.
+- `tests/integration/dependency_security_guard.cjs` fails if a patched floor
+  regresses or an RSC dependency, server build input, unstable API, internal
+  RSC client, or action header appears before React Router is upgraded.

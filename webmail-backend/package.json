@@ -20,7 +20,7 @@
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "imapflow": "^1.4.2",
-    "mailparser": "^3.9.11",
+    "mailparser": "^3.9.14",
     "multer": "^2.2.0",
     "mysql2": "^3.22.5",
     "nodemailer": "^9.0.1",

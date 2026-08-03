@@ -7984,3 +7984,53 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
 - This CardDAV release did not change package manifests or lockfiles. The
   advisories are recorded as the next security task; do not run an automatic
   major upgrade or claim the historical zero-audit state is current.
+
+## 2026-08-03 — Production dependency advisory remediation
+
+### Starting state
+
+- Git was clean at `723fc8a8`.
+- Production-only audits reported frontend DOMPurify low plus React Router and
+  Socket.IO parser high findings, and backend `ip-address`, MailParser/linkify,
+  and Socket.IO parser high findings.
+
+### Acceptance criteria
+
+- Patch every advisory with a Node-20-compatible release.
+- Prove whether React Router GHSA-qwww-vcr4-c8h2 is reachable rather than
+  forcing a platform-major upgrade or dismissing the audit result.
+- Preserve the Node 20.19 runtime, add a regression guard, pass backend and
+  frontend tests/lint/build, full integration, audits, and guarded release
+  gates.
+
+### Implementation and decision
+
+- Frontend now resolves DOMPurify 3.4.13, React Router 7.18.2, Socket.IO parser
+  4.2.7, PostCSS 8.5.25, and brace-expansion 5.0.9. Backend resolves MailParser
+  3.9.14/linkify 5.0.2, `ip-address` 10.4.0, and Socket.IO parser 4.2.7.
+- React Router's official advisory says it affects only unstable RSC APIs.
+  OpenMailStack uses BrowserRouter in a client-only Vite SPA and has no RSC
+  dependencies, server build entrypoint, unstable RSC API, internal RSC client,
+  or `rsc-action-id` handling. The only patched release, 8.3.0, requires Node
+  22.22 and React 19.2.7, so it is not a compatible fix for the supported Node
+  20.19 baseline.
+- Added `tests/integration/dependency_security_guard.cjs` and wired it into
+  `tests/integration/run.sh`. It enforces patched version floors and the RSC
+  non-reachability boundary until the router/platform upgrade occurs.
+
+### Local proof
+
+- Backend: 255 tests, 252 passed, 3 environment-gated skips, 0 failures; full
+  and production-only audits report zero vulnerabilities.
+- Frontend: 84/84 tests, lint, and production build pass. Compatible production
+  and development findings are zero; full and production-only audits retain
+  exactly GHSA-qwww-vcr4-c8h2 for the non-reachable RSC path.
+- Full static integration suite and `git diff --check` pass on Node 20.19.2.
+- Two-axis review: spec PASS; standards findings for broader RSC proof, strict
+  version parsing, and stale completion docs were corrected before commit.
+
+### Release state
+
+- Commit and guarded deployment are pending. Do not mark the live dependency
+  graph updated until the mandatory public protocol gates and staging smoke
+  complete.

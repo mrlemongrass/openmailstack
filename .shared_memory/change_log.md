@@ -1555,3 +1555,18 @@ Future entry template:
 - No dependency file changed in the CardDAV release. Remediation is the next
   security task and must preserve Node 20 compatibility, assess React Router
   RSC reachability, and pass clean production audits plus full release gates.
+
+## 2026-08-03 — Compatible Dependency Advisories Patched
+
+- Raised DOMPurify to 3.4.13, React Router to the latest Node-20-compatible
+  7.18.2, MailParser to 3.9.14, and resolved patched Socket.IO parser,
+  `ip-address`, linkify, PostCSS, and brace-expansion transitive releases.
+- Backend production/full audits are clean. Frontend production/full audits
+  report only React Router GHSA-qwww-vcr4-c8h2; upstream says the issue affects
+  only unstable RSC APIs, and 8.3.0 requires Node 22.22 plus React 19.2.7.
+- `dependency_security_guard.cjs` enforces patched floors, exact React Router
+  pinning, strict release versions, absence of RSC dependencies/server build
+  inputs/APIs/action headers, and is wired into the full integration suite.
+- Node 20.19.2 backend tests (252 pass, 3 gated skips), frontend tests (84
+  pass), lint, build, and integration checks pass. Deployment proof remains to
+  be appended after the guarded release.

@@ -106,13 +106,18 @@ if ! grep -Fq "<D:owner><D:href>/carddav/principals/${SMOKE_USER}/</D:href></D:o
   cat "${tmpdir}/propfind-addressbook-capabilities.out"
   exit 1
 fi
-for privilege in read write bind unbind; do
+for privilege in read bind unbind; do
   if ! grep -q "<D:${privilege}/>" "${tmpdir}/propfind-addressbook-capabilities.out"; then
     echo "FAIL: CardDAV addressbook PROPFIND omitted ${privilege} privilege"
     cat "${tmpdir}/propfind-addressbook-capabilities.out"
     exit 1
   fi
 done
+if grep -q '<D:write/>' "${tmpdir}/propfind-addressbook-capabilities.out"; then
+  echo "FAIL: CardDAV addressbook PROPFIND overclaimed aggregate write"
+  cat "${tmpdir}/propfind-addressbook-capabilities.out"
+  exit 1
+fi
 for report in addressbook-query addressbook-multiget sync-collection; do
   if ! grep -q "<[^:>]*:${report}/>" "${tmpdir}/propfind-addressbook-capabilities.out"; then
     echo "FAIL: CardDAV addressbook PROPFIND omitted the ${report} report"

@@ -92,7 +92,7 @@ const propfindBody = [
   '</D:propfind>',
 ].join('');
 
-test('owner CardDAV collection advertises aggregate write plus granular create and delete privileges', async (t) => {
+test('owner CardDAV collection advertises only implemented create and delete privileges', async (t) => {
   const app = express();
   app.use(express.raw({ type: () => true }));
   app.use('/carddav', carddavRouter);
@@ -151,7 +151,7 @@ test('owner CardDAV collection advertises aggregate write plus granular create a
   const addressBookXml = await addressBook.text();
   assert.match(addressBookXml, /<D:current-user-privilege-set>/);
   assert.match(addressBookXml, /<D:privilege><D:read\/><\/D:privilege>/);
-  assert.match(addressBookXml, /<D:privilege><D:write\/><\/D:privilege>/);
+  assert.doesNotMatch(addressBookXml, /<D:privilege><D:write\/><\/D:privilege>/);
   assert.match(addressBookXml, /<D:privilege><D:bind\/><\/D:privilege>/);
   assert.match(addressBookXml, /<D:privilege><D:unbind\/><\/D:privilege>/);
   assert.doesNotMatch(addressBookXml, /<D:privilege><D:write-content\/><\/D:privilege>/);
@@ -170,10 +170,7 @@ test('owner CardDAV collection advertises aggregate write plus granular create a
   const addressBookWithContactXml = await addressBookWithContact.text();
   assert.match(addressBookWithContactXml, /capability-contact\.vcf/);
   assert.match(addressBookWithContactXml, /<D:privilege><D:write-content\/><\/D:privilege>/);
-  assert.equal(
-    addressBookWithContactXml.match(/<D:privilege><D:write\/><\/D:privilege>/g)?.length,
-    1,
-  );
+  assert.doesNotMatch(addressBookWithContactXml, /<D:privilege><D:write\/><\/D:privilege>/);
   assert.doesNotMatch(addressBookWithContactXml, /<D:privilege><D:write-properties\/><\/D:privilege>/);
 });
 
@@ -233,5 +230,5 @@ test('macOS home discovery advertises owner and implemented address book reports
     xml,
     /<D:supported-report><D:report><D:sync-collection\/><\/D:report><\/D:supported-report>/,
   );
-  assert.equal(xml.match(/<D:privilege><D:write\/><\/D:privilege>/g)?.length, 1);
+  assert.doesNotMatch(xml, /<D:privilege><D:write\/><\/D:privilege>/);
 });

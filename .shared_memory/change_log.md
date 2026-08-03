@@ -1588,3 +1588,21 @@ Future entry template:
   closes both the catch-up/no-change and MIME body-display gates without any
   mailbox mutation. Exact identity reconciliation remains the regression
   rule.
+
+## 2026-08-03 — Mozilla Mail Autoconfiguration Deployed
+
+- Added the Thunderbird provider and domain well-known discovery routes with
+  full-address usernames, IMAP 993 SSL, and SMTP 587 STARTTLS. The query email
+  address is not reflected into the public XML.
+- Fresh and legacy Nginx paths proxy both endpoints, certificate-host
+  enumeration includes `autoconfig.<FIRST_DOMAIN>` even without Scheduler, and
+  staging smoke validates the secure settings.
+- Commit `63683df8` passed backend 254/257 with three environment skips,
+  frontend 84/84, full integration, installer dry-run, and guarded public
+  IMAPS/ActiveSync checks before and after deployment. Live artifacts match,
+  the service has `NRestarts=0`, and rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260803T235205Z/`.
+- Public completion remains blocked on an external prerequisite:
+  `autoconfig.housevo.us` has no DNS record and is absent from the active
+  certificate. Add both, then repeat Thunderbird desktop and Android automatic
+  account setup before closing one-step discovery.

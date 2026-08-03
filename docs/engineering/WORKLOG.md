@@ -8081,3 +8081,54 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   The separate macOS Contacts Default Account picker omission remains an Apple
   client issue; HouseVo CardDAV discovery, targeted writes, sync, and cleanup
   pass.
+
+## 2026-08-03 — Mozilla mail autoconfiguration server release
+
+### Goal and acceptance criteria
+
+- Replace Thunderbird's unsafe heuristic/manual setup with the two provider
+  discovery paths documented by Mozilla: `/mail/config-v1.1.xml` on
+  `autoconfig.<domain>` and the domain
+  `/.well-known/autoconfig/mail/config-v1.1.xml` fallback.
+- Advertise the full email address as username, IMAP 993 with SSL, and SMTP 587
+  with STARTTLS. Do not reflect query input or advertise an unencrypted option.
+- Cover fresh and legacy installer routes, certificate-host enumeration,
+  automated regressions, guarded deployment, and public endpoint proof.
+
+### Implementation and local proof
+
+- Added a small public Express router that renders one escaped Mozilla 1.1 XML
+  configuration for both paths. `%EMAILADDRESS%` remains a client-side
+  placeholder, so requests do not echo submitted mailbox addresses.
+- `functions/10_webmail.sh` proxies both exact routes in managed and legacy
+  vhosts, adds only a missing route when a host is partially configured, and
+  always refreshes the OpenMailStack server-name list. Host enumeration now
+  includes `autoconfig.<FIRST_DOMAIN>` whether Scheduler is enabled or not.
+- Red/green endpoint tests cover the provider and well-known seams. The
+  integration guard executes host enumeration in both Scheduler modes and
+  checks application, Nginx, and staging-smoke contracts.
+- Backend: 257 tests, 254 passed, 3 documented environment skips, 0 failures.
+  Frontend: 84/84 through the full integration suite. Installer dry-run, shell
+  syntax, focused tests, build, and `git diff --check` pass.
+
+### Deployment and live proof
+
+- Commit `63683df8` is pushed and deployed. The mandatory public IMAPS and
+  ActiveSync gate passed before and after installation. Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260803T235205Z/`.
+- Full staging smoke passes, including the new XML assertion. Both live paths
+  on `mail.housevo.us` return the documented settings; forced routing with Host
+  `autoconfig.housevo.us` returns 200. Repository and live router artifacts
+  share SHA-256
+  `70f55d7847bb669253dd07940ae601b0337c787c5e474f86dbf8f25c22f54512`.
+  Nginx is valid, the post-release warning journal is empty, and the service is
+  active with `NRestarts=0`.
+
+### Remaining public gate
+
+- `autoconfig.housevo.us` has no public DNS A/AAAA/CNAME answer and the current
+  Let's Encrypt certificate does not cover it. Add a DNS alias to
+  `mail.housevo.us`, expand the existing certificate SAN, then rerun automatic
+  setup in Thunderbird 140.12.0esr and Thunderbird Android 21.0. Until those
+  checks pass, server support is deployed but one-step public discovery remains
+  open.

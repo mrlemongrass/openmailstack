@@ -1,5 +1,26 @@
 # Implementation State
 
+## 2026-08-03 Mozilla Mail Autoconfiguration
+
+**Status: Server support deployed; public discovery hostname pending DNS and
+certificate provisioning.** Commit `63683df8` serves Thunderbird's provider
+`/mail/config-v1.1.xml` path and domain well-known fallback from one tested
+router. The response uses `%EMAILADDRESS%`, IMAP 993 with SSL, and SMTP 587 with
+STARTTLS; it never reflects the query email address. Fresh and legacy Nginx
+install paths proxy both routes, and installer certificate-host enumeration now
+includes `autoconfig.<FIRST_DOMAIN>` with or without Scheduler.
+
+Backend 254/257 with three environment-gated skips, frontend 84/84 through the
+full integration suite, shell syntax, installer dry-run, and focused discovery
+guards pass. The guarded release passed strict public IMAPS and ActiveSync
+before and after deployment. Staging smoke, both live routes on
+`mail.housevo.us`, forced-host routing, exact repository/live artifact hash,
+clean warning journal, and `NRestarts=0` pass. Rollback is
+`/var/backups/openmailstack/protocol-guarded-webmail-20260803T235205Z/`.
+`autoconfig.housevo.us` still has no public DNS record and the active certificate
+does not cover it, so do not claim one-step Thunderbird setup until DNS, SAN
+expansion, and a fresh physical client run pass.
+
 ## 2026-08-03 macOS CardDAV Owned-Collection Writability
 
 **Status: CardDAV physical write lifecycle passed; macOS picker defect remains.**

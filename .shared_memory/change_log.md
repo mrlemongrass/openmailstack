@@ -1479,3 +1479,16 @@ Future entry template:
 - No server change followed. The next step is a read-only macOS
   `CNContactStore` container/default probe; do not add another DAV capability
   guess before local classification is known.
+
+## 2026-08-03 — macOS Housevo Container Is Native CardDAV
+
+- Read-only Contacts-framework output reports Housevo as an authorized native
+  CardDAV container, not a directory or unassigned source. Housevo and iCloud
+  both have zero groups; iCloud is default and Housevo is not.
+- Read-only Accounts database metadata reports Housevo active, authenticated,
+  visible, configuration-complete, and owned by `com.apple.AddressBook`, with
+  populated home/principal discovery state. The top-level state flags match
+  iCloud's CardDAV rows.
+- The next minimal probe is a user-created disposable contact while `All
+  HouseVo Contacts` is selected, followed by web verification and deletion.
+  Do not mutate Accounts/Contacts databases or add another DAV capability.

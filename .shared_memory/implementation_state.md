@@ -22,7 +22,13 @@ consumed the response but HouseVo remained absent from Default Account; the
 sidebar shows only `All HouseVo Contacts`. Aggregate writability is therefore
 falsified as the deciding gate. Inspect the Mac's local Contacts container
 classification next instead of adding more server capability guesses, then
-reconsider the now-ineffective aggregate compatibility claim.
+reconsider the now-ineffective aggregate compatibility claim. Read-only local
+probes now show Housevo is a normal active/authenticated/visible CardDAV
+container, configuration-complete and owned by `com.apple.AddressBook`, with
+the same top-level state flags and zero-group count as iCloud. The remaining
+split is explicit new-contact writability versus macOS 26.5.2's implicit-
+default picker; test one user-created disposable card in the selected Housevo
+scope before inspecting private blobs or changing server metadata.
 
 ## 2026-07-31 Mandatory IMAPS And ActiveSync Release Gate
 

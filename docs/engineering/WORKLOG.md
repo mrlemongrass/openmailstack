@@ -7824,3 +7824,29 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   or omits HouseVo, inspect the local account/container records before changing
   the server again. Reconsider and likely remove the now-ineffective aggregate
   compatibility claim once the local classification is known.
+
+## 2026-08-03 — macOS Local CardDAV Container Classification
+
+- A read-only `CNContactStore` probe returned three containers. Housevo is
+  present as `type=CardDAV`, `default=false`, and `groups=0`; iCloud is also
+  `type=CardDAV` with `groups=0` and is the current default. On My Mac is the
+  third, local container. Contacts access was authorized (`AUTH_RAW=3`).
+- This rules out LDAP/directory classification, an omitted local container,
+  and the absence of a `Personal` sidebar child as the deciding issue. Apple
+  models a CardDAV account as one container, while groups/lists are separate;
+  both Housevo and iCloud having zero groups is consistent with the sidebar.
+- A second read-only Accounts database comparison found Housevo's CardDAV row
+  active, authenticated, visible, configuration-complete, and owned by
+  `com.apple.AddressBook`. Its top-level active/auth/visibility flags match the
+  iCloud CardDAV rows. Housevo has populated `HomeInfo` and principal metadata;
+  no exposed read-only/default-eligibility property key is uniquely absent.
+- The material structural difference is that iCloud's CardDAV rows are
+  privileged children of the Apple account and include Apple-specific
+  dataclass metadata, while Housevo is a normal standalone CardDAV account.
+  Do not infer a server defect from that provider distinction.
+- Next physical probe: with `All HouseVo Contacts` selected, create one clearly
+  named disposable card, verify it appears in OMS Web Contacts, then delete it
+  and verify removal. Success proves the container accepts new contacts and
+  isolates the fault to macOS 26.5.2's implicit-default picker. Failure or an
+  iCloud destination supplies the missing local write-path error. No server or
+  local database mutation was performed by the diagnostic commands.

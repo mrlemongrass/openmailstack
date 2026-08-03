@@ -12,7 +12,7 @@ const router = express_1.default.Router();
 const ADDRESSBOOK_SLUGS = new Set(['personal', 'contacts']);
 const READ_PRIVILEGES = ['read', 'read-current-user-privilege-set'];
 const CONTACT_PRIVILEGES = [...READ_PRIVILEGES, 'write-content'];
-const ADDRESSBOOK_PRIVILEGES = [...READ_PRIVILEGES, 'bind', 'unbind'];
+const ADDRESSBOOK_PRIVILEGES = [...READ_PRIVILEGES, 'write', 'bind', 'unbind'];
 function currentUserPrivilegeSet(privileges) {
     return `<D:current-user-privilege-set>${privileges
         .map(privilege => `<D:privilege><D:${privilege}/></D:privilege>`)

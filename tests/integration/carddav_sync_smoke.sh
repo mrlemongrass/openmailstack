@@ -106,7 +106,7 @@ if ! grep -Fq "<D:owner><D:href>/carddav/principals/${SMOKE_USER}/</D:href></D:o
   cat "${tmpdir}/propfind-addressbook-capabilities.out"
   exit 1
 fi
-for privilege in read bind unbind; do
+for privilege in read write bind unbind; do
   if ! grep -q "<D:${privilege}/>" "${tmpdir}/propfind-addressbook-capabilities.out"; then
     echo "FAIL: CardDAV addressbook PROPFIND omitted ${privilege} privilege"
     cat "${tmpdir}/propfind-addressbook-capabilities.out"

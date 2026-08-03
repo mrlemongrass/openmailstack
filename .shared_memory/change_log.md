@@ -1573,3 +1573,18 @@ Future entry template:
   Socket.IO handshake pass, the live backend audit is clean, repository/live
   dependency and frontend artifacts match, and `NRestarts=0`. Rollback is
   `/var/backups/openmailstack/protocol-guarded-webmail-20260803T232855Z/`.
+
+## 2026-08-03 — Physical ActiveSync Mail Gate Closed
+
+- Reconciled the older partial-catch-up status with the later July 29
+  exhaustion, stable no-change polling, and exact saved-UID reconciliation
+  proof already recorded in the engineering worklog.
+- A fresh read-only assertion against the newest iOS partnership reports 6,243
+  saved Inbox identities, `minimum_uid=1`, nonzero SyncKey and MODSEQ, zero
+  pending commands, and `MoreAvailable=false`. Public EAS `OPTIONS` returns
+  200; the backend is active with `NRestarts=0`.
+- The owner confirmed macOS Mail, iOS IMAP, and iOS Exchange all render and
+  synchronize correctly; the only later mail issue was Sieve filtering. This
+  closes both the catch-up/no-change and MIME body-display gates without any
+  mailbox mutation. Exact identity reconciliation remains the regression
+  rule.

@@ -8047,3 +8047,37 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   RSC-only advisory.
 - Rollback snapshot:
   `/var/backups/openmailstack/protocol-guarded-webmail-20260803T232855Z/`.
+
+## 2026-08-03 — Physical iOS ActiveSync Mail gate closure
+
+### Evidence reconciliation
+
+- Older current-status documents still stopped at 4,550 of 6,034 Inbox items,
+  even though the July 29 worklog had already proved paging exhaustion, exact
+  saved-UID reconciliation, and sustained no-change polling. The only remaining
+  item was physical iPhone display confirmation.
+- The owner subsequently confirmed that macOS Mail, iOS IMAP, and iOS Exchange
+  all work correctly. Their only later mail report concerned Sieve filtering,
+  not ActiveSync synchronization or MIME body rendering.
+
+### Current read-only proof
+
+- A deterministic SQL assertion against the newest iOS partnership passed with
+  6,243 saved Inbox identities, `minimum_uid=1`, nonzero SyncKey and MODSEQ,
+  `last_commands=0`, and `last_more_available=0`.
+- Every recently polled collection on that partnership is checkpointed with no
+  pending commands and no `MoreAvailable`. Public EAS `OPTIONS` returns 200;
+  `openmailstack-webmail` is active with `NRestarts=0`.
+- Historical spam reconciliation still treats known Junk items and same-subject
+  or same-sender Inbox messages as distinct identities. No mailbox or production
+  data was changed during this closure check.
+
+### Decision
+
+- Close the iOS catch-up/no-change and MIME body-display gates. Preserve exact
+  identity reconciliation tests and the mandatory guarded protocol release
+  gate for future ActiveSync changes.
+- The tested Apple, Android/DAVx5, and Thunderbird mail/DAV matrix now passes.
+  The separate macOS Contacts Default Account picker omission remains an Apple
+  client issue; HouseVo CardDAV discovery, targeted writes, sync, and cleanup
+  pass.

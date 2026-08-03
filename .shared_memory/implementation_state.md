@@ -2,54 +2,27 @@
 
 ## 2026-08-03 macOS CardDAV Owned-Collection Writability
 
-**Status: Deployed and script-verified; physical picker failed.** A privacy-
-bounded temporary probe captured the exact DAV property names requested during
-a failed fresh macOS 26.5.2 CardDAV onboarding. The Personal Contacts response
-omitted both `DAV:owner` and the RFC-required `DAV:supported-report-set`.
-Commit `78c0726` now identifies the authenticated principal as owner and
-advertises the route's addressbook-query, addressbook-multiget, and
-sync-collection reports. A complete post-deploy macOS refresh consumed those
-properties but HouseVo still did not appear in Default Account, falsifying
-that metadata as sufficient. Commit `e468e443` now adds aggregate `DAV:write`
-only to the owned Personal collection as a compatibility signal for its
-existing create/edit/delete behavior; individual contact resources remain
-`write-content`-only, and no mutable ACL or standalone `write-properties`
-claim was added. The temporary probe is removed. The red-then-green exact
-macOS route regression, authenticated public CardDAV lifecycle, mandatory
-IMAPS/ActiveSync gate, staging smoke, exact live artifact hash, clean recent
-error check, and zero-restart service state pass. A fresh physical refresh
-consumed the response but HouseVo remained absent from Default Account; the
-sidebar shows only `All HouseVo Contacts`. Aggregate writability is therefore
-falsified as the deciding gate. Inspect the Mac's local Contacts container
-classification next instead of adding more server capability guesses, then
-reconsider the now-ineffective aggregate compatibility claim. Read-only local
-probes now show Housevo is a normal active/authenticated/visible CardDAV
-container, configuration-complete and owned by `com.apple.AddressBook`, with
-the same top-level state flags and zero-group count as iCloud. The remaining
-split is explicit new-contact writability versus macOS 26.5.2's implicit-
-default picker; test one user-created disposable card in the selected Housevo
-scope before inspecting private blobs or changing server metadata. That UI
-test saved to iCloud, proving `All HouseVo Contacts` is only a filtered view and
-does not select a destination. Use the repository's sanitized read-only
-`macos_contacts_capabilities.py` decoder on cached Housevo/iCloud `HomeInfo`
-before any explicit-contact mutation or server change. That decoder now shows
-Housevo's Personal address book is cached with `read`, `write`, `bind`,
-`unbind`, and `read-current-user-privilege-set`, the CardDAV address-book
-resource type, and all three implemented reports. The home-set itself has only
-the two truthful read privileges. iCloud additionally advertises `read-acl`
-and writable home-set collection management, neither of which OpenMailStack
-implements. Do not claim those rights to influence the picker. The remaining
-decisive probe is an explicitly targeted Contacts-framework create/delete in
-the Housevo container, which requires user approval because it briefly mutates
-contact data. Approval was granted, and
-`scripts/diagnostics/macos_contacts_targeted_write.swift` now implements that
-one-shot probe. It requires exactly one Housevo CardDAV container, targets the
-save by opaque container identifier, verifies the random marker only appears
-inside Housevo, waits 20 seconds for CardDAV synchronization, deletes the exact
-marker, verifies local removal, and waits another 10 seconds for cleanup sync.
-Any error is sanitized; a failed cleanup prints the unique manual-removal name.
-The physical macOS run and correlated live CardDAV PUT/DELETE evidence remain
-the acceptance gate.
+**Status: CardDAV physical write lifecycle passed; macOS picker defect remains.**
+macOS 26.5.2 classifies Housevo as an active native CardDAV container and
+cached its Personal address book as writable, yet still omits it from Contacts
+> Settings > General > Default Account. The approved
+`macos_contacts_targeted_write.swift` probe explicitly targeted that container,
+created one random marker, verified `DESTINATION_OK=HouseVo`, and deleted it.
+Live CardDAV logs recorded the matching PUT at 22:56:52 UTC and DELETE at
+22:57:15 UTC. Storage has zero active rows and one expected tombstone for the
+exact DAV UID; the service remained warning-free and healthy.
+
+The experimental aggregate `DAV:write` compatibility signal was therefore
+both ineffective and broader than the implemented property-write contract.
+Commit `35d29345` removes it while preserving truthful collection
+`bind`/`unbind`, contact-resource `write-content`, owner metadata, and handled
+query/multiget/sync reports. Backend 252/255 with three gated skips, frontend
+84/84 plus lint/build, integration and focused shell checks, mandatory public
+mail gates before/after deployment, public CardDAV lifecycle, staging smoke,
+exact artifact hash, clean warnings, and `NRestarts=0` pass. Rollback is
+`/var/backups/openmailstack/protocol-guarded-webmail-20260803T230149Z/`. Do not
+add ACL or writable-home claims or mutate private macOS databases; the remaining
+Default Account failure is isolated to Apple's client eligibility/UI state.
 
 ## 2026-07-31 Mandatory IMAPS And ActiveSync Release Gate
 
@@ -78,7 +51,7 @@ web sessions, and ActiveSync state were empty.
 
 ## 2026-07-30 Thunderbird And Android Client Matrix
 
-**Status: Thunderbird desktop and the remote Android client stack pass; active test state is clean.** Thunderbird 140.12.0esr on Debian 13.6 completed IMAP/SMTP self-send plus CalDAV and CardDAV create/edit/delete through the live server. Thunderbird Android 21.0 and DAVx5 4.5.18-ose completed the corresponding mail, Calendar-provider, and Contacts-provider lifecycles on an Android 11 API 30 emulator in `dev2-debian`; Etar 1.0.56 supplied the event editor because the bundled AOSP Calendar package declared but omitted its editor class. The server retained stable DAV UIDs through edits and emitted the expected calendar/contact tombstones on delete. Exact Inbox/Sent test UIDs were expunged only after subject verification. The disposable `omsclient` account/home was removed, taking its Thunderbird profiles, Android AVDs, APKs, screenshots, and cached mailbox credential with it. The Android SDK and installed Debian test packages remain reusable and contain no mailbox profile. Post-cleanup staging smoke, public IMAP/SMTP hostname verification, HTTPS, service activity, recent error checks, and zero backend restarts pass. Remaining matrix work is standalone macOS Mail/Contacts. macOS 26.5.2 CardDAV authenticates, syncs, and allows edits; owner `read`/contact `write-content`/collection `bind` and `unbind` metadata is live at commit `6901d9b`, while the Default Account menu and reversible physical lifecycle still require recheck. Both Thunderbird variants exposed the separate Mozilla Autoconfiguration gap recorded in the risk register and roadmap.
+**Status: Thunderbird desktop and the remote Android client stack pass; active test state is clean.** Thunderbird 140.12.0esr on Debian 13.6 completed IMAP/SMTP self-send plus CalDAV and CardDAV create/edit/delete through the live server. Thunderbird Android 21.0 and DAVx5 4.5.18-ose completed the corresponding mail, Calendar-provider, and Contacts-provider lifecycles on an Android 11 API 30 emulator in `dev2-debian`; Etar 1.0.56 supplied the event editor because the bundled AOSP Calendar package declared but omitted its editor class. The server retained stable DAV UIDs through edits and emitted the expected calendar/contact tombstones on delete. Exact Inbox/Sent test UIDs were expunged only after subject verification. The disposable `omsclient` account/home was removed, taking its Thunderbird profiles, Android AVDs, APKs, screenshots, and cached mailbox credential with it. The Android SDK and installed Debian test packages remain reusable and contain no mailbox profile. Post-cleanup staging smoke, public IMAP/SMTP hostname verification, HTTPS, service activity, recent error checks, and zero backend restarts pass. Standalone macOS Mail remains the physical protocol gate. macOS 26.5.2 CardDAV now has an explicit create/delete lifecycle pass through a real PUT/DELETE and clean tombstone; only Apple's Default Account picker omission remains open. Both Thunderbird variants exposed the separate Mozilla Autoconfiguration gap recorded in the risk register and roadmap.
 
 ## 2026-07-30 Public IMAP TLS
 
@@ -88,7 +61,7 @@ web sessions, and ActiveSync state were empty.
 
 **Status: Deployed through `701583fd`; live protocol and browser validation passed.** Production requires separate preserved 64-character session and account-security keys. TOTP secrets use purpose-separated AES-256-GCM encryption; recovery codes and named app passwords are stored only as digests. Two-factor login accepts TOTP or one transactionally consumed recovery code, and enabling 2FA retains only the current session. Dovecot 2.4.1 has separate master, app-password, and mailbox-password passdbs: 2FA blocks the primary password while app passwords work across IMAP, SMTP submission, ManageSieve, and CalDAV. The delegated backend identity remains independent. All 47 modern Admin routes require an authenticated session and fresh active-superadmin row; legacy PHP actions use explicit global, domain, self-service, and quarantine policies. See `docs/engineering/ADMIN_RBAC_AUDIT.md`. Backend 223/226 with three documented optional skips, frontend 82/82, lint/build/integration/PHP checks, disposable live protocol probes, authenticated desktop/mobile Playwright, exact artifacts, and staging smoke pass. Final live probe state is empty and the account used for UI verification has 2FA disabled with no app passwords. Rollback: `/var/backups/openmailstack/auth-2fa-rbac-6f5d51aa-20260730T054937Z/`.
 
-Last reviewed: 2026-07-30. Webmail search performance and correctness are deployed at `4b0eb69d`: ordinary all-field terms use one Boolean FULLTEXT filter/score, while short, quoted, punctuation-bearing, and default InnoDB-stopword terms retain bounded LIKE semantics. Recent worker-certified complete indexes require no synchronous IMAP; every worker cycle invalidates the previous snapshot first and certifies a replacement only after pagination completes and every folder passes same-cycle move/delete reconciliation. LIST-STATUS consolidates unseen and UID identity reads where the server advertises it, worker cycles cannot overlap, superseded frontend/live-fallback work is cancelled, Undo and move actions invalidate stale snapshots, and bounded timing/source/count telemetry excludes query, user, folder, subject, and body values. A production Boolean probe returned 50 rows in about 85 ms; the deployed worker certified two available user snapshots in 33.6 seconds with no failure or overlap. The accessible single/bulk Move picker remains deployed and folder-safe. Exact backend/frontend artifacts, normalized permissions, API/auth boundaries, ActiveSync OPTIONS, zero automatic restarts, warning-free post-restart logs, Nginx, and staging smoke pass. Rollback is `/var/backups/openmailstack/search-perf-73a7ec2-20260721T133522Z`. Calendar Track T is complete for the deployed scope. ActiveSync Mail delta synchronization is deployed at `5b9cd89e`, with FilterType-0 all-mail pagination corrected at `bc4f7387`: state is scoped by mailbox/device/folder; web moves emit source Deletes and destination Adds; FilterType, WindowSize, body truncation, paginated initial catch-up, and efficient post-catch-up no-change polls are bounded and regression-covered. Authenticated production web-to-Junk/web-to-Trash smoke, exact artifacts, service health, rollback checks, the physical stale-key reset, and continuous iOS paging beyond 25 messages pass. Physical Inbox catch-up reached 4,550 of roughly 6,034 messages before pausing with `MoreAvailable=true`; final exhaustion/no-change remains open. The user confirmed the IMAP client consistently classified the two historical spam examples as Junk, while current server search finds separate active Inbox UIDs and the recent web action referenced neither; do not mutate mail by subject until those identities are reconciled. The timezone repair, EAS origin-timezone codec, recurrence exceptions/reminders, and conservative custom-zone handling remain deployed under rollback. Physical macOS 26.5.2 CalDAV and iOS 26.5.2 ActiveSync Calendar gates pass. F0 remains next in program order after the mail device gate. Thunderbird desktop and the remote Android client stack now pass; standalone macOS Mail/Contacts remain. Clean-VM validation is deferred until a second development Linux server is available.
+Last reviewed: 2026-08-03. Webmail search performance and correctness are deployed at `4b0eb69d`: ordinary all-field terms use one Boolean FULLTEXT filter/score, while short, quoted, punctuation-bearing, and default InnoDB-stopword terms retain bounded LIKE semantics. Recent worker-certified complete indexes require no synchronous IMAP; every worker cycle invalidates the previous snapshot first and certifies a replacement only after pagination completes and every folder passes same-cycle move/delete reconciliation. LIST-STATUS consolidates unseen and UID identity reads where the server advertises it, worker cycles cannot overlap, superseded frontend/live-fallback work is cancelled, Undo and move actions invalidate stale snapshots, and bounded timing/source/count telemetry excludes query, user, folder, subject, and body values. A production Boolean probe returned 50 rows in about 85 ms; the deployed worker certified two available user snapshots in 33.6 seconds with no failure or overlap. The accessible single/bulk Move picker remains deployed and folder-safe. Exact backend/frontend artifacts, normalized permissions, API/auth boundaries, ActiveSync OPTIONS, zero automatic restarts, warning-free post-restart logs, Nginx, and staging smoke pass. Rollback is `/var/backups/openmailstack/search-perf-73a7ec2-20260721T133522Z`. Calendar Track T is complete for the deployed scope. ActiveSync Mail delta synchronization is deployed at `5b9cd89e`, with FilterType-0 all-mail pagination corrected at `bc4f7387`: state is scoped by mailbox/device/folder; web moves emit source Deletes and destination Adds; FilterType, WindowSize, body truncation, paginated initial catch-up, and efficient post-catch-up no-change polls are bounded and regression-covered. Authenticated production web-to-Junk/web-to-Trash smoke, exact artifacts, service health, rollback checks, the physical stale-key reset, and continuous iOS paging beyond 25 messages pass. Physical Inbox catch-up reached 4,550 of roughly 6,034 messages before pausing with `MoreAvailable=true`; final exhaustion/no-change remains open. The user confirmed the IMAP client consistently classified the two historical spam examples as Junk, while current server search finds separate active Inbox UIDs and the recent web action referenced neither; do not mutate mail by subject until those identities are reconciled. The timezone repair, EAS origin-timezone codec, recurrence exceptions/reminders, and conservative custom-zone handling remain deployed under rollback. Physical macOS 26.5.2 CalDAV and CardDAV lifecycles plus iOS 26.5.2 ActiveSync Calendar pass. F0 remains next in program order after the mail device gate. Thunderbird desktop and the remote Android client stack now pass; standalone macOS Mail remains, while the Contacts Default Account picker is documented as an Apple UI issue. Clean-VM validation is deferred until a second development Linux server is available.
 
 ## 2026-07-21 Webmail Search Correctness
 

@@ -1528,3 +1528,20 @@ Future entry template:
 - Static diff validation passes. The physical macOS 26.5.2 run and correlated
   live CardDAV PUT/DELETE logs remain pending; no server or contact data was
   changed while preparing the probe.
+
+## 2026-08-03 — macOS Housevo Write Passed And Aggregate Claim Removed
+
+- Physical macOS 26.5.2 explicitly created one random contact in Housevo and
+  deleted it. Live logs recorded the matching CardDAV PUT/DELETE; storage has
+  zero active rows plus one tombstone for the exact UID, with no warnings or
+  backend restarts.
+- Commit `35d29345` removes the falsified aggregate `DAV:write` compatibility
+  claim while retaining `bind`/`unbind`, contact `write-content`, owner, and
+  implemented reports. The public smoke now rejects aggregate write.
+- Backend 252/255 with three skips, frontend 84/84 plus lint/build, integration
+  and shell checks, guarded public mail gates, public CardDAV lifecycle,
+  staging smoke, exact live artifact hash, readiness, and service health pass.
+  Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260803T230149Z/`.
+- The remaining Default Account omission is isolated to the macOS picker; do
+  not broaden DAV rights or edit private Apple account databases.

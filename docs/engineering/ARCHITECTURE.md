@@ -1158,13 +1158,9 @@ Current CardDAV interoperability seam, deployed and verified 2026-08-03:
 - `webmail-backend/src/carddav.ts` implements native principal/address-book
   discovery and one owner-only Personal Contacts collection. Its
   `DAV:current-user-privilege-set` reports read access, contact-resource
-  `write-content`, and collection `write`/`bind`/`unbind`.
-- The Personal collection's aggregate `DAV:write` is a macOS compatibility
-  signal for the already-implemented owner create/edit/delete lifecycle. It is
-  scoped to that collection and does not add mutable ACLs, sharing, or new DAV
-  methods; root, principal, home, and contact-resource privilege sets remain
-  bounded. OpenMailStack still does not advertise RFC 3744 `access-control` or
-  a standalone `write-properties` privilege.
+  `write-content`, and collection `bind`/`unbind`. It does not advertise
+  aggregate `write`, RFC 3744 `access-control`, or `write-properties` because
+  arbitrary property and ACL mutation are not implemented.
 - The address-book home and Personal Contacts collection identify the
   authenticated principal through `DAV:owner`. Personal Contacts advertises
   the already-handled `addressbook-query`, `addressbook-multiget`, and
@@ -1175,12 +1171,14 @@ Current CardDAV interoperability seam, deployed and verified 2026-08-03:
   `tests/integration/carddav_sync_smoke.sh` checks the public capability and
   CRUD/tombstone lifecycle and deletes its unique remote contact from the EXIT
   trap if a post-PUT assertion fails.
-- Production artifacts match commit `e468e443`; the authenticated public
+- Production artifacts match commit `35d29345`; the authenticated public
   lifecycle, complete staging smoke, zero active synthetic contacts, and
-  zero-restart/error service checks pass. A fresh macOS 26.5.2 discovery
-  consumed the response but still did not offer HouseVo as its Default
-  Account. The next diagnostic boundary is the Mac's read-only Contacts
-  container classification, not another server capability claim.
+  zero-restart/error service checks pass. A targeted macOS 26.5.2
+  Contacts-framework create/delete reached the Personal collection through a
+  real CardDAV PUT/DELETE pair and cleaned up successfully. HouseVo still does
+  not appear as Default Account, isolating that remaining issue to the macOS
+  picker rather than server writability; no further DAV privilege broadening
+  is justified.
 
 Agents should locate and document:
 

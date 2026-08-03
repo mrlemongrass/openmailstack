@@ -7930,3 +7930,43 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
 - `git diff --check` passes. This Linux workspace has no Swift compiler or
   Apple Contacts framework, so compile/runtime validation is deliberately left
   to the approved physical macOS 26.5.2 run.
+
+## 2026-08-03 — macOS Housevo Write Lifecycle And Capability Cleanup
+
+### Physical result and diagnosis
+
+- The approved macOS 26.5.2 probe ran from 22:56:39 through 22:57:09 UTC and
+  returned `CREATE_OK=true`, `DESTINATION_OK=HouseVo`, `DELETE_OK=true`, and
+  `RESULT=PASS`.
+- Live service logs recorded discovery followed by a PUT for one unique vCard
+  at 22:56:52 UTC and the matching DELETE at 22:57:15 UTC. There were no
+  CardDAV errors or warning-level service entries in the correlation window.
+- The exact DAV UID has zero active contact rows and one expected tombstone.
+  The backend remained active with `NRestarts=0`, and `/api/auth/me` returned
+  the healthy unauthenticated boundary of 401.
+- This closes Housevo create/delete writability end to end. The remaining
+  Default Account omission is macOS 26.5.2 picker/eligibility behavior, not a
+  missing Personal collection, stale discovery, or failed CardDAV write path.
+
+### Semantic correction and release proof
+
+- The new route regression first failed twice against the experimental
+  aggregate `DAV:write`, then passed after removing that one token from
+  `ADDRESSBOOK_PRIVILEGES`. `bind`/`unbind`, contact `write-content`, owner,
+  supported reports, methods, and storage behavior are unchanged.
+- The public CardDAV smoke now requires bounded `read`/`bind`/`unbind` and
+  fails if aggregate `write` reappears. Its reversible public lifecycle and
+  tombstone checks pass after deployment.
+- Backend passed 255 tests: 252 passed, 3 environment-gated skips, 0 failures.
+  Frontend passed 84/84 plus lint/build. Integration guards, focused Bash
+  syntax/ShellCheck, and `git diff --check` pass.
+- Code commit `35d29345` is pushed and deployed. The mandatory public
+  IMAPS/ActiveSync gate passed before and after deployment; full staging smoke
+  passed afterward. Repository/live `carddav.js` SHA-256 is
+  `18d6d18fbac5ef45f3ffbe73e3e987111e216f23107586b184fa19f13dc6c44a`.
+  The service is active with `NRestarts=0`, readiness is 401, and the
+  post-release warning journal is empty.
+- Rollback snapshot:
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260803T230149Z/`.
+  Do not advertise ACL/writable-home privileges or mutate private macOS
+  Accounts databases to influence the picker.

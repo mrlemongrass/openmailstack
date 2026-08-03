@@ -1153,7 +1153,7 @@ Current ActiveSync Mail interoperability seam, deployed and script-verified 2026
 - Email `FilterType`, `WindowSize`, and AirSyncBase body preferences are honored with UTF-8-safe truncation, protocol window bounds, and a 16 MiB aggregate source-fetch budget. FilterType `0` or an omitted FilterType paginates every eligible item through `MoreAvailable`; once the initial catch-up is complete, unchanged `HIGHESTMODSEQ` polls avoid `SEARCH ALL`.
 - `tests/integration/activesync_mail_smoke.sh` uses the real web message-action API to prove Inbox-to-Junk and Junk-to-Trash deltas, body truncation, read/unread changes, and an empty no-change Sync. The production smoke passed under isolated synthetic-device state. Physical iOS 26.5.2 passed the stale-key reset and continuous all-mail paging after hotfix `bc4f7387`; exhaustion/no-change remains open. Do not repeat a spam move based on subject alone while the IMAP clients and current server UIDs disagree about the two historical examples.
 
-Current CardDAV interoperability seam, deployed and verified 2026-07-30:
+Current CardDAV interoperability seam, deployed and verified 2026-08-03:
 
 - `webmail-backend/src/carddav.ts` implements native principal/address-book
   discovery and one owner-only Personal Contacts collection. Its bounded
@@ -1164,12 +1164,17 @@ Current CardDAV interoperability seam, deployed and verified 2026-07-30:
   mutable ACLs, aggregate `write`, or arbitrary `write-properties` support.
   The owner metadata is present to make create/edit/delete capability explicit
   without overstating the protocol surface.
+- The address-book home and Personal Contacts collection identify the
+  authenticated principal through `DAV:owner`. Personal Contacts advertises
+  the already-handled `addressbook-query`, `addressbook-multiget`, and
+  `sync-collection` reports through `DAV:supported-report-set`, matching the
+  property names captured from macOS 26.5.2 onboarding.
 - `webmail-backend/test/carddav-capabilities.test.cjs` exercises authenticated
   owner discovery through the real Express router.
   `tests/integration/carddav_sync_smoke.sh` checks the public capability and
   CRUD/tombstone lifecycle and deletes its unique remote contact from the EXIT
   trap if a post-PUT assertion fails.
-- Production artifacts match commit `6901d9b`; the authenticated public
+- Production artifacts match commit `78c0726`; the authenticated public
   lifecycle, complete staging smoke, zero active synthetic contacts, and
   zero-restart/error service checks pass. Whether macOS 26.5.2 now offers
   HouseVo as its Default Account remains a physical-client gate.

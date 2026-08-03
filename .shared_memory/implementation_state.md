@@ -1,5 +1,20 @@
 # Implementation State
 
+## 2026-08-03 macOS CardDAV Owned-Collection Discovery
+
+**Status: Deployed and script-verified; physical picker pending.** A privacy-
+bounded temporary probe captured the exact DAV property names requested during
+a failed fresh macOS 26.5.2 CardDAV onboarding. The Personal Contacts response
+omitted both `DAV:owner` and the RFC-required `DAV:supported-report-set`.
+Commit `78c0726` now identifies the authenticated principal as owner and
+advertises the route's addressbook-query, addressbook-multiget, and
+sync-collection reports while preserving granular `read`/`bind`/`unbind`
+privileges and avoiding aggregate ACL/property-write claims. The temporary
+probe is removed. The macOS-shaped route regression, authenticated public
+CardDAV lifecycle, mandatory IMAPS/ActiveSync gate, staging smoke, exact live
+artifact hash, clean recent error check, and zero-restart service state pass.
+The user must disable/re-enable HouseVo Contacts and recheck Default Account.
+
 ## 2026-07-31 Mandatory IMAPS And ActiveSync Release Gate
 
 **Status: Provisioned, deployed, and live-validated.** The installed host has a

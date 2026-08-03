@@ -1426,3 +1426,23 @@ Future entry template:
 - Regression guards cover missing/exposed credentials, public strict-TLS
   configuration, unique DeviceIds, exact state cleanup, rejected skips or
   cleanup warnings, direct deployment refusal, and unsupported guarded targets.
+
+## 2026-08-03 — macOS CardDAV Owned-Collection Discovery
+
+- Reproduced: a complete macOS 26.5.2 account removal/re-add still produced
+  `All HouseVo Contacts` but no HouseVo Default Account choice.
+- Diagnosed: the privacy-bounded request-name probe showed macOS explicitly
+  asks for `owner` and `supported-report-set`; the Personal Contacts response
+  omitted both. The probe is removed from source, tests, and production.
+- Changed: commit `78c0726` adds the authenticated owner principal and
+  advertises handled addressbook-query, addressbook-multiget, and
+  sync-collection reports without adding aggregate `write` or arbitrary
+  property-write claims.
+- Verified: red-then-green macOS-shaped route coverage, backend 252/255 with
+  three optional skips, frontend 84/84, integration guards, focused
+  ShellCheck, authenticated public CardDAV lifecycle, mandatory public mail
+  gate, staging smoke, exact deployed hash, clean recent error query, and
+  `NRestarts=0` pass. Root-only rollback snapshot:
+  `/var/backups/openmailstack/carddav-discovery-78c0726-20260803T205739Z/`.
+- Remaining: disable/re-enable the physical HouseVo CardDAV account and recheck
+  the macOS Default Account menu before closing the Contacts matrix row.

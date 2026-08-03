@@ -7659,3 +7659,72 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
 - Final canary mailbox messages, web sessions, and ActiveSync state all count
   zero. Root-only webmail and Dovecot rollback snapshots are retained under
   `/var/backups/openmailstack/`.
+
+## 2026-08-03 — macOS Contacts Owned-Collection Discovery
+
+### Acceptance criteria
+
+- Reproduce the missing HouseVo Default Account choice after a complete
+  CardDAV account removal and fresh macOS 26.5.2 onboarding.
+- Capture only the requested DAV element names, without credentials or contact
+  content, then remove the temporary instrumentation.
+- Answer the owner/report properties that macOS requests using only reports
+  already handled by the native CardDAV route, without broadening ACL or
+  arbitrary property-write claims.
+- Require a red-then-green macOS-shaped route test, authenticated public
+  CardDAV lifecycle, mandatory public mail gate, staging smoke, and one final
+  physical Default Account recheck.
+
+### Diagnosis
+
+- A second full remove, Contacts quit/reopen, and fresh account add still
+  produced only `All HouseVo Contacts`; the Default Account menu remained
+  limited to iCloud and On My Mac. Nginx and backend logs showed a complete
+  successful discovery and sync with no authentication or HTTP errors.
+- The temporary `[DEBUG-CARDDAV-MACOS-DEFAULT-6f2b]` probe recorded only XML
+  element names plus method/scope/depth. macOS explicitly requested
+  `supported-report-set` on the principal and address-book home discovery,
+  plus `owner`, `current-user-privilege-set`, and related collection metadata
+  in the depth-one home request.
+- OpenMailStack returned the Personal Contacts collection and granular
+  `read`/`bind`/`unbind` privileges but omitted both `DAV:owner` and
+  `DAV:supported-report-set`. RFC 6352 requires supported address-book reports
+  to be advertised on address-book collections; Apple's open-source Calendar
+  and Contacts Server exposes the same owner/report metadata.
+
+### Implementation and proof
+
+- `webmail-backend/src/carddav.ts` now identifies the authenticated principal
+  as owner of the address-book home and Personal Contacts collection. The
+  collection advertises `addressbook-query`, `addressbook-multiget`, and
+  `sync-collection`, all of which already route through `handleReport()`.
+- The existing bounded privileges remain unchanged. OpenMailStack still does
+  not claim aggregate `write`, mutable ACLs, or arbitrary `write-properties`.
+- `webmail-backend/test/carddav-capabilities.test.cjs` replays the captured
+  macOS depth-one home discovery. It failed before the response change because
+  owner/report metadata was absent, then passed after implementation.
+- `tests/integration/carddav_sync_smoke.sh` now requires the owner principal
+  and all three advertised reports. It failed against the pre-deploy public
+  response and passed after deployment while retaining failure-safe contact
+  cleanup.
+- Full backend proof passed 255 tests: 252 passed, 3 optional environment-gated
+  skips, 0 failures. Frontend passed 84/84; repository integration, focused
+  ShellCheck, Bash syntax, and `git diff --check` passed. Repository-wide
+  ShellCheck still reports the documented unrelated installer/security/backup
+  findings.
+
+### Deployment and remaining gate
+
+- Committed and pushed as `78c07260`. Only the generated CardDAV artifacts
+  were installed. Repository/live `carddav.js` SHA-256 is
+  `18d6d18fbac5ef45f3ffbe73e3e987111e216f23107586b184fa19f13dc6c44a`.
+- Root-only rollback snapshot:
+  `/var/backups/openmailstack/carddav-discovery-78c0726-20260803T205739Z/`.
+- The mandatory public IMAPS/ActiveSync gate passed before and after the
+  restart. Authenticated CardDAV create/query/get/delete/tombstone lifecycle
+  and complete staging smoke passed. The backend is active/running with
+  `NRestarts=0`; the corrected recent targeted-error query is empty.
+- The temporary debug tag is absent from source, tests, and the deployed
+  artifact. The physical macOS 26.5.2 Default Account picker remains the only
+  acceptance gate; disable/re-enable the account once to force the new
+  discovery response before considering another account removal.

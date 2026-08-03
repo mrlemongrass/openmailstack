@@ -7728,3 +7728,73 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   artifact. The physical macOS 26.5.2 Default Account picker remains the only
   acceptance gate; disable/re-enable the account once to force the new
   discovery response before considering another account removal.
+
+## 2026-08-03 — macOS CardDAV Aggregate Writability Compatibility
+
+### Acceptance criteria
+
+- Confirm the user's post-`78c0726` refresh consumed the new owner/report
+  response before changing another server variable.
+- Add aggregate `DAV:write` only to the owned Personal Contacts collection;
+  preserve the bounded root/principal/home and contact-resource privilege
+  sets, existing methods, and production contact data.
+- Require a red-then-green macOS-shaped route regression, full backend and
+  frontend suites, integration guards, public protocol gates, authenticated
+  CardDAV lifecycle, staging smoke, exact artifacts, and rollback proof.
+- Stop changing server capabilities if one physical refresh still leaves the
+  picker unchanged; inspect the Mac's local Contacts container classification
+  next.
+
+### Diagnosis and implementation
+
+- AddressBookCore performed a complete fresh discovery at 14:02 Phoenix time,
+  including OPTIONS, principal/home/Personal PROPFINDs, and REPORTs. Response
+  sizes increased exactly where `owner` and `supported-report-set` were added,
+  with no HTTP failures. The unchanged picker therefore falsified missing
+  owner/report metadata as the deciding gate.
+- The remaining highest-ranked hypothesis is that macOS uses the aggregate
+  `DAV:write` token to classify an address book as a writable default target,
+  even when `bind`, `unbind`, and contact `write-content` already describe the
+  implemented operations.
+- `webmail-backend/src/carddav.ts` now adds `write` only to
+  `ADDRESSBOOK_PRIVILEGES`. Root, principal, home, and individual contact
+  resources are unchanged; no mutable ACL, sharing, new method, or standalone
+  `write-properties` element was added.
+- The exact macOS depth-one discovery test first failed because `DAV:write`
+  was absent, then passed after the one-line source change. Depth-one coverage
+  asserts exactly one aggregate write token, so contact resources remain
+  `write-content`-only. The public CardDAV smoke now requires
+  `read`/`write`/`bind`/`unbind` on Personal Contacts.
+
+### Verification and deployment
+
+- Backend passed 255 tests: 252 passed, 3 optional environment-gated skips,
+  and 0 failures. Frontend passed 84/84. Complete integration checks, focused
+  ShellCheck, Bash syntax, TypeScript build, and `git diff --check` passed.
+- Committed and pushed as `e468e443`. The mandatory public IMAPS/ActiveSync
+  gate passed before deployment and after the successful restart.
+- The first install attempt exercised automatic rollback because the readiness
+  probe treated the normal restart-window connection refusal as fatal before
+  retrying. The previous hash was restored, the service recovered with
+  `NRestarts=0`, and the rollback protocol gate passed. The retry loop was
+  corrected locally to tolerate connection refusal and no repository deploy
+  code was changed.
+- The second isolated install passed the post-restart public mail gate,
+  authenticated CardDAV create/query/get/delete cleanup, and complete staging
+  smoke. Public Personal discovery contains `write`, `bind`, and `unbind`.
+  Repository/live `carddav.js` SHA-256 is
+  `b343970f76fd22fc46bdc12d493f58589fb902c6a97413629d22c09c4b45c0b6`;
+  the backend is active/running with `NRestarts=0`.
+- Successful-release rollback snapshot:
+  `/var/backups/openmailstack/carddav-write-e468e443-20260803T211650Z/`.
+  The earlier automatically restored snapshot is retained at
+  `/var/backups/openmailstack/carddav-write-e468e443-20260803T211548Z/`.
+
+### Remaining physical gate
+
+- Disable and re-enable HouseVo Contacts once, then recheck Contacts > Settings
+  > General > Default Account. Do not remove/re-add the account again for this
+  experiment.
+- If HouseVo is still absent, treat aggregate writability as falsified and move
+  to read-only local macOS container/source inspection before considering any
+  further protocol change.

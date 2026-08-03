@@ -1,6 +1,6 @@
 # Implementation State
 
-## 2026-08-03 macOS CardDAV Owned-Collection Discovery
+## 2026-08-03 macOS CardDAV Owned-Collection Writability
 
 **Status: Deployed and script-verified; physical picker pending.** A privacy-
 bounded temporary probe captured the exact DAV property names requested during
@@ -8,12 +8,19 @@ a failed fresh macOS 26.5.2 CardDAV onboarding. The Personal Contacts response
 omitted both `DAV:owner` and the RFC-required `DAV:supported-report-set`.
 Commit `78c0726` now identifies the authenticated principal as owner and
 advertises the route's addressbook-query, addressbook-multiget, and
-sync-collection reports while preserving granular `read`/`bind`/`unbind`
-privileges and avoiding aggregate ACL/property-write claims. The temporary
-probe is removed. The macOS-shaped route regression, authenticated public
-CardDAV lifecycle, mandatory IMAPS/ActiveSync gate, staging smoke, exact live
-artifact hash, clean recent error check, and zero-restart service state pass.
-The user must disable/re-enable HouseVo Contacts and recheck Default Account.
+sync-collection reports. A complete post-deploy macOS refresh consumed those
+properties but HouseVo still did not appear in Default Account, falsifying
+that metadata as sufficient. Commit `e468e443` now adds aggregate `DAV:write`
+only to the owned Personal collection as a compatibility signal for its
+existing create/edit/delete behavior; individual contact resources remain
+`write-content`-only, and no mutable ACL or standalone `write-properties`
+claim was added. The temporary probe is removed. The red-then-green exact
+macOS route regression, authenticated public CardDAV lifecycle, mandatory
+IMAPS/ActiveSync gate, staging smoke, exact live artifact hash, clean recent
+error check, and zero-restart service state pass. The user must disable and
+re-enable HouseVo Contacts once and recheck Default Account. If the picker is
+still unchanged, inspect the Mac's local Contacts container classification
+instead of adding more server capability guesses.
 
 ## 2026-07-31 Mandatory IMAPS And ActiveSync Release Gate
 

@@ -1446,3 +1446,24 @@ Future entry template:
   `/var/backups/openmailstack/carddav-discovery-78c0726-20260803T205739Z/`.
 - Remaining: disable/re-enable the physical HouseVo CardDAV account and recheck
   the macOS Default Account menu before closing the Contacts matrix row.
+
+## 2026-08-03 — macOS CardDAV Aggregate Writability Compatibility
+
+- Observed: macOS completed a fresh post-`78c0726` discovery and consumed the
+  larger owner/report responses without HTTP errors, but HouseVo remained
+  absent from Default Account. This falsifies owner/report metadata as
+  sufficient.
+- Changed: `e468e443` adds aggregate `DAV:write` only to the owned Personal
+  collection as a compatibility signal for existing owner create/edit/delete.
+  Individual resources remain `write-content`-only; no mutable ACL or
+  standalone `write-properties` element was added.
+- Verified: red-then-green exact macOS route coverage, backend 252/255 with
+  three gated skips, frontend 84/84, integration/static checks, mandatory
+  public mail gates, public CardDAV lifecycle and cleanup, staging smoke,
+  exact deployed artifacts, and `NRestarts=0` pass.
+- Rollback: the first install correctly restored after a readiness-probe race
+  and passed its protocol gate. The successful release snapshot is
+  `/var/backups/openmailstack/carddav-write-e468e443-20260803T211650Z/`.
+- Remaining: disable/re-enable HouseVo Contacts once and recheck Default
+  Account. If unchanged, inspect local macOS Contacts container classification
+  and reconsider the aggregate compatibility claim before further server work.

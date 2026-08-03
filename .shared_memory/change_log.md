@@ -1545,3 +1545,13 @@ Future entry template:
   `/var/backups/openmailstack/protocol-guarded-webmail-20260803T230149Z/`.
 - The remaining Default Account omission is isolated to the macOS picker; do
   not broaden DAV rights or edit private Apple account databases.
+
+## 2026-08-03 — Production Dependency Audit Drift Detected
+
+- Post-release production-only npm audits report one low/two high frontend and
+  four high backend findings across DOMPurify, React Router, Socket.IO parser,
+  `ip-address`, and MailParser/linkify. The older zero-vulnerability audit is
+  no longer current.
+- No dependency file changed in the CardDAV release. Remediation is the next
+  security task and must preserve Node 20 compatibility, assess React Router
+  RSC reachability, and pass clean production audits plus full release gates.

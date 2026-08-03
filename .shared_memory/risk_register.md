@@ -48,7 +48,13 @@ Last updated: 2026-08-03
 - ✅ OMS Scheduler Phase 3 complete: migrations `024`-`025`, owner/Admin workflow APIs, native builder, lifecycle triggers, email/in-app/signed-webhook actions, replay/dead-letter recovery, provider health/metrics, encrypted adapter secrets, consent/unsubscribe controls, and provider-dependent SMS/WhatsApp/voice/translation adapters are live. Ambiguous acceptance is not retried as a duplicate.
 - ✅ Backend deployment preserves persistent uploads: `functions/10_webmail.sh` excludes `uploads/` from `rsync --delete`, preventing application data from being treated as a build artifact.
 - ✅ Scheduler entitlement navigation refresh: Admin enable/disable changes now notify the authenticated shell immediately, while focus and visibility refresh cover changes made in another tab. Playwright proved the disabled-to-enabled transition and desktop/mobile placement after Notes.
-- ✅ Frontend dependency and Node compatibility: removed unused vulnerable `pdfjs-dist`, pinned React Router to Node-20-compatible `7.18.1`, and locked Quill to non-vulnerable `2.0.2`. Frontend and backend registry audits report zero vulnerabilities on live Node `20.19.2`.
+- 🔴 Production dependency advisories: the 2026-08-03 production-only audits
+  report frontend DOMPurify (low), React Router and Socket.IO parser (high),
+  plus backend `ip-address`, MailParser/linkify, and Socket.IO parser (high).
+  The earlier zero-audit result is historical, not current. Remediate compatible
+  fixes first, assess whether the React Router RSC-only path is reachable in
+  this SPA before a major upgrade, preserve Node 20 support, and require clean
+  production audits plus complete regression/release gates.
 - ✅ Webmail deployment umask isolation: secret environment rendering confines `umask 077` to a subshell, while dependency installs use `umask 022`, preventing deployment from leaving repository dependencies unreadable.
 - ✅ Message templates settings contract: commit `49d14d3c` is live; the backend recognizes the bounded `templates` namespace, compose uses the shared settings shape, deployed artifacts are exact, and deployed-artifact authenticated GET/PUT returns `200` without production-data access. The public endpoint remains `401` when unauthenticated.
 - ✅ ActiveSync recurring-event origin timezone: the deployed EAS adapter now encodes/decodes the 172-byte `TIME_ZONE_INFORMATION` blob, validates CLDR Windows/IANA candidates against binary rules, preserves fixed/DST recurrence wall time, bounds caches/fallback work, and carries the Unicode license notice.

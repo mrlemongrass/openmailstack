@@ -7970,3 +7970,17 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   `/var/backups/openmailstack/protocol-guarded-webmail-20260803T230149Z/`.
   Do not advertise ACL/writable-home privileges or mutate private macOS
   Accounts databases to influence the picker.
+
+### Release-adjacent dependency finding
+
+- The guarded installer reported current npm advisories. Fresh
+  `npm audit --omit=dev --json` checks confirmed these affect production
+  dependency graphs rather than only build tooling: frontend has one low and
+  two high findings; backend has four high findings.
+- Affected paths are frontend DOMPurify, React Router, and Socket.IO parser,
+  plus backend `ip-address`, MailParser/linkify, and Socket.IO parser. The
+  React Router advisory is described for RSC action handling, which this SPA
+  may not expose, but reachability must be proved rather than assumed.
+- This CardDAV release did not change package manifests or lockfiles. The
+  advisories are recorded as the next security task; do not run an automatic
+  major upgrade or claim the historical zero-audit state is current.

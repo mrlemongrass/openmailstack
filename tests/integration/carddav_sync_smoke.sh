@@ -101,9 +101,21 @@ if [[ "${status}" != "207" ]]; then
   cat "${tmpdir}/propfind-addressbook-capabilities.out"
   exit 1
 fi
+if ! grep -Fq "<D:owner><D:href>/carddav/principals/${SMOKE_USER}/</D:href></D:owner>" "${tmpdir}/propfind-addressbook-capabilities.out"; then
+  echo "FAIL: CardDAV addressbook PROPFIND omitted the owner principal"
+  cat "${tmpdir}/propfind-addressbook-capabilities.out"
+  exit 1
+fi
 for privilege in read bind unbind; do
   if ! grep -q "<D:${privilege}/>" "${tmpdir}/propfind-addressbook-capabilities.out"; then
     echo "FAIL: CardDAV addressbook PROPFIND omitted ${privilege} privilege"
+    cat "${tmpdir}/propfind-addressbook-capabilities.out"
+    exit 1
+  fi
+done
+for report in addressbook-query addressbook-multiget sync-collection; do
+  if ! grep -q "<[^:>]*:${report}/>" "${tmpdir}/propfind-addressbook-capabilities.out"; then
+    echo "FAIL: CardDAV addressbook PROPFIND omitted the ${report} report"
     cat "${tmpdir}/propfind-addressbook-capabilities.out"
     exit 1
   fi

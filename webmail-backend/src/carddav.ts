@@ -34,6 +34,18 @@ function currentUserPrivilegeSet(privileges: string[]): string {
         .join('')}</D:current-user-privilege-set>`;
 }
 
+function ownerProperty(user: string): string {
+    return `<D:owner><D:href>/carddav/principals/${xmlEscape(user)}/</D:href></D:owner>`;
+}
+
+function supportedAddressBookReportSet(): string {
+    return `<D:supported-report-set>
+          <D:supported-report><D:report><C:addressbook-query/></D:report></D:supported-report>
+          <D:supported-report><D:report><C:addressbook-multiget/></D:report></D:supported-report>
+          <D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report>
+        </D:supported-report-set>`;
+}
+
 function emitContactsUpdated(user: string, details: Record<string, any> = {}) {
     try {
         const { io } = require('./index');
@@ -81,7 +93,9 @@ function responseForAddressBook(user: string, syncToken: string, includeChildren
         <D:displayname>Personal Contacts</D:displayname>
         <CS:getctag>"${xmlEscape(syncToken)}"</CS:getctag>
         <D:sync-token>http://openmailstack.local/carddav/${xmlEscape(syncToken)}</D:sync-token>
+        ${ownerProperty(user)}
         ${currentUserPrivilegeSet(ADDRESSBOOK_PRIVILEGES)}
+        ${supportedAddressBookReportSet()}
         <C:supported-address-data>
           <C:address-data-type content-type="text/vcard" version="3.0"/>
           <C:address-data-type content-type="text/vcard" version="4.0"/>
@@ -250,6 +264,7 @@ ${responseForAddressBook(user, syncToken, contactResponses)}
     <D:propstat>
       <D:prop>
         <D:resourcetype><D:collection/></D:resourcetype>
+        ${ownerProperty(user)}
         ${currentUserPrivilegeSet(READ_PRIVILEGES)}
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>

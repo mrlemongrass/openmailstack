@@ -173,3 +173,62 @@ test('owner CardDAV collection advertises create and delete privileges', async (
   assert.doesNotMatch(addressBookWithContactXml, /<D:privilege><D:write\/><\/D:privilege>/);
   assert.doesNotMatch(addressBookWithContactXml, /<D:privilege><D:write-properties\/><\/D:privilege>/);
 });
+
+test('macOS home discovery advertises owner and implemented address book reports', async (t) => {
+  const app = express();
+  app.use(express.raw({ type: () => true }));
+  app.use('/carddav', carddavRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const address = server.address();
+  const encodedUser = encodeURIComponent(user);
+  const macosHomeDiscoveryBody = [
+    '<?xml version="1.0" encoding="utf-8" ?>',
+    '<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">',
+    '<D:prop>',
+    '<D:resourcetype/>',
+    '<D:owner/>',
+    '<D:current-user-privilege-set/>',
+    '<D:supported-report-set/>',
+    '<D:sync-token/>',
+    '</D:prop>',
+    '</D:propfind>',
+  ].join('');
+
+  const response = await fetch(
+    `http://127.0.0.1:${address.port}/carddav/addressbooks/${encodedUser}/`,
+    {
+      method: 'PROPFIND',
+      headers: {
+        Authorization: auth,
+        Depth: '1',
+        'Content-Type': 'application/xml; charset=utf-8',
+        'User-Agent': 'macOS/26.5.2 AddressBookCore/2732.600.11',
+      },
+      body: macosHomeDiscoveryBody,
+    },
+  );
+
+  assert.equal(response.status, 207);
+  const xml = await response.text();
+  assert.match(
+    xml,
+    /<D:owner><D:href>\/carddav\/principals\/mac@example\.test\/<\/D:href><\/D:owner>/,
+  );
+  assert.match(xml, /<D:supported-report-set>/);
+  assert.match(
+    xml,
+    /<D:supported-report><D:report><C:addressbook-query\/><\/D:report><\/D:supported-report>/,
+  );
+  assert.match(
+    xml,
+    /<D:supported-report><D:report><C:addressbook-multiget\/><\/D:report><\/D:supported-report>/,
+  );
+  assert.match(
+    xml,
+    /<D:supported-report><D:report><D:sync-collection\/><\/D:report><\/D:supported-report>/,
+  );
+  assert.doesNotMatch(xml, /<D:privilege><D:write\/><\/D:privilege>/);
+});

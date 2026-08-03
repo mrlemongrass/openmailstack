@@ -7897,3 +7897,36 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   it briefly creates contact data. Success isolates the defect to Apple's
   picker; failure provides the concrete Contacts error needed for the next
   server-side loop.
+
+## 2026-08-03 — macOS Targeted Housevo Write Probe Prepared
+
+### Acceptance criteria
+
+- Refuse to mutate unless Contacts access is already authorized and exactly one
+  case-insensitive `Housevo` CardDAV container exists.
+- Create only one contact containing a random probe name, explicitly targeting
+  the Housevo container identifier rather than the implicit default.
+- Verify the marker appears in Housevo and no other local container, allow time
+  for CardDAV synchronization, delete only that exact marker, and verify local
+  cleanup.
+- Emit sanitized status/error output and an exact manual-cleanup name if the
+  cleanup retry cannot remove the marker.
+- Treat the physical Mac result plus correlated live CardDAV PUT/DELETE logs as
+  the proof boundary; do not claim Linux validation of Apple's Contacts
+  framework.
+
+### Implementation and current proof
+
+- Added executable
+  `scripts/diagnostics/macos_contacts_targeted_write.swift`. It uses Apple's
+  supported `CNSaveRequest.add(_:toContainerWithIdentifier:)` API, not the
+  broken implicit default or a private Accounts database mutation.
+- The probe selects the already observed native CardDAV container, adds no
+  email, phone, note, or user data, and uses a UUID solely in the disposable
+  display name. Container-scoped queries prove destination before cleanup.
+- It waits 20 seconds after creation and 10 seconds after deletion so the
+  account sync agent has bounded time to issue CardDAV PUT and DELETE requests.
+  Any failure after creation triggers one exact-marker cleanup retry.
+- `git diff --check` passes. This Linux workspace has no Swift compiler or
+  Apple Contacts framework, so compile/runtime validation is deliberately left
+  to the approved physical macOS 26.5.2 run.

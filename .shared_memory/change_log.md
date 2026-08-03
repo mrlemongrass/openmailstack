@@ -1516,3 +1516,15 @@ Future entry template:
 - No server or contact data changed. The next test needs explicit approval: a
   Contacts-framework create targeted to Housevo, immediately deleted, with
   CardDAV logs correlated to the result.
+
+## 2026-08-03 — macOS Targeted Housevo Write Probe
+
+- Added `scripts/diagnostics/macos_contacts_targeted_write.swift` after the
+  user approved a transient contact mutation. It explicitly targets the one
+  Housevo CardDAV container, verifies the random marker's destination, and
+  deletes only that marker after a bounded sync wait.
+- Failure handling retries exact-marker cleanup once and prints the unique
+  manual-removal name if anything remains. Errors omit raw Contacts userInfo.
+- Static diff validation passes. The physical macOS 26.5.2 run and correlated
+  live CardDAV PUT/DELETE logs remain pending; no server or contact data was
+  changed while preparing the probe.

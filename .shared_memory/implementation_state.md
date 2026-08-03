@@ -41,7 +41,15 @@ and writable home-set collection management, neither of which OpenMailStack
 implements. Do not claim those rights to influence the picker. The remaining
 decisive probe is an explicitly targeted Contacts-framework create/delete in
 the Housevo container, which requires user approval because it briefly mutates
-contact data.
+contact data. Approval was granted, and
+`scripts/diagnostics/macos_contacts_targeted_write.swift` now implements that
+one-shot probe. It requires exactly one Housevo CardDAV container, targets the
+save by opaque container identifier, verifies the random marker only appears
+inside Housevo, waits 20 seconds for CardDAV synchronization, deletes the exact
+marker, verifies local removal, and waits another 10 seconds for cleanup sync.
+Any error is sanitized; a failed cleanup prints the unique manual-removal name.
+The physical macOS run and correlated live CardDAV PUT/DELETE evidence remain
+the acceptance gate.
 
 ## 2026-07-31 Mandatory IMAPS And ActiveSync Release Gate
 

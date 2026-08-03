@@ -1568,5 +1568,8 @@ Future entry template:
   pinning, strict release versions, absence of RSC dependencies/server build
   inputs/APIs/action headers, and is wired into the full integration suite.
 - Node 20.19.2 backend tests (252 pass, 3 gated skips), frontend tests (84
-  pass), lint, build, and integration checks pass. Deployment proof remains to
-  be appended after the guarded release.
+  pass), lint, build, and integration checks pass. Commit `0236f008` is live;
+  public IMAPS/ActiveSync passed before and after deployment, staging and the
+  Socket.IO handshake pass, the live backend audit is clean, repository/live
+  dependency and frontend artifacts match, and `NRestarts=0`. Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260803T232855Z/`.

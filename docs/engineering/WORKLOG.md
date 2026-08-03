@@ -8031,6 +8031,19 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
 
 ### Release state
 
-- Commit and guarded deployment are pending. Do not mark the live dependency
-  graph updated until the mandatory public protocol gates and staging smoke
-  complete.
+- Commit `0236f008` is pushed and deployed. The mandatory public IMAPS and
+  ActiveSync gate passed before and after the install; staging smoke, public
+  Socket.IO polling handshake, Nginx validation, and the 401 readiness boundary
+  pass. The service is active with `NRestarts=0`, and the post-release warning
+  journal is empty.
+- Repository and live backend manifest hashes match (`package.json`
+  `c99f1089ce747db69503bbd8d819578bfc5db35e418157a16f00b230647b2108`,
+  lockfile `a43417218d5f64ae1d9d34991653bf366f4b95c292ac436235581650fee31a93`).
+  The complete frontend build tree matches the live webroot; both index files
+  hash to `1f2b10b349980c28a162361990376717b566282dc84cf00647baa66dcca70092`.
+- The deployed backend resolves MailParser 3.9.14, linkify 5.0.2,
+  `ip-address` 10.4.0, and Socket.IO parser 4.2.7, and its production audit is
+  clean. The frontend installer reports exactly the documented React Router
+  RSC-only advisory.
+- Rollback snapshot:
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260803T232855Z/`.

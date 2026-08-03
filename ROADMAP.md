@@ -122,7 +122,8 @@ The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day 
   SPA with no RSC API, package, server entrypoint, or action header, enforced
   by `dependency_security_guard.cjs`. React Router 8.3.0 is deferred because
   it requires Node 22.22 and React 19.2.7 rather than the supported Node 20
-  baseline.
+  baseline. Commit `0236f008` is deployed behind passing public protocol and
+  staging gates.
 - ✅ Replace reversible mailbox-credential storage with delegated Dovecot master-user auth. The installer now creates the root-only raw secret and Dovecot-readable hash, IMAP/SMTP/ManageSieve use the delegated identity, DAV and ActiveSync still validate supplied user credentials directly, and session/offline-index rows retain encrypted empty values rather than mailbox passwords.
 - ✅ Set and document an explicit high-entropy `OMS_SESSION_SECRET` for production. Production startup rejects missing/short values and upgrades generate and preserve a 64-character secret.
 - ✅ Add two-factor authentication and app-password support. TOTP with one-time recovery codes, purpose-separated encrypted secrets, protocol-capable per-device app passwords, session/app-password revocation, and primary-password blocking while 2FA is enabled are deployed and live-validated.

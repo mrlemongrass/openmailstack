@@ -381,3 +381,8 @@ Validation:
 - `tests/integration/dependency_security_guard.cjs` fails if a patched floor
   regresses or an RSC dependency, server build input, unstable API, internal
   RSC client, or action header appears before React Router is upgraded.
+- This boundary is deployed from `0236f008`. The live backend dependency audit
+  is clean; frontend installation reports only the expected RSC-only advisory.
+  Public IMAPS/ActiveSync, staging, Socket.IO, readiness, artifact equality,
+  restart count, and the warning journal pass. Rollback snapshot:
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260803T232855Z/`.

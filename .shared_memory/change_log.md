@@ -1503,3 +1503,16 @@ Future entry template:
   selected HouseVo/iCloud CardDAV properties from the Accounts database in
   strict read-only mode and redacts every string/binary value. Synthetic
   decoding/redaction and syntax/help checks pass.
+
+## 2026-08-03 — macOS Cached CardDAV Capabilities Are Writable
+
+- The sanitized Accounts archive proves Housevo's Personal address book is
+  cached with aggregate `write`, `bind`, `unbind`, the CardDAV address-book
+  resource type, and all three implemented reports. The absence from Default
+  Account is not caused by a stale pre-write capability cache.
+- iCloud additionally has `read-acl` and writable home-set collection
+  management. OpenMailStack does not implement those capabilities and must not
+  advertise them as a picker workaround.
+- No server or contact data changed. The next test needs explicit approval: a
+  Contacts-framework create targeted to Housevo, immediately deleted, with
+  CardDAV logs correlated to the result.

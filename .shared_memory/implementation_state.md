@@ -32,7 +32,16 @@ scope before inspecting private blobs or changing server metadata. That UI
 test saved to iCloud, proving `All HouseVo Contacts` is only a filtered view and
 does not select a destination. Use the repository's sanitized read-only
 `macos_contacts_capabilities.py` decoder on cached Housevo/iCloud `HomeInfo`
-before any explicit-contact mutation or server change.
+before any explicit-contact mutation or server change. That decoder now shows
+Housevo's Personal address book is cached with `read`, `write`, `bind`,
+`unbind`, and `read-current-user-privilege-set`, the CardDAV address-book
+resource type, and all three implemented reports. The home-set itself has only
+the two truthful read privileges. iCloud additionally advertises `read-acl`
+and writable home-set collection management, neither of which OpenMailStack
+implements. Do not claim those rights to influence the picker. The remaining
+decisive probe is an explicitly targeted Contacts-framework create/delete in
+the Housevo container, which requires user approval because it briefly mutates
+contact data.
 
 ## 2026-07-31 Mandatory IMAPS And ActiveSync Release Gate
 

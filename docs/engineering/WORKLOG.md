@@ -7862,3 +7862,38 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   dynamic keys are redacted. A synthetic archive proved that `isWritable=true`
   remains visible while a server URL is replaced by its character count; the
   script compiles, its help path passes, and `git diff --check` is clean.
+
+## 2026-08-03 — macOS Cached CardDAV Capability Comparison
+
+### Result
+
+- The sanitized `HomeInfo` decoder proves macOS cached Housevo's Personal
+  address book as a CardDAV address-book collection with `read`, aggregate
+  `write`, `bind`, `unbind`, and `read-current-user-privilege-set`. It also
+  cached `addressbook-query`, `addressbook-multiget`, and `sync-collection`.
+  Aggregate writability is therefore present in the Mac's local account state,
+  not merely in the current server response.
+- Housevo's addressbook-home-set is truthfully read-only at the collection-
+  management layer. iCloud's home set is writable and its cached collections
+  include `read-acl`; those are iCloud-only ACL/address-book-management
+  capabilities that OpenMailStack does not implement. Advertising either to
+  influence a UI picker would overstate server behavior.
+- `AccountConfigCompleted=true`, `isChildDelegate=false`, and
+  `searchable=false` match the relevant iCloud primary CardDAV row. No cached
+  read-only marker or missing Personal collection explains the picker.
+- Apple documents that the Default Account is the user's implicit target for
+  new contacts and that Contacts can choose among configured accounts. Its
+  public Contacts API exposes a default-container getter but no setter, so
+  changing private Accounts/Contacts databases is not a supported remedy.
+
+### Decision and next probe
+
+- Do not add ACL privileges, writable home-set rights, or another DAV metadata
+  guess. The current evidence narrows the issue to macOS 26.5.2's default-
+  account eligibility state or a client-side regression.
+- The remaining one-variable test is a Contacts-framework save explicitly
+  targeted to the Housevo container, followed immediately by deletion and
+  live CardDAV log correlation. This requires explicit user approval because
+  it briefly creates contact data. Success isolates the defect to Apple's
+  picker; failure provides the concrete Contacts error needed for the next
+  server-side loop.

@@ -8365,3 +8365,87 @@ Starting git state: clean at `a8ccc2d4`
   self-hosted signaling configuration plus an authenticated, owner-authorized
   note-room token/handshake. Do not enable or market collaboration until room
   access and signaling are both production-safe.
+
+## 2026-08-04 — Notes authenticated live collaboration foundation
+
+Agent/tool: Codex with TDD, Playwright, independent Standards/Spec review, and
+guarded release
+Branch: `main`
+Starting git state: clean at `1525203c`
+
+### Goal and acceptance criteria
+
+- [x] Keep collaboration disabled by default and locally editable when the
+  service is unavailable.
+- [x] Use self-hosted same-origin signaling without exposing stable note IDs or
+  a shared secret as room credentials.
+- [x] Authorize one room through a short-lived capability bound to the current
+  owner and authenticated session; enforce expiry, room, message, and connection
+  limits.
+- [x] Bootstrap both populated and empty notes, propagate edits in both
+  directions, and persist one exact merged document across reload.
+- [x] Preserve atomic note revision conflict handling and prevent stale or
+  unsaved-note collaboration requests.
+- [x] Install the WebSocket route on fresh and legacy upgrades, pass automated
+  checks/review, deploy through the protocol gate, and prove the live flow in
+  isolated browser sessions with exact cleanup.
+
+### Implementation and regression proof
+
+- The authenticated collaboration-session route returns an opaque five-minute
+  capability for an owner-scoped note. The capability is HMAC-signed and bound
+  to owner, session, and one opaque room; the WebSocket service admits only that
+  room and closes expired connections. Messages are capped at 64 KiB and rooms
+  at 32 connections.
+- A `noServer` WebSocket endpoint shares the existing HTTP server at
+  `/notes-signal`. Nginx disables access logging for the route so credentials in
+  the query string are not retained. The feature is controlled by
+  `ENABLE_OMS_NOTES_COLLABORATION`, defaults off in the installer, and uses no
+  public signaling provider or browser-visible shared secret.
+- The frontend refreshes capabilities, reconnects with bounded backoff, elects
+  a bootstrap leader, handles empty documents, destroys providers on note
+  changes, and continues local Yjs editing during network failure. Durable saves
+  use expected `sync_token` revision checks to reject stale writes.
+- Upgrade testing found the initial Nginx insertion handled only marked vhosts;
+  `ef69a53` adds and tests the legacy unmarked path. Browser inspection then
+  found normal new-note and missing-reminder 404s; `2b3a68b` keeps unsaved notes
+  local and gives both Notes routers an explicit `200` empty-reminder response
+  with executable route regressions.
+
+### Verification and review
+
+- Backend: 269 total, 266 passed, three documented environment-gated skips,
+  zero failures. Frontend: 98/98 passed. ESLint, TypeScript/Vite production
+  build, complete repository integration, and `git diff --check` pass.
+- Independent Spec and Standards reviews pass with no remaining findings. The
+  initial Standards concern about a regex-only router assertion was resolved by
+  mounting both real routers with auth middleware and asserting exact responses
+  and owner-scoped calls.
+- Live Playwright used two isolated authenticated sessions. A seeded disposable
+  note appeared once, became live in both sessions, propagated owner-to-peer and
+  peer-to-owner edits, and reloaded with the exact merged body. A second empty
+  note accepted its first peer edit and propagated it to the owner. A final
+  fresh-context pass proved New Note stays `Editing locally`, saved/reopened
+  notes become live, no `/notes/new/collaboration-session` request occurs, and
+  the console has zero warnings or errors.
+
+### Guarded deployment, cleanup, and next task
+
+- Code commits `7dcfae3`, `ef69a53`, and `2b3a68b` were deployed only through
+  `functions/protocol_guarded_deploy.sh webmail`. Strict public IMAPS and the
+  ActiveSync full-MIME/Junk/Trash/no-change sequence passed before and after
+  installation. Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260804T125823Z/`.
+- Repository and live backend/frontend content match by checksum. Complete
+  staging smoke and Nginx validation pass; local/public authentication return
+  the expected `401`; the backend and Nginx are active, `NRestarts=0`, and the
+  post-release warning journal is empty.
+- All three exact disposable subjects were removed. After one full sync interval,
+  SQL reports zero matching rows and the IMAP Notes mailbox reports zero matching
+  messages. Temporary browser authentication state is absent.
+- Cleanup exposed a separate high-priority Notes IMAP data-integrity defect: a
+  rapid save/close/delete sequence created three IMAP copies of the final probe,
+  and a previously expunged copy was re-imported once into SQL. Exact cleanup is
+  complete, but this release does not conceal or close that defect.
+- Next: reproduce and fix Notes IMAP save/export/delete idempotency and race
+  handling before implementing cross-account invitations, membership, or ACLs.

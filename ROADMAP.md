@@ -59,7 +59,9 @@ The contacts and notes apps have been extracted into their own directories with 
 
 ### Notes (🟡 in progress)
 - ✅ Per-app directory with useNotes hook, NotesSidebar, NotesGrid, NoteSkeleton.
-- 🟡 Yjs-backed rich editing is live; WebRTC collaboration remains opt-in pending self-hosted signaling and authenticated room access.
+- ✅ Opt-in, self-hosted WebRTC collaboration is live through same-origin signaling and short-lived, session-bound owner capabilities. Same-account sessions can collaborate without exposing note IDs as room credentials.
+- 🟡 Cross-account invitations, sharing permissions, and collaborative-room membership remain future work.
+- 🔴 Notes IMAP persistence can duplicate a message during rapid save/close/delete synchronization; the exact live probe was cleaned from SQL and IMAP, but the write/delete lifecycle needs a data-integrity fix before further collaboration scope.
 - ✅ Pin, lock, color tags, labels, search.
 - ✅ Multi-format import (HTML, PDF, Markdown, JSON) and export (PDF, Markdown, JSON).
 - ✅ Apple Notes IMAP sync and ActiveSync support.

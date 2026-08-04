@@ -706,7 +706,18 @@ undecidable rules are reported as skipped.
 - Yjs/WebRTC usage
 - conflict behavior
 
-Verified 2026-07-29: the editor always uses a local Yjs/Quill binding, but creates a `WebrtcProvider` only when the build-time `VITE_OMS_NOTES_SIGNALING_URLS` list is explicitly configured. Default builds make no public signaling connection. Endpoint configuration alone does not provide authenticated room authorization; do not claim production-ready collaborative editing until a self-hosted signaling and access-control contract is implemented and validated.
+Verified 2026-08-04: the editor always uses a local Yjs/Quill binding. When the
+runtime `ENABLE_OMS_NOTES_COLLABORATION` flag is enabled, the authenticated
+backend issues a five-minute opaque capability bound to the note owner, current
+session, and one opaque room. The browser connects only to the same-origin
+`/notes-signal` WebSocket endpoint; the signaling service validates the
+capability before joining that exact room, enforces expiry and connection/message
+limits, and does not log the query string. No build-time signaling URL or shared
+room secret is exposed to the browser. A bootstrap leader and atomic note
+`sync_token` checks coordinate initial state and durable persistence while local
+editing remains available during signaling failure. This release authorizes
+only the same owner in multiple sessions; cross-account invitations, sharing
+ACLs, and room membership are not yet implemented.
 
 ### 6.5 Backend architecture
 

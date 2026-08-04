@@ -1,5 +1,32 @@
 # Implementation State
 
+## 2026-08-04 Notes Authenticated Live Collaboration
+
+**Status: Deployed and live browser-validated for same-owner sessions.** Commits
+`7dcfae3`, `ef69a53`, and `2b3a68b` add opt-in, same-origin Notes signaling
+with five-minute opaque capabilities bound to the authenticated owner, session,
+and one opaque room. The service enforces token expiry, 64 KiB messages, and 32
+connections per room; the editor refreshes credentials, elects a bootstrap
+leader, persists through atomic `sync_token` checks, and falls back to local
+editing when signaling is unavailable. Installer upgrades now add the WebSocket
+route to both marked and legacy Nginx vhosts. Unsaved notes remain local and
+missing reminders return an expected empty result, keeping normal first-use
+flows console-clean.
+
+Backend tests pass 266/269 with three documented skips; frontend tests pass
+98/98; lint, production build, integration, and final Spec/Standards reviews
+pass. Two isolated authenticated Playwright sessions proved seeded and empty
+note bootstrap, bidirectional edits, exact reload persistence, live status, and
+zero final console warnings/errors. The guarded deployment passed public IMAPS
+and ActiveSync before and after release. Rollback:
+`/var/backups/openmailstack/protocol-guarded-webmail-20260804T125823Z/`.
+
+The live cleanup uncovered a separate high-priority data-integrity defect:
+rapid Notes save/close/delete synchronization produced duplicate IMAP messages
+and one SQL re-import. All exact disposable probe records were removed and both
+stores verify empty. Next: reproduce and fix the Notes IMAP write/delete race
+before adding cross-account collaboration invitations or ACLs.
+
 ## 2026-08-04 Notes Clipboard Image Paste
 
 **Status: Deployed and browser-validated.** Commit `0a85b4d` routes image-only

@@ -1673,3 +1673,27 @@ Future entry template:
   readiness, zero restarts, clean warnings, Nginx, and staging smoke pass.
   Rollback is
   `/var/backups/openmailstack/protocol-guarded-webmail-20260804T022450Z/`.
+
+## 2026-08-04 — Notes Authenticated Live Collaboration
+
+- Commits `7dcfae3`, `ef69a53`, and `2b3a68b` add an operator-controlled,
+  self-hosted Notes collaboration foundation: same-origin WebSocket signaling,
+  five-minute capabilities bound to owner/session/opaque room, bounded traffic,
+  bootstrap leadership, credential refresh, and atomic durable persistence.
+- Upgrade installs now inject `/notes-signal` into both marked and legacy Nginx
+  vhosts. Unsaved notes do not request a fake collaboration room, and both Notes
+  routers return an explicit empty reminder result instead of a normal-flow 404.
+- Backend tests pass 266/269 with three documented skips; frontend tests pass
+  98/98; lint, build, integration, and final Spec/Standards review pass.
+- Live Playwright with two isolated authenticated sessions proved seeded and
+  empty-note bootstrap, bidirectional editing, exact reload persistence, status
+  feedback, and a clean final browser console. Exact disposable data was removed
+  from SQL and IMAP.
+- Guarded public IMAPS/ActiveSync checks passed before and after deployment.
+  Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260804T125823Z/`.
+- Repository/live runtime content matches by checksum; staging smoke, Nginx,
+  readiness, zero restarts, and the warning journal pass.
+- Cleanup exposed a separate Notes IMAP race: rapid save/close/delete produced
+  duplicate messages and a SQL re-import. The stores verify clean; fixing this
+  data-integrity defect is the next priority, ahead of cross-account sharing.

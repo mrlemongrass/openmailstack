@@ -323,6 +323,11 @@ test('deployment renders opt-in configuration and the self-hosted websocket rout
   assert.match(installer, /ENABLE_OMS_NOTES_COLLABORATION/);
   assert.match(installer, /existing_env_value ENABLE_OMS_NOTES_COLLABORATION/);
   assert.match(installer, /location = \/notes-signal[\s\S]*access_log off;[\s\S]*proxy_set_header Upgrade/);
+  assert.equal(
+    (installer.match(/location = \/notes-signal \{/g) || []).length,
+    2,
+    'fresh and legacy-vhost deployments must both install the Notes signaling route',
+  );
   assert.match(installEntry, /ENABLE_OMS_NOTES_COLLABORATION="false"/);
   assert.match(installEntry, /openmailstack_read_env_value[\s\S]*ENABLE_OMS_NOTES_COLLABORATION/);
   assert.match(configTemplate, /ENABLE_OMS_NOTES_COLLABORATION="false"/);

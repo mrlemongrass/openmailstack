@@ -330,6 +330,25 @@ EOF
 
 EOF
         fi
+        if ! grep -Fq 'location = /notes-signal' "${cleaned}"; then
+            cat >> "${snippet}" <<EOF
+    # --- OMS Notes Collaboration Route ---
+    location = /notes-signal {
+        access_log off;
+        proxy_pass http://${WEBMAIL_HOST}:${WEBMAIL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 1h;
+    }
+    # --- End OMS Notes Collaboration Route ---
+
+EOF
+        fi
         if [[ "${SCHEDULER_ENABLED}" == "true" ]] && ! grep -Eq '^[[:space:]]*location[[:space:]]+\^~[[:space:]]+/scheduler/' "${cleaned}"; then
             cat >> "${snippet}" <<EOF
     # --- OMS Scheduler Route ---

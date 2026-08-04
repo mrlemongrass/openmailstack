@@ -2486,6 +2486,19 @@ li[data-checked="true"] .ql-checkbox {
   opacity: 0.6;
 }
 
+.note-modal-meta,
+.note-modal-status-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reminder-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+}
+
 .note-modal-actions {
   display: flex;
   gap: 4px;
@@ -2525,6 +2538,38 @@ li[data-checked="true"] .ql-checkbox {
   overflow: hidden;
 }
 
+.live-note-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.live-note-editor .live-note-quill {
+  flex: 1;
+  min-height: 0;
+}
+
+.note-image-upload-status {
+  flex: 0 0 auto;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border-glass);
+  background: var(--surface-color);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.note-image-upload-status.success {
+  color: #10b981;
+}
+
+.note-image-upload-status.error {
+  color: var(--danger);
+}
+
 .note-modal-editor .quill {
   flex: 1;
   display: flex;
@@ -2543,6 +2588,44 @@ li[data-checked="true"] .ql-checkbox {
     height: 100vh;
     max-width: none;
     border-radius: 0;
+  }
+
+  .note-modal-header {
+    flex-wrap: wrap;
+  }
+
+  .note-modal-title {
+    min-width: 0;
+  }
+
+  .note-modal-actions {
+    order: 2;
+  }
+
+  .note-modal-meta {
+    order: 3;
+    flex: 1 0 100%;
+    min-width: 0;
+    justify-content: space-between;
+  }
+
+  .note-color-picker {
+    min-width: 0;
+    overflow-x: auto;
+    padding: 2px;
+    scrollbar-width: thin;
+  }
+
+  .note-modal-status-controls {
+    flex: 0 0 auto;
+  }
+
+  .reminder-popover {
+    position: fixed;
+    top: 110px;
+    right: 16px;
+    left: 16px;
+    min-width: 0 !important;
   }
 }
 

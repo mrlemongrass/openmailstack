@@ -88,7 +88,7 @@ export function ReminderPicker({ noteId }: ReminderPickerProps) {
       </button>
       {isOpen && (
         <div className="reminder-popover" style={{
-          position: 'absolute', top: '100%', left: 0, zIndex: 10,
+          zIndex: 10,
           background: 'var(--bg-secondary)', border: '1px solid var(--border-glass)',
           borderRadius: 'var(--radius-md)', padding: 12, minWidth: 240,
           boxShadow: '0 8px 24px rgba(0,0,0,0.3)',

@@ -397,10 +397,10 @@ export async function deleteNoteApi(id: string): Promise<void> {
 }
 
 // ---- Notes: Image upload ----
-export async function uploadNoteImage(file: File): Promise<{ url: string }> {
+export async function uploadNoteImage(file: File, signal?: AbortSignal): Promise<{ url: string }> {
   const formData = new FormData();
   formData.append('file', file);
-  const res = await fetch('/api/notes/upload', { method: 'POST', body: formData });
+  const res = await fetch('/api/notes/upload', { method: 'POST', body: formData, signal });
   if (!res.ok) throw new Error('Image upload failed');
   return res.json();
 }

@@ -7,6 +7,12 @@ import { QuillBinding } from 'y-quill';
 import DOMPurify from 'dompurify';
 import { ChecklistBlot } from './notes/editor/checklist-blot';
 import { CodeBlockBlot } from './notes/editor/code-block-blot';
+import {
+  clipboardHasTextContent,
+  clipboardImageFiles,
+  noteImageValidationError,
+  uploadAndInsertNoteImages,
+} from './notes/editor/image-paste';
 import { uploadNoteImage } from './shared/api';
 
 interface QuillRange {
@@ -72,11 +78,118 @@ interface LiveNoteEditorProps {
   onChange: (content: string) => void;
 }
 
+interface ImageStatus {
+  kind: 'uploading' | 'success' | 'error';
+  message: string;
+}
+
 export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialContent, onChange }) => {
   const quillRef = useRef<ReactQuill | null>(null);
   const initialized = useRef(false);
   const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const imageStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ydocRef = useRef<Y.Doc | null>(null);
+  const ytextRef = useRef<Y.Text | null>(null);
+  const editorGenerationRef = useRef(0);
+  const imageUploadControllersRef = useRef(new Set<AbortController>());
+  const initialContentRef = useRef(initialContent);
   const onChangeRef = useRef(onChange);
+  const [imageStatus, setImageStatus] = React.useState<ImageStatus | null>(null);
+
+  const reportImageStatus = React.useCallback((status: ImageStatus) => {
+    if (imageStatusTimerRef.current) clearTimeout(imageStatusTimerRef.current);
+    setImageStatus(status);
+    if (status.kind === 'success') {
+      imageStatusTimerRef.current = setTimeout(() => setImageStatus(null), 2500);
+    }
+  }, []);
+
+  const insertNoteImages = React.useCallback(async (
+    files: File[],
+    startIndex: number,
+    action: 'paste' | 'upload',
+  ) => {
+    const validationError = files
+      .map(noteImageValidationError)
+      .find((error): error is string => error !== null);
+    if (validationError) {
+      reportImageStatus({ kind: 'error', message: validationError });
+      return;
+    }
+
+    const ydoc = ydocRef.current;
+    const ytext = ytextRef.current;
+    if (!ydoc || !ytext) return;
+
+    reportImageStatus({
+      kind: 'uploading',
+      message: action === 'paste'
+        ? `Pasting ${files.length === 1 ? 'image' : `${files.length} images`}…`
+        : 'Uploading image…',
+    });
+
+    const anchor = Y.createRelativePositionFromTypeIndex(ytext, startIndex);
+    const generation = editorGenerationRef.current;
+    const controller = new AbortController();
+    imageUploadControllersRef.current.add(controller);
+
+    try {
+      const isCurrent = () => (
+        !controller.signal.aborted
+        && generation === editorGenerationRef.current
+        && ydoc === ydocRef.current
+        && ytext === ytextRef.current
+        && getQuillEditor(quillRef) !== null
+      );
+      const result = await uploadAndInsertNoteImages(
+        files,
+        uploadNoteImage,
+        {
+          isCurrent,
+          resolveInsertionIndex: () => {
+            if (!isCurrent()) return null;
+            const position = Y.createAbsolutePositionFromRelativePosition(anchor, ydoc);
+            return position?.type === ytext ? position.index : null;
+          },
+          selectionIndex: () => getQuillEditor(quillRef)?.getSelection(false)?.index ?? null,
+          insertImage: (index, url) => getQuillEditor(quillRef)?.insertEmbed(index, 'image', url),
+          setSelection: (index) => getQuillEditor(quillRef)?.setSelection(index),
+        },
+        controller.signal,
+      );
+
+      if (!isCurrent() || result.state === 'aborted') return;
+      if (result.state === 'complete') {
+        reportImageStatus({
+          kind: 'success',
+          message: action === 'paste'
+            ? `${files.length === 1 ? 'Image' : `${files.length} images`} pasted.`
+            : 'Image added.',
+        });
+      } else {
+        reportImageStatus({
+          kind: 'error',
+          message: result.state === 'partial'
+            ? `${result.inserted} of ${result.total} images pasted. The next image could not be uploaded.`
+            : 'Image could not be uploaded. Try again.',
+        });
+      }
+    } finally {
+      imageUploadControllersRef.current.delete(controller);
+    }
+  }, [reportImageStatus]);
+
+  useEffect(() => () => {
+      editorGenerationRef.current += 1;
+      for (const controller of imageUploadControllersRef.current) {
+        controller.abort();
+      }
+      imageUploadControllersRef.current.clear();
+      if (imageStatusTimerRef.current) {
+        clearTimeout(imageStatusTimerRef.current);
+        imageStatusTimerRef.current = null;
+      }
+  }, []);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -98,14 +211,17 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
       ? new WebrtcProvider(`oms-note-${noteId}`, ydoc, { signaling: signalingUrls })
       : null;
     const ytext = ydoc.getText('quill');
+    ydocRef.current = ydoc;
+    ytextRef.current = ytext;
+    editorGenerationRef.current += 1;
 
     const binding = new QuillBinding(ytext, editor, provider?.awareness);
 
     // Short debounce to allow CRDT sync before checking for initial content
     initTimerRef.current = setTimeout(() => {
-      if (initialContent && ytext.length === 0) {
+      if (initialContentRef.current && ytext.length === 0) {
         // Sanitize HTML before pasting to prevent stored XSS
-        const cleanHtml = DOMPurify.sanitize(initialContent);
+        const cleanHtml = DOMPurify.sanitize(initialContentRef.current);
         // Use dangerouslyPasteHTML for table support — Quill's native insertText
         // does not handle complex HTML structures like tables.
         editor.clipboard.dangerouslyPasteHTML(cleanHtml);
@@ -122,10 +238,33 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
       editor.off('text-change', handleTextChange);
       binding.destroy();
       provider?.destroy();
+      ydocRef.current = null;
+      ytextRef.current = null;
       ydoc.destroy();
+      editorGenerationRef.current += 1;
       initialized.current = false;
     };
-  }, [noteId, initialContent]);
+  }, [noteId]);
+
+  useEffect(() => {
+    const editor = getQuillEditor(quillRef);
+    if (!editor) return;
+
+    const handlePaste = (event: ClipboardEvent) => {
+      if (!event.clipboardData) return;
+      const files = clipboardImageFiles(event.clipboardData);
+      if (files.length === 0 || clipboardHasTextContent(event.clipboardData)) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const range = editor.getSelection(true);
+      if (!range) return;
+      void insertNoteImages(files, range.index, 'paste');
+    };
+
+    editor.root.addEventListener('paste', handlePaste, true);
+    return () => editor.root.removeEventListener('paste', handlePaste, true);
+  }, [insertNoteImages]);
 
   // Image upload handler
   const handleImageUpload = React.useCallback(() => {
@@ -135,20 +274,14 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
-      try {
-        const editor = getQuillEditor(quillRef);
-        if (!editor) return;
-        const range = editor.getSelection(true);
-        if (!range) return;
-        const { url } = await uploadNoteImage(file);
-        editor.insertEmbed(range.index, 'image', url);
-        editor.setSelection(range.index + 1);
-      } catch (e) {
-        console.error('Image upload failed', e);
-      }
+      const editor = getQuillEditor(quillRef);
+      if (!editor) return;
+      const range = editor.getSelection(true);
+      if (!range) return;
+      await insertNoteImages([file], range.index, 'upload');
     };
     input.click();
-  }, []);
+  }, [insertNoteImages]);
 
   // Table insert helper
   const handleInsertTable = React.useCallback(() => {
@@ -219,12 +352,24 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
   }), [handleImageUpload, handleInsertTable, handleCodeBlock]);
 
   return (
-    <ReactQuill
-      ref={quillRef}
-      theme="bubble"
-      placeholder="Start typing your note here..."
-      style={{ height: '100%', display: 'flex', flexDirection: 'column', color: 'var(--text-primary)', fontSize: '1.1rem', lineHeight: '1.6' }}
-      modules={modules}
-    />
+    <div className="live-note-editor">
+      <ReactQuill
+        ref={quillRef}
+        className="live-note-quill"
+        theme="bubble"
+        placeholder="Start typing your note here..."
+        style={{ display: 'flex', flexDirection: 'column', color: 'var(--text-primary)', fontSize: '1.1rem', lineHeight: '1.6' }}
+        modules={modules}
+      />
+      {imageStatus && (
+        <div
+          className={`note-image-upload-status ${imageStatus.kind}`}
+          role={imageStatus.kind === 'error' ? 'alert' : 'status'}
+          aria-live={imageStatus.kind === 'error' ? undefined : 'polite'}
+        >
+          {imageStatus.message}
+        </div>
+      )}
+    </div>
   );
 };

@@ -127,30 +127,34 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             value={note.title || ''}
             onChange={handleTitleChange}
           />
-          <div className="note-color-picker">
-            {NOTE_COLORS.map(color => (
-              <button
-                key={color}
-                className={`note-color-swatch${note.color === color ? ' active' : ''}`}
-                style={{ backgroundColor: color }}
-                title={color}
-                onClick={() => { n.setEditingNote((prev) => ({ ...prev, color })); scheduleAutoSave(); }}
-              />
-            ))}
+          <div className="note-modal-meta">
+            <div className="note-color-picker">
+              {NOTE_COLORS.map(color => (
+                <button
+                  key={color}
+                  className={`note-color-swatch${note.color === color ? ' active' : ''}`}
+                  style={{ backgroundColor: color }}
+                  title={color}
+                  onClick={() => { n.setEditingNote((prev) => ({ ...prev, color })); scheduleAutoSave(); }}
+                />
+              ))}
+            </div>
+            <div className="note-modal-status-controls">
+              <ReminderPicker noteId={note.id} />
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                {(note.content || '').replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(Boolean).length} words
+              </span>
+              {saveStatus && (
+                <span style={{
+                  fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4,
+                  color: saveStatus === 'saved' ? '#10b981' : 'var(--text-secondary)',
+                }}>
+                  {saveStatus === 'saving' ? <Loader size={12} className="spin" /> : <Check size={12} />}
+                  {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
+                </span>
+              )}
+            </div>
           </div>
-          <ReminderPicker noteId={note.id} />
-          <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-            {(note.content || '').replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(Boolean).length} words
-          </span>
-          {saveStatus && (
-            <span style={{
-              fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: 4,
-              color: saveStatus === 'saved' ? '#10b981' : 'var(--text-secondary)',
-            }}>
-              {saveStatus === 'saving' ? <Loader size={12} className="spin" /> : <Check size={12} />}
-              {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
-            </span>
-          )}
           <div className="note-modal-actions">
             <button className="btn btn-ghost btn-sm" onClick={handleClose} title="Close">
               <X size={18} />
@@ -159,6 +163,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
         </div>
         <div className="note-modal-editor">
           <LiveNoteEditor
+            key={note.id || 'new'}
             noteId={note.id || 'new'}
             initialContent={note.content || ''}
             onChange={handleContentChange}

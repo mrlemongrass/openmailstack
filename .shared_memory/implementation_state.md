@@ -2,8 +2,8 @@
 
 ## 2026-08-03 Mozilla Mail Autoconfiguration
 
-**Status: Server support deployed; public discovery hostname pending DNS and
-certificate provisioning.** Commit `63683df8` serves Thunderbird's provider
+**Status: Public one-step discovery is deployed and client-validated.** Commit
+`63683df8` serves Thunderbird's provider
 `/mail/config-v1.1.xml` path and domain well-known fallback from one tested
 router. The response uses `%EMAILADDRESS%`, IMAP 993 with SSL, and SMTP 587 with
 STARTTLS; it never reflects the query email address. Fresh and legacy Nginx
@@ -17,9 +17,18 @@ before and after deployment. Staging smoke, both live routes on
 `mail.housevo.us`, forced-host routing, exact repository/live artifact hash,
 clean warning journal, and `NRestarts=0` pass. Rollback is
 `/var/backups/openmailstack/protocol-guarded-webmail-20260803T235205Z/`.
-`autoconfig.housevo.us` still has no public DNS record and the active certificate
-does not cover it, so do not claim one-step Thunderbird setup until DNS, SAN
-expansion, and a fresh physical client run pass.
+`autoconfig.housevo.us` now resolves by CNAME to `mail.housevo.us`, and the
+active Let's Encrypt certificate covers `autoconfig`, `autodiscover`, `mail`,
+and `webmail`. Thunderbird 140.12.0esr on Debian 13 and Thunderbird Android
+21.1 on Android 11 both fetched the public provider route, selected full-address
+usernames, IMAP 993 SSL/TLS, and SMTP 587 STARTTLS, and authenticated without
+manual correction. The desktop account-creation success screen, Android
+expanded discovered-settings screen, Android Inbox, and matching redacted
+Nginx user agents were observed. No message was sent or mailbox data changed.
+The disposable Linux user, Thunderbird profile, AVD, APK, screenshots, and
+cached credential were removed; the reusable Android SDK contains no account
+state. Certificate/vhost backup:
+`/var/backups/openmailstack/autoconfig-cert-20260803T2359Z/`.
 
 ## 2026-08-03 macOS CardDAV Owned-Collection Writability
 
@@ -72,7 +81,7 @@ web sessions, and ActiveSync state were empty.
 
 ## 2026-07-30 Thunderbird And Android Client Matrix
 
-**Status: Thunderbird desktop, the remote Android client stack, and macOS Mail pass; active test state is clean.** Thunderbird 140.12.0esr on Debian 13.6 completed IMAP/SMTP self-send plus CalDAV and CardDAV create/edit/delete through the live server. Thunderbird Android 21.0 and DAVx5 4.5.18-ose completed the corresponding mail, Calendar-provider, and Contacts-provider lifecycles on an Android 11 API 30 emulator in `dev2-debian`; Etar 1.0.56 supplied the event editor because the bundled AOSP Calendar package declared but omitted its editor class. The server retained stable DAV UIDs through edits and emitted the expected calendar/contact tombstones on delete. Exact Inbox/Sent test UIDs were expunged only after subject verification. The disposable `omsclient` account/home was removed, taking its Thunderbird profiles, Android AVDs, APKs, screenshots, and cached mailbox credential with it. The Android SDK and installed Debian test packages remain reusable and contain no mailbox profile. Post-cleanup staging smoke, public IMAP/SMTP hostname verification, HTTPS, service activity, recent error checks, and zero backend restarts pass. After the IMAP certificate repair, the owner confirmed macOS Mail worked normally. macOS 26.5.2 CardDAV has an explicit create/delete lifecycle pass through a real PUT/DELETE and clean tombstone; only Apple's Default Account picker omission remains open. Both Thunderbird variants exposed the separate Mozilla Autoconfiguration gap recorded in the risk register and roadmap.
+**Status: Thunderbird desktop, the remote Android client stack, and macOS Mail pass; active test state is clean.** Thunderbird 140.12.0esr on Debian 13.6 completed IMAP/SMTP self-send plus CalDAV and CardDAV create/edit/delete through the live server. Thunderbird Android 21.0 and DAVx5 4.5.18-ose completed the corresponding mail, Calendar-provider, and Contacts-provider lifecycles on an Android 11 API 30 emulator in `dev2-debian`; Etar 1.0.56 supplied the event editor because the bundled AOSP Calendar package declared but omitted its editor class. The server retained stable DAV UIDs through edits and emitted the expected calendar/contact tombstones on delete. Exact Inbox/Sent test UIDs were expunged only after subject verification. The disposable `omsclient` account/home was removed, taking its Thunderbird profiles, Android AVDs, APKs, screenshots, and cached mailbox credential with it. The Android SDK and installed Debian test packages remain reusable and contain no mailbox profile. Post-cleanup staging smoke, public IMAP/SMTP hostname verification, HTTPS, service activity, recent error checks, and zero backend restarts pass. After the IMAP certificate repair, the owner confirmed macOS Mail worked normally. macOS 26.5.2 CardDAV has an explicit create/delete lifecycle pass through a real PUT/DELETE and clean tombstone; only Apple's Default Account picker omission remains open. The later Mozilla Autoconfiguration release and public DNS/SAN expansion closed the manual-configuration gap in both Thunderbird variants.
 
 ## 2026-07-30 Public IMAP TLS
 

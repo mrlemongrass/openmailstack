@@ -1606,3 +1606,27 @@ Future entry template:
   `autoconfig.housevo.us` has no DNS record and is absent from the active
   certificate. Add both, then repeat Thunderbird desktop and Android automatic
   account setup before closing one-step discovery.
+
+## 2026-08-03 — Mozilla Autoconfiguration Public Client Gate Closed
+
+- Added public `autoconfig.housevo.us` DNS by CNAME to `mail.housevo.us` and
+  expanded the existing Let's Encrypt certificate to cover `autoconfig`,
+  `autodiscover`, `mail`, and `webmail`; strict hostname verification passes and
+  the certificate expires 2026-11-01. The pre-change certificate and Nginx
+  vhost are preserved at
+  `/var/backups/openmailstack/autoconfig-cert-20260803T2359Z/`.
+- Thunderbird 140.12.0esr on Debian 13 found the provider configuration,
+  selected full-address usernames with IMAP 993 SSL/TLS and SMTP 587 STARTTLS,
+  authenticated, and displayed `Account successfully created` in an isolated
+  profile.
+- Official stable Thunderbird Android 21.1 matched its published SHA-256,
+  displayed the same expanded discovered settings on Android 11, authenticated,
+  and reached Inbox. Optional Contacts access was skipped and no mail was sent
+  or changed.
+- Public Nginx access evidence records successful provider requests from the
+  desktop Thunderbird user agent and Android `okhttp/5.3.2`. The mandatory
+  protocol release gate and full staging smoke pass after certificate reload.
+- The disposable Linux user/home, desktop profile, Android AVD, APK,
+  screenshots, and cached canary credential were removed. The reusable Android
+  SDK remains without account state. Next: harden the bounded raw ManageSieve
+  response parser.

@@ -8132,3 +8132,68 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
   setup in Thunderbird 140.12.0esr and Thunderbird Android 21.0. Until those
   checks pass, server support is deployed but one-step public discovery remains
   open.
+
+## 2026-08-03 — Mozilla autoconfiguration public client gate closure
+
+### Goal and acceptance criteria
+
+- Close the external DNS and certificate prerequisites for
+  `autoconfig.housevo.us` without replacing or weakening the existing
+  `mail.housevo.us` certificate.
+- Prove automatic provider discovery and authentication in fresh Thunderbird
+  desktop and Android client state, with the full address, IMAP 993 SSL/TLS,
+  and SMTP 587 STARTTLS visible before account creation.
+- Avoid sending or mutating mail and remove every disposable profile,
+  credential, emulator, APK, and screenshot afterward.
+
+### DNS, certificate, and server proof
+
+- Public DNS now returns `autoconfig.housevo.us CNAME mail.housevo.us` and the
+  live address. The existing Certbot lineage was expanded in place to cover
+  `autoconfig.housevo.us`, `autodiscover.housevo.us`, `mail.housevo.us`, and
+  `webmail.housevo.us`; the new certificate is valid through 2026-11-01.
+- The pre-change fullchain, key, and Nginx vhost are preserved at
+  `/var/backups/openmailstack/autoconfig-cert-20260803T2359Z/`. `nginx -t`,
+  reload, strict public hostname verification, the live provider response, and
+  service activity with `NRestarts=0` pass.
+- `tests/integration/protocol_release_gate.sh` passed strict public IMAPS and
+  the full ActiveSync MIME/Junk/Trash/no-change sequence. Full
+  `tests/integration/staging_smoke.sh ./config.conf` passed, including Mozilla
+  route contents, service/listener health, and TLS checks.
+
+### Thunderbird desktop result
+
+- Thunderbird 140.12.0esr on Debian 13 used a fresh isolated profile. It
+  reported `Configuration found at email provider`, displayed IMAP SSL/TLS and
+  SMTP STARTTLS at `mail.housevo.us`, used the full email address for both
+  usernames, authenticated, and displayed `Account successfully created`.
+- The resulting profile independently recorded IMAP port 993/socket type 3 and
+  SMTP port 587/STARTTLS. No send, append, move, delete, or other mailbox
+  mutation was performed.
+
+### Thunderbird Android result
+
+- The official stable Thunderbird Android 21.1 APK, released 2026-08-03,
+  matched published SHA-256
+  `699a48aeaa4ffca88ad868655e356995f943933fafe5f1d7773f803b866fc717`.
+  Android Emulator 37.1.11 ran Android 11/API 30 under CPU emulation because
+  `dev2-debian` has no `/dev/kvm`.
+- The fresh client reported `Configuration found` and its expanded settings
+  displayed `mail.housevo.us:993`, `SSL/TLS`, full-address incoming username,
+  `mail.housevo.us:587`, `StartTLS`, and full-address outgoing username. After
+  exact ADB text-entry verification, both authentication checks passed and the
+  client reached Inbox. Optional Contacts access was skipped; no mail was sent
+  or changed.
+- Redacted Nginx access evidence records the desktop
+  `Thunderbird/140.12.0` provider requests and Android `okhttp/5.3.2` provider
+  requests with 200 responses.
+
+### Cleanup and decision
+
+- The `omsclient` Linux user and home, Thunderbird profile, Android AVD, APK,
+  screenshots, and cached canary credential were removed. No process remains
+  for the deleted account. The reusable Android SDK remains installed and has
+  no mailbox profile.
+- Close Mozilla one-step autoconfiguration for desktop and Android. The next
+  recommended bounded task is the open ManageSieve response-parser hardening
+  recorded in `ROADMAP.md` and `.shared_memory/risk_register.md`.

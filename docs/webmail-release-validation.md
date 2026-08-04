@@ -2,6 +2,26 @@
 
 Use this as the release gate for the modern webmail stack. Local checks prove the repo builds; staging checks prove the installed system behaves like production.
 
+## 2026-08-04 Notes Clipboard Image Paste Live Gate
+
+- Scope: image-only clipboard paste through authenticated Notes upload,
+  asynchronous Yjs-safe insertion, accessible feedback, and mobile header and
+  reminder geometry. Validation used browser-intercepted fixtures and did not
+  persist a production note or upload.
+- Automated: focused 6/6, frontend 90/90, ESLint, TypeScript/Vite build, full
+  integration, `git diff --check`, and independent Spec/Standards reviews pass.
+- Browser: 1440x900 and 390x844 direct paste each issued one upload and embedded
+  one returned URL with editor focus retained and no overflow. File plus
+  image-only HTML used the upload path; captioned/mixed rich content remained
+  native. At 320x700 the reminder panel was fully inside the viewport at 16 px
+  side insets.
+- Release: commit `0a85b4d` passed mandatory public IMAPS and ActiveSync before
+  and after deployment. Tested/live frontend contents match; public root/auth
+  are 200/401; `openmailstack.service` is active with `NRestarts=0`; Nginx,
+  warning-journal review, and full staging smoke pass.
+- Rollback:
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260804T022450Z/`.
+
 ## Local Gates
 
 Run from the repo root:

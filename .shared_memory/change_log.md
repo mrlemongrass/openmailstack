@@ -1650,3 +1650,26 @@ Future entry template:
   bytes without printing content or changing filter/mailbox state. Next:
   implement direct clipboard-image paste in Notes through the existing image
   upload path.
+
+## 2026-08-04 — Notes Clipboard Image Paste
+
+- Added image-only clipboard interception to the live Notes editor, reusing
+  `/api/notes/upload` and the existing PNG/JPEG/GIF/WebP 5 MiB boundary instead
+  of allowing Quill to persist base64 image data.
+- Preserved native rich paste for real text/caption content, including the
+  common browser case where a copied image provides both a file and an
+  image-only `text/html` representation.
+- Anchored asynchronous insertion with Yjs relative positions, preserved a
+  user-moved caret, aborted stale work on editor teardown, and added polite or
+  assertive status feedback for upload, success, partial failure, and error.
+- Reflowed the mobile note header so reminder/save/close controls remain
+  visible and bounded the reminder popover to 16 px viewport insets at 320 px.
+- Focused tests pass 6/6; frontend tests pass 90/90; lint, production build,
+  integration, `git diff --check`, and final Spec/Standards reviews pass.
+  Fixture-only Playwright passed desktop, standard mobile, and 320 px geometry
+  checks without production persistence.
+- Commit `0a85b4d` was deployed through the mandatory guarded webmail path.
+  Public IMAPS and ActiveSync passed before/after, exact live frontend content,
+  readiness, zero restarts, clean warnings, Nginx, and staging smoke pass.
+  Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260804T022450Z/`.

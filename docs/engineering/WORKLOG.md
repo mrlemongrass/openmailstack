@@ -8273,3 +8273,95 @@ Starting git state: `54e6a9d0`
   in Notes, reusing the existing authenticated image upload and inline-display
   path. Self-hosted signaling and authenticated collaboration rooms remain a
   separate, larger slice.
+
+## 2026-08-04 — Notes direct clipboard-image paste
+
+Agent/tool: Codex with TDD, Playwright, independent Standards/Spec review, and
+guarded release
+Branch: `main`
+Starting git state: clean at `a8ccc2d4`
+
+### Goal and acceptance criteria
+
+- [x] Intercept supported image-only clipboard content before Quill can embed
+  base64 data.
+- [x] Reuse authenticated `/api/notes/upload` and its PNG/JPEG/GIF/WebP,
+  5 MiB contract.
+- [x] Insert returned URLs at an asynchronous-safe logical position without
+  stealing a moved caret or writing into a replaced/unmounted editor.
+- [x] Preserve native text/rich paste, including captioned image content, while
+  recognizing file plus image-only HTML as an image paste.
+- [x] Expose accessible upload/success/error feedback and keep the mobile note
+  header, actions, and reminder panel usable down to 320 px.
+- [x] Pass focused/full tests, lint/build, repository integration, both review
+  axes, fixture-only desktop/mobile Playwright, guarded deployment, artifact
+  equality, health checks, and staging smoke.
+
+### Implementation and regression proof
+
+- Added a pure clipboard/upload helper that extracts image files, validates the
+  existing upload boundary, distinguishes image-only HTML from real text, and
+  uploads sequentially so multi-image order is deterministic.
+- The editor captures a Yjs relative position before upload and resolves it
+  against the live document afterward. Generation/document/editor checks and
+  `AbortController` prevent stale insertion; selection advances only when the
+  user has not moved it.
+- The same helper now backs toolbar image upload. Feedback uses `status` with
+  polite live updates for progress/success and `alert` for errors. Successful
+  feedback clears after a bounded interval.
+- Mobile browser inspection found the existing single-row header hid controls;
+  metadata now occupies a second row with a scroll-safe swatch strip. Review
+  then found the reminder panel could still clip at 320 px; it now uses fixed
+  16 px side insets on mobile.
+- The initial focused test failed because the helper did not exist. Behavioral
+  tests then covered extraction/validation, image-only versus captioned HTML,
+  upload order, post-await index resolution, moved-caret preservation, partial
+  failure, stale invalidation, listener cleanup, status semantics, and mobile
+  layout guards. Final focused result is 6/6.
+
+### Verification and review
+
+- Frontend: 90/90 tests, ESLint, TypeScript, and Vite production build pass.
+  The complete integration suite passes every mail/protocol, Scheduler,
+  authentication/RBAC, dependency, installer, and dry-run guard.
+- Fixture-only Playwright used intercepted authenticated APIs and did not write
+  production data. At 1440x900 and 390x844, image paste was prevented from the
+  native base64 path, issued one upload, embedded one returned URL, retained
+  editor focus, announced `Image pasted.`, and produced no horizontal
+  overflow. A file plus image-only HTML repeated the upload path. At 320x700,
+  the reminder panel measured left 16/right 304/top 110/bottom 208 and stayed
+  fully inside the viewport.
+- First Standards review identified a stale numeric cursor, mixed-content loss,
+  shallow tests, and conflicting ARIA semantics; all were corrected. Spec
+  review then identified image-only clipboard HTML; that was corrected with
+  paired image-only/caption regressions. Final Spec and Standards reviews PASS
+  with no remaining findings.
+
+### Guarded deployment and live proof
+
+- Code commit `0a85b4d` was deployed only through
+  `functions/protocol_guarded_deploy.sh webmail`. Strict public IMAPS and the
+  ActiveSync full-MIME/Junk/Trash/no-change sequence passed before and after
+  installation. Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260804T022450Z/`.
+- Checksum-mode rsync with ownership/permission metadata ignored reports no
+  content difference. Repository/live SHA-256 pairs match for `index.html`
+  (`71049bbfa278dea24e2f3c570b60e8fc468ecc5865ef93f6166ce0379c278fec`),
+  the Notes route bundle
+  (`56b078a585fcbfce774f1c69c73610eb147ac2cfc94ccc3f6c344c5d460c60f9`),
+  and shared CSS
+  (`28717c9f36144398a96066ca478eb94e04195bc5c4a6e2de7f7012c46c62fbc9`).
+- Public root/auth return 200/401. `openmailstack.service` is active/running
+  with `NRestarts=0`; Nginx validates, the recent warning journal is empty, and
+  complete staging smoke passes. The deploy installer reports only the already
+  documented React Router RSC-only advisory protected by the dependency guard.
+
+### Decision and next task
+
+- Close direct clipboard-image paste as a deployed Notes capability. Preserve
+  the authenticated upload, image-only HTML classifier, Yjs-relative anchor,
+  cancellation, and browser geometry regressions.
+- Next, define and deliver the first bounded collaboration foundation:
+  self-hosted signaling configuration plus an authenticated, owner-authorized
+  note-room token/handshake. Do not enable or market collaboration until room
+  access and signaling are both production-safe.

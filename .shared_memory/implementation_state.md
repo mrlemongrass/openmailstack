@@ -1,5 +1,36 @@
 # Implementation State
 
+## 2026-08-04 Notes Clipboard Image Paste
+
+**Status: Deployed and browser-validated.** Commit `0a85b4d` routes image-only
+clipboard pastes through the existing authenticated `/api/notes/upload` path,
+validates PNG/JPEG/GIF/WebP files up to 5 MiB, and embeds the returned URL. It
+distinguishes image-only HTML clipboard representations from real captioned or
+mixed rich content so Quill cannot silently store pasted base64 images while
+ordinary rich paste remains intact.
+
+Yjs relative positions resolve the insertion point after asynchronous upload;
+note/editor generation checks and abort signals prevent late insertion after a
+note switch or unmount, and a moved caret is not stolen. Ordered multi-image
+upload, partial failure, and accessible uploading/success/error feedback are
+covered. The mobile editor header wraps without hiding close/reminder/save
+controls, and the reminder panel stays within a 320 px viewport.
+
+Focused tests pass 6/6; the complete frontend suite passes 90/90, ESLint and
+the production build pass, every repository integration guard passes, and
+independent Spec/Standards reviews return PASS. Fixture-only Playwright at
+1440x900, 390x844, and 320x700 proved direct file paste, image-only HTML paste,
+one upload per paste, URL embedding, editor focus, status semantics, no
+horizontal overflow, visible mobile controls, and bounded reminder geometry
+without persisting production data.
+
+The guarded deployment passed strict public IMAPS and the ActiveSync
+full-MIME/Junk/Trash/no-change sequence before and after installation. Live
+frontend content matches the tested build, public root/auth return 200/401,
+the service is active with `NRestarts=0`, the warning journal is empty, and
+full staging smoke passes. Rollback:
+`/var/backups/openmailstack/protocol-guarded-webmail-20260804T022450Z/`.
+
 ## 2026-08-03 ManageSieve Response Framing
 
 **Status: Deployed, bounded, and live-validated.** Commits `b3494c08` and

@@ -1,6 +1,6 @@
 # OpenMailStack Roadmap
 
-Last reviewed: 2026-08-03
+Last reviewed: 2026-08-04
 
 This roadmap tracks the remaining product and release work for the modern OpenMailStack suite. The current product direction is a native React webmail, calendar, and contacts experience backed by the Node/Express sync proxy, while Roundcube and older SOGo-compatible paths remain compatibility or fallback surfaces.
 
@@ -64,7 +64,7 @@ The contacts and notes apps have been extracted into their own directories with 
 - ✅ Multi-format import (HTML, PDF, Markdown, JSON) and export (PDF, Markdown, JSON).
 - ✅ Apple Notes IMAP sync and ActiveSync support.
 - ✅ Checklists/todo items in notes.
-- 🟡 Image upload and inline display are implemented; direct clipboard-image paste remains.
+- ✅ Image upload, inline display, and direct clipboard-image paste are implemented. Image-only clipboard HTML is routed through the authenticated upload path instead of becoming a base64 document embed; mixed text/image clipboard content retains native rich-paste behavior.
 - ✅ Table support and code blocks.
 - ✅ Sort options.
 - ✅ Reminders/due dates on notes.

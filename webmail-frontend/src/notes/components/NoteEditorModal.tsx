@@ -200,7 +200,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
         <div className="note-modal-editor">
           <LiveNoteEditor
             key={note.id || 'new'}
-            noteId={note.id || 'new'}
+            noteId={note.id}
             initialContent={note.content || ''}
             onChange={handleContentChange}
           />

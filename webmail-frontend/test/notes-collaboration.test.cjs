@@ -99,6 +99,10 @@ test('a synced event initializes only while at least one peer is still live', ()
 
 test('the editor uses only authenticated runtime signaling and preserves local fallback', () => {
   const editor = fs.readFileSync(path.resolve(__dirname, '../src/LiveNoteEditor.tsx'), 'utf8');
+  const modal = fs.readFileSync(
+    path.resolve(__dirname, '../src/notes/components/NoteEditorModal.tsx'),
+    'utf8',
+  );
   assert.doesNotMatch(editor, /VITE_OMS_NOTES_SIGNALING_URLS/);
   assert.match(editor, /fetchNoteCollaborationSession/);
   assert.match(editor, /collaborationWebSocketUrl/);
@@ -124,6 +128,10 @@ test('the editor uses only authenticated runtime signaling and preserves local f
     /const disconnectProvider[\s\S]*activeProvider\.disconnect\(\)[\s\S]*activeProvider\.destroy\(\)/,
   );
   assert.doesNotMatch(editor, /provider\??\.destroy\(\)/);
+  assert.match(editor, /noteId\?:\s*string/);
+  assert.match(editor, /if \(!noteId\)[\s\S]*switchToLocalEditing\(\)/);
+  assert.match(modal, /noteId=\{note\.id\}/);
+  assert.doesNotMatch(modal, /noteId=\{note\.id \|\| 'new'\}/);
 });
 
 test('note persistence carries a revision and keeps stale conflicts visible', () => {

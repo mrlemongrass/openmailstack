@@ -81,7 +81,7 @@ if (ListConfig) {
 }
 
 interface LiveNoteEditorProps {
-  noteId: string;
+  noteId?: string;
   initialContent: string;
   onChange: (content: string) => void;
 }
@@ -307,6 +307,10 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
 
     const connectCollaboration = async () => {
       if (collaborationStopped) return;
+      if (!noteId) {
+        switchToLocalEditing();
+        return;
+      }
       const generation = ++collaborationGeneration;
       if (provider && currentCapabilityExpiresAt <= Date.now()) {
         disconnectProvider();
@@ -365,7 +369,11 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
         if (requestController === currentRequest) requestController = null;
       }
     };
-    void connectCollaboration();
+    if (!noteId) {
+      switchToLocalEditing();
+    } else {
+      void connectCollaboration();
+    }
 
     const handleTextChange = () => {
       onChangeRef.current(editor.root.innerHTML);

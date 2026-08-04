@@ -3522,7 +3522,7 @@ exports.apiRouter.get('/notes/:id/reminder', requireAuth, async (req, res) => {
     try {
         const reminder = await (0, notes_utils_1.getNoteReminder)(req.params.id, req.user.username);
         if (!reminder) {
-            res.status(404).json({ success: false, reminder: null });
+            res.json({ success: true, reminder: null });
             return;
         }
         res.json({ success: true, reminder: { remind_at: reminder.remind_at } });

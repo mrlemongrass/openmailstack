@@ -8197,3 +8197,79 @@ ManageSieve response-parser risk stays explicitly open in `ROADMAP.md`.
 - Close Mozilla one-step autoconfiguration for desktop and Android. The next
   recommended bounded task is the open ManageSieve response-parser hardening
   recorded in `ROADMAP.md` and `.shared_memory/risk_register.md`.
+
+## 2026-08-03 — ManageSieve byte framing and bounded response lifecycle
+
+Agent/tool: Codex with TDD, independent Standards/Spec review, guarded release,
+and read-only live ManageSieve proof
+Branch: `main`
+Starting git state: `54e6a9d0`
+
+### Goal and acceptance criteria
+
+- [x] Exercise the public `ManageSieveClient` against a real local TCP server.
+- [x] Preserve exact UTF-8 script bytes across arbitrary literal-header,
+  literal-body, and terminal-status chunks.
+- [x] Ignore `OK`, `NO`, and `BYE` lines inside a declared script literal and
+  require a CRLF-complete terminal status outside it.
+- [x] Reject a peer that closes mid-response and bound inbound literal/response
+  memory.
+- [x] Preserve login, `SETACTIVE`, and logout behavior without changing filter
+  evaluation, saved scripts, or mailbox state.
+- [x] Pass focused/full regressions, both review axes, guarded deployment,
+  staging smoke, artifact equality, and read-only live retrieval.
+
+### Diagnosis and red/green proof
+
+- The prior client appended decoded string chunks, approximated outstanding
+  literal bytes, and treated the last line beginning with a status word as a
+  completed response. A UTF-8 split or an `OK`/`NO`/`BYE` line in script text
+  could therefore corrupt framing or settle the command before Dovecot's real
+  status arrived.
+- The first regression failed against that implementation because the promise
+  settled after literal content and before the delayed terminal status. Review
+  regressions then failed because a partial response followed by peer EOF and
+  an oversized literal declaration both remained pending.
+- The green implementation stores response data as `Buffer`, scans complete
+  CRLF lines, consumes the declared literal byte count exactly, and recognizes
+  only complete terminal tokens outside literals. Exact `GETSCRIPT` extraction
+  preserves UTF-8 and trailing CRLF.
+- A centralized rejection path covers timeout, socket error, parser failure,
+  EOF, and close. Literals above 10 MiB are rejected before their body is
+  buffered; total response overhead has a separate fixed bound.
+
+### Automated proof and review
+
+- Focused ManageSieve tests pass 4/4: chunked UTF-8 literal/status framing,
+  login/activate/logout, incomplete-response EOF, and oversized literal.
+- Backend tests: 261 total, 258 passed, three documented environment-gated
+  skips, zero failures. The full integration suite passes all guards and 84/84
+  frontend tests. TypeScript build and `git diff --check` pass.
+- Independent Spec and Standards review both returned PASS after the first
+  Standards pass identified EOF rejection, response limits, duplicated test
+  setup, and pending documentation/deployment closure. The final helper and
+  lifecycle/limit changes address every finding.
+
+### Guarded deployment and live proof
+
+- Commits `b3494c08` and `9b421e5` were deployed only through
+  `functions/protocol_guarded_deploy.sh webmail`. Strict public IMAPS and the
+  ActiveSync full-MIME/Junk/Trash/no-change gate passed before and after the
+  installation. Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260804T014236Z/`.
+- Full staging smoke passed. Repository and live `managesieve.js` share SHA-256
+  `d4ee070ef623a46b2d1438c8dc541936a9563286a729b9d29909186ca5ec0eeb`.
+  Readiness returned the expected `401`; the service is active/running with
+  `NRestarts=0` and zero recent warning-level journal lines.
+- Three new delegated sessions retrieved `GETSCRIPT webmail` through the
+  deployed client. Every response was 84,349 bytes. Only byte counts were
+  emitted; no script content, saved filter, or mailbox message was changed.
+
+### Decision and next task
+
+- Close the enterprise ManageSieve response-parser risk while preserving the
+  small raw-client design and its byte/lifecycle/size regressions.
+- The next highest-value bounded product task is direct clipboard-image paste
+  in Notes, reusing the existing authenticated image upload and inline-display
+  path. Self-hosted signaling and authenticated collaboration rooms remain a
+  separate, larger slice.

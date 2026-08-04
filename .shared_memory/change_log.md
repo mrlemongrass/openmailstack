@@ -1630,3 +1630,23 @@ Future entry template:
   screenshots, and cached canary credential were removed. The reusable Android
   SDK remains without account state. Next: harden the bounded raw ManageSieve
   response parser.
+
+## 2026-08-03 — ManageSieve Response Framing Hardened
+
+- Commits `b3494c08` and `9b421e5` replace string/chunk response heuristics
+  with byte-framed parsing that consumes exact UTF-8 literal lengths before
+  recognizing complete CRLF terminal status lines.
+- Pending commands now reject on mid-response EOF/close. Inbound literals are
+  capped at 10 MiB and response overhead is bounded; focused regressions cover
+  chunked literals, status-like script lines, split status lines, lifecycle,
+  EOF, and oversized declarations.
+- Backend tests pass 258/261 with three documented gated skips, frontend tests
+  pass 84/84 through the integration suite, and both final review axes pass.
+- The guarded deployment passed public IMAPS and ActiveSync before and after
+  installation. Staging smoke, exact repository/live artifact hash, readiness,
+  service health, zero restarts, and a clean warning journal pass. Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260804T014236Z/`.
+- Three delegated read-only live `GETSCRIPT webmail` calls each returned 84,349
+  bytes without printing content or changing filter/mailbox state. Next:
+  implement direct clipboard-image paste in Notes through the existing image
+  upload path.

@@ -129,7 +129,12 @@ The reopened-timezone work now distinguishes UTC, `TZID`, floating, and all-day 
 - ✅ Add two-factor authentication and app-password support. TOTP with one-time recovery codes, purpose-separated encrypted secrets, protocol-capable per-device app passwords, session/app-password revocation, and primary-password blocking while 2FA is enabled are deployed and live-validated.
 - ✅ Audit admin RBAC and domain scoping endpoint by endpoint. All 47 modern Admin routes require a fresh active-superadmin check; the legacy session API now applies explicit global, domain, self-service, and quarantine policies. The completed inventory and boundary decisions are recorded in `docs/engineering/ADMIN_RBAC_AUDIT.md`.
 - ✅ Harden ActiveSync contact photos, conflict handling, tombstones, and long-running incremental sync (EAS calendar tombstones, recurrence mapping, Picture sync).
-- ❌ Revisit ManageSieve response parsing before treating complex filter editing as enterprise-grade.
+- ✅ Harden ManageSieve response parsing for complex filter editing. The client
+  now frames responses as bytes, skips exact UTF-8 literal lengths before
+  recognizing terminal status lines, requires a complete CRLF status, rejects
+  incomplete peer closes, and caps literals at 10 MiB with bounded response
+  overhead. Focused chunk/EOF/limit regressions, the full test suite, guarded
+  deployment, and three consistent read-only live script retrievals pass.
 
 ## 7. Admin Dashboard Overhaul & Telemetry 🟡
 

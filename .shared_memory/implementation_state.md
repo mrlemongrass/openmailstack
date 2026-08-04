@@ -1,5 +1,26 @@
 # Implementation State
 
+## 2026-08-03 ManageSieve Response Framing
+
+**Status: Deployed, bounded, and live-validated.** Commits `b3494c08` and
+`9b421e5` replace string/chunk heuristics with byte-framed ManageSieve response
+parsing. Declared UTF-8 literal bytes are consumed exactly before `OK`, `NO`, or
+`BYE` can terminate a response; the terminal line must include CRLF. A peer
+that ends or closes mid-response now rejects the pending request rather than
+leaving it unresolved. Inbound literals are capped at 10 MiB and response
+overhead is bounded.
+
+The focused suite passes 4/4. Backend tests report 261 total, 258 passed, three
+documented environment-gated skips, and zero failures; frontend tests pass
+84/84 through the full integration suite. Both Spec and Standards review axes
+pass. The guarded webmail deployment passed strict public IMAPS and ActiveSync
+before and after installation; rollback is
+`/var/backups/openmailstack/protocol-guarded-webmail-20260804T014236Z/`.
+Staging smoke, exact repository/live parser hash, readiness `401`, zero service
+restarts, and a clean recent warning journal pass. Three delegated read-only
+live `GETSCRIPT webmail` calls each returned 84,349 bytes; no filter or mailbox
+state was changed.
+
 ## 2026-08-03 Mozilla Mail Autoconfiguration
 
 **Status: Public one-step discovery is deployed and client-validated.** Commit

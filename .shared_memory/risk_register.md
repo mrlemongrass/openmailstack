@@ -125,7 +125,12 @@ Operational/release risks:
 - `functions/10_webmail.sh` now renders `/etc/openmailstack/webmail-backend.env`, installs `openmailstack.service`, deploys the React app, and injects Nginx proxy routes with candidate validation/rollback. It has still not been exercised on a clean VM in this cycle; validate on a clean VM before release.
 - On the live server, Nginx already had root, `/api`, `/caldav`, and ActiveSync routes before migration. Do not blindly run the `functions/10_webmail.sh` Nginx injection against an already-migrated live config without checking for duplicate locations first.
 - The backend's global raw body parser must not consume `/api/` or `multipart/form-data` requests; otherwise webmail send/draft uploads fail with Busboy `Unexpected end of form`.
-- `webmail-backend/src/managesieve.ts` still uses a small raw TCP ManageSieve client. Before relying on complex filter round-tripping at scale, revisit response parsing so script content cannot be confused with protocol status lines or chunk boundaries.
+- `webmail-backend/src/managesieve.ts` remains a small raw TCP client, but its
+  response framing is now byte-safe and regression-covered: literal bytes are
+  skipped before terminal-line recognition, terminal status requires CRLF,
+  peer EOF/close rejects pending work, literals are capped at 10 MiB, and total
+  response overhead is bounded. Preserve these guards when changing complex
+  filter round-tripping; do not return to string/chunk heuristics.
 - Existing-mail rule Apply must stay bound to the previewed rule revision, UIDVALIDITY, and UID ceiling. Continued copies rely on `mail_rule_copy_ledger`: use a rule-revision-independent action key from mailbox identity/source UID/destination, allow only one pending action per source UID, reserve only the destination group about to be copied, mark confirmed completion, skip completed actions on replay, and resolve only the exact pending action keys shown to the owner. Pending copies must block even a later Move-only edit. Do not age out unresolved rows, make Apply browser-cancellable, or bypass that durable idempotency contract.
 - Never use `/dev/null` or another device as `sievec`'s compiled-output path: `sievec <source> <output>` replaces that path. Use a dedicated temporary regular file, or use `sieve-test` when only replaying a message against source.
 - Core SMTP may connect to loopback, but strict TLS must use `OMS_SMTP_SERVER_NAME=mail.housevo.us` so certificate validation uses the public mail hostname. This is deployed in commit `e8caa78b`; keep the installer default and live environment aligned during upgrades.

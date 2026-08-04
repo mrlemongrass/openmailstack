@@ -9,6 +9,7 @@ export declare class ManageSieveClient {
     private dataBuffer;
     private receiveTimer;
     constructor(host?: string, port?: number, masterUser?: string, masterPass?: string);
+    private rejectPending;
     private sendCommand;
     connect(): Promise<string>;
     login(user: string, pass: string): Promise<void>;

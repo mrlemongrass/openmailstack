@@ -38,6 +38,8 @@ const net = __importStar(require("net"));
 const CRLF = Buffer.from('\r\n', 'ascii');
 const LITERAL_HEADER = /^\{(\d+)\+?\}$/;
 const TERMINAL_STATUS = /^(?:OK|NO|BYE)(?:$|[\t (])/;
+const MAX_LITERAL_BYTES = 10 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = MAX_LITERAL_BYTES + (64 * 1024);
 function findResponseEnd(buffer) {
     let cursor = 0;
     while (cursor < buffer.length) {
@@ -51,6 +53,9 @@ function findResponseEnd(buffer) {
             const literalSize = Number(literalMatch[1]);
             if (!Number.isSafeInteger(literalSize)) {
                 throw new Error('ManageSieve literal size is invalid');
+            }
+            if (literalSize > MAX_LITERAL_BYTES) {
+                throw new Error(`ManageSieve literal exceeds ${MAX_LITERAL_BYTES} bytes`);
             }
             if (buffer.length < cursor + literalSize)
                 return null;
@@ -93,17 +98,16 @@ class ManageSieveClient {
         this.client = new net.Socket();
         this.client.setTimeout(30000);
         this.client.on('timeout', () => {
-            if (this.rejectError) {
-                this.rejectError(new Error('ManageSieve connection timed out'));
-                this.resolveData = null;
-                this.rejectError = null;
-            }
+            this.rejectPending(new Error('ManageSieve connection timed out'));
             this.client.destroy();
         });
         this.client.on('data', (data) => {
             const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8');
-            this.dataBuffer = Buffer.concat([this.dataBuffer, chunk]);
             try {
+                if (this.dataBuffer.length + chunk.length > MAX_RESPONSE_BYTES) {
+                    throw new Error(`ManageSieve response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+                }
+                this.dataBuffer = Buffer.concat([this.dataBuffer, chunk]);
                 const responseEnd = findResponseEnd(this.dataBuffer);
                 if (responseEnd !== null && this.resolveData) {
                     const resolve = this.resolveData;
@@ -116,20 +120,31 @@ class ManageSieveClient {
             }
             catch (error) {
                 const failure = error instanceof Error ? error : new Error(String(error));
-                if (this.rejectError)
-                    this.rejectError(failure);
-                this.resolveData = null;
-                this.rejectError = null;
+                this.rejectPending(failure);
                 this.client.destroy();
             }
         });
         this.client.on('error', (err) => {
-            if (this.rejectError) {
-                this.rejectError(err);
-                this.rejectError = null;
-                this.resolveData = null;
-            }
+            this.rejectPending(err);
         });
+        this.client.on('end', () => {
+            this.rejectPending(new Error('ManageSieve connection ended before response completed'));
+        });
+        this.client.on('close', () => {
+            this.rejectPending(new Error('ManageSieve connection closed before response completed'));
+        });
+    }
+    rejectPending(error) {
+        const reject = this.rejectError;
+        this.resolveData = null;
+        this.rejectError = null;
+        this.dataBuffer = Buffer.alloc(0);
+        if (this.receiveTimer) {
+            clearTimeout(this.receiveTimer);
+            this.receiveTimer = null;
+        }
+        if (reject)
+            reject(error);
     }
     async sendCommand(cmd, waitResponse = true) {
         return new Promise((resolve, reject) => {

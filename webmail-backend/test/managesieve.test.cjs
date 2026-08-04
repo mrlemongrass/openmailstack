@@ -9,6 +9,31 @@ const pause = (milliseconds) => new Promise((resolve) => {
   setTimeout(resolve, milliseconds);
 });
 
+async function withManageSieveServer(handleSocket, run) {
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    socket.on('error', () => {});
+    socket.setNoDelay(true);
+    handleSocket(socket);
+  });
+
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.notEqual(address, null);
+  assert.equal(typeof address, 'object');
+
+  const client = new ManageSieveClient('127.0.0.1', address.port);
+  try {
+    await run(client);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 test('getScript preserves chunked UTF-8 literals and waits for the terminal status', async () => {
   const script = [
     'require ["fileinto"];',
@@ -36,13 +61,7 @@ test('getScript preserves chunked UTF-8 literals and waits for the terminal stat
   const finalLfReleased = new Promise((resolve) => {
     releaseFinalLf = resolve;
   });
-  const sockets = new Set();
-
-  const server = net.createServer((socket) => {
-    sockets.add(socket);
-    socket.on('close', () => sockets.delete(socket));
-    socket.on('error', () => {});
-    socket.setNoDelay(true);
+  await withManageSieveServer((socket) => {
     socket.write('OK "ready"\r\n');
 
     let commands = '';
@@ -74,16 +93,7 @@ test('getScript preserves chunked UTF-8 literals and waits for the terminal stat
       }
 
     });
-  });
-
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  assert.notEqual(address, null);
-  assert.equal(typeof address, 'object');
-
-  const client = new ManageSieveClient('127.0.0.1', address.port);
-  try {
+  }, async (client) => {
     await client.connect();
     let settled = false;
     const scriptPromise = client.getScript('webmail');
@@ -104,21 +114,14 @@ test('getScript preserves chunked UTF-8 literals and waits for the terminal stat
     assert.equal(settledBeforeStatus, false);
     assert.equal(settledBeforeFinalLf, false);
     assert.equal(await scriptPromise, script);
-  } finally {
+  }).finally(() => {
     releaseTerminalStatus();
     releaseFinalLf();
-    for (const socket of sockets) socket.destroy();
-    await new Promise((resolve) => server.close(resolve));
-  }
+  });
 });
 
 test('login, setActive, and logout accept complete single-line OK responses', async () => {
-  const sockets = new Set();
-  const server = net.createServer((socket) => {
-    sockets.add(socket);
-    socket.on('close', () => sockets.delete(socket));
-    socket.on('error', () => {});
-    socket.setNoDelay(true);
+  await withManageSieveServer((socket) => {
     socket.write('OK "ready"\r\n');
 
     let commands = '';
@@ -138,22 +141,52 @@ test('login, setActive, and logout accept complete single-line OK responses', as
         socket.write('OK "bye"\r\n');
       }
     });
-  });
-
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  assert.notEqual(address, null);
-  assert.equal(typeof address, 'object');
-
-  const client = new ManageSieveClient('127.0.0.1', address.port);
-  try {
+  }, async (client) => {
     await client.connect();
     await client.login('person@example.test', 'test-only');
     await client.setActive('webmail');
     await client.logout();
-  } finally {
-    for (const socket of sockets) socket.destroy();
-    await new Promise((resolve) => server.close(resolve));
-  }
+  });
+});
+
+test('rejects an incomplete response when the peer ends the connection', async () => {
+  await withManageSieveServer((socket) => {
+    socket.write('OK "ready"\r\n');
+
+    socket.once('data', () => {
+      socket.end('{20}\r\nshort');
+    });
+  }, async (client) => {
+    await client.connect();
+    await assert.rejects(
+      Promise.race([
+        client.getScript('webmail'),
+        pause(150).then(() => {
+          throw new Error('ManageSieve request remained pending after peer ended connection');
+        }),
+      ]),
+      /ManageSieve connection ended before response completed/,
+    );
+  });
+});
+
+test('rejects a literal larger than the response safety limit', async () => {
+  await withManageSieveServer((socket) => {
+    socket.write('OK "ready"\r\n');
+
+    socket.once('data', () => {
+      socket.write('{10485761}\r\n');
+    });
+  }, async (client) => {
+    await client.connect();
+    await assert.rejects(
+      Promise.race([
+        client.getScript('webmail'),
+        pause(150).then(() => {
+          throw new Error('ManageSieve oversized literal remained pending');
+        }),
+      ]),
+      /ManageSieve literal exceeds 10485760 bytes/,
+    );
+  });
 });

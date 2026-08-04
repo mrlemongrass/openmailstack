@@ -14,6 +14,9 @@ export interface NoteRow {
     created_at: string;
     updated_at: string;
 }
+export declare class NoteConflictError extends Error {
+    constructor();
+}
 export declare function ensureNotesSchema(): Promise<void>;
 export declare function listNotes(owner: string, includeDeleted?: boolean): Promise<NoteRow[]>;
 export declare function getNote(id: string, owner: string, includeDeleted?: boolean): Promise<NoteRow | null>;
@@ -21,6 +24,7 @@ export declare function saveNote(note: Partial<NoteRow> & {
     owner: string;
     imap_uid?: number;
     imap_msgid?: string;
+    expected_sync_token?: number;
 }): Promise<NoteRow>;
 export declare function deleteNote(id: string, owner: string): Promise<void>;
 export declare function hardDeleteNote(id: string, owner: string): Promise<void>;

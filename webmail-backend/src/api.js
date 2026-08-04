@@ -61,6 +61,7 @@ const branding_1 = require("./branding");
 const search_worker_1 = require("./search-worker");
 const rspamd_health_1 = require("./rspamd-health");
 const password_verification_1 = require("./password-verification");
+const security_1 = require("./security");
 const account_security_1 = require("./account-security");
 exports.apiRouter = (0, express_1.Router)();
 // Auth failure log for fail2ban integration
@@ -75,6 +76,7 @@ const logAuthFailure = (ip, username, reason) => {
 const requireAuth = auth_1.requireSession;
 const requireAdmin = auth_1.requireAdminSession;
 const execPromise = util_1.default.promisify(child_process_1.exec);
+const notesCollaborationSessionLimit = (0, security_1.rateLimit)(60 * 1000, 30);
 // IMAP connection pool — reuses connections instead of creating new ones per request
 let _imapPool = null;
 async function getPooledImap(user, pass) {
@@ -3366,6 +3368,7 @@ exports.apiRouter.post('/admin/spam_policies', requireAuth, requireAdmin, async 
 });
 const notes_utils_1 = require("./notes-utils");
 const notes_imap_sync_1 = require("./notes-imap-sync");
+const notes_collaboration_1 = require("./notes-collaboration");
 const path_1 = __importDefault(require("path"));
 const notesUploadDir = path_1.default.join(__dirname, '..', 'uploads', 'notes');
 if (!fs_1.default.existsSync(notesUploadDir)) {
@@ -3446,17 +3449,51 @@ exports.apiRouter.post('/notes', requireAuth, async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+exports.apiRouter.post('/notes/:id/collaboration-session', requireAuth, notesCollaborationSessionLimit, async (req, res) => {
+    try {
+        const capability = await (0, notes_collaboration_1.authorizeNoteCollaboration)({
+            enabled: config_1.serverConfig.notesCollaborationEnabled,
+            noteId: req.params.id,
+            owner: req.user.username,
+            sessionId: req.user.sessionId,
+            secret: config_1.serverConfig.sessionSecret,
+            findOwnedNote: notes_utils_1.getNote,
+        });
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({
+            success: true,
+            ...capability,
+            signalingPath: notes_collaboration_1.NOTES_SIGNALING_PATH,
+        });
+    }
+    catch (error) {
+        if (error instanceof notes_collaboration_1.NoteCollaborationError) {
+            res.status(error.statusCode).json({ success: false, error: error.message });
+            return;
+        }
+        console.error('Notes collaboration session error:', error);
+        res.status(500).json({ success: false, error: 'Collaboration is temporarily unavailable' });
+    }
+});
 exports.apiRouter.put('/notes/:id', requireAuth, async (req, res) => {
     try {
-        const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
+        const { title, content, color, is_pinned, is_locked, folder, labels_json, expected_sync_token } = req.body;
+        if (expected_sync_token === undefined) {
+            res.status(428).json({ success: false, error: 'The current note revision is required.' });
+            return;
+        }
         const note = await (0, notes_utils_1.saveNote)({
             id: req.params.id, owner: req.user.username,
-            title, content, color, is_pinned, is_locked, folder, labels_json
+            title, content, color, is_pinned, is_locked, folder, labels_json, expected_sync_token
         });
         (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
         res.json({ success: true, note });
     }
     catch (err) {
+        if (err instanceof notes_utils_1.NoteConflictError) {
+            res.status(409).json({ success: false, error: err.message });
+            return;
+        }
         res.status(500).json({ success: false, error: err.message });
     }
 });

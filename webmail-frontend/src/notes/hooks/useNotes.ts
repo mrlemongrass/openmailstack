@@ -33,11 +33,14 @@ export function useNotes() {
   }, [fetchNotes]);
 
   const saveNote = useCallback(async (note: Partial<Note>) => {
-    try { await api.saveNote(note); await fetchNotes(); } catch (e) { console.error(e); }
+    const saved = await api.saveNote(note);
+    await fetchNotes();
+    return saved;
   }, [fetchNotes]);
 
   const deleteNote = useCallback(async (id: string) => {
-    try { await api.deleteNoteApi(id); await fetchNotes(); } catch (e) { console.error(e); }
+    await api.deleteNoteApi(id);
+    await fetchNotes();
   }, [fetchNotes]);
 
   return {

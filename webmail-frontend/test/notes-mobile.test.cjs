@@ -34,8 +34,14 @@ test('populated mobile notes expose creation without rendering numeric false fla
 
 test('notes do not contact public collaboration signaling by default', () => {
   assert.doesNotMatch(liveEditorSource, /signaling\.yjs\.dev|herokuapp\.com/);
-  assert.match(liveEditorSource, /VITE_OMS_NOTES_SIGNALING_URLS/);
-  assert.match(liveEditorSource, /signalingUrls\.length > 0[\s\S]*new WebrtcProvider/);
-  assert.match(liveEditorSource, /provider\?\.awareness/);
-  assert.match(liveEditorSource, /provider\?\.destroy\(\)/);
+  assert.doesNotMatch(liveEditorSource, /VITE_OMS_NOTES_SIGNALING_URLS/);
+  assert.match(liveEditorSource, /fetchNoteCollaborationSession/);
+  assert.match(liveEditorSource, /session[\s\S]*new WebrtcProvider/);
+  assert.match(liveEditorSource, /disconnectProvider/);
+});
+
+test('card actions await revision-checked saves before reporting success', () => {
+  assert.match(notesGridSource, /NoteSaveConflictError/);
+  assert.match(notesGridSource, /await n\.saveNote/);
+  assert.match(notesGridSource, /expected_sync_token:\s*note\.sync_token/);
 });

@@ -14,6 +14,13 @@ import {
   uploadAndInsertNoteImages,
 } from './notes/editor/image-paste';
 import { uploadNoteImage } from './shared/api';
+import {
+  collaborationRetryDelay,
+  collaborationRefreshDelay,
+  collaborationWebSocketUrl,
+  fetchNoteCollaborationSession,
+  observeNoteCollaborationProvider,
+} from './notes/collaboration';
 
 interface QuillRange {
   index: number;
@@ -39,6 +46,7 @@ interface QuillEditor {
   setSelection(index: number): void;
   formatText(index: number, length: number, name: string, value: unknown): void;
   format(name: string, value: unknown): void;
+  enable(enabled: boolean): void;
   getLine(index: number): [QuillLine];
   on(eventName: 'text-change', handler: () => void): void;
   off(eventName: 'text-change', handler: () => void): void;
@@ -83,6 +91,8 @@ interface ImageStatus {
   message: string;
 }
 
+type CollaborationStatus = 'checking' | 'enabled' | 'active' | 'local';
+
 export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialContent, onChange }) => {
   const quillRef = useRef<ReactQuill | null>(null);
   const initialized = useRef(false);
@@ -95,6 +105,7 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
   const initialContentRef = useRef(initialContent);
   const onChangeRef = useRef(onChange);
   const [imageStatus, setImageStatus] = React.useState<ImageStatus | null>(null);
+  const [collaborationStatus, setCollaborationStatus] = React.useState<CollaborationStatus>('checking');
 
   const reportImageStatus = React.useCallback((status: ImageStatus) => {
     if (imageStatusTimerRef.current) clearTimeout(imageStatusTimerRef.current);
@@ -203,30 +214,158 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
     if (!editor) return;
 
     const ydoc = new Y.Doc();
-    const signalingUrls = String(import.meta.env.VITE_OMS_NOTES_SIGNALING_URLS || '')
-      .split(',')
-      .map((url) => url.trim())
-      .filter(Boolean);
-    const provider = signalingUrls.length > 0
-      ? new WebrtcProvider(`oms-note-${noteId}`, ydoc, { signaling: signalingUrls })
-      : null;
+    const collaborationController = new AbortController();
+    let provider: WebrtcProvider | null = null;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let requestController: AbortController | null = null;
+    let collaborationGeneration = 0;
+    let collaborationRetryAttempt = 0;
+    let currentCapabilityExpiresAt = 0;
+    let collaborationStopped = false;
+    let initializedFromPersistedHtml = false;
+    setCollaborationStatus('checking');
     const ytext = ydoc.getText('quill');
     ydocRef.current = ydoc;
     ytextRef.current = ytext;
     editorGenerationRef.current += 1;
 
-    const binding = new QuillBinding(ytext, editor, provider?.awareness);
+    const binding = new QuillBinding(ytext, editor);
+    editor.enable(false);
 
-    // Short debounce to allow CRDT sync before checking for initial content
-    initTimerRef.current = setTimeout(() => {
-      if (initialContentRef.current && ytext.length === 0) {
-        // Sanitize HTML before pasting to prevent stored XSS
+    const clearInitializationTimer = () => {
+      if (initTimerRef.current) {
+        clearTimeout(initTimerRef.current);
+        initTimerRef.current = null;
+      }
+    };
+
+    const initializeFromPersistedHtml = () => {
+      if (initializedFromPersistedHtml || ytext.length > 0) {
+        initializedFromPersistedHtml = true;
+        clearInitializationTimer();
+        editor.enable(true);
+        return;
+      }
+      initializedFromPersistedHtml = true;
+      clearInitializationTimer();
+      if (initialContentRef.current) {
         const cleanHtml = DOMPurify.sanitize(initialContentRef.current);
-        // Use dangerouslyPasteHTML for table support — Quill's native insertText
-        // does not handle complex HTML structures like tables.
         editor.clipboard.dangerouslyPasteHTML(cleanHtml);
       }
-    }, 200);
+      editor.enable(true);
+    };
+
+    const initializeFromSharedState = () => {
+      if (initializedFromPersistedHtml) return;
+      initializedFromPersistedHtml = true;
+      clearInitializationTimer();
+      editor.enable(true);
+    };
+
+    const handleSharedText = () => {
+      if (!initializedFromPersistedHtml && ytext.length > 0) {
+        initializeFromPersistedHtml();
+      }
+    };
+    ytext.observe(handleSharedText);
+
+    const disconnectProvider = () => {
+      const activeProvider = provider;
+      provider = null;
+      if (!activeProvider) return;
+      activeProvider.disconnect();
+      activeProvider.destroy();
+    };
+
+    const switchToLocalEditing = () => {
+      collaborationStopped = true;
+      collaborationGeneration += 1;
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
+      }
+      requestController?.abort();
+      disconnectProvider();
+      currentCapabilityExpiresAt = 0;
+      initializeFromPersistedHtml();
+      setCollaborationStatus('local');
+    };
+
+    initTimerRef.current = setTimeout(() => {
+      if (initializedFromPersistedHtml || ytext.length > 0) {
+        initializeFromPersistedHtml();
+        return;
+      }
+      switchToLocalEditing();
+    }, 5000);
+
+    const scheduleCollaborationAttempt = (delay: number) => {
+      if (collaborationStopped) return;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void connectCollaboration(), delay);
+    };
+
+    const connectCollaboration = async () => {
+      if (collaborationStopped) return;
+      const generation = ++collaborationGeneration;
+      if (provider && currentCapabilityExpiresAt <= Date.now()) {
+        disconnectProvider();
+        setCollaborationStatus('local');
+      }
+      requestController?.abort();
+      const currentRequest = new AbortController();
+      requestController = currentRequest;
+      const requestTimeout = setTimeout(() => currentRequest.abort(), 10_000);
+      try {
+        const session = await fetchNoteCollaborationSession(noteId, currentRequest.signal);
+        if (collaborationController.signal.aborted || generation !== collaborationGeneration) return;
+        if (!session) {
+          switchToLocalEditing();
+          return;
+        }
+        disconnectProvider();
+        provider = new WebrtcProvider(session.room, ydoc, {
+          signaling: [collaborationWebSocketUrl(session)],
+          filterBcConns: false,
+        });
+        currentCapabilityExpiresAt = session.expiresAt;
+        collaborationRetryAttempt = 0;
+        setCollaborationStatus('enabled');
+        observeNoteCollaborationProvider(provider, {
+          onBootstrap: (leader) => {
+            if (generation !== collaborationGeneration) return;
+            if (leader) initializeFromPersistedHtml();
+          },
+          onPeerChange: (hasPeers) => {
+            if (generation === collaborationGeneration) {
+              setCollaborationStatus(hasPeers ? 'active' : 'enabled');
+            }
+          },
+          onSynced: () => {
+            if (generation === collaborationGeneration) initializeFromSharedState();
+          },
+        });
+        scheduleCollaborationAttempt(collaborationRefreshDelay(session));
+      } catch (_error) {
+        if (collaborationController.signal.aborted || generation !== collaborationGeneration) return;
+        const retryDelay = provider
+          ? collaborationRetryDelay(
+            collaborationRetryAttempt,
+            currentCapabilityExpiresAt,
+          )
+          : null;
+        if (retryDelay !== null) {
+          collaborationRetryAttempt += 1;
+          scheduleCollaborationAttempt(retryDelay);
+          return;
+        }
+        switchToLocalEditing();
+      } finally {
+        clearTimeout(requestTimeout);
+        if (requestController === currentRequest) requestController = null;
+      }
+    };
+    void connectCollaboration();
 
     const handleTextChange = () => {
       onChangeRef.current(editor.root.innerHTML);
@@ -235,9 +374,14 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
 
     return () => {
       if (initTimerRef.current) clearTimeout(initTimerRef.current);
+      if (refreshTimer) clearTimeout(refreshTimer);
+      collaborationController.abort();
+      collaborationStopped = true;
+      requestController?.abort();
       editor.off('text-change', handleTextChange);
+      ytext.unobserve(handleSharedText);
       binding.destroy();
-      provider?.destroy();
+      disconnectProvider();
       ydocRef.current = null;
       ytextRef.current = null;
       ydoc.destroy();
@@ -361,6 +505,15 @@ export const LiveNoteEditor: React.FC<LiveNoteEditorProps> = ({ noteId, initialC
         style={{ display: 'flex', flexDirection: 'column', color: 'var(--text-primary)', fontSize: '1.1rem', lineHeight: '1.6' }}
         modules={modules}
       />
+      <div className={`note-collaboration-status ${collaborationStatus}`} role="status" aria-live="polite">
+        {collaborationStatus === 'checking'
+          ? 'Checking live collaboration…'
+          : collaborationStatus === 'active'
+            ? 'Live collaboration active'
+            : collaborationStatus === 'enabled'
+              ? 'Live collaboration enabled'
+            : 'Editing locally'}
+      </div>
       {imageStatus && (
         <div
           className={`note-image-upload-status ${imageStatus.kind}`}

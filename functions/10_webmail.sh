@@ -52,9 +52,15 @@ SCHEDULER_SERVER_NAMES="$(openmailstack_scheduler_server_names)"
 
 existing_env_value() {
     local key="$1"
-    [[ -f "${ENV_FILE}" ]] || return 0
-    sed -n "s/^${key}=\"\([^\"]*\)\"$/\1/p" "${ENV_FILE}" | tail -n 1
+    openmailstack_read_env_value "${ENV_FILE}" "${key}"
 }
+
+NOTES_COLLABORATION_ENABLED="${ENABLE_OMS_NOTES_COLLABORATION:-$(existing_env_value ENABLE_OMS_NOTES_COLLABORATION)}"
+NOTES_COLLABORATION_ENABLED="${NOTES_COLLABORATION_ENABLED:-false}"
+if [[ ! "${NOTES_COLLABORATION_ENABLED}" =~ ^(true|false)$ ]]; then
+    echo -e "${RED}Error: ENABLE_OMS_NOTES_COLLABORATION must be true or false.${NC}" >&2
+    exit 1
+fi
 
 SESSION_SECRET="${OMS_SESSION_SECRET:-$(existing_env_value OMS_SESSION_SECRET)}"
 if [[ -z "${SESSION_SECRET}" ]]; then
@@ -186,6 +192,7 @@ render_backend_env() {
             write_env_line "OMS_ACCOUNT_SECURITY_KEY" "${ACCOUNT_SECURITY_KEY}"
             write_env_line "OMS_COOKIE_SECURE" "${OMS_COOKIE_SECURE:-true}"
             write_env_line "OMS_UPLOAD_LIMIT_BYTES" "${OMS_UPLOAD_LIMIT_BYTES:-26214400}"
+            write_env_line "ENABLE_OMS_NOTES_COLLABORATION" "${NOTES_COLLABORATION_ENABLED}"
             write_env_line "ENABLE_OMS_SCHEDULER" "${SCHEDULER_ENABLED}"
             write_env_line "OMS_SCHEDULER_PUBLIC_BASE_URL" "${SCHEDULER_PUBLIC_BASE_URL}"
             write_env_line "OMS_SCHEDULER_HOST_ALIASES" "${SCHEDULER_HOST_ALIASES}"
@@ -399,6 +406,19 @@ EOF
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location = /notes-signal {
+        access_log off;
+        proxy_pass http://${WEBMAIL_HOST}:${WEBMAIL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 1h;
     }
 
     location = /rspamd {

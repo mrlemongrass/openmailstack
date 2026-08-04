@@ -40,6 +40,9 @@ OMS_DEFAULT_DOMAIN="${FIRST_DOMAIN}"
 OMS_COOKIE_SECURE="true"
 OMS_UPLOAD_LIMIT_BYTES="26214400"
 
+# Self-hosted Notes live collaboration (optional, disabled by default).
+ENABLE_OMS_NOTES_COLLABORATION="false"
+
 # OMS Scheduler (optional)
 # The configuration wizard asks before enabling this. Disabled installations do
 # not apply Scheduler migrations or publish Scheduler routes.

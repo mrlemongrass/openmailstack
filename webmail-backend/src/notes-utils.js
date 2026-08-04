@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.NoteConflictError = void 0;
 exports.ensureNotesSchema = ensureNotesSchema;
 exports.listNotes = listNotes;
 exports.getNote = getNote;
@@ -51,6 +52,21 @@ exports.listNotesWithReminders = listNotesWithReminders;
 exports.getNotesSyncToken = getNotesSyncToken;
 const db_1 = require("./db");
 const crypto = __importStar(require("crypto"));
+class NoteConflictError extends Error {
+    constructor() {
+        super('This note changed in another session. Review the latest version before saving again.');
+    }
+}
+exports.NoteConflictError = NoteConflictError;
+function noteContentMatches(note, expected) {
+    return note.title === expected.title
+        && note.content === expected.content
+        && note.color === expected.color
+        && Number(note.is_pinned) === expected.is_pinned
+        && Number(note.is_locked) === expected.is_locked
+        && note.folder === expected.folder
+        && note.labels_json === expected.labels_json;
+}
 async function ensureNotesSchema() {
     await db_1.pool.query(`
         CREATE TABLE IF NOT EXISTS notes (
@@ -113,8 +129,20 @@ async function saveNote(note) {
     const is_locked = note.is_locked ? 1 : 0;
     const folder = note.folder || 'notes';
     const labels_json = note.labels_json || '[]';
+    const expectedContent = { title, content, color, is_pinned, is_locked, folder, labels_json };
     // Check if exists
     const existing = await getNote(id, note.owner);
+    if (note.expected_sync_token !== undefined) {
+        const expectedSyncToken = Number(note.expected_sync_token);
+        if (!Number.isSafeInteger(expectedSyncToken) || expectedSyncToken < 1 || !existing) {
+            throw new NoteConflictError();
+        }
+        if (Number(existing.sync_token) !== expectedSyncToken) {
+            if (noteContentMatches(existing, expectedContent))
+                return existing;
+            throw new NoteConflictError();
+        }
+    }
     if (existing) {
         let updateQuery = 'UPDATE notes SET title = ?, content = ?, color = ?, is_pinned = ?, is_locked = ?, folder = ?, labels_json = ?, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP';
         let queryParams = [title, content, color, is_pinned, is_locked, folder, labels_json];
@@ -128,7 +156,17 @@ async function saveNote(note) {
         }
         updateQuery += ' WHERE id = ? AND owner = ?';
         queryParams.push(id, note.owner);
-        await db_1.pool.query(updateQuery, queryParams);
+        if (note.expected_sync_token !== undefined) {
+            updateQuery += ' AND sync_token = ?';
+            queryParams.push(Number(note.expected_sync_token));
+        }
+        const [updateResult] = await db_1.pool.query(updateQuery, queryParams);
+        if (note.expected_sync_token !== undefined && updateResult.affectedRows === 0) {
+            const current = await getNote(id, note.owner);
+            if (current && noteContentMatches(current, expectedContent))
+                return current;
+            throw new NoteConflictError();
+        }
     }
     else {
         await db_1.pool.query('INSERT INTO notes (id, owner, title, content, color, is_pinned, is_locked, folder, labels_json, sync_token, imap_uid, imap_msgid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)', [id, note.owner, title, content, color, is_pinned, is_locked, folder, labels_json, note.imap_uid || null, note.imap_msgid || null]);

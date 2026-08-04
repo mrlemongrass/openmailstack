@@ -4,8 +4,9 @@ import { LiveNoteEditor } from '../../LiveNoteEditor';
 import { ReminderPicker } from './ReminderPicker';
 import { AttachmentList } from './AttachmentList';
 import type { useNotes } from '../hooks/useNotes';
-import { saveNote } from '../../shared/api';
+import { NoteSaveConflictError, saveNote } from '../../shared/api';
 import { useToast } from '../../shared/components/Toast';
+import type { Note } from '../../shared/types';
 
 const NOTE_COLORS = [
   '#ffffff', '#f28b82', '#fbbc04', '#fff475', '#ccff90',
@@ -21,15 +22,20 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
   const { showToast } = useToast();
   const titleRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const latestDraftRef = useRef<Partial<Note>>(n.editingNote);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | null>(null);
 
   // ── All hooks MUST be before the early return ──────────────────────────
+
+  useEffect(() => {
+    latestDraftRef.current = n.editingNote;
+  }, [n.editingNote]);
 
   const scheduleAutoSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaveStatus('saving');
     saveTimerRef.current = setTimeout(async () => {
-      const latest = n.editingNote;
+      const latest = latestDraftRef.current;
       const title = titleRef.current?.value || latest.title || '';
       const content = latest.content || '';
       if (title || content) {
@@ -43,23 +49,40 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             is_locked: latest.is_locked,
             folder: latest.folder || 'notes',
             labels_json: latest.labels_json || '[]',
+            expected_sync_token: latest.sync_token,
           });
+          if (saved?.id) {
+            latestDraftRef.current = {
+              ...latestDraftRef.current,
+              id: saved.id,
+              sync_token: saved.sync_token,
+            };
+            n.setEditingNote((prev) => ({
+              ...prev,
+              id: saved.id,
+              sync_token: saved.sync_token,
+            }));
+          }
           if (!latest.id && saved?.id) {
-            n.setEditingNote((prev) => ({ ...prev, id: saved.id }));
             n.fetchNotes();
           }
           setSaveStatus('saved');
         } catch (e) {
+          if (e instanceof NoteSaveConflictError) {
+            showToast({ type: 'error', message: e.message });
+          } else {
+            showToast({ type: 'error', message: 'The note could not be saved. Your draft is still open.' });
+          }
           console.error('Auto-save failed', e);
           setSaveStatus(null);
         }
       }
     }, 1500);
-  }, [n]);
+  }, [n, showToast]);
 
   const handleClose = useCallback(async () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    const latest = n.editingNote;
+    const latest = latestDraftRef.current;
     const title = titleRef.current?.value || latest.title || '';
     const content = latest.content || '';
     if (title || content) {
@@ -73,9 +96,16 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
           is_locked: latest.is_locked,
           folder: latest.folder || 'notes',
           labels_json: latest.labels_json || '[]',
+          expected_sync_token: latest.sync_token,
         });
       } catch (e) {
+        if (e instanceof NoteSaveConflictError) {
+          showToast({ type: 'error', message: e.message });
+          return;
+        }
         console.error('Save on close failed', e);
+        showToast({ type: 'error', message: 'The note could not be saved. Your draft is still open.' });
+        return;
       }
     }
     n.setIsNoteModalOpen(false);
@@ -85,11 +115,13 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
   }, [n, showToast]);
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    latestDraftRef.current = { ...latestDraftRef.current, title: e.target.value };
     n.setEditingNote((prev) => ({ ...prev, title: e.target.value }));
     scheduleAutoSave();
   }, [n, scheduleAutoSave]);
 
   const handleContentChange = useCallback((content: string) => {
+    latestDraftRef.current = { ...latestDraftRef.current, content };
     n.setEditingNote((prev) => ({ ...prev, content }));
     scheduleAutoSave();
   }, [n, scheduleAutoSave]);
@@ -135,7 +167,11 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
                   className={`note-color-swatch${note.color === color ? ' active' : ''}`}
                   style={{ backgroundColor: color }}
                   title={color}
-                  onClick={() => { n.setEditingNote((prev) => ({ ...prev, color })); scheduleAutoSave(); }}
+                  onClick={() => {
+                    latestDraftRef.current = { ...latestDraftRef.current, color };
+                    n.setEditingNote((prev) => ({ ...prev, color }));
+                    scheduleAutoSave();
+                  }}
                 />
               ))}
             </div>

@@ -137,6 +137,27 @@ if [[ ! "${ENABLE_OMS_SCHEDULER}" =~ ^(true|false)$ ]]; then
 fi
 export ENABLE_OMS_SCHEDULER
 
+# Notes collaboration is a self-hosted, opt-in WebSocket service. Existing
+# unattended installations remain local-only until an operator enables it.
+if [[ -z "${ENABLE_OMS_NOTES_COLLABORATION+x}" ]]; then
+    ENABLE_OMS_NOTES_COLLABORATION="$(
+        openmailstack_read_env_value "/etc/openmailstack/webmail-backend.env" ENABLE_OMS_NOTES_COLLABORATION
+    )"
+    if [[ -z "${ENABLE_OMS_NOTES_COLLABORATION}" ]]; then
+        ENABLE_OMS_NOTES_COLLABORATION="false"
+        if [[ -t 0 ]]; then
+            read -r -p "Enable self-hosted Notes live collaboration? (y/N): " INSTALL_NOTES_COLLABORATION
+            [[ "${INSTALL_NOTES_COLLABORATION:-}" =~ ^[Yy]$ ]] && ENABLE_OMS_NOTES_COLLABORATION="true"
+        fi
+    fi
+    printf '\nENABLE_OMS_NOTES_COLLABORATION="%s"\n' "${ENABLE_OMS_NOTES_COLLABORATION}" >> "${SCRIPT_DIR}/config.conf"
+fi
+if [[ ! "${ENABLE_OMS_NOTES_COLLABORATION}" =~ ^(true|false)$ ]]; then
+    echo -e "${RED}Error: ENABLE_OMS_NOTES_COLLABORATION must be true or false.${NC}"
+    exit 1
+fi
+export ENABLE_OMS_NOTES_COLLABORATION
+
 # 5. Upfront Configuration Validation
 echo -e "Validating configuration..."
 if grep -q "ChangeMe_" "${SCRIPT_DIR}/config.conf"; then

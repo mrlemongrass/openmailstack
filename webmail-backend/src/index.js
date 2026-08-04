@@ -72,10 +72,19 @@ const router_1 = require("./scheduler/router");
 const auth_1 = require("./auth");
 const account_security_1 = require("./account-security");
 const mail_autoconfig_1 = require("./mail-autoconfig");
+const notes_collaboration_1 = require("./notes-collaboration");
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
 exports.io = new socket_io_1.Server(server, {
     cors: { origin: true, credentials: true }
+});
+(0, notes_collaboration_1.installNotesSignalingServer)(server, {
+    enabled: config_1.serverConfig.notesCollaborationEnabled,
+    secret: config_1.serverConfig.sessionSecret,
+    authenticate: async (request) => {
+        const session = await (0, auth_1.getSession)(request);
+        return session ? { owner: session.username, sessionId: session.id } : null;
+    },
 });
 exports.io.on('connection', (socket) => {
     socket.on('join', async () => {

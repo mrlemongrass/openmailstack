@@ -9,6 +9,7 @@ export declare const serverConfig: {
     cookieSecure: boolean;
     uploadLimitBytes: number;
     webhookSecret: string;
+    notesCollaborationEnabled: boolean;
 };
 export declare const schedulerConfig: {
     enabled: boolean;

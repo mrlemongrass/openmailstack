@@ -45,6 +45,7 @@ exports.serverConfig = {
     cookieSecure: parseBoolean('OMS_COOKIE_SECURE', process.env.NODE_ENV === 'production'),
     uploadLimitBytes: parseNumber('OMS_UPLOAD_LIMIT_BYTES', 25 * 1024 * 1024),
     webhookSecret: optional('OMS_WEBHOOK_SECRET'),
+    notesCollaborationEnabled: parseBoolean('ENABLE_OMS_NOTES_COLLABORATION', false),
 };
 const schedulerPublicBaseUrl = optional('OMS_SCHEDULER_PUBLIC_BASE_URL', exports.serverConfig.publicBaseUrl).replace(/\/$/, '');
 const schedulerPublicHost = schedulerPublicBaseUrl ? new URL(schedulerPublicBaseUrl).hostname.toLowerCase() : '';

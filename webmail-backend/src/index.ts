@@ -64,11 +64,21 @@ import { schedulerRouter } from './scheduler/router';
 import { getSession, initializeSessionStore, requireSession } from './auth';
 import { ensureAccountSecuritySchema } from './account-security';
 import { createMozillaAutoconfigRouter } from './mail-autoconfig';
+import { installNotesSignalingServer } from './notes-collaboration';
 
 const app = express();
 const server = http.createServer(app);
 export const io = new SocketIOServer(server, {
     cors: { origin: true, credentials: true }
+});
+
+installNotesSignalingServer(server, {
+    enabled: serverConfig.notesCollaborationEnabled,
+    secret: serverConfig.sessionSecret,
+    authenticate: async request => {
+        const session = await getSession(request);
+        return session ? { owner: session.username, sessionId: session.id } : null;
+    },
 });
 
 io.on('connection', (socket) => {

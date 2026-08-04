@@ -371,6 +371,8 @@ export async function unshareCalendar(calendarId: number, email: string): Promis
 }
 
 // ---- Notes ----
+export class NoteSaveConflictError extends Error {}
+
 export async function fetchNotesApi(): Promise<Note[]> {
   const res = await fetch(`/api/notes?t=${Date.now()}`);
   if (!res.ok) throw new Error('Failed to fetch notes');
@@ -386,6 +388,9 @@ export async function saveNote(note: Partial<Note>): Promise<Note> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(note),
   });
+  if (res.status === 409) {
+    throw new NoteSaveConflictError('This note changed elsewhere. Your draft is still open; review the latest version before saving.');
+  }
   if (!res.ok) throw new Error('Failed to save note');
   const data = await res.json();
   return data.note;

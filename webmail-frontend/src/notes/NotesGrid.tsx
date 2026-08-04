@@ -8,6 +8,7 @@ import { useToast } from '../shared/components/Toast';
 import { ScrollToTop } from '../shared/components/ScrollToTop';
 import type { useNotes } from './hooks/useNotes';
 import type { Note } from '../shared/types';
+import { NoteSaveConflictError } from '../shared/api';
 
 function formatRelativeTime(date: Date): string {
   const now = new Date();
@@ -139,6 +140,33 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
   const updatedAt = note.updated_at ? new Date(note.updated_at) : null;
   const relativeTime = updatedAt ? formatRelativeTime(updatedAt) : '';
 
+  const saveCardChange = async (changes: Partial<Note>, successMessage: string) => {
+    try {
+      await n.saveNote({
+        ...note,
+        ...changes,
+        expected_sync_token: note.sync_token,
+      });
+      showToast({ type: 'info', message: successMessage });
+    } catch (error) {
+      showToast({
+        type: 'error',
+        message: error instanceof NoteSaveConflictError
+          ? error.message
+          : 'The note could not be updated. Try again.',
+      });
+    }
+  };
+
+  const deleteCard = async () => {
+    try {
+      await n.deleteNote(note.id);
+      showToast({ type: 'info', message: 'Note moved to trash' });
+    } catch {
+      showToast({ type: 'error', message: 'The note could not be moved to trash. Try again.' });
+    }
+  };
+
   return (
     <div className="contact-card glass-panel" style={{
       padding: 0, borderRadius: 'var(--radius-md)', overflow: 'hidden',
@@ -190,7 +218,7 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
             style={{ fontSize: '0.7rem' }}
             onClick={(e) => {
               e.stopPropagation();
-              n.saveNote({ id: note.id, folder: 'notes' });
+              void saveCardChange({ folder: 'notes' }, 'Note restored');
             }}>
             Unarchive
           </button>
@@ -199,7 +227,7 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
             style={{ fontSize: '0.7rem' }}
             onClick={(e) => {
               e.stopPropagation();
-              n.saveNote({ id: note.id, folder: 'archive' });
+              void saveCardChange({ folder: 'archive' }, 'Note archived');
             }}>
             Archive
           </button>
@@ -209,8 +237,7 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
             style={{ fontSize: '0.7rem', color: 'var(--danger)' }}
             onClick={(e) => {
               e.stopPropagation();
-              n.deleteNote(note.id!);
-              showToast({ type: 'info', message: 'Note moved to trash' });
+              void deleteCard();
             }}>
             Delete
           </button>
@@ -221,8 +248,10 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
             onClick={(e) => {
               e.stopPropagation();
               const newPinned = !isPinned;
-              n.saveNote({ id: note.id, is_pinned: newPinned ? 1 : 0 });
-              showToast({ type: 'info', message: newPinned ? 'Note pinned' : 'Note unpinned' });
+              void saveCardChange(
+                { is_pinned: newPinned ? 1 : 0 },
+                newPinned ? 'Note pinned' : 'Note unpinned',
+              );
             }}>
             <Star size={12} fill={isPinned ? '#f59e0b' : 'none'} /> {isPinned ? 'Unpin' : 'Pin'}
           </button>

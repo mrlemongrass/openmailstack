@@ -2570,6 +2570,18 @@ li[data-checked="true"] .ql-checkbox {
   color: var(--danger);
 }
 
+.note-collaboration-status {
+  align-self: flex-end;
+  margin: 0.35rem 0.75rem 0.5rem;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  line-height: 1.25;
+}
+
+.note-collaboration-status.live {
+  color: var(--success);
+}
+
 .note-modal-editor .quill {
   flex: 1;
   display: flex;

@@ -11,6 +11,22 @@
 # - WEB_USER                       (www-data|nginx)
 # - WEB_GROUP                      (www-data|nginx)
 
+openmailstack_read_env_value() {
+    local env_file="$1"
+    local key="$2"
+    local line value
+    [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+    [[ -f "${env_file}" ]] || return 0
+    line="$(sed -n "/^${key}=/p" "${env_file}" | tail -n 1)"
+    value="${line#*=}"
+    if [[ ${#value} -ge 2 && "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+        value="${value:1:${#value}-2}"
+    elif [[ ${#value} -ge 2 && "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+        value="${value:1:${#value}-2}"
+    fi
+    printf '%s\n' "${value}"
+}
+
 detect_openmailstack_os() {
     local os_release_file=""
     if [[ -r /etc/os-release ]]; then

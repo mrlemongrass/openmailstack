@@ -253,6 +253,7 @@ export const requireSession = async (req: any, res: any, next: any) => {
         return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
     req.user = {
+        sessionId: session.id,
         username: session.username,
         password: session.password,
         isAdmin: session.isAdmin,

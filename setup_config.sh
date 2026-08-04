@@ -43,6 +43,12 @@ if [[ "${INSTALL_SCHEDULER}" =~ ^[Yy]$ ]]; then
 else
     ENABLE_OMS_SCHEDULER_VALUE="false"
 fi
+read -p "Enable self-hosted Notes live collaboration? (y/N): " INSTALL_NOTES_COLLABORATION
+if [[ "${INSTALL_NOTES_COLLABORATION}" =~ ^[Yy]$ ]]; then
+    ENABLE_OMS_NOTES_COLLABORATION_VALUE="true"
+else
+    ENABLE_OMS_NOTES_COLLABORATION_VALUE="false"
+fi
 
 # Input validation helpers
 # More robust domain validation
@@ -135,6 +141,7 @@ ESCAPED_EMAIL=$(printf '%s' "${USER_EMAIL}" | sed 's/[\/&]/\\&/g')
 sed -i "s/FIRST_DOMAIN=\"example.com\"/FIRST_DOMAIN=\"${ESCAPED_DOMAIN}\"/" ./config.conf
 sed -i "s/LETSENCRYPT_EMAIL=\"admin@\${FIRST_DOMAIN}\"/LETSENCRYPT_EMAIL=\"${ESCAPED_EMAIL}\"/" ./config.conf
 sed -i "s/ENABLE_OMS_SCHEDULER=\"false\"/ENABLE_OMS_SCHEDULER=\"${ENABLE_OMS_SCHEDULER_VALUE}\"/" ./config.conf
+sed -i "s/ENABLE_OMS_NOTES_COLLABORATION=\"false\"/ENABLE_OMS_NOTES_COLLABORATION=\"${ENABLE_OMS_NOTES_COLLABORATION_VALUE}\"/" ./config.conf
 
 sed -i "s/ChangeMe_Vmail_Pass/$(gen_pass)/" ./config.conf
 sed -i "s/ChangeMe_PFA_Pass/$(gen_pass)/" ./config.conf
@@ -157,4 +164,5 @@ echo -e "Domain:     ${USER_DOMAIN}"
 echo -e "Hostname:   mail.${USER_DOMAIN}"
 echo -e "Email:      ${USER_EMAIL}"
 echo -e "Scheduler:  ${ENABLE_OMS_SCHEDULER_VALUE}"
+echo -e "Notes live collaboration: ${ENABLE_OMS_NOTES_COLLABORATION_VALUE}"
 echo -e "${CYAN}===========================================${NC}"

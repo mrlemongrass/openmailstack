@@ -388,6 +388,8 @@ export interface Note {
   is_locked: number;
   folder: string;
   labels_json: string;
+  sync_token: number;
+  expected_sync_token?: number;
   created_at: string;
   updated_at: string;
   remind_at?: string;

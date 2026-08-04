@@ -35,6 +35,46 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ManageSieveClient = void 0;
 const net = __importStar(require("net"));
+const CRLF = Buffer.from('\r\n', 'ascii');
+const LITERAL_HEADER = /^\{(\d+)\+?\}$/;
+const TERMINAL_STATUS = /^(?:OK|NO|BYE)(?:$|[\t (])/;
+function findResponseEnd(buffer) {
+    let cursor = 0;
+    while (cursor < buffer.length) {
+        const lineEnd = buffer.indexOf(CRLF, cursor);
+        if (lineEnd < 0)
+            return null;
+        const line = buffer.subarray(cursor, lineEnd).toString('utf8');
+        cursor = lineEnd + CRLF.length;
+        const literalMatch = line.match(LITERAL_HEADER);
+        if (literalMatch) {
+            const literalSize = Number(literalMatch[1]);
+            if (!Number.isSafeInteger(literalSize)) {
+                throw new Error('ManageSieve literal size is invalid');
+            }
+            if (buffer.length < cursor + literalSize)
+                return null;
+            cursor += literalSize;
+            continue;
+        }
+        if (TERMINAL_STATUS.test(line))
+            return cursor;
+    }
+    return null;
+}
+function terminalStatus(response) {
+    if (!response.endsWith('\r\n'))
+        return null;
+    const withoutTrailingCrlf = response.slice(0, -CRLF.length);
+    const statusStart = withoutTrailingCrlf.lastIndexOf('\r\n');
+    return statusStart < 0
+        ? withoutTrailingCrlf
+        : withoutTrailingCrlf.slice(statusStart + CRLF.length);
+}
+function responseIsOk(response) {
+    const status = terminalStatus(response);
+    return status !== null && /^OK(?:$|[\t (])/.test(status);
+}
 class ManageSieveClient {
     host;
     port;
@@ -43,8 +83,7 @@ class ManageSieveClient {
     client;
     resolveData = null;
     rejectError = null;
-    dataBuffer = '';
-    literalBytesRemaining = 0;
+    dataBuffer = Buffer.alloc(0);
     receiveTimer = null;
     constructor(host = 'localhost', port = 4190, masterUser, masterPass) {
         this.host = host;
@@ -62,39 +101,26 @@ class ManageSieveClient {
             this.client.destroy();
         });
         this.client.on('data', (data) => {
-            this.dataBuffer += data.toString('utf8');
-            // Handle {size+} literal: read exactly size bytes before looking for status
-            if (this.literalBytesRemaining > 0) {
-                this.literalBytesRemaining -= data.length;
-                if (this.literalBytesRemaining > 0)
-                    return; // still waiting for more literal data
-            }
-            // Check for literal size prefix: {size}\r\n or {size+}\r\n
-            const literalMatch = this.dataBuffer.match(/^\{(\d+)\+?\}\r\n/);
-            if (literalMatch && !this.literalBytesRemaining) {
-                const size = parseInt(literalMatch[1], 10);
-                const afterPrefix = this.dataBuffer.slice(literalMatch[0].length);
-                if (afterPrefix.length >= size) {
-                    // Literal data already fully received; consume it and continue
-                    this.literalBytesRemaining = 0;
-                }
-                else {
-                    this.literalBytesRemaining = size - afterPrefix.length;
-                    return; // wait for more data
-                }
-            }
-            // Check if we received a full response (last line starts with OK/NO/BYE)
-            const lines = this.dataBuffer.trim().split('\r\n');
-            const lastLine = lines[lines.length - 1];
-            if (lastLine.startsWith('OK') || lastLine.startsWith('NO') || lastLine.startsWith('BYE')) {
-                if (this.resolveData) {
-                    const response = this.dataBuffer;
-                    this.dataBuffer = '';
-                    this.literalBytesRemaining = 0;
-                    this.resolveData(response);
+            const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8');
+            this.dataBuffer = Buffer.concat([this.dataBuffer, chunk]);
+            try {
+                const responseEnd = findResponseEnd(this.dataBuffer);
+                if (responseEnd !== null && this.resolveData) {
+                    const resolve = this.resolveData;
+                    const response = this.dataBuffer.subarray(0, responseEnd).toString('utf8');
+                    this.dataBuffer = this.dataBuffer.subarray(responseEnd);
                     this.resolveData = null;
                     this.rejectError = null;
+                    resolve(response);
                 }
+            }
+            catch (error) {
+                const failure = error instanceof Error ? error : new Error(String(error));
+                if (this.rejectError)
+                    this.rejectError(failure);
+                this.resolveData = null;
+                this.rejectError = null;
+                this.client.destroy();
             }
         });
         this.client.on('error', (err) => {
@@ -128,27 +154,32 @@ class ManageSieveClient {
         const authPass = (this.masterUser && this.masterPass) ? this.masterPass : pass;
         const authString = Buffer.from(`\0${authUser}\0${authPass}`).toString('base64');
         const res = await this.sendCommand(`AUTHENTICATE "PLAIN" "${authString}"`);
-        if (!res.trim().split('\r\n').pop()?.startsWith('OK')) {
+        if (!responseIsOk(res)) {
             throw new Error(`ManageSieve login failed: ${res}`);
         }
     }
     async getScript(scriptName) {
         const res = await this.sendCommand(`GETSCRIPT "${scriptName}"`);
-        const lines = res.trim().split('\r\n');
-        const lastLine = lines.pop();
-        if (!lastLine?.startsWith('OK')) {
+        if (!responseIsOk(res)) {
             throw new Error(`GETSCRIPT failed: ${res}`);
         }
-        // Response format:
-        // {size}
-        // script content...
-        // OK
-        let content = '';
-        if (lines[0].startsWith('{')) {
-            lines.shift(); // Remove the {size} line
-            content = lines.join('\n'); // Join the rest
+        const response = Buffer.from(res, 'utf8');
+        const headerEnd = response.indexOf(CRLF);
+        if (headerEnd < 0)
+            throw new Error('GETSCRIPT response is missing a literal header');
+        const literalMatch = response.subarray(0, headerEnd).toString('ascii').match(LITERAL_HEADER);
+        if (!literalMatch)
+            throw new Error('GETSCRIPT response is missing a literal');
+        const literalSize = Number(literalMatch[1]);
+        const contentStart = headerEnd + CRLF.length;
+        const contentEnd = contentStart + literalSize;
+        if (!Number.isSafeInteger(literalSize) || contentEnd + CRLF.length > response.length) {
+            throw new Error('GETSCRIPT response contains an incomplete literal');
         }
-        return content;
+        if (!response.subarray(contentEnd, contentEnd + CRLF.length).equals(CRLF)) {
+            throw new Error('GETSCRIPT response literal is not terminated');
+        }
+        return response.subarray(contentStart, contentEnd).toString('utf8');
     }
     async putScript(scriptName, content) {
         // Need to send PUTSCRIPT "name" {size}
@@ -159,15 +190,14 @@ class ManageSieveClient {
             this.rejectError = reject;
             this.client.write(`PUTSCRIPT "${scriptName}" {${size}+}\r\n${content}\r\n`);
         }).then(res => {
-            const lastLine = res.trim().split('\r\n').pop();
-            if (!lastLine?.startsWith('OK')) {
+            if (!responseIsOk(res)) {
                 throw new Error(`PUTSCRIPT failed: ${res}`);
             }
         });
     }
     async setActive(scriptName) {
         const res = await this.sendCommand(`SETACTIVE "${scriptName}"`);
-        if (!res.trim().split('\r\n').pop()?.startsWith('OK')) {
+        if (!responseIsOk(res)) {
             throw new Error(`SETACTIVE failed: ${res}`);
         }
     }

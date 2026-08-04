@@ -7,7 +7,6 @@ export declare class ManageSieveClient {
     private resolveData;
     private rejectError;
     private dataBuffer;
-    private literalBytesRemaining;
     private receiveTimer;
     constructor(host?: string, port?: number, masterUser?: string, masterPass?: string);
     private sendCommand;

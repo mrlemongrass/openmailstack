@@ -56,10 +56,10 @@ The contacts and notes apps have been extracted into their own directories with 
 - ✅ Selective vCard and CSV export for chosen contacts.
 - ✅ Contact activity timeline for recent email and owner-scoped Calendar activity.
 - ✅ Contact sharing through an owned, generated vCard handoff.
-- 🟡 UUID-backed CardDAV/vCard identity is implemented for web/API/CSV/vCard
+- 🟡 UUID-backed CardDAV/vCard identity is deployed for web/API/CSV/vCard
   contact creation, and duplicate repair keeps the UUID row as primary without
-  rewriting legacy rows. Deployment and one physical macOS edit/merge retry
-  remain before this compatibility fix is closed.
+  rewriting legacy rows. One physical macOS edit/merge retry remains before
+  this compatibility fix is closed.
 
 ### Notes (🟡 in progress)
 - ✅ Per-app directory with useNotes hook, NotesSidebar, NotesGrid, NoteSkeleton.

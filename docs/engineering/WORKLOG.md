@@ -8497,10 +8497,23 @@ Starting git state: clean
 
 ### Risks and next task
 
-- This tree is not deployed in this worklog entry, and the macOS behavior that
-  motivated it remains a strong diagnosis rather than a completed physical
-  control test. Existing legacy contacts are unchanged until the owner chooses
-  the explicit duplicate merge flow.
-- Next: use the guarded webmail release path. After release, merge one known
-  legacy/UUID pair with the UUID row primary and confirm a subsequent macOS edit
-  produces a PUT to that same UUID href rather than another contact.
+- The macOS behavior that motivated this change remains a strong diagnosis
+  rather than a completed physical control test. Existing legacy contacts are
+  unchanged until the owner chooses the explicit duplicate merge flow.
+- Next: merge one known legacy/UUID pair with the UUID row primary and confirm a
+  subsequent macOS edit produces a PUT to that same UUID href rather than
+  another contact.
+
+### Guarded deployment
+
+- Commit `b575a57` was released through
+  `functions/protocol_guarded_deploy.sh webmail`. Strict public IMAPS and the
+  ActiveSync full-MIME/Junk/Trash/no-change sequence passed before and after
+  installation. Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260807T224814Z/`.
+- Repository and deployed `api.js`, `apps-api.js`, and `contact-utils.js`
+  hashes match exactly. Local and public auth return `401`; Nginx validates;
+  `openmailstack.service` is active with `NRestarts=0`; the recent warning
+  journal is empty; and complete staging smoke passes.
+- The guarded probes cleaned their disposable state. No real contact row was
+  merged, edited, re-keyed, or deleted during deployment.

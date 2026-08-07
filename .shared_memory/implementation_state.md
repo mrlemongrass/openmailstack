@@ -2,8 +2,8 @@
 
 ## 2026-08-06 Contact CardDAV Identity Hardening
 
-**Status: Implemented and locally regression-tested; not deployed or physically
-confirmed.** New Contacts-app/API/CSV-created rows now persist a UUID as both
+**Status: Deployed and locally/release-gate validated; physical confirmation
+remains.** New Contacts-app/API/CSV-created rows now persist a UUID as both
 their CardDAV `dav_uid` and vCard `UID`. vCard imports use an independent UUID
 href, preserve an incoming `UID`, and persist a generated `UID` when absent.
 The compatibility `/api/contacts` writer follows the same invariant.
@@ -15,8 +15,12 @@ CardDAV PUT identity remains href-driven: a PUT to the same href updates the
 existing row, while a different href remains a create even when names or email
 addresses match. Focused identity tests pass 7/7; the complete backend suite
 passes 273/276 with three documented environment-gated skips, and repository
-integration plus frontend tests pass. Deployment and a physical macOS retry
-are still required before release closure.
+integration plus frontend tests pass. Commit `b575a57` passed the guarded
+public IMAPS/ActiveSync gates before and after deployment; repository and live
+backend artifacts match, readiness and staging pass, and the service has zero
+restarts or recent warnings. Rollback is
+`/var/backups/openmailstack/protocol-guarded-webmail-20260807T224814Z/`.
+A physical macOS retry is still required before release closure.
 
 ## 2026-08-04 Notes Authenticated Live Collaboration
 

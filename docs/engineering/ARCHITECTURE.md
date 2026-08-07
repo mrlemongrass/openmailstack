@@ -1191,8 +1191,8 @@ Current CardDAV interoperability seam, deployed and verified 2026-08-03:
   picker rather than server writability; no further DAV privilege broadening
   is justified.
 
-Contact identity hardening, implemented locally 2026-08-06 and awaiting
-deployment plus physical macOS confirmation:
+Contact identity hardening, deployed 2026-08-07 and awaiting physical macOS
+confirmation:
 
 - `contacts.dav_uid` names the CardDAV resource href; the `UID` property inside
   `vcard_data` identifies the contact. New native web/API/CSV contacts use one
@@ -1207,6 +1207,11 @@ deployment plus physical macOS confirmation:
 - `webmail-backend/test/contact-identity-route.test.cjs` covers every web/import
   writer, supplied-vCard normalization, UUID-primary recovery ordering, and
   same-href CardDAV update semantics.
+- Runtime commit `b575a57` was released through the guarded webmail interface.
+  Both public IMAPS/ActiveSync gates, exact backend artifact comparison,
+  local/public `401` readiness, zero restarts, clean warning logs, Nginx
+  validation, and complete staging smoke pass. Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260807T224814Z/`.
 
 Agents should locate and document:
 

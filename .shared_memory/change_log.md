@@ -1716,5 +1716,12 @@ Future entry template:
 - Focused red-to-green route/storage coverage passes 7/7. The complete backend
   suite passes 273/276 with three documented environment-gated skips, and the
   repository integration run including 98/98 frontend tests passes. Production
-  data was not changed; guarded deployment and physical macOS confirmation
-  remain.
+  data was not changed during local validation; physical macOS confirmation
+  remained after that phase.
+- Commit `b575a57` was deployed on 2026-08-07 through the guarded webmail path.
+  Public IMAPS/ActiveSync passed before and after installation. Repository and
+  live backend artifacts match; local/public auth return `401`; the service is
+  active with zero restarts; Nginx, the warning journal, and complete staging
+  smoke pass. Rollback is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260807T224814Z/`.
+  No real contact was merged or edited during the release.

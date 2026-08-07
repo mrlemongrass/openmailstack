@@ -1697,3 +1697,24 @@ Future entry template:
 - Cleanup exposed a separate Notes IMAP race: rapid save/close/delete produced
   duplicate messages and a SQL re-import. The stores verify clean; fixing this
   data-integrity defect is the next priority, ahead of cross-account sharing.
+
+## 2026-08-06 — Contact CardDAV Identity Hardening
+
+- Reproduced the primary writer defect with an API-level red test: web-created
+  contacts used timestamp/synthetic CardDAV identity, CSV imports stored no
+  vCard, and vCard imports could leave `UID` absent in persistent storage.
+- Added one UUID identity generator seam. Web, compatibility API, and CSV
+  creation persist that UUID in both `dav_uid` and vCard `UID`; vCard imports
+  preserve a supplied `UID` while using an independent UUID href, or persist a
+  generated UID when absent.
+- Kept CardDAV href semantics strict: the same href updates one row; a new href
+  remains a create. No name/email auto-merge and no automatic legacy re-key were
+  added.
+- Duplicate scans now rank UUID-backed contacts first so the existing merge
+  operation preserves the durable identity, combines legacy fields, and
+  tombstones the old href.
+- Focused red-to-green route/storage coverage passes 7/7. The complete backend
+  suite passes 273/276 with three documented environment-gated skips, and the
+  repository integration run including 98/98 frontend tests passes. Production
+  data was not changed; guarded deployment and physical macOS confirmation
+  remain.

@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { pool } from './db';
 
 export interface ContactRow {
@@ -62,6 +62,15 @@ export interface ParsedVCardContact {
     middleName?: string;
     prefix?: string;
     suffix?: string;
+}
+
+export function createContactUid(): string {
+    return randomUUID();
+}
+
+export function contactIdentityRank(contact: Pick<ContactRow, 'dav_uid'>): number {
+    const davUid = String(contact.dav_uid || '');
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(davUid) ? 1 : 0;
 }
 
 let schemaPromise: Promise<void> | null = null;

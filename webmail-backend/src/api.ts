@@ -9,6 +9,7 @@ import type { PoolConnection } from 'mysql2/promise';
 import { ManageSieveClient } from './managesieve';
 import bcrypt from 'bcryptjs';
 import { pool } from './db';
+import { createContactUid, nextContactSyncToken, patchVCardData } from './contact-utils';
 import { canDemoteGlobalAdmin, clearSession, createSession, hasGlobalAdminAccess, requireAdminSession, requireSession, SESSION_COOKIE } from './auth';
 import { imapConfig, normalizeMailboxUsername, schedulerConfig, serverConfig, sieveConfig, smtpConfig, smtpTransportOptions } from './config';
 import { compileSieve, extractJsonFromSieve, type SieveRule, type SieveRulesDocument } from './sieve-compiler';
@@ -2683,9 +2684,21 @@ apiRouter.post('/contacts', requireAuth, async (req: any, res) => {
     const { name, email, phone } = req.body;
     if (!name || !email) return res.status(400).json({ success: false, error: 'Name and email required' });
     try {
+        const cleanName = cleanTextInput(name);
+        const cleanEmail = requireValidMailbox(email);
+        const cleanPhone = cleanTextInput(phone, 30);
+        const davUid = createContactUid();
+        const vcard = patchVCardData('', davUid, {
+            name: cleanName,
+            email: cleanEmail,
+            phone: cleanPhone,
+        });
+        const syncToken = await nextContactSyncToken(user);
         await pool.query(
-            'INSERT INTO contacts (username, name, email, phone) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone)',
-            [user, cleanTextInput(name), requireValidMailbox(email), cleanTextInput(phone, 30)]
+            `INSERT INTO contacts (username, name, email, phone, vcard_data, dav_uid, sync_token)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone), sync_token = VALUES(sync_token)`,
+            [user, cleanName, cleanEmail, cleanPhone, vcard, davUid, syncToken]
         );
         res.json({ success: true });
     } catch (err: any) {

@@ -193,7 +193,7 @@ exports.appsApiRouter.post('/contacts', async (req, res) => {
     const user = req.username;
     const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url } = req.body;
     try {
-        const davUid = `contact-${Date.now()}`;
+        const davUid = (0, contact_utils_1.createContactUid)();
         const prefix = req.body.prefix || '';
         const firstName = req.body.first_name || '';
         const middleName = req.body.middle_name || '';
@@ -204,10 +204,12 @@ exports.appsApiRouter.post('/contacts', async (req, res) => {
         const birthday = req.body.birthday || '';
         const websiteUrl = req.body.website_url || '';
         const fullName = name || [prefix, firstName, middleName, lastName, suffix].filter(Boolean).join(' ') || email;
-        const newVcardData = vcard_data || (0, contact_utils_1.patchVCardData)('', davUid, {
-            name: fullName, first_name: firstName, last_name: lastName, middle_name: middleName,
-            prefix, suffix, email, phone, emails_json, phones_json, job_title, organization, notes
-        });
+        const newVcardData = typeof vcard_data === 'string' && vcard_data.trim()
+            ? (0, contact_utils_1.normalizeVCardData)(vcard_data, davUid, { name: fullName, email: email || '', phone: phone || '' })
+            : (0, contact_utils_1.patchVCardData)('', davUid, {
+                name: fullName, first_name: firstName, last_name: lastName, middle_name: middleName,
+                prefix, suffix, email, phone, emails_json, phones_json, job_title, organization, notes
+            });
         const syncToken = await (0, contact_utils_1.nextContactSyncToken)(user);
         const [result] = await db_1.pool.query(`INSERT INTO contacts
             (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, sync_token, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url)
@@ -582,9 +584,18 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                     continue;
                 }
                 try {
+                    const davUid = (0, contact_utils_1.createContactUid)();
+                    const vcard = (0, contact_utils_1.patchVCardData)('', davUid, {
+                        name,
+                        email,
+                        phone,
+                        job_title: jobTitle,
+                        organization,
+                        notes,
+                    });
                     const syncToken = await (0, contact_utils_1.nextContactSyncToken)(user);
-                    const [result] = await db_1.pool.query(`INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, dav_uid, sync_token)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, CONCAT('import-csv-', UNIX_TIMESTAMP(), '-', ?), ?)
+                    const [result] = await db_1.pool.query(`INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, vcard_data, dav_uid, sync_token)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                          ON DUPLICATE KEY UPDATE
                            name = VALUES(name),
                            phone = VALUES(phone),
@@ -592,7 +603,7 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                            organization = VALUES(organization),
                            notes = VALUES(notes),
                            deleted_at = NULL,
-                           sync_token = VALUES(sync_token)`, [user, name, email, phone, jobTitle, organization, notes, imported, syncToken]);
+                           sync_token = VALUES(sync_token)`, [user, name, email, phone, jobTitle, organization, notes, vcard, davUid, syncToken]);
                     if (result.affectedRows > 0)
                         imported++;
                     else
@@ -617,12 +628,14 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                 const emailsJson = (parsed.emails && parsed.emails.length > 0) ? JSON.stringify(parsed.emails.map((e) => ({ value: e, label: 'Other' }))) : null;
                 const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p) => ({ value: p, label: 'Other' }))) : null;
                 try {
+                    const davUid = (0, contact_utils_1.createContactUid)();
+                    const normalizedVcard = (0, contact_utils_1.normalizeVCardData)(vcard, davUid, parsed);
                     const syncToken = await (0, contact_utils_1.nextContactSyncToken)(user);
                     const [result] = await db_1.pool.query(`INSERT INTO contacts
                          (username, name, email, phone, job_title, organization, notes,
                           emails_json, phones_json, vcard_data,
                           prefix, first_name, middle_name, last_name, suffix, dav_uid, sync_token)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CONCAT('import-vcard-', UNIX_TIMESTAMP(), '-', ?), ?)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                          ON DUPLICATE KEY UPDATE
                            name = VALUES(name),
                            phone = VALUES(phone),
@@ -640,9 +653,9 @@ exports.appsApiRouter.post('/contacts-import', async (req, res) => {
                            deleted_at = NULL,
                            sync_token = VALUES(sync_token)`, [user, parsed.name || '', parsed.email || '', parsed.phone || '',
                         parsed.title || '', parsed.organization || '', parsed.note || '',
-                        emailsJson, phonesJson, vcard,
+                        emailsJson, phonesJson, normalizedVcard,
                         parsed.prefix || null, parsed.firstName || null, parsed.middleName || null,
-                        parsed.lastName || null, parsed.suffix || null, imported, syncToken]);
+                        parsed.lastName || null, parsed.suffix || null, davUid, syncToken]);
                     if (result.affectedRows > 0)
                         imported++;
                     else
@@ -665,6 +678,7 @@ exports.appsApiRouter.get('/contacts-duplicates', async (req, res) => {
     const user = req.username;
     try {
         const [rows] = await db_1.pool.query('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL', [user]);
+        rows.sort((left, right) => (0, contact_utils_1.contactIdentityRank)(right) - (0, contact_utils_1.contactIdentityRank)(left));
         const duplicates = [];
         const seen = new Set();
         for (let i = 0; i < rows.length; i++) {

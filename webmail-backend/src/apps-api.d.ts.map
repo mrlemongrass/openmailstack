@@ -1,1 +1,1 @@
-{"version":3,"file":"apps-api.d.ts","sourceRoot":"","sources":["apps-api.ts"],"names":[],"mappings":"AAgBA,eAAO,MAAM,aAAa,4CAAW,CAAC;AA6XtC,eAAO,MAAM,6BAA6B,GAAI,OAAO,MAAM,WAI1D,CAAC;AAEF,eAAO,MAAM,8BAA8B,GAAI,OAAO,MAAM,WAI3D,CAAC"}
+{"version":3,"file":"apps-api.d.ts","sourceRoot":"","sources":["apps-api.ts"],"names":[],"mappings":"AAkBA,eAAO,MAAM,aAAa,4CAAW,CAAC;AA+XtC,eAAO,MAAM,6BAA6B,GAAI,OAAO,MAAM,WAI1D,CAAC;AAEF,eAAO,MAAM,8BAA8B,GAAI,OAAO,MAAM,WAI3D,CAAC"}

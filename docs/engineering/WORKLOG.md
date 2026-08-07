@@ -8449,3 +8449,58 @@ Starting git state: clean at `1525203c`
   complete, but this release does not conceal or close that defect.
 - Next: reproduce and fix Notes IMAP save/export/delete idempotency and race
   handling before implementing cross-account invitations, membership, or ACLs.
+
+## 2026-08-06 — macOS Contacts Duplicate-on-Edit Identity Fix
+
+Agent/tool: Codex with graph query, bug diagnosis, TDD, and code-learning-loop
+Branch: `main`
+Starting git state: clean
+
+### Goal and acceptance criteria
+
+- [x] New web/API/CSV/vCard-created contacts persist globally unique vCard
+  identity instead of synthetic `contact-*` or timestamp identifiers.
+- [x] Imported vCards preserve a supplied `UID` and persist one when omitted.
+- [x] A CardDAV PUT to an existing href remains an update, with no name/email
+  auto-merge behavior.
+- [x] Legacy rows remain readable and are not silently rewritten.
+- [x] Duplicate repair keeps the UUID-backed contact as primary so legacy
+  fields can be merged without discarding the durable identity.
+- [x] No production contacts or credentials are modified.
+
+### Implementation and proof
+
+- `createContactUid()` centralizes UUID generation. The primary Contacts route,
+  compatibility route, CSV importer, and vCard importer now persist identity in
+  both the CardDAV href metadata and stored vCard where appropriate. Supplied
+  vCard data is normalized before insertion.
+- `contactIdentityRank()` makes duplicate results present UUID-backed contacts
+  first. The existing merge endpoint therefore retains that row, patches its
+  vCard with combined fields, records a tombstone for the legacy href, and
+  removes the duplicate.
+- `contact-identity-route.test.cjs` was added red-first. It covers native and
+  compatibility creation, supplied vCard normalization, CSV/vCard import,
+  supplied UID preservation, UUID-primary duplicate recovery, and same-href
+  CardDAV update behavior. Focused result: 7/7 pass after `npm run build`.
+
+### Verification
+
+- Complete backend: 276 total, 273 passed, three documented environment-gated
+  skips, zero failures. The build ran first and refreshed the generated
+  JavaScript, declarations, and source maps consumed by the service.
+- `tests/integration/run.sh` passes, including all 98 frontend tests, deployment
+  and protocol-gate guards, auth/RBAC/dependency checks, Scheduler guards, and
+  local installer dry-run integration.
+- `git diff --check` passes. The project-memory hygiene checker reports only the
+  existing broad possible-secret warning for `risk_register.md`; the new entry
+  contains no credentials, private contact values, or raw logs.
+
+### Risks and next task
+
+- This tree is not deployed in this worklog entry, and the macOS behavior that
+  motivated it remains a strong diagnosis rather than a completed physical
+  control test. Existing legacy contacts are unchanged until the owner chooses
+  the explicit duplicate merge flow.
+- Next: use the guarded webmail release path. After release, merge one known
+  legacy/UUID pair with the UUID row primary and confirm a subsequent macOS edit
+  produces a PUT to that same UUID href rather than another contact.

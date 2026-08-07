@@ -1,5 +1,23 @@
 # Implementation State
 
+## 2026-08-06 Contact CardDAV Identity Hardening
+
+**Status: Implemented and locally regression-tested; not deployed or physically
+confirmed.** New Contacts-app/API/CSV-created rows now persist a UUID as both
+their CardDAV `dav_uid` and vCard `UID`. vCard imports use an independent UUID
+href, preserve an incoming `UID`, and persist a generated `UID` when absent.
+The compatibility `/api/contacts` writer follows the same invariant.
+
+Existing `contact-<id>` rows are deliberately not rewritten. Duplicate scan
+results rank UUID-backed contacts first, allowing the existing merge workflow
+to keep the durable UUID row, combine legacy fields, and tombstone the old href.
+CardDAV PUT identity remains href-driven: a PUT to the same href updates the
+existing row, while a different href remains a create even when names or email
+addresses match. Focused identity tests pass 7/7; the complete backend suite
+passes 273/276 with three documented environment-gated skips, and repository
+integration plus frontend tests pass. Deployment and a physical macOS retry
+are still required before release closure.
+
 ## 2026-08-04 Notes Authenticated Live Collaboration
 
 **Status: Deployed and live browser-validated for same-owner sessions.** Commits

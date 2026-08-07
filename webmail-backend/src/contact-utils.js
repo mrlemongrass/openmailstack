@@ -1,5 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.createContactUid = createContactUid;
+exports.contactIdentityRank = contactIdentityRank;
 exports.ensureContactsSchema = ensureContactsSchema;
 exports.xmlEscape = xmlEscape;
 exports.stampVCardRevision = stampVCardRevision;
@@ -29,6 +31,13 @@ exports.addressBookSyncToken = addressBookSyncToken;
 exports.contactVCard = contactVCard;
 const crypto_1 = require("crypto");
 const db_1 = require("./db");
+function createContactUid() {
+    return (0, crypto_1.randomUUID)();
+}
+function contactIdentityRank(contact) {
+    const davUid = String(contact.dav_uid || '');
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(davUid) ? 1 : 0;
+}
 let schemaPromise = null;
 async function ensureContactsSchema() {
     if (!schemaPromise) {

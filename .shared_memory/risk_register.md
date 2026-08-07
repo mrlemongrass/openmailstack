@@ -38,6 +38,13 @@ Last updated: 2026-08-04
 - ✅ ActiveSync/CardDAV contact tombstones and delta deletes: contact deletes now write `contact_tombstones`, CardDAV stale-token `sync-collection` returns 404 tombstone responses, ActiveSync Contacts returns Delete commands, and local/public smokes assert both paths.
 - ✅ CardDAV contact depth-1 tombstone compatibility: macOS Contacts was observed listing the address book with depth-1 `PROPFIND` after an iPhone delete, so CardDAV now includes recent 404 tombstones in address-book PROPFIND results and the smoke script asserts that path.
 - ✅ CardDAV legacy href tombstone compatibility: deleted contact tombstones now also emit a legacy `contact-<id>` href alias when available, covering macOS caches that may have stored an older resource href for an ActiveSync-created card.
+- 🟡 CardDAV contact identity hardening: new web/API/CSV/vCard-created contacts
+  now persist UUID-backed href/vCard identity, and duplicate scan results keep
+  the UUID row as merge primary without rewriting legacy `contact-<id>` rows.
+  Focused and complete local regression/integration checks pass; deployment
+  and a physical macOS edit/merge retry remain. Do not replace this with
+  name/email-based PUT merging, which would collapse legitimate contacts and
+  violate href-based CardDAV semantics.
 - 🟡 macOS CardDAV Default Account picker: server writability is closed. macOS 26.5.2 classifies Housevo as native CardDAV, cached the Personal collection as writable, and an explicitly targeted Contacts-framework create/delete produced a successful CardDAV PUT/DELETE plus clean tombstone. HouseVo nevertheless remains absent from Default Account. Commit `35d29345` removed the ineffective aggregate `DAV:write` experiment; bounded `bind`/`unbind`, contact `write-content`, owner metadata, and handled reports remain live. Treat the remaining picker behavior as an Apple client issue; do not add ACL/home-management claims or modify private macOS databases.
 - ✅ Physical iPhone Exchange contact create/edit/delete: `thang@housevo.us` contact create and edit reached iPhone, web Contacts, macOS Contacts, and server storage. Delete reached iPhone, web Contacts, and server tombstone state immediately; macOS Contacts cleared stale local cache state after the CardDAV account was removed, Contacts was closed/reopened, and the account was re-added.
 - ✅ Frontend lint and main bundle stabilization: Frontend lint exits 0 with zero warnings, and the main production chunk remains below the documented 500 kB target after top-level route code splitting.

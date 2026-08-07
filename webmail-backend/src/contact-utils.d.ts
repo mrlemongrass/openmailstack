@@ -57,6 +57,8 @@ export interface ParsedVCardContact {
     prefix?: string;
     suffix?: string;
 }
+export declare function createContactUid(): string;
+export declare function contactIdentityRank(contact: Pick<ContactRow, 'dav_uid'>): number;
 export declare function ensureContactsSchema(): Promise<void>;
 export declare function xmlEscape(value: string): string;
 export declare function stampVCardRevision(vcard: string, date?: Date): string;

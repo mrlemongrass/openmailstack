@@ -47,6 +47,7 @@ const util_1 = __importDefault(require("util"));
 const managesieve_1 = require("./managesieve");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const db_1 = require("./db");
+const contact_utils_1 = require("./contact-utils");
 const auth_1 = require("./auth");
 const config_1 = require("./config");
 const sieve_compiler_1 = require("./sieve-compiler");
@@ -2477,7 +2478,19 @@ exports.apiRouter.post('/contacts', requireAuth, async (req, res) => {
     if (!name || !email)
         return res.status(400).json({ success: false, error: 'Name and email required' });
     try {
-        await db_1.pool.query('INSERT INTO contacts (username, name, email, phone) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone)', [user, cleanTextInput(name), requireValidMailbox(email), cleanTextInput(phone, 30)]);
+        const cleanName = cleanTextInput(name);
+        const cleanEmail = requireValidMailbox(email);
+        const cleanPhone = cleanTextInput(phone, 30);
+        const davUid = (0, contact_utils_1.createContactUid)();
+        const vcard = (0, contact_utils_1.patchVCardData)('', davUid, {
+            name: cleanName,
+            email: cleanEmail,
+            phone: cleanPhone,
+        });
+        const syncToken = await (0, contact_utils_1.nextContactSyncToken)(user);
+        await db_1.pool.query(`INSERT INTO contacts (username, name, email, phone, vcard_data, dav_uid, sync_token)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone), sync_token = VALUES(sync_token)`, [user, cleanName, cleanEmail, cleanPhone, vcard, davUid, syncToken]);
         res.json({ success: true });
     }
     catch (err) {

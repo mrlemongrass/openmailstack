@@ -1191,6 +1191,23 @@ Current CardDAV interoperability seam, deployed and verified 2026-08-03:
   picker rather than server writability; no further DAV privilege broadening
   is justified.
 
+Contact identity hardening, implemented locally 2026-08-06 and awaiting
+deployment plus physical macOS confirmation:
+
+- `contacts.dav_uid` names the CardDAV resource href; the `UID` property inside
+  `vcard_data` identifies the contact. New native web/API/CSV contacts use one
+  generated UUID for both. vCard imports receive an independent UUID href and
+  preserve a supplied vCard `UID`, or persist the generated UUID as `UID` when
+  the import omitted one.
+- Legacy `contact-<id>` rows remain readable and are not silently re-keyed.
+  Duplicate scanning ranks UUID-backed rows first, so the existing merge flow
+  keeps the durable identity while folding fields from a legacy duplicate and
+  tombstoning the legacy href. It never merges contacts merely because a new
+  CardDAV PUT has a matching name or email.
+- `webmail-backend/test/contact-identity-route.test.cjs` covers every web/import
+  writer, supplied-vCard normalization, UUID-primary recovery ordering, and
+  same-href CardDAV update semantics.
+
 Agents should locate and document:
 
 - where the SOGo ActiveSync integration lives

@@ -2576,42 +2576,232 @@ appsApiRouter.delete('/events/:calendar_id/:uid', async (req: Request, res: Resp
     }
 });
 
-// #2 Free/busy lookup
-appsApiRouter.get('/calendars/freebusy', async (req: Request, res: Response) => {
-    try {
-        const users = (req.query.users as string || '').split(',').filter(Boolean);
-        const start = new Date(req.query.start as string);
-        const end = new Date(req.query.end as string);
-        if (!users.length || isNaN(start.getTime()) || isNaN(end.getTime())) {
-            return res.status(400).json({ error: 'Missing users, start, or end' });
+const MAX_FREE_BUSY_USERS = 50;
+const MAX_FREE_BUSY_ADDRESS_BYTES = 254;
+const MAX_FREE_BUSY_WINDOW_MS = 366 * 24 * 60 * 60 * 1000;
+const MAX_FREE_BUSY_EVENT_ROWS = 5_000;
+const MAX_FREE_BUSY_EXPANSION_STEPS = 5_000;
+const FREE_BUSY_LOCAL_PART = /^[a-z0-9._%+-]+$/i;
+const FREE_BUSY_DOMAIN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+
+function canonicalFreeBusyAddress(value: string): string | null {
+    if (/[\r\n\0]/.test(value)) return null;
+    const address = value.trim().toLowerCase();
+    if (!address
+        || Buffer.byteLength(address, 'utf8') > MAX_FREE_BUSY_ADDRESS_BYTES
+        || /\s/.test(address)
+        || /[<>()\[\]\\,;:"]/.test(address)) return null;
+    const at = address.indexOf('@');
+    if (at < 1 || at !== address.lastIndexOf('@') || at === address.length - 1) return null;
+    const local = address.slice(0, at);
+    const domain = address.slice(at + 1);
+    if (Buffer.byteLength(local, 'utf8') > 64
+        || !FREE_BUSY_LOCAL_PART.test(local)
+        || !FREE_BUSY_DOMAIN.test(domain)
+        || local.startsWith('.')
+        || local.endsWith('.')
+        || local.includes('..')) return null;
+    return address;
+}
+
+function requestedFreeBusyUsers(value: unknown): string[] | null {
+    if (typeof value !== 'string' || !value) return null;
+    const canonical: string[] = [];
+    const seen = new Set<string>();
+    for (const rawAddress of value.split(',')) {
+        const address = canonicalFreeBusyAddress(rawAddress);
+        if (!address) return null;
+        if (!seen.has(address)) {
+            seen.add(address);
+            canonical.push(address);
         }
-        const busy: Record<string, { start: string; end: string }[]> = {};
-        for (const user of users) {
-            const [rows]: any = await pool.query(
-                `SELECT events.ical_data FROM events
-                 JOIN calendars ON events.calendar_id = calendars.id
-                 WHERE calendars.user_id = ? OR calendars.id IN
-                   (SELECT calendar_id FROM calendar_shares WHERE shared_with_user_id = ?)`,
-                [user, user]
-            );
-            const userBusy: { start: string; end: string }[] = [];
-            for (const row of rows || []) {
-                try {
-                    const evt = parseIcalEvent('freebusy', row.ical_data);
-                    if (!evt) continue;
-                    if (row.ical_data.includes('TRANSP:TRANSPARENT')) continue;
-                    const eStart = new Date(evt.start);
-                    const eEnd = new Date(evt.end);
-                    if (eEnd > start && eStart < end) {
-                        userBusy.push({ start: eStart.toISOString(), end: eEnd.toISOString() });
-                    }
-                } catch (e) {}
+    }
+    return canonical.length > 0 && canonical.length <= MAX_FREE_BUSY_USERS ? canonical : null;
+}
+
+function freeBusyWindow(startValue: unknown, endValue: unknown): { start: Date; end: Date } | null {
+    if (typeof startValue !== 'string' || typeof endValue !== 'string') return null;
+    const start = new Date(startValue);
+    const end = new Date(endValue);
+    if (!Number.isFinite(start.getTime())
+        || !Number.isFinite(end.getTime())
+        || end <= start
+        || end.getTime() - start.getTime() > MAX_FREE_BUSY_WINDOW_MS) return null;
+    return { start, end };
+}
+
+function freeBusyExpansionSteps(
+    event: ReturnType<typeof parseIcalEvent>,
+    rangeEnd: Date,
+): number | null {
+    if (!event.recurrence) return 1;
+    if (event.recurrenceExceptionOverflow) return null;
+
+    const keys = String(event.recurrence.raw || '')
+        .split(';')
+        .map(part => part.split('=', 1)[0]?.trim().toUpperCase())
+        .filter(Boolean);
+    if (keys.some(key => !['FREQ', 'INTERVAL', 'COUNT', 'UNTIL'].includes(key))) return null;
+
+    const effectiveEnd = event.recurrence.until && event.recurrence.until < rangeEnd
+        ? event.recurrence.until
+        : rangeEnd;
+    let steps = 0;
+    if (event.start <= effectiveEnd) {
+        const interval = Math.max(1, event.recurrence.interval);
+        const elapsedMs = Math.max(0, effectiveEnd.getTime() - event.start.getTime());
+        if (event.recurrence.frequency === 'DAILY') {
+            steps = Math.ceil(elapsedMs / (interval * 24 * 60 * 60 * 1000)) + 2;
+        } else if (event.recurrence.frequency === 'WEEKLY') {
+            steps = Math.ceil(elapsedMs / (interval * 7 * 24 * 60 * 60 * 1000)) + 2;
+        } else if (event.recurrence.frequency === 'MONTHLY') {
+            const months = (effectiveEnd.getUTCFullYear() - event.start.getUTCFullYear()) * 12
+                + effectiveEnd.getUTCMonth() - event.start.getUTCMonth();
+            steps = Math.ceil(Math.max(0, months) / interval) + 2;
+        } else {
+            const years = effectiveEnd.getUTCFullYear() - event.start.getUTCFullYear();
+            steps = Math.ceil(Math.max(0, years) / interval) + 2;
+        }
+        if (event.recurrence.count) steps = Math.min(steps, event.recurrence.count);
+    }
+    return steps + (event.recurrenceExceptions?.length || 0);
+}
+
+function busyIntervals(
+    rows: Array<{ ical_data?: unknown }>,
+    start: Date,
+    end: Date,
+): Array<{ start: string; end: string }> | null {
+    const intervals = new Map<string, { start: string; end: string }>();
+    let expansionSteps = 0;
+    for (const row of rows) {
+        try {
+            const icalData = typeof row.ical_data === 'string' ? row.ical_data : '';
+            if (!/(?:^|\r?\n)BEGIN:VEVENT(?:\r?\n|$)/i.test(icalData)
+                || !/(?:^|\r?\n)END:VEVENT(?:\r?\n|$)/i.test(icalData)
+                || !/(?:^|\r?\n)DTSTART(?:;[^:\r\n]*)?:[^\r\n]+/i.test(icalData)) return null;
+            const event = parseIcalEvent('freebusy', icalData);
+            if (/(?:^|\r?\n)(?:RDATE|EXRULE)(?:;|:)/i.test(icalData)) return null;
+            const rowExpansionSteps = freeBusyExpansionSteps(event, end);
+            if (rowExpansionSteps === null
+                || expansionSteps + rowExpansionSteps > MAX_FREE_BUSY_EXPANSION_STEPS) return null;
+            expansionSteps += rowExpansionSteps;
+            if (event.meetingStatus === '5') continue;
+
+            const occurrences = event.recurrence
+                ? expandRecurringEvent(event, start, end, Math.max(1, rowExpansionSteps))
+                : [event];
+            for (const occurrence of occurrences) {
+                if (occurrence.busyStatus === 'free') continue;
+                const eventStart = new Date(occurrence.start);
+                const eventEnd = new Date(occurrence.end);
+                if (!Number.isFinite(eventStart.getTime())
+                    || !Number.isFinite(eventEnd.getTime())
+                    || eventEnd <= eventStart) return null;
+                if (eventEnd <= start || eventStart >= end) continue;
+                const interval = { start: eventStart.toISOString(), end: eventEnd.toISOString() };
+                intervals.set(`${interval.start}\0${interval.end}`, interval);
             }
-            busy[user] = userBusy;
+        } catch {
+            return null;
         }
-        res.json({ success: true, busy });
-    } catch (e: any) {
-        res.status(500).json({ success: false, error: e.message });
+    }
+    return [...intervals.values()].sort((left, right) => (
+        left.start.localeCompare(right.start) || left.end.localeCompare(right.end)
+    ));
+}
+
+// A free/busy key is an authorization grant. Missing, unknown, and unshared
+// recipients are deliberately indistinguishable in the neutral unavailable list.
+appsApiRouter.get('/calendars/freebusy', async (req: Request, res: Response) => {
+    const users = requestedFreeBusyUsers(req.query.users);
+    const window = freeBusyWindow(req.query.start, req.query.end);
+    if (!users || !window) {
+        return res.status(400).json({ success: false, error: 'Invalid free/busy request' });
+    }
+
+    const caller = String((req as any).username || '').trim().toLowerCase();
+    const authorized = new Set<string>();
+    const failedUsers = new Set<string>();
+    const rowsByUser = new Map<string, Array<{ ical_data?: unknown }>>();
+    try {
+        if (users.includes(caller)) {
+            authorized.add(caller);
+            const [selfRows]: any = await pool.query(
+                `SELECT e.ical_data
+                 FROM events e
+                 JOIN calendars c ON c.id = e.calendar_id
+                 WHERE c.user_id = ?
+                    OR EXISTS (
+                       SELECT 1 FROM calendar_shares cs
+                       WHERE cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+                    )
+                 LIMIT ${MAX_FREE_BUSY_EVENT_ROWS + 1}`,
+                [caller, caller],
+            );
+            if ((selfRows || []).length > MAX_FREE_BUSY_EVENT_ROWS) failedUsers.add(caller);
+            else rowsByUser.set(caller, selfRows || []);
+        }
+
+        const otherUsers = users.filter(user => user !== caller);
+        if (otherUsers.length > 0) {
+            const placeholders = otherUsers.map(() => '?').join(', ');
+            const [sharedTargets]: any = await pool.query(
+                `SELECT DISTINCT c.user_id AS target_user
+                 FROM calendars c
+                 JOIN calendar_shares cs ON cs.calendar_id = c.id
+                 WHERE cs.shared_with_user_id = ?
+                   AND c.user_id IN (${placeholders})`,
+                [caller, ...otherUsers],
+            );
+            for (const row of sharedTargets || []) {
+                const target = String(row.target_user || '').trim().toLowerCase();
+                if (otherUsers.includes(target)) authorized.add(target);
+            }
+
+            const authorizedOthers = otherUsers.filter(user => authorized.has(user));
+            if (authorizedOthers.length > 0) {
+                const authorizedPlaceholders = authorizedOthers.map(() => '?').join(', ');
+                const [sharedEventRows]: any = await pool.query(
+                    `SELECT c.user_id AS target_user, e.ical_data
+                     FROM events e
+                     JOIN calendars c ON c.id = e.calendar_id
+                     WHERE c.user_id IN (${authorizedPlaceholders})
+                       AND EXISTS (
+                         SELECT 1 FROM calendar_shares cs
+                         WHERE cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+                       )
+                     LIMIT ${MAX_FREE_BUSY_EVENT_ROWS + 1}`,
+                    [...authorizedOthers, caller],
+                );
+                if ((sharedEventRows || []).length > MAX_FREE_BUSY_EVENT_ROWS) {
+                    for (const target of authorizedOthers) failedUsers.add(target);
+                } else {
+                    for (const row of sharedEventRows || []) {
+                        const target = String(row.target_user || '').trim().toLowerCase();
+                        if (!authorized.has(target)) continue;
+                        const targetRows = rowsByUser.get(target) || [];
+                        targetRows.push({ ical_data: row.ical_data });
+                        rowsByUser.set(target, targetRows);
+                    }
+                }
+            }
+        }
+
+        const busy: Record<string, Array<{ start: string; end: string }>> = {};
+        const unavailable: string[] = [];
+        for (const user of users) {
+            if (!authorized.has(user) || failedUsers.has(user)) {
+                unavailable.push(user);
+                continue;
+            }
+            const intervals = busyIntervals(rowsByUser.get(user) || [], window.start, window.end);
+            if (intervals === null) unavailable.push(user);
+            else busy[user] = intervals;
+        }
+        return res.json({ success: true, busy, unavailable });
+    } catch {
+        return res.status(500).json({ success: false, error: 'Unable to load free/busy' });
     }
 });
 

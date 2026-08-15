@@ -144,7 +144,8 @@ test('note persistence carries a revision and keeps stale conflicts visible', ()
     path.resolve(__dirname, '../../webmail-backend/src/api.ts'),
     'utf8',
   );
-  assert.match(modal, /expected_sync_token:\s*latest\.sync_token/);
+  assert.match(modal, /saveCoordinatorRef\.current\.enqueue/);
+  assert.match(modal, /expected_sync_token:\s*identity\.syncToken \?\? latest\.sync_token/);
   assert.match(modal, /latestDraftRef/);
   assert.match(modal, /const latest = latestDraftRef\.current/);
   assert.match(modal, /Save on close failed[\s\S]*showToast[\s\S]*return;/);

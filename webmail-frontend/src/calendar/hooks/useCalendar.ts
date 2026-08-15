@@ -12,6 +12,12 @@ import {
   projectInstantToWallDate,
   wallDateToInstant,
 } from '../calendarTime';
+import {
+  buildFreeBusyRequestUrl,
+  createUnavailableFreeBusyLookup,
+  normalizeFreeBusyResponse,
+  type FreeBusyLookup,
+} from '../freeBusy';
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -230,8 +236,9 @@ export function useCalendar() {
   }, [displayTimeZone]);
 
   // Free/busy
-  const [freeBusy, setFreeBusy] = useState<Record<string, { start: Date; end: Date }[]>>({});
+  const [freeBusyLookup, setFreeBusyLookup] = useState<FreeBusyLookup>(() => createUnavailableFreeBusyLookup([]));
   const [freeBusyLoading, setFreeBusyLoading] = useState(false);
+  const freeBusyRequestId = useRef(0);
 
   const draftWallDateToInstant = useCallback((date: Date) => {
     const timeKind = newEvent.isAllDay ? 'all-day' : (newEvent.timeKind || 'zoned');
@@ -240,15 +247,30 @@ export function useCalendar() {
   }, [newEvent.isAllDay, newEvent.timeKind, newEvent.timeZone, displayTimeZone]);
 
   const lookupFreeBusy = useCallback(async (emails: string[], start: Date, end: Date) => {
+    const requestId = ++freeBusyRequestId.current;
+    setFreeBusyLookup(createUnavailableFreeBusyLookup(emails));
+    if (emails.length === 0) {
+      setFreeBusyLoading(false);
+      return;
+    }
     setFreeBusyLoading(true);
     try {
       const startInstant = draftWallDateToInstant(start);
       const endInstant = draftWallDateToInstant(end);
-      const res = await fetch(`/api/apps/calendars/freebusy?users=${emails.join(',')}&start=${startInstant.toISOString()}&end=${endInstant.toISOString()}`);
+      const res = await fetch(buildFreeBusyRequestUrl(emails, startInstant, endInstant));
+      if (!res.ok) throw new Error(`Free/busy lookup failed (${res.status})`);
       const data = await res.json();
-      if (data.busy) setFreeBusy(data.busy);
-    } catch (e) { console.error('Free/busy lookup failed', e); }
-    setFreeBusyLoading(false);
+      if (freeBusyRequestId.current === requestId) {
+        setFreeBusyLookup(normalizeFreeBusyResponse(emails, data));
+      }
+    } catch (e) {
+      console.error('Free/busy lookup failed', e);
+      if (freeBusyRequestId.current === requestId) {
+        setFreeBusyLookup(createUnavailableFreeBusyLookup(emails));
+      }
+    } finally {
+      if (freeBusyRequestId.current === requestId) setFreeBusyLoading(false);
+    }
   }, [draftWallDateToInstant]);
 
   return {
@@ -264,6 +286,8 @@ export function useCalendar() {
     saveEvent, deleteEvent, openNewEvent, editExistingEvent,
     calendarVisibility, setCalendarVisibility,
     quickCreateText, setQuickCreateText,
-    freeBusy, freeBusyLoading, lookupFreeBusy, draftWallDateToInstant,
+    freeBusy: freeBusyLookup.busy,
+    freeBusyUnavailable: freeBusyLookup.unavailable,
+    freeBusyLoading, lookupFreeBusy, draftWallDateToInstant,
   };
 }

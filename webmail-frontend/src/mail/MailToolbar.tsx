@@ -12,6 +12,7 @@ interface MailToolbarProps {
   searchScope: SearchScope;
   isSearchActive: boolean;
   selectionDisabled: boolean;
+  draftMode?: boolean;
   activeFolder?: string;
   folders: MailFolder[];
   onSearchChange: (q: string) => void;
@@ -36,7 +37,7 @@ const SEARCH_HINTS = [
   { syntax: 'after:2026-01-01', desc: 'Messages after date' },
 ];
 
-export function MailToolbar({ selectedCount, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, activeFolder, folders, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMoveSelected, onMarkAllRead }: MailToolbarProps) {
+export function MailToolbar({ selectedCount, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, draftMode = false, activeFolder, folders, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMoveSelected, onMarkAllRead }: MailToolbarProps) {
   const allSelected = selectedCount > 0 && selectedCount === totalCount;
   const [showHints, setShowHints] = useState(false);
   const [showMoveTo, setShowMoveTo] = useState(false);
@@ -125,23 +126,31 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, searchFiel
             {selectedCount} selected
           </span>
           <div style={{ flex: 1 }} />
-          <button className="btn btn-ghost" onClick={() => onBulkAction('read')} title="Mark read"><Mail size={16} /></button>
-          <button className="btn btn-ghost" onClick={() => onBulkAction('unread')} title="Mark unread"><MailOpen size={16} /></button>
-          <button className="btn btn-ghost" onClick={() => onBulkAction('archive')} title="Archive"><Archive size={16} /></button>
-          <div style={{ position: 'relative' }}>
-            <button ref={moveButtonRef} className="btn btn-ghost" onClick={() => setShowMoveTo((visible) => !visible)}
-              title="Move to folder" aria-haspopup="dialog" aria-expanded={showMoveTo} disabled={moveFolders.length === 0}>
-              <FolderOpen size={16} />
+          {draftMode ? (
+            <button className="btn btn-danger" onClick={() => onBulkAction('delete')} title="Delete drafts">
+              <Trash2 size={16} /> Delete
             </button>
-            {showMoveTo && (
-              <MoveToPopover folders={moveFolders} align="right"
-                onMove={onMoveSelected}
-                onClose={closeMoveTo} />
-            )}
-          </div>
-          <button className="btn btn-ghost" onClick={() => onBulkAction('star')} title="Star"><StarIcon size={16} /></button>
-          <button className="btn btn-ghost" onClick={() => onBulkAction('spam')} title="Mark as spam"><ShieldAlert size={16} /></button>
-          <button className="btn btn-danger" onClick={() => onBulkAction('delete')} title="Delete"><Trash2 size={16} /></button>
+          ) : (
+            <>
+              <button className="btn btn-ghost" onClick={() => onBulkAction('read')} title="Mark read"><Mail size={16} /></button>
+              <button className="btn btn-ghost" onClick={() => onBulkAction('unread')} title="Mark unread"><MailOpen size={16} /></button>
+              <button className="btn btn-ghost" onClick={() => onBulkAction('archive')} title="Archive"><Archive size={16} /></button>
+              <div style={{ position: 'relative' }}>
+                <button ref={moveButtonRef} className="btn btn-ghost" onClick={() => setShowMoveTo((visible) => !visible)}
+                  title="Move to folder" aria-haspopup="dialog" aria-expanded={showMoveTo} disabled={moveFolders.length === 0}>
+                  <FolderOpen size={16} />
+                </button>
+                {showMoveTo && (
+                  <MoveToPopover folders={moveFolders} align="right"
+                    onMove={onMoveSelected}
+                    onClose={closeMoveTo} />
+                )}
+              </div>
+              <button className="btn btn-ghost" onClick={() => onBulkAction('star')} title="Star"><StarIcon size={16} /></button>
+              <button className="btn btn-ghost" onClick={() => onBulkAction('spam')} title="Mark as spam"><ShieldAlert size={16} /></button>
+              <button className="btn btn-danger" onClick={() => onBulkAction('delete')} title="Delete"><Trash2 size={16} /></button>
+            </>
+          )}
         </div>
       )}
     </div>

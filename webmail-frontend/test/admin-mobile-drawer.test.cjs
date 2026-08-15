@@ -20,7 +20,8 @@ test('mobile Admin navigation uses an opaque, labelled drawer', () => {
   assert.match(routesSource, /event\.key === 'Escape'[\s\S]*closeSidebar\(\)/);
   assert.match(routesSource, /!drawer\.contains\(document\.activeElement\)[\s\S]*event\.shiftKey \? last : first/);
   assert.match(routesSource, /event\.key !== 'Tab'[\s\S]*last\.focus\(\)[\s\S]*first\.focus\(\)/);
-  assert.match(routesSource, /window\.requestAnimationFrame\(\(\) => menuButtonRef\.current\?\.focus\(\)\)/);
+  assert.match(routesSource, /restoreMenuFocusRef\.current = true[\s\S]*setSidebarOpen\(false\)/);
+  assert.match(routesSource, /if \(sidebarOpen \|\| !restoreMenuFocusRef\.current\) return;[\s\S]*menuButtonRef\.current\?\.focus\(\)/);
   assert.match(routesSource, /<main inert=\{sidebarOpen \|\| undefined\}/);
   assert.match(
     routesSource,

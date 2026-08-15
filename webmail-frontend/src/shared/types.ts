@@ -94,6 +94,8 @@ export interface Message {
   from: string;
   to?: string;
   cc?: string;
+  bcc?: string;
+  replyTo?: string;
   date: string | Date;
   isRead?: boolean;
   isStarred?: boolean;
@@ -108,6 +110,10 @@ export interface Message {
   references?: string[];
   is_scheduled?: boolean;
   scheduled_id?: number;
+  delivery_state?: 'scheduled' | 'retry_wait' | 'claimed' | 'smtp_inflight'
+    | 'sent_copy_pending' | 'completed' | 'failed' | 'delivery_uncertain'
+    | 'partial_delivery' | 'cancelled';
+  delivery_error?: string;
   draftId?: string;
   threadCount?: number;
   threadUids?: number[];
@@ -144,8 +150,21 @@ export interface MessageActionResponse {
   undoUids?: number[];
 }
 
+export interface UndoActionResponse {
+  success: boolean;
+  error?: string;
+  draftFolder?: string;
+  draftUid?: number;
+}
+
 export interface SendMessageResponse extends MessageActionResponse {
   scheduledId?: number;
+  sendAt?: string;
+  draftCleanupStatus?: 'removed' | 'failed';
+  deliveryStatus?: 'accepted' | 'partial';
+  rejectedRecipients?: string[];
+  sentCopyStatus?: 'saved' | 'pending' | 'unavailable';
+  messageId?: string;
 }
 
 export interface SaveDraftResponse {

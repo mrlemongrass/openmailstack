@@ -38,8 +38,10 @@ const listen = (server) => new Promise((resolve, reject) => {
   server.listen(0, '127.0.0.1', () => resolve(server.address()));
 });
 
-const openSocket = (url, cookie = 'oms_session=valid') => new Promise((resolve, reject) => {
-  const socket = new WebSocket(url, { headers: { Cookie: cookie } });
+const openSocket = (url, cookie = 'oms_session=valid', origin) => new Promise((resolve, reject) => {
+  const headers = { Cookie: cookie };
+  if (origin !== undefined) headers.Origin = origin;
+  const socket = new WebSocket(url, { headers });
   socket.once('open', () => resolve(socket));
   socket.once('unexpected-response', (_request, response) => {
     response.resume();
@@ -329,14 +331,16 @@ test('session issuance is opt-in and requires a live note owned by the caller', 
 test('the signaling server authenticates the socket and confines it to one signed room', async (t) => {
   const server = http.createServer();
   const realtime = new SocketIOServer(server);
+  let authenticationCalls = 0;
   const signaling = installNotesSignalingServer(server, {
     enabled: true,
     secret: SECRET,
-    authenticate: async (request) => (
-      request.headers.cookie === 'oms_session=valid'
+    authenticate: async (request) => {
+      authenticationCalls += 1;
+      return request.headers.cookie === 'oms_session=valid'
         ? { owner: 'owner@example.test', sessionId: 'session-one' }
-        : null
-    ),
+        : null;
+    },
   });
   const address = await listen(server);
   t.after(async () => {
@@ -354,8 +358,14 @@ test('the signaling server authenticates the socket and confines it to one signe
   });
   const url = `ws://127.0.0.1:${address.port}/notes-signal?token=${encodeURIComponent(capability.token)}`;
 
+  const callsBeforeCrossOrigin = authenticationCalls;
+  await assert.rejects(openSocket(url, 'oms_session=valid', 'https://evil.example'), /403/);
+  assert.equal(authenticationCalls, callsBeforeCrossOrigin, 'origin rejection must happen before cookie authentication');
   await assert.rejects(openSocket(url, 'oms_session=invalid'), /401/);
   await assert.rejects(openSocket(`${url}x`), /401/);
+
+  const exactOriginSocket = await openSocket(url, 'oms_session=valid', `http://127.0.0.1:${address.port}`);
+  exactOriginSocket.close();
 
   const first = await openSocket(url);
   const second = await openSocket(url);

@@ -1,19 +1,37 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Routes, Route } from 'react-router';
 import { MailLayout } from './MailLayout';
 import { MessageList } from './MessageList';
 import { ComposeModal } from './ComposeModal';
 import { useMail } from './hooks/useMail';
 import { useAppearance } from '../shared/hooks/useAppearance';
-import { defaultMailSettings } from '../settings/settingsApi';
+import { defaultMailSettings, getUserSettings, type MailUserSettings } from '../settings/settingsApi';
+import { fetchIdentities } from '../shared/api';
 import type { UserIdentities } from '../shared/types';
-
-const EMPTY_IDENTITIES: UserIdentities = { name: '', address: '', aliases: [] };
+import {
+  EMPTY_USER_IDENTITIES,
+  loadMailIdentitiesOrDefault,
+  loadMailSettingsOrDefault,
+} from './mail-runtime-settings';
 
 export function MailRoutes() {
   const { appearance } = useAppearance();
   const density = (appearance.density as 'compact' | 'cozy' | 'comfortable') || 'cozy';
-  const mail = useMail({ mailSettings: defaultMailSettings, isThreaded: false, userIdentities: EMPTY_IDENTITIES });
+  const [mailSettings, setMailSettings] = useState<MailUserSettings>(defaultMailSettings);
+  const [userIdentities, setUserIdentities] = useState<UserIdentities>(EMPTY_USER_IDENTITIES);
+  const mail = useMail({ mailSettings, isThreaded: false, userIdentities });
+  const { startCompose } = mail;
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadMailSettingsOrDefault(() => getUserSettings('mail')).then(settings => {
+      if (!cancelled) setMailSettings(settings);
+    });
+    void loadMailIdentitiesOrDefault(fetchIdentities).then(identities => {
+      if (!cancelled) setUserIdentities(identities);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Listen for cross-suite compose events + check for pending compose on mount
   useEffect(() => {
@@ -21,21 +39,19 @@ export function MailRoutes() {
     const pendingTo = sessionStorage.getItem('oms_compose_to');
     if (pendingTo) {
       sessionStorage.removeItem('oms_compose_to');
-      mail.setComposeTo(pendingTo);
-      mail.setIsComposing(true);
+      startCompose({ to: pendingTo });
     }
     // Live event listener for same-route compose triggers
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail?.to) {
         sessionStorage.removeItem('oms_compose_to');
-        mail.setComposeTo(detail.to);
-        mail.setIsComposing(true);
+        startCompose({ to: detail.to });
       }
     };
     window.addEventListener('oms:compose', handler);
     return () => window.removeEventListener('oms:compose', handler);
-  }, [mail]);
+  }, [startCompose]);
 
   return (
     <>

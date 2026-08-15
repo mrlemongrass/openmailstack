@@ -3,8 +3,6 @@ export type SettingsTab =
   | 'mail_identity'
   | 'mail_signatures'
   | 'mail_reading'
-  | 'mail_forwarding'
-  | 'mail_vacation'
   | 'mail_filters'
   | 'mail_spam'
   | 'calendar_defaults'
@@ -18,8 +16,6 @@ const SETTINGS_TABS: SettingsTab[] = [
   'mail_identity',
   'mail_signatures',
   'mail_reading',
-  'mail_forwarding',
-  'mail_vacation',
   'mail_filters',
   'mail_spam',
   'calendar_defaults',
@@ -31,7 +27,6 @@ const SETTINGS_TABS: SettingsTab[] = [
 
 export function normalizeSettingsTab(tab: string | null | undefined): SettingsTab {
   if (tab === 'general') return 'mail_signatures';
-  if (tab === 'forwarding') return 'mail_forwarding';
   if (tab === 'filters') return 'mail_filters';
   if (tab === 'spam') return 'mail_spam';
   if (tab === 'security') return 'account_password';

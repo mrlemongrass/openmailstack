@@ -16,6 +16,7 @@ import {
   wallDateToInstant,
   type CalendarTimeKind,
 } from './calendarTime';
+import { freeBusyStatusForUser } from './freeBusy';
 
 const VIDEO_PROVIDERS = [
   { name: 'Google Meet', prefix: 'https://meet.google.com/' },
@@ -59,6 +60,10 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const guestBlurRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [allGuestContacts, setAllGuestContacts] = useState<{ name: string; email: string }[]>([]);
+  const eventStart = cal.newEvent.start;
+  const eventEnd = cal.newEvent.end;
+  const setNewEvent = cal.setNewEvent;
+  const lookupFreeBusy = cal.lookupFreeBusy;
 
   useEffect(() => {
     api.fetchContacts(500, 0).then((data) => {
@@ -124,14 +129,13 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
   // Sync guests to newEvent and trigger free/busy lookup
   useEffect(() => {
-    const evt = cal.newEvent;
     if (guests.length > 0) {
-      cal.setNewEvent((prev) => ({ ...prev, guests }));
+      setNewEvent((prev) => ({ ...prev, guests }));
     }
-    if (guests.length > 0 && evt.start) {
-      cal.lookupFreeBusy(guests, evt.start as Date, evt.end as Date);
+    if (guests.length > 0 && eventStart && eventEnd) {
+      lookupFreeBusy(guests, eventStart as Date, eventEnd as Date);
     }
-  }, [guests, cal]);
+  }, [guests, eventStart, eventEnd, lookupFreeBusy, setNewEvent]);
 
   // Initialize guests when modal opens
   useEffect(() => {
@@ -201,6 +205,15 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
     if (email && email.includes('@') && !guests.includes(email)) {
       setGuests([...guests, email]);
       setGuestInput('');
+    }
+  };
+
+  const handleRemoveGuest = (guest: string) => {
+    const nextGuests = guests.filter((candidate) => candidate !== guest);
+    setGuests(nextGuests);
+    setNewEvent((previous) => ({ ...previous, guests: nextGuests }));
+    if (eventStart && eventEnd) {
+      lookupFreeBusy(nextGuests, eventStart as Date, eventEnd as Date);
     }
   };
 
@@ -356,20 +369,33 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                 </div>
               )}
             </div>
-            {guests.map((g) => (
-              <div key={g} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '4px 8px', marginTop: 4, borderRadius: 4, background: 'rgba(255,255,255,0.03)', fontSize: '0.8rem' }}>
-                <span>{g}</span>
-                {/* #2 Free/busy indicator */}
-                {cal.freeBusyLoading ? <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>checking...</span> :
-                  cal.freeBusy[g] && cal.freeBusy[g].some((b) => new Date(b.start) <= cal.draftWallDateToInstant(evt.end as Date) && new Date(b.end) >= cal.draftWallDateToInstant(evt.start as Date)) ?
-                    <span style={{ color: '#f59e0b', fontSize: '0.7rem' }}>⚠ Busy</span> :
-                    <span style={{ color: '#10b981', fontSize: '0.7rem' }}>Free</span>}
-                <button type="button" className="btn btn-ghost" aria-label={`Remove guest ${g}`}
-                  onClick={() => setGuests(guests.filter((x) => x !== g))}
-                  style={{ padding: '1px 4px' }}><Minus size={12} /></button>
-              </div>
-            ))}
+            {guests.map((g) => {
+              const availability = evt.start && evt.end
+                ? freeBusyStatusForUser(
+                  { busy: cal.freeBusy, unavailable: cal.freeBusyUnavailable },
+                  g,
+                  cal.draftWallDateToInstant(evt.start as Date),
+                  cal.draftWallDateToInstant(evt.end as Date),
+                )
+                : 'unavailable';
+              return (
+                <div key={g} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '4px 8px', marginTop: 4, borderRadius: 4, background: 'rgba(255,255,255,0.03)', fontSize: '0.8rem' }}>
+                  <span>{g}</span>
+                  {/* #2 Free/busy indicator */}
+                  {cal.freeBusyLoading
+                    ? <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>checking...</span>
+                    : availability === 'unavailable'
+                      ? <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>Availability unavailable</span>
+                      : availability === 'busy'
+                        ? <span style={{ color: '#f59e0b', fontSize: '0.7rem' }}>⚠ Busy</span>
+                        : <span style={{ color: '#10b981', fontSize: '0.7rem' }}>Free</span>}
+                  <button type="button" className="btn btn-ghost" aria-label={`Remove guest ${g}`}
+                    onClick={() => handleRemoveGuest(g)}
+                    style={{ padding: '1px 4px' }}><Minus size={12} /></button>
+                </div>
+              );
+            })}
           </div>
 
           {/* #10 Event attachments */}

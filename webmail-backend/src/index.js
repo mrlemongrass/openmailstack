@@ -45,7 +45,6 @@ const parser_1 = require("./wbxml/parser");
 const writer_1 = require("./wbxml/writer");
 const imap_1 = require("./imap");
 const api_1 = require("./api");
-const cors_1 = __importDefault(require("cors"));
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const config_1 = require("./config");
 const security_1 = require("./security");
@@ -76,10 +75,12 @@ const auth_1 = require("./auth");
 const account_security_1 = require("./account-security");
 const mail_autoconfig_1 = require("./mail-autoconfig");
 const notes_collaboration_1 = require("./notes-collaboration");
+const browser_origin_1 = require("./browser-origin");
+const private_uploads_1 = require("./private-uploads");
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
 exports.io = new socket_io_1.Server(server, {
-    cors: { origin: true, credentials: true }
+    allowRequest: browser_origin_1.allowSameOriginSocketRequest,
 });
 (0, notes_collaboration_1.installNotesSignalingServer)(server, {
     enabled: config_1.serverConfig.notesCollaborationEnabled,
@@ -107,6 +108,7 @@ exports.io.on('connection', (socket) => {
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(security_1.securityHeaders);
+app.use('/api', browser_origin_1.requireSameOriginBrowserRequest);
 app.use('/Microsoft-Server-ActiveSync', body_parser_1.default.raw({
     type: () => true,
     limit: `${eas_protocol_1.ACTIVE_SYNC_MAX_REQUEST_BYTES}b`,
@@ -122,11 +124,10 @@ app.use(body_parser_1.default.raw({
     limit: `${config_1.serverConfig.uploadLimitBytes}b`
 }));
 const path = __importStar(require("path"));
-app.use('/uploads', (req, res, next) => {
-    (0, auth_1.requireSession)(req, res, () => {
-        next();
-    });
-}, express_1.default.static(path.join(__dirname, '..', 'uploads')));
+app.use('/uploads', (0, private_uploads_1.createPrivateUploadsRouter)({
+    rootDirectory: path.join(__dirname, '..', 'uploads'),
+    authenticate: auth_1.requireSession,
+}));
 const caldav_1 = __importDefault(require("./caldav"));
 const carddav_1 = __importDefault(require("./carddav"));
 const apps_api_1 = require("./apps-api");
@@ -204,9 +205,9 @@ function isContactsCollection(collectionId) {
     return collectionId === CONTACTS_COLLECTION_ID;
 }
 app.use('/api/auth/login', (0, security_1.rateLimit)(15 * 60 * 1000, 20));
-app.use('/api', (0, cors_1.default)({ credentials: true, origin: true }), api_1.apiRouter);
-app.use('/api/apps', (0, cors_1.default)({ credentials: true, origin: true }), apps_api_1.appsApiRouter);
-app.use('/api', (0, cors_1.default)({ credentials: true, origin: true }), router_1.schedulerRouter);
+app.use('/api', api_1.apiRouter);
+app.use('/api/apps', apps_api_1.appsApiRouter);
+app.use('/api', router_1.schedulerRouter);
 app.use('/caldav', caldav_1.default);
 app.all('/', (req, res, next) => {
     if (req.method === 'PROPFIND') {

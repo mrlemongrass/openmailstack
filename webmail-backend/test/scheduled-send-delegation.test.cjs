@@ -1,112 +1,347 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const queries = [];
-const dbPath = require.resolve('../src/db.js');
-require.cache[dbPath] = {
-  id: dbPath,
-  filename: dbPath,
-  loaded: true,
-  exports: {
-    pool: {
-      async query(sql) {
-        const text = String(sql).replace(/\s+/g, ' ').trim();
-        queries.push(text);
-        if (text.startsWith('SELECT * FROM scheduled_emails')) {
-          return [[{
-            id: 42,
-            username: 'user@example.test',
-            mail_options: JSON.stringify({
-              from: 'user@example.test',
-              to: 'recipient@example.test',
-              subject: 'Delegated send',
-              text: 'Hello',
-            }),
-            draft_uid: null,
-          }], []];
-        }
-        return [[], []];
-      },
-    },
-  },
-  children: [],
-  paths: [],
-};
+process.env.OMS_DB_PASSWORD ||= 'scheduled-send-test';
 
-let sent = false;
-const nodemailerPath = require.resolve('nodemailer');
-require.cache[nodemailerPath] = {
-  id: nodemailerPath,
-  filename: nodemailerPath,
-  loaded: true,
-  exports: {
+const baseRow = (overrides = {}) => ({
+  id: 42,
+  username: 'user@example.test',
+  send_at: new Date('2026-08-15T12:00:00.000Z'),
+  mail_options: JSON.stringify({ from: 'user@example.test', to: 'recipient@example.test', text: 'Hello' }),
+  draft_uid: null,
+  payload_version: 2,
+  status: 'claimed',
+  available_at: new Date('2026-08-15T12:00:00.000Z'),
+  attempts: 1,
+  lease_owner: 'worker-1',
+  sender_address: 'user@example.test',
+  message_id: '<stable@example.test>',
+  envelope_json: JSON.stringify({ from: 'user@example.test', to: ['recipient@example.test'] }),
+  raw_message: Buffer.from('Message-ID: <stable@example.test>\r\n\r\nHello'),
+  smtp_accepted_at: null,
+  ...overrides,
+});
+
+test('an SMTP-accepted scheduled message reconciles only its Sent copy by Message-ID', async () => {
+  const events = [];
+  const store = {
+    async complete(_row, workerId) { events.push(['complete', workerId]); },
+    async sentCopyPending() { events.push(['pending']); },
+  };
+  const searches = [];
+  const imap = {
+    client: {
+      async mailboxOpen(folder) { events.push(['open', folder]); },
+      async search(query) { searches.push(query); return [991]; },
+    },
+    async getFolders() { return [{ path: 'Sent' }]; },
+    async appendMessage() { throw new Error('existing Message-ID must not be appended twice'); },
+    async logout() { events.push(['logout']); },
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(
+    baseRow({ status: 'sent_copy_pending', smtp_accepted_at: new Date('2026-08-15T12:00:01.000Z') }),
+    'worker-1',
+    store,
+    {
+      async getCredential() { return ''; },
+      createTransport() { throw new Error('SMTP must never run after acceptance'); },
+      async createImap() { return imap; },
+      async authorizeSender() { throw new Error('sender reauthorization must not block an accepted Sent copy'); },
+    },
+  );
+
+  assert.equal(outcome, 'completed');
+  assert.deepEqual(searches, [{ header: { 'message-id': '<stable@example.test>' } }]);
+  assert.deepEqual(events, [['open', 'Sent'], ['complete', 'worker-1'], ['logout']]);
+});
+
+test('a DATA-phase scheduled SMTP failure is retained as delivery uncertain', async () => {
+  const events = [];
+  const store = {
+    async beginSmtp() { events.push('begin'); },
+    async uncertain(_row, _workerId, code) { events.push(['uncertain', code]); },
+    async retry() { events.push('retry'); },
+    async failed() { events.push('failed'); },
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(baseRow(), 'worker-1', store, {
+    async getCredential() { return ''; },
     createTransport() {
       return {
         async sendMail() {
-          sent = true;
+          const error = new Error('connection ended during DATA');
+          error.code = 'ETIMEDOUT';
+          error.command = 'DATA';
+          throw error;
         },
+        close() {},
       };
     },
-  },
-  children: [],
-  paths: [],
-};
+    async createImap() { throw new Error('IMAP must not run'); },
+    async authorizeSender() { return { address: 'user@example.test', name: 'User' }; },
+  });
 
-const configPath = require.resolve('../src/config.js');
-require.cache[configPath] = {
-  id: configPath,
-  filename: configPath,
-  loaded: true,
-  exports: {
-    delegatedAuthEnabled: true,
-    smtpTransportOptions: auth => ({ auth }),
-  },
-  children: [],
-  paths: [],
-};
+  assert.equal(outcome, 'delivery_uncertain');
+  assert.deepEqual(events, ['begin', ['uncertain', 'ETIMEDOUT:DATA']]);
+});
 
-const authPath = require.resolve('../src/auth.js');
-require.cache[authPath] = {
-  id: authPath,
-  filename: authPath,
-  loaded: true,
-  exports: {
-    decryptPassword() {
-      throw new Error('delegated sending must not decrypt a mailbox password');
+test('partial scheduled SMTP acceptance becomes terminal without retrying accepted recipients', async () => {
+  const events = [];
+  let smtpCalls = 0;
+  const row = baseRow({
+    envelope_json: JSON.stringify({
+      from: 'user@example.test',
+      to: ['recipient@example.test', 'rejected@example.test'],
+    }),
+  });
+  const store = {
+    async beginSmtp() { events.push(['begin']); },
+    async accepted(current) {
+      events.push(['accepted', JSON.parse(current.rejected_recipients_json)]);
     },
-  },
-  children: [],
-  paths: [],
-};
-
-const imapPath = require.resolve('../src/imap.js');
-require.cache[imapPath] = {
-  id: imapPath,
-  filename: imapPath,
-  loaded: true,
-  exports: {
-    ImapService: class {
-      constructor(user, pass) {
-        assert.equal(user, 'user@example.test');
-        assert.equal(pass, '');
-        this.client = {};
-      }
-      async connect() {}
-      async getFolders() { return [{ path: 'Sent' }]; }
-      async appendMessage() {}
-      async logout() {}
+    async renewSentCopyLease() { events.push(['renew']); },
+    async complete() { events.push(['complete']); },
+    async retry() { events.push(['retry']); },
+  };
+  const imap = {
+    client: {
+      async mailboxOpen() {},
+      async search() { return []; },
     },
-  },
-  children: [],
-  paths: [],
-};
+    async getFolders() { return [{ path: 'Sent' }]; },
+    async appendMessage() {},
+    async logout() {},
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(row, 'worker-partial', store, {
+    async getCredential() { return ''; },
+    createTransport() {
+      return {
+        async sendMail() {
+          smtpCalls += 1;
+          return {
+            accepted: ['recipient@example.test'],
+            rejected: ['rejected@example.test'],
+          };
+        },
+        close() {},
+      };
+    },
+    async createImap() { return imap; },
+    async authorizeSender() { return { address: 'user@example.test', name: 'User' }; },
+  });
 
-const { runScheduledSender } = require('../src/scheduled-send.js');
+  assert.equal(outcome, 'partial_delivery');
+  assert.equal(smtpCalls, 1);
+  assert.deepEqual(events, [
+    ['begin'],
+    ['accepted', ['rejected@example.test']],
+    ['renew'],
+    ['complete'],
+  ]);
+});
 
-test('scheduled mail uses delegated auth without requiring an active session password', async () => {
-  await runScheduledSender();
+test('a legacy scheduled row is authorized from its stored From and materialized once before SMTP', async () => {
+  const smtpPayloads = [];
+  const appended = [];
+  let authorizedFrom = '';
+  const row = baseRow({
+    payload_version: 1,
+    sender_address: 'user@example.test',
+    message_id: null,
+    envelope_json: null,
+    raw_message: null,
+    mail_options: JSON.stringify({
+      from: 'User Name <alias@example.test>',
+      to: 'recipient@example.test',
+      subject: 'Legacy payload',
+      body: 'Legacy body',
+      inReplyTo: '<parent@example.test>',
+      references: ['<root@example.test>'],
+    }),
+  });
+  const events = [];
+  const store = {
+    async materialize(materialized) {
+      events.push('materialize');
+      assert.ok(Buffer.isBuffer(materialized.raw_message));
+      assert.equal(materialized.sender_address, 'alias@example.test');
+    },
+    async beginSmtp() { events.push('begin'); },
+    async accepted() { events.push('accepted'); },
+    async complete() { events.push('complete'); },
+  };
+  const imap = {
+    client: {
+      async mailboxOpen() {},
+      async search() { return []; },
+    },
+    async getFolders() { return [{ path: 'Sent' }]; },
+    async appendMessage(_folder, raw) { appended.push(Buffer.from(raw)); },
+    async logout() {},
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(row, 'worker-1', store, {
+    async getCredential() { return ''; },
+    createTransport() {
+      return {
+        async sendMail(payload) { smtpPayloads.push(payload); },
+        close() {},
+      };
+    },
+    async createImap() { return imap; },
+    async authorizeSender(_username, sender) {
+      authorizedFrom = sender;
+      return { address: 'alias@example.test', name: 'User Name' };
+    },
+  });
 
-  assert.equal(sent, true);
-  assert.equal(queries.some(text => text.includes('FROM webmail_sessions')), false);
-  assert.equal(queries.some(text => text.startsWith('DELETE FROM scheduled_emails')), true);
+  assert.equal(outcome, 'completed');
+  assert.equal(authorizedFrom, 'alias@example.test');
+  assert.deepEqual(events, ['materialize', 'begin', 'accepted', 'complete']);
+  assert.equal(smtpPayloads.length, 1);
+  assert.equal(appended.length, 1);
+  assert.deepEqual(smtpPayloads[0].raw, appended[0]);
+});
+
+test('Sent-copy IMAP work times out below the lease and closes the stale client before retry', { timeout: 500 }, async () => {
+  const events = [];
+  const store = {
+    async sentCopyPending(_row, _workerId, code) { events.push(['pending', code]); },
+  };
+  const imap = {
+    client: {
+      async mailboxOpen() {},
+      async search() { return new Promise(() => {}); },
+      close() { events.push(['close']); },
+    },
+    async getFolders() { return [{ path: 'Sent' }]; },
+    async appendMessage() { events.push(['append']); },
+    async logout() {},
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(
+    baseRow({ status: 'sent_copy_pending', smtp_accepted_at: new Date() }),
+    'worker-timeout',
+    store,
+    {
+      operationTimeoutMs: 20,
+      async getCredential() { return ''; },
+      createTransport() { throw new Error('SMTP must not run'); },
+      async createImap() { return imap; },
+      async authorizeSender() { throw new Error('authorization must not rerun'); },
+    },
+  );
+
+  assert.equal(outcome, 'sent_copy_pending');
+  assert.deepEqual(events, [['close'], ['pending', 'ETIMEDOUT']]);
+});
+
+test('Sent-copy credential lookup is bounded and cannot outlive its lease', { timeout: 500 }, async () => {
+  const events = [];
+  const store = {
+    async sentCopyPending(_row, _workerId, code) { events.push(['pending', code]); },
+    async renewSentCopyLease() { events.push(['renew']); },
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(
+    baseRow({ status: 'sent_copy_pending', smtp_accepted_at: new Date() }),
+    'worker-credential-timeout',
+    store,
+    {
+      operationTimeoutMs: 20,
+      async getCredential() { return new Promise(() => {}); },
+      createTransport() { throw new Error('SMTP must not run'); },
+      async createImap() { throw new Error('IMAP must not run'); },
+      async authorizeSender() { throw new Error('authorization must not rerun'); },
+    },
+  );
+
+  assert.equal(outcome, 'sent_copy_pending');
+  assert.deepEqual(events, [['pending', 'ETIMEDOUT']]);
+});
+
+test('Sent-copy ownership is revalidated and its lease renewed immediately before IMAP', async () => {
+  const events = [];
+  const store = {
+    async renewSentCopyLease(_row, workerId) { events.push(['renew', workerId]); },
+    async complete() { events.push(['complete']); },
+  };
+  const imap = {
+    client: {
+      async mailboxOpen() { events.push(['open']); },
+      async search() { return [81]; },
+    },
+    async getFolders() { return [{ path: 'Sent' }]; },
+    async appendMessage() { throw new Error('existing Message-ID must not be appended'); },
+    async logout() {},
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(
+    baseRow({ status: 'sent_copy_pending', smtp_accepted_at: new Date() }),
+    'worker-renew',
+    store,
+    {
+      async getCredential() { events.push(['credential']); return ''; },
+      createTransport() { throw new Error('SMTP must not run'); },
+      async createImap() { events.push(['imap']); return imap; },
+      async authorizeSender() { throw new Error('authorization must not rerun'); },
+    },
+  );
+
+  assert.equal(outcome, 'completed');
+  assert.deepEqual(events, [
+    ['credential'],
+    ['renew', 'worker-renew'],
+    ['imap'],
+    ['open'],
+    ['complete'],
+  ]);
+});
+
+test('transient sender-authorization storage errors retry without SMTP', async () => {
+  const events = [];
+  const store = {
+    async retry(_row, _workerId, code) { events.push(['retry', code]); },
+    async failed() { events.push(['failed']); },
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(baseRow(), 'worker-auth-retry', store, {
+    async getCredential() { throw new Error('credentials must not load'); },
+    createTransport() { throw new Error('SMTP must not run'); },
+    async createImap() { throw new Error('IMAP must not run'); },
+    async authorizeSender() {
+      const error = new Error('database lock wait timed out');
+      error.code = 'ER_LOCK_WAIT_TIMEOUT';
+      throw error;
+    },
+  });
+
+  assert.equal(outcome, 'retry_wait');
+  assert.deepEqual(events, [['retry', 'ER_LOCK_WAIT_TIMEOUT']]);
+});
+
+test('a malformed stored envelope fails before the SMTP-inflight boundary', async () => {
+  const events = [];
+  const store = {
+    async beginSmtp() { events.push('begin'); },
+    async failed(_row, _workerId, code) { events.push(['failed', code]); },
+    async uncertain() { events.push('uncertain'); },
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(
+    baseRow({ envelope_json: '{"from":"user@example.test","to":[]}' }),
+    'worker-invalid-envelope',
+    store,
+    {
+      async getCredential() { return ''; },
+      createTransport() { throw new Error('transport must not be constructed'); },
+      async createImap() { throw new Error('IMAP must not run'); },
+      async authorizeSender() { return { address: 'user@example.test', name: 'User' }; },
+    },
+  );
+
+  assert.equal(outcome, 'failed');
+  assert.deepEqual(events, [['failed', 'invalid_payload']]);
 });

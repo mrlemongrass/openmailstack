@@ -1,5 +1,5 @@
 import type {
-  MessageListResponse, MessageResponse, MessageActionResponse,
+  MessageListResponse, MessageResponse, MessageActionResponse, UndoActionResponse,
   SendMessageResponse, SaveDraftResponse,
   SearchResponse, SearchIndexStatusResponse, SearchIndexRefreshResponse,
   SearchWorkerStatusResponse, SavedSearch,
@@ -49,13 +49,16 @@ export async function fetchMessage(folder: string, uid: number): Promise<Message
 
 export async function sendMessage(formData: FormData): Promise<SendMessageResponse> {
   const res = await fetch('/api/messages/send', { method: 'POST', body: formData });
-  if (!res.ok) throw new Error('Failed to send message');
-  return res.json();
+  const data: SendMessageResponse = await res.json().catch(() => ({ success: false }));
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to send message');
+  return data;
 }
 
 export async function saveDraft(formData: FormData): Promise<SaveDraftResponse> {
   const res = await fetch('/api/messages/draft', { method: 'POST', body: formData });
-  return res.json();
+  const data: SaveDraftResponse = await res.json();
+  if (!res.ok || data.success === false) throw new Error(data.error || 'Failed to save draft');
+  return data;
 }
 
 export async function messageAction(action: string, folder: string, uids: number[], targetFolder?: string): Promise<MessageActionResponse> {
@@ -68,12 +71,30 @@ export async function messageAction(action: string, folder: string, uids: number
   return res.json();
 }
 
-export async function undoAction(undo: { uids: number[]; targetFolder?: string; sourceFolder?: string }): Promise<void> {
-  await fetch('/api/messages/undo', {
+export async function undoAction(undo: {
+  scheduledId?: number;
+  uids?: number[];
+  targetFolder?: string;
+  sourceFolder?: string;
+}): Promise<UndoActionResponse> {
+  const res = await fetch('/api/messages/undo', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(undo),
   });
+  const data = await res.json().catch(() => ({ success: false })) as UndoActionResponse;
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Undo failed');
+  }
+  return data;
+}
+
+export async function removeScheduledMessage(scheduledId: number): Promise<void> {
+  const res = await fetch(`/api/messages/scheduled/${scheduledId}`, { method: 'DELETE' });
+  const data = await res.json().catch(() => ({})) as { success?: boolean; error?: string };
+  if (!res.ok || data.success === false) {
+    throw new Error(data.error || 'The scheduled message could not be removed');
+  }
 }
 
 export async function searchMessages({

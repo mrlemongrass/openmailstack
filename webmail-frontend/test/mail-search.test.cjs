@@ -325,11 +325,12 @@ test('move picker renders destinations and completes a selected-folder workflow'
   assert.equal(closed, true);
 });
 
-test('message row checkbox selects without bubbling into message navigation', () => {
+test('message row child controls do not bubble pointer or keyboard activation into navigation', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../src/mail/MessageRow.tsx'), 'utf8');
 
   assert.match(source, /<input type="checkbox"[\s\S]*aria-label=\{`Select \$\{message\.subject \|\| 'message'\}`\}/);
   assert.match(source, /<input type="checkbox"[\s\S]*onClick=\{\(e\) => e\.stopPropagation\(\)\}[\s\S]*onChange=/);
+  assert.match(source, /onKeyDown=\{\(e\) => \{\s*if \(e\.target !== e\.currentTarget\) return;/);
 });
 
 test('mail search identities and route lookups remain folder-qualified when UIDs collide', () => {
@@ -356,6 +357,7 @@ test('mail search identities and route lookups remain folder-qualified when UIDs
       { path: 'INBOX', unseen: 0 },
       { path: 'Archive', unseen: 0 },
       { path: 'Projects', unseen: 0 },
+      { path: 'SCHEDULED', unseen: 0 },
     ], 'Archive').map((folder) => folder.path),
     ['INBOX', 'Projects'],
   );

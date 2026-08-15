@@ -64,6 +64,8 @@ const rspamd_health_1 = require("./rspamd-health");
 const password_verification_1 = require("./password-verification");
 const security_1 = require("./security");
 const version_info_1 = require("./version-info");
+const outbound_mail_1 = require("./outbound-mail");
+const scheduled_send_1 = require("./scheduled-send");
 const account_security_1 = require("./account-security");
 exports.apiRouter = (0, express_1.Router)();
 // Auth failure log for fail2ban integration
@@ -444,6 +446,47 @@ const withTransaction = async (callback) => {
     }
 };
 const getAddressText = (value) => value?.text || '';
+const scheduledAddressText = (value) => {
+    if (typeof value === 'string')
+        return value;
+    if (Array.isArray(value)) {
+        return value.map((entry) => {
+            if (typeof entry === 'string')
+                return entry;
+            const address = String(entry?.address || '').trim();
+            const name = String(entry?.name || '').trim();
+            return address && name ? `${name} <${address}>` : address;
+        }).filter(Boolean).join(', ');
+    }
+    if (value && typeof value.text === 'string')
+        return value.text;
+    if (value && typeof value.address === 'string') {
+        const address = value.address.trim();
+        const name = typeof value.name === 'string' ? value.name.trim() : '';
+        return address && name ? `${name} <${address}>` : address;
+    }
+    return '';
+};
+const scheduledRejectedRecipients = (value) => {
+    try {
+        const parsed = JSON.parse(String(value || '[]'));
+        if (!Array.isArray(parsed))
+            return [];
+        const seen = new Set();
+        const recipients = [];
+        for (const item of parsed.slice(0, 100)) {
+            const address = (0, outbound_mail_1.normalizeMailboxAddress)(item);
+            if (!address || seen.has(address))
+                continue;
+            seen.add(address);
+            recipients.push(address);
+        }
+        return recipients;
+    }
+    catch {
+        return [];
+    }
+};
 const getAttachmentNames = (parsed) => {
     if (!Array.isArray(parsed.attachments))
         return '';
@@ -1425,7 +1468,13 @@ exports.apiRouter.get('/folders', requireAuth, async (req, res) => {
     const pass = req.user.password;
     try {
         const imap = await getPooledImap(user, pass);
-        const folders = await imap.getFolders();
+        const folders = [...await imap.getFolders()];
+        const [scheduledRows] = await db_1.pool.query(`SELECT COUNT(*) AS total
+             FROM scheduled_emails
+             WHERE username = ? AND status NOT IN ('completed', 'cancelled')`, [user]);
+        if (Number(scheduledRows?.[0]?.total || 0) > 0 && !folders.some((folder) => folder.path === 'SCHEDULED')) {
+            folders.push({ path: 'SCHEDULED', delimiter: '/', unseen: 0 });
+        }
         res.json({ success: true, folders });
     }
     catch (err) {
@@ -1485,7 +1534,11 @@ exports.apiRouter.get('/folders/*folder/messages', requireAuth, async (req, res)
     const fetchOlderThan = Number.isFinite(olderThan) && olderThan > 1 ? olderThan : undefined;
     if (folder === 'SCHEDULED') {
         try {
-            const [rows] = await db_1.pool.query('SELECT id, send_at, mail_options FROM scheduled_emails WHERE username = ? ORDER BY send_at ASC', [user]);
+            const [rows] = await db_1.pool.query(`SELECT id, send_at, mail_options, sender_address, status, last_error_code,
+                        rejected_recipients_json
+                 FROM scheduled_emails
+                 WHERE username = ? AND status NOT IN ('completed', 'cancelled')
+                 ORDER BY send_at ASC`, [user]);
             const messages = rows.map((r) => {
                 let opts = {};
                 try {
@@ -1496,12 +1549,17 @@ exports.apiRouter.get('/folders/*folder/messages', requireAuth, async (req, res)
                     uid: r.id + 100000000, // fake high UID to avoid collisions
                     id: r.id,
                     subject: opts.subject || '(No Subject)',
-                    from: [{ address: opts.from || user, name: '' }],
-                    to: opts.to ? opts.to.split(',').map((t) => ({ address: t, name: '' })) : [],
+                    from: scheduledAddressText(r.sender_address || opts.from || user),
+                    to: scheduledAddressText(opts.to),
+                    cc: scheduledAddressText(opts.cc),
+                    bcc: scheduledAddressText(opts.bcc),
                     date: r.send_at,
                     flags: [],
                     unseen: false,
-                    is_scheduled: true
+                    is_scheduled: true,
+                    delivery_state: r.status,
+                    delivery_error: r.last_error_code || undefined,
+                    rejectedRecipients: scheduledRejectedRecipients(r.rejected_recipients_json),
                 };
             });
             return res.json({ success: true, messages, moreAvailable: false });
@@ -2007,105 +2065,203 @@ exports.apiRouter.get('/messages/search', requireAuth, async (req, res) => {
 });
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config_1.serverConfig.uploadLimitBytes } });
+const MAX_SCHEDULE_DELAY_SECONDS = 5 * 366 * 24 * 60 * 60;
+const MAX_IMAP_UID = 4_294_967_295;
+const strictInteger = (value, minimum, maximum) => {
+    const text = String(value ?? '').trim();
+    if (!/^\d+$/.test(text))
+        return null;
+    const parsed = Number(text);
+    return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
+};
+const optionalDraftUid = (value) => {
+    if (value === undefined || value === null || String(value).trim() === '')
+        return null;
+    const uid = strictInteger(value, 1, MAX_IMAP_UID);
+    if (uid === null)
+        throw new outbound_mail_1.OutboundMessageValidationError('Draft UID is invalid');
+    return uid;
+};
 exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'), async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
-    const { from, to, cc, bcc, replyTo, subject, html, text, draftUid } = req.body;
+    const { from, to, cc, bcc, replyTo, subject, html, text, body, draftUid, inReplyTo, references } = req.body;
     const files = req.files || [];
     try {
+        const parsedDraftUid = optionalDraftUid(draftUid);
         const nodemailer = require('nodemailer');
-        const transporter = nodemailer.createTransport((0, config_1.smtpTransportOptions)({ user, pass }));
-        // Ensure "from" is valid. If it's just an email, format it. If we can get a name, use it.
-        // If the user didn't specify from or it's empty, default to their username.
-        const senderEmail = from || user;
-        const [mailboxRows] = await db_1.pool.query('SELECT name FROM mailbox WHERE username = ?', [user]);
-        const senderName = mailboxRows.length > 0 && mailboxRows[0].name ? mailboxRows[0].name : '';
-        const fromHeader = senderName ? `"${senderName}" <${senderEmail}>` : senderEmail;
-        const mailOptions = {
-            from: fromHeader,
+        const sender = await (0, outbound_mail_1.authorizeOutboundSender)(db_1.pool, user, from);
+        const compiled = await (0, outbound_mail_1.compileOutboundMessage)({
+            sender,
             to,
             cc,
             bcc,
             replyTo,
             subject,
             text,
+            body,
             html,
+            inReplyTo,
+            references,
             attachments: files.map((f) => ({
                 filename: f.originalname,
-                content: f.buffer
-            }))
-        };
-        const delaySeconds = parseInt(req.body.delaySeconds || '0', 10);
+                content: f.buffer,
+                contentType: f.mimetype,
+            })),
+        });
+        const rawDelaySeconds = req.body.delaySeconds;
+        const delayText = rawDelaySeconds == null ? '0' : String(rawDelaySeconds).trim();
+        if (!/^\d+$/.test(delayText)) {
+            throw new outbound_mail_1.OutboundMessageValidationError('Scheduled delivery delay is invalid');
+        }
+        const delaySeconds = Number(delayText);
+        if (!Number.isSafeInteger(delaySeconds) || delaySeconds > MAX_SCHEDULE_DELAY_SECONDS) {
+            throw new outbound_mail_1.OutboundMessageValidationError('Scheduled delivery delay is invalid');
+        }
         if (delaySeconds > 0) {
-            const scheduledOptions = {
-                ...mailOptions,
-                attachments: files.map((f) => ({
-                    filename: f.originalname,
-                    content: f.buffer.toString('base64'),
-                    encoding: 'base64'
-                }))
-            };
             const sendAt = new Date(Date.now() + delaySeconds * 1000);
-            const { ensureScheduledEmailsSchema } = require('./scheduled-send');
-            await ensureScheduledEmailsSchema();
-            const [insertRes] = await db_1.pool.query('INSERT INTO scheduled_emails (username, send_at, mail_options, draft_uid) VALUES (?, ?, ?, ?)', [user, sendAt, JSON.stringify(scheduledOptions), draftUid ? parseInt(draftUid, 10) : null]);
-            return res.json({ success: true, scheduledId: insertRes.insertId, sendAt, message: 'Message scheduled' });
-        }
-        const info = await transporter.sendMail(mailOptions);
-        const contactsSettings = await (0, user_settings_1.getUserSettings)(user, 'contacts');
-        if (contactsSettings.autoCreateFromSent !== false) {
-            const allRecipients = [to, cc, bcc].filter(Boolean).join(',');
-            if (allRecipients) {
-                const emails = allRecipients.split(',').map((e) => e.trim());
-                for (const email of emails) {
-                    if (email) {
-                        const match = email.match(/(.*)<(.+)>/);
-                        let contactName = '';
-                        let contactEmail = email;
-                        if (match) {
-                            contactName = match[1].replace(/"/g, '').trim();
-                            contactEmail = match[2].trim();
-                        }
-                        if (!contactName)
-                            contactName = contactEmail.split('@')[0];
-                        try {
-                            await db_1.pool.query('INSERT IGNORE INTO contacts (username, name, email) VALUES (?, ?, ?)', [user, contactName, contactEmail]);
-                        }
-                        catch (e) { }
-                    }
-                }
-            }
-        }
-        const imap = await getPooledImap(user, pass);
-        const folders = await imap.getFolders();
-        let sentFolder = folders.find((f) => f.path.toLowerCase().includes('sent'))?.path;
-        if (!sentFolder) {
-            try {
-                await imap.client.mailboxCreate('Sent');
-            }
-            catch (e) { }
-            sentFolder = 'Sent';
-        }
-        const MailComposer = require('nodemailer/lib/mail-composer');
-        const mail = new MailComposer(mailOptions);
-        const rawMessage = await mail.compile().build();
-        await imap.appendMessage(sentFolder, rawMessage, ['\\Seen']);
-        // Delete draft if one exists
-        if (draftUid) {
-            let draftsFolder = folders.find((f) => f.path.toLowerCase().includes('draft'))?.path;
-            if (draftsFolder) {
+            const scheduledId = await (0, scheduled_send_1.enqueueScheduledEmail)(db_1.pool, {
+                username: user,
+                sendAt,
+                senderAddress: sender.address,
+                messageId: compiled.messageId,
+                envelope: compiled.envelope,
+                raw: compiled.raw,
+                sentRaw: compiled.sentRaw,
+                metadata: compiled.metadata,
+                draftUid: parsedDraftUid,
+            });
+            let draftCleanupStatus;
+            if (parsedDraftUid) {
                 try {
-                    await imap.messageAction(draftsFolder, [parseInt(draftUid, 10)], 'delete');
+                    const imap = await getPooledImap(user, pass);
+                    const folders = await imap.getFolders();
+                    const draftsFolder = folders.find((folder) => folder.path.toLowerCase().includes('draft'))?.path;
+                    if (draftsFolder) {
+                        await imap.messageAction(draftsFolder, [parsedDraftUid], 'delete');
+                    }
+                    draftCleanupStatus = 'removed';
                 }
-                catch (e) {
-                    console.error('Failed to delete sent draft', e);
+                catch (draftCleanupError) {
+                    let schedulingAborted = false;
+                    try {
+                        schedulingAborted = await (0, scheduled_send_1.abortScheduledEmailBeforeDelivery)(db_1.pool, scheduledId, user);
+                    }
+                    catch (abortError) {
+                        console.error('Could not abort scheduling after Draft cleanup failed:', abortError);
+                    }
+                    if (schedulingAborted)
+                        throw draftCleanupError;
+                    draftCleanupStatus = 'failed';
+                }
+            }
+            return res.json({
+                success: true,
+                scheduledId,
+                sendAt,
+                draftCleanupStatus,
+                message: draftCleanupStatus === 'failed'
+                    ? 'Message scheduled, but its old Draft could not be removed'
+                    : 'Message scheduled',
+            });
+        }
+        const transporter = nodemailer.createTransport((0, config_1.smtpTransportOptions)({ user, pass }));
+        let smtpRecipientOutcome;
+        try {
+            const smtpInfo = await transporter.sendMail({ raw: compiled.raw, envelope: compiled.envelope });
+            smtpRecipientOutcome = (0, outbound_mail_1.classifySmtpRecipientOutcome)(smtpInfo, compiled.envelope.to);
+        }
+        finally {
+            try {
+                transporter.close?.();
+            }
+            catch { }
+        }
+        // SMTP acceptance is irreversible. Every remaining side effect is best-effort
+        // and must never turn an accepted delivery into an HTTP failure.
+        try {
+            const contactsSettings = await (0, user_settings_1.getUserSettings)(user, 'contacts');
+            if (contactsSettings.autoCreateFromSent !== false) {
+                for (const contactEmail of smtpRecipientOutcome.accepted) {
+                    const contactName = contactEmail.split('@')[0];
+                    try {
+                        await db_1.pool.query('INSERT IGNORE INTO contacts (username, name, email) VALUES (?, ?, ?)', [user, contactName, contactEmail]);
+                    }
+                    catch { }
                 }
             }
         }
-        res.json({ success: true });
+        catch (error) {
+            console.error('Failed to update contacts after accepted delivery:', error);
+        }
+        try {
+            const imap = await getPooledImap(user, pass);
+            const folders = await imap.getFolders();
+            let sentFolder = folders.find((folder) => folder.path.toLowerCase().includes('sent'))?.path;
+            if (!sentFolder) {
+                try {
+                    await imap.client.mailboxCreate('Sent');
+                }
+                catch { }
+                sentFolder = 'Sent';
+            }
+            await imap.appendMessage(sentFolder, compiled.sentRaw, ['\\Seen']);
+            if (parsedDraftUid) {
+                const draftsFolder = folders.find((folder) => folder.path.toLowerCase().includes('draft'))?.path;
+                if (draftsFolder) {
+                    try {
+                        await imap.messageAction(draftsFolder, [parsedDraftUid], 'delete');
+                    }
+                    catch { }
+                }
+            }
+            return res.json({
+                success: true,
+                deliveryStatus: smtpRecipientOutcome.partial ? 'partial' : 'accepted',
+                rejectedRecipients: smtpRecipientOutcome.rejected,
+                sentCopyStatus: 'saved',
+                messageId: compiled.messageId,
+            });
+        }
+        catch (sentCopyError) {
+            console.error('Failed to save accepted message in Sent:', sentCopyError);
+            let scheduledId;
+            let sentCopyStatus = 'pending';
+            try {
+                scheduledId = await (0, scheduled_send_1.retainAcceptedSentCopy)(db_1.pool, {
+                    username: user,
+                    sendAt: new Date(),
+                    senderAddress: sender.address,
+                    messageId: compiled.messageId,
+                    envelope: compiled.envelope,
+                    raw: compiled.raw,
+                    sentRaw: compiled.sentRaw,
+                    metadata: compiled.metadata,
+                    draftUid: parsedDraftUid,
+                });
+            }
+            catch (persistError) {
+                console.error('Failed to retain accepted message for Sent-copy retry:', persistError);
+                sentCopyStatus = 'unavailable';
+            }
+            return res.json({
+                success: true,
+                deliveryStatus: smtpRecipientOutcome.partial ? 'partial' : 'accepted',
+                rejectedRecipients: smtpRecipientOutcome.rejected,
+                sentCopyStatus,
+                scheduledId,
+                messageId: compiled.messageId,
+            });
+        }
     }
     catch (err) {
-        console.error('Failed to parse message:', err);
+        if (err instanceof outbound_mail_1.SenderAuthorizationError) {
+            return res.status(403).json({ success: false, error: err.message, code: err.code });
+        }
+        if (err instanceof outbound_mail_1.OutboundMessageValidationError) {
+            return res.status(400).json({ success: false, error: err.message, code: err.code });
+        }
+        console.error('Failed to send message:', err);
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -2115,14 +2271,107 @@ exports.apiRouter.post('/messages/undo', requireAuth, async (req, res) => {
     const { scheduledId, uids, targetFolder, sourceFolder } = req.body;
     // Handle scheduled send cancellation
     if (scheduledId) {
+        const cancellationWorkerId = `cancel-${process.pid}-${crypto_1.default.randomUUID()}`;
         try {
-            const [result] = await db_1.pool.query('DELETE FROM scheduled_emails WHERE id = ? AND username = ?', [scheduledId, user]);
-            if (result.affectedRows > 0) {
-                return res.json({ success: true, message: 'Message send undone' });
+            const id = Number(scheduledId);
+            if (!Number.isSafeInteger(id) || id < 1) {
+                return res.status(400).json({ success: false, error: 'scheduledId is invalid' });
             }
-            else {
-                return res.status(404).json({ success: false, error: 'Scheduled message not found or already sent' });
+            await (0, scheduled_send_1.ensureScheduledEmailsSchema)();
+            const claim = await (0, scheduled_send_1.claimScheduledCancellation)(db_1.pool, id, user, cancellationWorkerId);
+            if (claim.outcome === 'ready') {
+                try {
+                    const row = claim.row;
+                    const retainedRaw = row.sent_raw_message || row.raw_message;
+                    let raw = retainedRaw
+                        ? (Buffer.isBuffer(retainedRaw) ? retainedRaw : Buffer.from(retainedRaw))
+                        : null;
+                    if (!raw) {
+                        const legacy = JSON.parse(String(row.mail_options || '{}'));
+                        const sender = await (0, outbound_mail_1.authorizeOutboundSender)(db_1.pool, user, row.sender_address || legacy.from);
+                        const compiled = await (0, outbound_mail_1.compileOutboundMessage)({
+                            sender,
+                            to: legacy.to,
+                            cc: legacy.cc,
+                            bcc: legacy.bcc,
+                            replyTo: legacy.replyTo,
+                            subject: legacy.subject,
+                            text: legacy.text,
+                            body: legacy.body,
+                            html: legacy.html,
+                            inReplyTo: legacy.inReplyTo,
+                            references: legacy.references,
+                            attachments: Array.isArray(legacy.attachments)
+                                ? legacy.attachments.map((attachment) => ({
+                                    filename: String(attachment.filename || 'attachment'),
+                                    content: Buffer.from(String(attachment.content || ''), 'base64'),
+                                    contentType: attachment.contentType,
+                                }))
+                                : [],
+                            keepBcc: true,
+                        });
+                        raw = compiled.raw;
+                        row.message_id = compiled.messageId;
+                    }
+                    const imap = await getPooledImap(user, pass);
+                    const folders = await imap.getFolders();
+                    let draftsFolder = folders.find((folder) => folder.path.toLowerCase().includes('draft'))?.path;
+                    if (!draftsFolder) {
+                        try {
+                            await imap.client.mailboxCreate('Drafts');
+                        }
+                        catch { }
+                        draftsFolder = 'Drafts';
+                    }
+                    await imap.client.mailboxOpen(draftsFolder);
+                    const messageId = String(row.message_id || '');
+                    let matchingUids = messageId
+                        ? await imap.client.search({ header: { 'message-id': messageId } })
+                        : [];
+                    let restoredDraftUid = Math.max(0, ...(matchingUids || []).map((value) => Number(value) || 0));
+                    if (!restoredDraftUid) {
+                        const appendResult = await imap.client.append(draftsFolder, raw, ['\\Draft', '\\Seen']);
+                        restoredDraftUid = Number(appendResult?.uid || 0);
+                        if (!restoredDraftUid && messageId) {
+                            matchingUids = await imap.client.search({ header: { 'message-id': messageId } });
+                            restoredDraftUid = Math.max(0, ...(matchingUids || []).map((value) => Number(value) || 0));
+                        }
+                    }
+                    if (!Number.isSafeInteger(restoredDraftUid) || restoredDraftUid < 1) {
+                        throw new Error('The cancelled message was restored but its Draft UID could not be confirmed');
+                    }
+                    if (row.draft_uid && Number(row.draft_uid) !== restoredDraftUid) {
+                        try {
+                            await imap.messageAction(draftsFolder, [Number(row.draft_uid)], 'delete');
+                        }
+                        catch { }
+                    }
+                    await (0, scheduled_send_1.completeScheduledCancellation)(db_1.pool, id, user, cancellationWorkerId, restoredDraftUid);
+                    return res.json({
+                        success: true,
+                        message: 'Message send undone and restored to Drafts',
+                        draftUid: restoredDraftUid,
+                        draftFolder: draftsFolder,
+                    });
+                }
+                catch (restoreError) {
+                    try {
+                        await (0, scheduled_send_1.releaseScheduledCancellation)(db_1.pool, id, user, cancellationWorkerId, String(restoreError?.code || restoreError?.name || 'draft_restore_failed'));
+                    }
+                    catch (releaseError) {
+                        console.error('Failed to retain cancelled message payload:', releaseError);
+                    }
+                    throw restoreError;
+                }
             }
+            if (claim.outcome === 'conflict') {
+                return res.status(409).json({
+                    success: false,
+                    error: 'Scheduled message is already being delivered and can no longer be cancelled',
+                    code: 'SCHEDULED_SEND_IN_PROGRESS',
+                });
+            }
+            return res.status(404).json({ success: false, error: 'Scheduled message not found or already sent' });
         }
         catch (err) {
             console.error('Undo error:', err);
@@ -2152,36 +2401,61 @@ exports.apiRouter.post('/messages/undo', requireAuth, async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+exports.apiRouter.delete('/messages/scheduled/:id', requireAuth, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) {
+        return res.status(400).json({ success: false, error: 'Scheduled message id is invalid' });
+    }
+    try {
+        await (0, scheduled_send_1.ensureScheduledEmailsSchema)();
+        const outcome = await (0, scheduled_send_1.removeTerminalScheduledEmail)(db_1.pool, id, req.user.username);
+        if (outcome === 'removed') {
+            return res.json({ success: true, message: 'Scheduled message removed' });
+        }
+        if (outcome === 'conflict') {
+            return res.status(409).json({
+                success: false,
+                error: 'Only failed or delivery-uncertain messages can be removed',
+                code: 'SCHEDULED_MESSAGE_NOT_TERMINAL',
+            });
+        }
+        return res.status(404).json({ success: false, error: 'Scheduled message not found' });
+    }
+    catch (err) {
+        console.error('Scheduled message removal error:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
 exports.apiRouter.post('/messages/draft', requireAuth, upload.array('attachments'), async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
-    const { from, to, cc, bcc, replyTo, subject, html, text, draftUid } = req.body;
+    const { from, to, cc, bcc, replyTo, subject, html, text, body, draftUid, inReplyTo, references } = req.body;
     const files = req.files || [];
     try {
-        const nodemailer = require('nodemailer');
-        const senderEmail = from || user;
-        const [mailboxRows] = await db_1.pool.query('SELECT name FROM mailbox WHERE username = ?', [user]);
-        const senderName = mailboxRows.length > 0 && mailboxRows[0].name ? mailboxRows[0].name : '';
-        const fromHeader = senderName ? `"${senderName}" <${senderEmail}>` : senderEmail;
-        const mailOptions = {
-            from: fromHeader,
+        const parsedDraftUid = optionalDraftUid(draftUid);
+        const sender = await (0, outbound_mail_1.authorizeOutboundSender)(db_1.pool, user, from);
+        const draftId = String(req.body.draftId || crypto_1.default.randomUUID());
+        const compiled = await (0, outbound_mail_1.compileOutboundMessage)({
+            sender,
             to: to || '',
             cc: cc || '',
             bcc: bcc || '',
             replyTo: replyTo || '',
             subject: subject || 'No Subject',
-            text: text || '',
-            html: html || '',
-            headers: {},
+            text,
+            body,
+            html,
+            inReplyTo,
+            references,
+            headers: { 'X-Draft-Id': draftId },
             attachments: files.map((f) => ({
                 filename: f.originalname,
-                content: f.buffer
-            }))
-        };
-        const draftId = req.body.draftId;
-        if (draftId) {
-            mailOptions.headers['X-Draft-Id'] = draftId;
-        }
+                content: f.buffer,
+                contentType: f.mimetype,
+            })),
+            allowNoRecipients: true,
+            keepBcc: true,
+        });
         const imap = await getPooledImap(user, pass);
         const folders = await imap.getFolders();
         let draftsFolder = folders.find((f) => f.path.toLowerCase().includes('draft'))?.path;
@@ -2189,45 +2463,49 @@ exports.apiRouter.post('/messages/draft', requireAuth, upload.array('attachments
             try {
                 await imap.client.mailboxCreate('Drafts');
             }
-            catch (e) { }
+            catch { }
             draftsFolder = 'Drafts';
         }
-        const MailComposer = require('nodemailer/lib/mail-composer');
-        const mail = new MailComposer(mailOptions);
-        const rawMessage = await mail.compile().build();
-        const uidsToDelete = [];
-        // If there's a previous draftUid, add it to deletion list
-        if (draftUid) {
-            uidsToDelete.push(parseInt(draftUid, 10));
+        // Append-first preserves the previous good draft if the new write fails.
+        const appendRes = await imap.client.append(draftsFolder, compiled.raw, ['\\Draft', '\\Seen']);
+        const newUid = Number(appendRes?.uid);
+        const uidsToDelete = new Set();
+        const previousUid = parsedDraftUid;
+        if (Number.isInteger(newUid) && Number.isInteger(previousUid) && previousUid > 0 && previousUid < newUid) {
+            uidsToDelete.add(previousUid);
         }
-        // Search for any existing drafts with this draftId
-        if (draftId) {
+        if (Number.isInteger(newUid)) {
             try {
                 await imap.client.mailboxOpen(draftsFolder);
                 const searchRes = await imap.client.search({ header: { 'x-draft-id': draftId } });
-                if (searchRes && searchRes.length > 0) {
-                    for (const uid of searchRes) {
-                        if (!uidsToDelete.includes(uid))
-                            uidsToDelete.push(uid);
-                    }
+                for (const uidValue of searchRes || []) {
+                    const uid = Number(uidValue);
+                    // A concurrent save with a higher UID is newer and must survive.
+                    if (Number.isInteger(uid) && uid > 0 && uid < newUid)
+                        uidsToDelete.add(uid);
                 }
             }
-            catch (e) {
-                console.error('Failed to search for existing drafts by draftId', e);
+            catch (error) {
+                console.error('Failed to reconcile old drafts by draftId:', error);
             }
         }
-        if (uidsToDelete.length > 0) {
+        if (uidsToDelete.size > 0) {
             try {
-                await imap.messageAction(draftsFolder, uidsToDelete, 'delete');
+                await imap.messageAction(draftsFolder, Array.from(uidsToDelete).sort((a, b) => a - b), 'delete');
             }
-            catch (e) {
-                console.error('Failed to delete old drafts', e);
+            catch (error) {
+                console.error('Failed to delete replaced drafts:', error);
             }
         }
-        const appendRes = await imap.client.append(draftsFolder, rawMessage, ['\\Draft', '\\Seen']);
-        res.json({ success: true, draftUid: appendRes.uid });
+        res.json({ success: true, draftId, draftUid: appendRes?.uid, messageId: compiled.messageId });
     }
     catch (err) {
+        if (err instanceof outbound_mail_1.SenderAuthorizationError) {
+            return res.status(403).json({ success: false, error: err.message, code: err.code });
+        }
+        if (err instanceof outbound_mail_1.OutboundMessageValidationError) {
+            return res.status(400).json({ success: false, error: err.message, code: err.code });
+        }
         console.error('Failed to save draft:', err);
         res.status(500).json({ success: false, error: err.message });
     }
@@ -2283,10 +2561,10 @@ exports.apiRouter.get('/folders/*folder/messages/:uid/attachments/:attachmentId'
     const user = req.user.username;
     const pass = req.user.password;
     const folder = folderParam(req);
-    const uid = parseInt(req.params.uid, 10);
-    const attachmentId = parseInt(req.params.attachmentId, 10);
+    const uid = strictInteger(req.params.uid, 1, MAX_IMAP_UID);
+    const attachmentId = strictInteger(req.params.attachmentId, 0, Number.MAX_SAFE_INTEGER);
     const forceDownload = req.query.download === '1';
-    if (!Number.isFinite(uid) || uid < 1 || !Number.isFinite(attachmentId) || attachmentId < 0) {
+    if (uid === null || attachmentId === null) {
         return res.status(400).json({ success: false, error: 'Invalid attachment request' });
     }
     const { ImapService } = require('./imap');
@@ -2322,11 +2600,14 @@ exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req,
     const user = req.user.username;
     const pass = req.user.password;
     const folder = folderParam(req);
-    const uid = parseInt(req.params.uid);
+    const uid = strictInteger(req.params.uid, 1, folder === 'SCHEDULED' ? Number.MAX_SAFE_INTEGER : MAX_IMAP_UID);
+    if (uid === null)
+        return res.status(400).json({ success: false, error: 'Message UID is invalid' });
     if (folder === 'SCHEDULED') {
         try {
             const realId = uid - 100000000;
-            const [rows] = await db_1.pool.query('SELECT * FROM scheduled_emails WHERE id = ? AND username = ?', [realId, user]);
+            const [rows] = await db_1.pool.query(`SELECT * FROM scheduled_emails
+                 WHERE id = ? AND username = ? AND status NOT IN ('completed', 'cancelled')`, [realId, user]);
             if (rows.length === 0)
                 return res.status(404).json({ success: false, error: 'Not found' });
             let opts = {};
@@ -2339,16 +2620,19 @@ exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req,
                 message: {
                     uid,
                     subject: opts.subject || '(No Subject)',
-                    from: [{ address: opts.from || user, name: '' }],
-                    to: opts.to ? opts.to.split(',').map((t) => ({ address: t, name: '' })) : [],
-                    cc: opts.cc ? opts.cc.split(',').map((t) => ({ address: t, name: '' })) : [],
-                    bcc: opts.bcc ? opts.bcc.split(',').map((t) => ({ address: t, name: '' })) : [],
+                    from: scheduledAddressText(rows[0].sender_address || opts.from || user),
+                    to: scheduledAddressText(opts.to),
+                    cc: scheduledAddressText(opts.cc),
+                    bcc: scheduledAddressText(opts.bcc),
                     date: rows[0].send_at,
                     html: opts.html || '',
                     text: opts.text || '',
                     attachments: [], // We won't try to parse attachments for scheduled messages for now
                     is_scheduled: true,
-                    scheduled_id: realId
+                    scheduled_id: realId,
+                    delivery_state: rows[0].status,
+                    delivery_error: rows[0].last_error_code || undefined,
+                    rejectedRecipients: scheduledRejectedRecipients(rows[0].rejected_recipients_json),
                 }
             });
         }
@@ -2379,6 +2663,9 @@ exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req,
                 subject: parsed.subject || '(No Subject)',
                 from: parsed.from?.text || '',
                 to: parsed.to?.text || '',
+                cc: parsed.cc?.text || '',
+                bcc: parsed.bcc?.text || '',
+                replyTo: parsed.replyTo?.text || '',
                 date: parsed.date,
                 html: parsed.html || parsed.textAsHtml,
                 text: parsed.text,
@@ -2402,11 +2689,15 @@ exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req,
 exports.apiRouter.get('/user/identities', requireAuth, async (req, res) => {
     try {
         const username = req.user.username;
-        const [mailboxRows] = await db_1.pool.query('SELECT name FROM mailbox WHERE username = ?', [username]);
-        const name = mailboxRows.length > 0 ? mailboxRows[0].name : '';
-        const [aliasRows] = await db_1.pool.query('SELECT address FROM alias WHERE goto LIKE ? AND active = 1', [`%${username}%`]);
-        const aliases = aliasRows.map((row) => row.address).filter((addr) => addr !== username);
-        res.json({ success: true, name, address: username, aliases });
+        const identities = await (0, outbound_mail_1.listOwnedSenderIdentities)(db_1.pool, username);
+        res.json({
+            success: true,
+            name: identities.name,
+            address: identities.primary,
+            aliases: identities.addresses
+                .filter(address => address !== identities.primary)
+                .map(address => ({ address, name: identities.name || undefined })),
+        });
     }
     catch (err) {
         res.status(500).json({ success: false, error: err.message });

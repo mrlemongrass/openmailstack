@@ -1,13 +1,11 @@
-import { StickyNote, Star, Lock, Archive, Trash2 } from 'lucide-react';
+import { StickyNote, Star, Archive } from 'lucide-react';
 import type { useNotes } from './hooks/useNotes';
 
 export function NotesSidebar({ notesCtx: n }: { notesCtx: ReturnType<typeof useNotes> }) {
   const filters = [
     { id: 'notes', label: 'All Notes', icon: StickyNote },
     { id: 'pinned', label: 'Pinned', icon: Star },
-    { id: 'locked', label: 'Locked', icon: Lock },
     { id: 'archive', label: 'Archive', icon: Archive },
-    { id: 'trash', label: 'Trash', icon: Trash2 },
   ];
 
   return (

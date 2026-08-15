@@ -18,7 +18,9 @@ export function messageForRoute(messages: Message[], routeFolder: string, uid: n
 }
 
 export function moveDestinationFolders(folders: MailFolder[], sourceFolder: string) {
-  return folders.filter((folder) => folder.path !== sourceFolder);
+  return folders.filter((folder) => (
+    folder.path !== sourceFolder && folder.path.toUpperCase() !== 'SCHEDULED'
+  ));
 }
 
 export function groupMessagesByFolder(

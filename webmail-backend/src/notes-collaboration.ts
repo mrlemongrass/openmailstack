@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import type { IncomingMessage } from 'http';
 import type { Socket } from 'net';
 import { WebSocket, WebSocketServer } from 'ws';
+import { browserRequestHasSameOrigin } from './browser-origin';
 
 export const NOTES_SIGNALING_PATH = '/notes-signal';
 export const NOTE_COLLABORATION_CAPABILITY_TTL_MS = 5 * 60 * 1000;
@@ -159,7 +160,7 @@ export async function authorizeNoteCollaboration({
 }
 
 const rejectUpgrade = (socket: Socket, statusCode: number): void => {
-    const reason = statusCode === 404 ? 'Not Found' : 'Unauthorized';
+    const reason = statusCode === 404 ? 'Not Found' : statusCode === 403 ? 'Forbidden' : 'Unauthorized';
     if (socket.writable) {
         socket.end(
             `HTTP/1.1 ${statusCode} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
@@ -289,6 +290,10 @@ export function installNotesSignalingServer(
             return;
         }
         if (url.pathname !== NOTES_SIGNALING_PATH) return;
+        if (!browserRequestHasSameOrigin(request)) {
+            rejectUpgrade(socket, 403);
+            return;
+        }
         if (!enabled) {
             rejectUpgrade(socket, 404);
             return;

@@ -17,7 +17,6 @@
     "@types/xml2js": "^0.4.14",
     "bcryptjs": "^3.0.3",
     "body-parser": "^2.3.0",
-    "cors": "^2.8.6",
     "express": "^5.2.1",
     "imapflow": "^1.4.2",
     "mailparser": "^3.9.14",
@@ -34,7 +33,6 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
-    "@types/cors": "^2.8.19",
     "@types/mailparser": "^3.4.6",
     "@types/multer": "^2.1.0",
     "@types/nodemailer": "^8.0.1",

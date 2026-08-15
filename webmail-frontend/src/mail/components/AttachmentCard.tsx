@@ -1,10 +1,18 @@
 import { Paperclip, Download } from 'lucide-react';
 import type { MessageAttachment } from '../../shared/types';
+import { messageAttachmentUrl } from '../draft-resume';
 
-export function AttachmentCard({ attachment }: { attachment: MessageAttachment }) {
+interface AttachmentCardProps {
+  attachment: MessageAttachment;
+  sourceFolder: string;
+  messageUid: number;
+}
+
+export function AttachmentCard({ attachment, sourceFolder, messageUid }: AttachmentCardProps) {
   const sizeStr = attachment.size >= 1048576
     ? `${(attachment.size / 1048576).toFixed(1)} MB`
     : `${Math.round(attachment.size / 1024)} KB`;
+  const downloadUrl = messageAttachmentUrl(sourceFolder, messageUid, attachment.id);
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
       borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.04)',
@@ -16,7 +24,8 @@ export function AttachmentCard({ attachment }: { attachment: MessageAttachment }
         </div>
         <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{sizeStr}</div>
       </div>
-      <a href={`/api/attachments/${attachment.id}`} download={attachment.filename}
+      <a href={downloadUrl} download={attachment.filename}
+        aria-label={`Download ${attachment.filename}`}
         className="btn btn-ghost" style={{ padding: '4px 8px' }}><Download size={14} /></a>
     </div>
   );

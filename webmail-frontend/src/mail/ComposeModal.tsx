@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { X, Send, Paperclip, Archive, Clock, Image, FileText } from 'lucide-react';
+import { X, Send, Paperclip, Clock, Image, FileText } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
@@ -9,6 +9,7 @@ import type { Contact, Signature, MailIdentity } from '../shared/types';
 import { getUserSettings, saveUserSettings, type MessageTemplate } from '../settings/settingsApi';
 import { uniqueContactSuggestions, type ContactSuggestion } from '../shared/contactSuggestions';
 import { useModalFocus } from '../shared/hooks/useModalFocus';
+import { outboundSendFeedback, scheduledDateFromLocalInputs } from './outbound-send-feedback';
 
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB warning
 const BLOCK_SIZE = 50 * 1024 * 1024; // 50MB block
@@ -38,7 +39,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
+  const [scheduleError, setScheduleError] = useState('');
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [closingComposer, setClosingComposer] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Image previews
@@ -140,30 +143,64 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   // Toast for send confirmation
   const { showToast } = useToast();
   const [didSend, setDidSend] = useState(false);
+  const {
+    cancelSendUndo,
+    closeComposer,
+    composeBody,
+    composeError,
+    composeSignature,
+    isComposing,
+    lastSendResult,
+    sending,
+    setComposeBody,
+    setComposeSignature,
+    signatures,
+    undoSendDelaySeconds,
+    undoSendId,
+    undoSendMode,
+  } = mail;
+  const composeBusy = sending || closingComposer;
   useEffect(() => {
-    if (didSend && !mail.sending && !mail.composeError && !mail.isComposing) {
+    if (didSend && !sending && !composeError && !isComposing) {
       const timer = window.setTimeout(() => {
-        const isUndoable = !!mail.undoSendId;
-        showToast({ type: 'success', message: isUndoable ? 'Message will be sent in 8s' : 'Message sent' });
+        const scheduledId = undoSendId;
+        const feedback = outboundSendFeedback(
+          lastSendResult || { scheduledId: scheduledId || undefined },
+          undoSendMode,
+          undoSendDelaySeconds,
+        );
+        const isUndoable = Boolean(scheduledId && feedback.actionLabel);
+        const isUserScheduled = undoSendMode === 'scheduled';
+        showToast({
+          ...feedback,
+          onAction: isUndoable && scheduledId ? async () => {
+            try {
+              const restoration = await cancelSendUndo(scheduledId);
+              const message = restoration.reopened
+                ? (isUserScheduled ? 'Scheduled message cancelled; Draft reopened' : 'Send undone; Draft reopened')
+                : (isUserScheduled ? 'Scheduled message cancelled; restored to Drafts' : 'Send undone; restored to Drafts');
+              showToast({ type: 'info', message });
+            } catch (error) {
+              showToast({
+                type: 'error',
+                message: error instanceof Error ? error.message : 'The message could not be cancelled',
+              });
+              throw error;
+            }
+          } : undefined,
+        });
         setDidSend(false);
       }, 0);
       return () => window.clearTimeout(timer);
     }
-    if (didSend && !mail.sending && mail.composeError) {
+    if (didSend && !sending && composeError) {
       const timer = window.setTimeout(() => setDidSend(false), 0);
       return () => window.clearTimeout(timer);
     }
-  }, [didSend, mail.sending, mail.composeError, mail.isComposing, showToast, mail.undoSendId]);
+  }, [cancelSendUndo, composeError, didSend, isComposing, sending, showToast,
+    lastSendResult, undoSendDelaySeconds, undoSendId, undoSendMode]);
 
   // Auto-select default signature when compose opens
-  const {
-    isComposing,
-    signatures,
-    composeSignature,
-    composeBody,
-    setComposeSignature,
-    setComposeBody,
-  } = mail;
   useEffect(() => {
     if (isComposing && signatures && signatures.length > 0) {
       const timer = window.setTimeout(() => {
@@ -185,12 +222,29 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
 
   const hasContent = mail.composeTo || mail.composeCc || mail.composeBcc || mail.composeSubject || mail.composeBody || mail.composeAttachments.length > 0;
 
+  const saveAndClose = () => {
+    setClosingComposer(true);
+    void closeComposer().then((closed) => {
+      if (!closed) {
+        showToast({ type: 'error', message: 'Draft could not be saved. The composer is still open.' });
+      }
+    }).catch((error: unknown) => {
+      showToast({
+        type: 'error',
+        message: error instanceof Error
+          ? `Draft could not be saved: ${error.message}`
+          : 'Draft could not be saved. The composer is still open.',
+      });
+    }).finally(() => setClosingComposer(false));
+  };
+
   const handleClose = () => {
+    if (composeBusy) return;
     if (hasContent) {
       setShowCloseConfirm(true);
       return;
     }
-    mail.setIsComposing(false);
+    saveAndClose();
   };
   useModalFocus({
     dialogRef,
@@ -201,11 +255,15 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
 
   if (!mail.isComposing) return null;
 
-  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); };
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!composeBusy) setIsDragOver(true);
+  };
   const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragOver(false); };
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation(); setIsDragOver(false);
-    if (e.dataTransfer.files.length > 0) {
+    if (!composeBusy && e.dataTransfer.files.length > 0) {
       mail.setComposeAttachments((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
     }
   };
@@ -238,8 +296,11 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         )}
         {/* Header */}
         <div className="compose-header">
-          <span id="compose-dialog-title" style={{ fontWeight: 600 }}>New Message</span>
-          <button className="btn btn-ghost" aria-label="Close message composer" onClick={handleClose} style={{ padding: 4 }}>
+          <span id="compose-dialog-title" style={{ fontWeight: 600 }}>
+            {mail.draftUid ? 'Edit Draft' : 'New Message'}
+          </span>
+          <button className="btn btn-ghost" aria-label="Close message composer" disabled={composeBusy}
+            onClick={handleClose} style={{ padding: 4 }}>
             <X size={18} />
           </button>
         </div>
@@ -249,6 +310,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           {fromOptions.length > 1 && (
             <select className="glass-select glass-input" value={mail.composeFrom}
               aria-label="From"
+              disabled={composeBusy}
               onChange={(e) => mail.setComposeFrom(e.target.value)}
               style={{ fontSize: '0.85rem', padding: '8px 12px' }}>
               {fromOptions.map((a: MailIdentity) => (
@@ -261,6 +323,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           <div style={{ position: 'relative' }}>
             <input className="glass-input" placeholder="To" value={mail.composeTo}
               autoFocus
+              disabled={composeBusy}
               onChange={(e) => handleFieldChange(e.target.value, 'to')}
               onKeyDown={(e) => handleFieldKeyDown(e, 'to')}
               onFocus={() => { clearBlurTimer(); const { fragment } = getFragmentInfo(mail.composeTo); if (fragment.length >= 2) handleFieldChange(mail.composeTo, 'to'); }}
@@ -288,6 +351,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           {mail.showCc && (
             <div style={{ position: 'relative' }}>
               <input className="glass-input" placeholder="Cc" value={mail.composeCc}
+                disabled={composeBusy}
                 onChange={(e) => handleFieldChange(e.target.value, 'cc')}
                 onKeyDown={(e) => handleFieldKeyDown(e, 'cc')}
                 onFocus={() => { const { fragment } = getFragmentInfo(mail.composeCc); if (fragment.length >= 2) handleFieldChange(mail.composeCc, 'cc'); }}
@@ -316,6 +380,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           {mail.showBcc && (
             <div style={{ position: 'relative' }}>
               <input className="glass-input" placeholder="Bcc" value={mail.composeBcc}
+                disabled={composeBusy}
                 onChange={(e) => handleFieldChange(e.target.value, 'bcc')}
                 onKeyDown={(e) => handleFieldKeyDown(e, 'bcc')}
                 onFocus={() => { const { fragment } = getFragmentInfo(mail.composeBcc); if (fragment.length >= 2) handleFieldChange(mail.composeBcc, 'bcc'); }}
@@ -342,14 +407,18 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             </div>
           )}
           <div style={{ display: 'flex', gap: 8 }}>
-            {!mail.showCc && <button className="btn btn-ghost" onClick={() => mail.setShowCc(true)} style={{ fontSize: '0.8rem' }}>Cc</button>}
-            {!mail.showBcc && <button className="btn btn-ghost" onClick={() => mail.setShowBcc(true)} style={{ fontSize: '0.8rem' }}>Bcc</button>}
+            {!mail.showCc && <button className="btn btn-ghost" disabled={composeBusy}
+              onClick={() => mail.setShowCc(true)} style={{ fontSize: '0.8rem' }}>Cc</button>}
+            {!mail.showBcc && <button className="btn btn-ghost" disabled={composeBusy}
+              onClick={() => mail.setShowBcc(true)} style={{ fontSize: '0.8rem' }}>Bcc</button>}
           </div>
           <input className="glass-input" placeholder="Subject" value={mail.composeSubject}
+            disabled={composeBusy}
             onChange={(e) => mail.setComposeSubject(e.target.value)} />
           {mail.signatures && mail.signatures.length > 0 && (
             <select className="glass-select glass-input" value={mail.composeSignature}
               aria-label="Signature"
+              disabled={composeBusy}
               onChange={(e) => {
                 const sig = mail.signatures.find((s: Signature) => s.id === e.target.value);
                 mail.setComposeSignature(e.target.value);
@@ -366,6 +435,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         {/* Scrollable body area — textarea + attachments + previews */}
         <div className="compose-body">
           <textarea className="glass-input" placeholder="Write your message..."
+            disabled={composeBusy}
             value={mail.composeBody} onChange={(e) => mail.setComposeBody(e.target.value)}
             style={{ flex: 1, minHeight: 180, resize: 'vertical' }} />
           {mail.composeBody && (
@@ -411,8 +481,12 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                   display: 'flex', alignItems: 'center', gap: 4 }}>
                   {IMAGE_TYPES.includes(f.type) ? <Image size={12} /> : <FileText size={12} />}
                   {f.name} ({formatBytes(f.size)})
-                  <X size={12} style={{ cursor: 'pointer' }}
-                    onClick={() => mail.setComposeAttachments((prev) => prev.filter((_, j) => j !== i))} />
+                  <button type="button" className="btn btn-ghost"
+                    aria-label={`Remove ${f.name}`} disabled={composeBusy}
+                    style={{ padding: 0, minWidth: 0 }}
+                    onClick={() => mail.setComposeAttachments((prev) => prev.filter((_, j) => j !== i))}>
+                    <X size={12} />
+                  </button>
                 </span>
               ))}
             </div>
@@ -435,15 +509,16 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
               <Paperclip size={16} />
               <input type="file" multiple hidden onChange={(e) => {
                 if (e.target.files) mail.setComposeAttachments((prev) => [...prev, ...Array.from(e.target.files!)]);
-              }} />
+              }} disabled={composeBusy} />
             </label>
             {/* Templates (#13) */}
             <div style={{ position: 'relative' }}>
-              <button className="btn btn-ghost" onClick={() => setShowTemplates(!showTemplates)}
+              <button className="btn btn-ghost" disabled={composeBusy}
+                onClick={() => setShowTemplates(!showTemplates)}
                 style={{ fontSize: '0.8rem' }} title="Templates">
                 <FileText size={16} /> Templates
               </button>
-              {showTemplates && (
+              {showTemplates && !composeBusy && (
                 <div style={{ position: 'absolute', bottom: '100%', left: 0, zIndex: 50, marginBottom: 4, minWidth: 220 }}
                   onClick={(e) => e.stopPropagation()}>
                   <div className="glass-panel compose-popover" style={{ padding: 8, maxHeight: 200, overflow: 'auto' }}>
@@ -498,31 +573,47 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           <div className="compose-footer-actions">
             {/* Schedule send (#3) */}
             <div style={{ position: 'relative' }}>
-              <button className="btn btn-ghost" onClick={() => setShowSchedule(!showSchedule)}
-                style={{ fontSize: '0.8rem' }} title="Schedule send">
+              <button className="btn btn-ghost" disabled={composeBusy}
+                onClick={() => { setScheduleError(''); setShowSchedule(!showSchedule); }}
+                style={{ fontSize: '0.8rem' }} title="Schedule send" aria-label="Schedule send">
                 <Clock size={16} />
               </button>
-              {showSchedule && (
+              {showSchedule && !composeBusy && (
                 <div style={{ position: 'absolute', bottom: '100%', right: 0, zIndex: 50, marginBottom: 4, minWidth: 260 }}
                   onClick={(e) => e.stopPropagation()}>
                   <div className="glass-panel compose-popover" style={{ padding: 12 }}>
                     <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8 }}>Schedule Send</div>
                     <input type="date" className="glass-input" value={scheduleDate}
-                      onChange={(e) => setScheduleDate(e.target.value)}
+                      aria-label="Scheduled send date"
+                      disabled={composeBusy}
+                      onChange={(e) => { setScheduleDate(e.target.value); setScheduleError(''); }}
                       style={{ width: '100%', marginBottom: 8, fontSize: '0.85rem' }} />
                     <input type="time" className="glass-input" value={scheduleTime}
-                      onChange={(e) => setScheduleTime(e.target.value)}
+                      aria-label="Scheduled send time"
+                      disabled={composeBusy}
+                      onChange={(e) => { setScheduleTime(e.target.value); setScheduleError(''); }}
                       style={{ width: '100%', marginBottom: 8, fontSize: '0.85rem' }} />
+                    {scheduleError && (
+                      <div role="alert" style={{ color: 'var(--danger)', fontSize: '0.78rem', marginBottom: 8 }}>
+                        {scheduleError}
+                      </div>
+                    )}
                     <button className="btn btn-primary" style={{ width: '100%', fontSize: '0.85rem' }}
-                      disabled={!scheduleDate || !scheduleTime || mail.sending}
+                      disabled={!scheduleDate || !scheduleTime || composeBusy}
                       onClick={() => {
-                        const [h, m] = scheduleTime.split(':').map(Number);
-                        const sendAt = new Date(scheduleDate);
-                        sendAt.setHours(h || 0, m || 0, 0, 0);
+                        const sendAt = scheduledDateFromLocalInputs(scheduleDate, scheduleTime);
+                        if (!sendAt || sendAt.getTime() <= Date.now()) {
+                          setScheduleError('Choose a future date and time.');
+                          return;
+                        }
+                        setDidSend(true);
                         setShowSchedule(false);
-                        setScheduleDate('');
-                        setScheduleTime('');
-                        mail.handleSend(sendAt);
+                        void mail.handleSend(sendAt).then((sent) => {
+                          if (sent) {
+                            setScheduleDate('');
+                            setScheduleTime('');
+                          }
+                        });
                       }}>
                       Schedule
                     </button>
@@ -530,14 +621,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                 </div>
               )}
             </div>
-            <button className="btn btn-primary" disabled={mail.sending || sizeExceedsBlock}
-              onClick={() => { setDidSend(true); mail.handleSend(); }}>
-              <Send size={16} /> {mail.sending ? <><Spinner size={14} /> Sending...</> : 'Send'}
-            </button>
-            <button className="btn btn-ghost" disabled={mail.sending || sizeExceedsBlock}
-              onClick={() => { setDidSend(true); mail.handleSendAndArchive(); }}
-              style={{ fontSize: '0.8rem' }} title="Send & Archive">
-              <Archive size={14} />
+            <button className="btn btn-primary" disabled={composeBusy || sizeExceedsBlock}
+              onClick={() => { setDidSend(true); void mail.handleSend(); }}>
+              <Send size={16} /> {sending ? <><Spinner size={14} /> Sending...</> : 'Send'}
             </button>
           </div>
         </div>
@@ -545,10 +631,13 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
       {showCloseConfirm && (
         <ConfirmDialog
           open={showCloseConfirm}
-          title="Discard message?"
-          message="You have unsaved changes in this message. Your draft will be saved automatically."
-          confirmLabel="Close"
-          onConfirm={() => { setShowCloseConfirm(false); mail.setIsComposing(false); }}
+          title="Save draft and close?"
+          message="Your latest changes will be saved to Drafts before this window closes."
+          confirmLabel="Save & Close"
+          onConfirm={() => {
+            setShowCloseConfirm(false);
+            saveAndClose();
+          }}
           onCancel={() => setShowCloseConfirm(false)}
         />
       )}

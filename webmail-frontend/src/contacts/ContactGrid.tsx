@@ -254,25 +254,45 @@ function ContactCard({ contact, nameFormat, isListMode, onClick, isSelected, onT
     const initials = (displayName || contact.email || '?').split(/[,\s]+/).filter(Boolean).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
     return (
         <div className="contact-card glass-panel" style={{
-            padding: isListMode ? 12 : 16, borderRadius: 'var(--radius-md)', cursor: 'pointer',
+            padding: 0, borderRadius: 'var(--radius-md)',
             position: 'relative',
             border: isSelected ? '1px solid var(--accent-primary)' : undefined,
             boxShadow: isSelected ? '0 0 0 1px var(--accent-primary)' : undefined,
-        }} onClick={onClick}>
+        }}>
             {onToggleSelect && (
-                <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
-                    onClick={(e) => { e.stopPropagation(); onToggleSelect(); }}>
-                    <div style={{
-                        width: 20, height: 20, borderRadius: 4,
+                <button
+                    type="button"
+                    aria-label={`${isSelected ? 'Deselect' : 'Select'} ${displayName}`}
+                    aria-pressed={isSelected}
+                    onClick={onToggleSelect}
+                    style={{
+                        position: 'absolute', top: 8, right: 8, zIndex: 2,
+                        width: 20, height: 20, padding: 0, borderRadius: 4,
                         border: `2px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-glass)'}`,
                         background: isSelected ? 'var(--accent-primary)' : 'transparent',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                        {isSelected && <span style={{ color: 'white', fontSize: '0.7rem' }}>✓</span>}
-                    </div>
-                </div>
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                    }}
+                >
+                    {isSelected && <span aria-hidden="true" style={{ color: 'white', fontSize: '0.7rem' }}>✓</span>}
+                </button>
             )}
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div
+                role="button"
+                tabIndex={0}
+                aria-label={`Open contact ${displayName}`}
+                onClick={onClick}
+                onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        onClick();
+                    }
+                }}
+                style={{
+                    width: '100%', padding: isListMode ? 12 : 16, border: 0,
+                    background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer',
+                    display: 'flex', alignItems: 'flex-start', gap: 12,
+                }}
+            >
                 <div style={{ width: 40, height: 40, borderRadius: '50%',
                     background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-purple))',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',

@@ -19,11 +19,6 @@ import { DEFAULT_APPEARANCE, applyAppearancePreferences, saveAppearancePreferenc
 import { fetchFolders, fetchRules, fetchIdentities, fetchCalendars } from '../shared/api';
 import type { Rule, MailFolder, Signature } from '../shared/types';
 
-type MailSettingsWithExtras = MailUserSettings & {
-  forwarding?: { goto?: string; keepCopy?: boolean };
-  vacation?: { enabled?: boolean; subject?: string; body?: string; days?: number };
-};
-
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -52,18 +47,6 @@ function SettingsLoader() {
   const [availableSenders, setAvailableSenders] = useState<string[]>([]);
   const [setupMailboxAddress, setSetupMailboxAddress] = useState('');
   const [calendars, setCalendars] = useState<{ id: number; name: string }[]>([]);
-
-  // Forwarding (loaded from mail settings extra fields)
-  const [forwardingGoto, setForwardingGoto] = useState('');
-  const [keepCopy, setKeepCopy] = useState(false);
-
-  // Vacation / auto-responder
-  const [vacationSettings, setVacationSettings] = useState({
-    enabled: false,
-    subject: '' as string | undefined,
-    body: '',
-    days: 1,
-  });
 
   // Passwords (cleared after save)
   const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' });
@@ -144,20 +127,6 @@ function SettingsLoader() {
         const calList = calendarsData.calendars || [];
         setCalendars(calList.map((c) => ({ id: c.id, name: c.name })));
 
-        // Forwarding and vacation are extra fields on mail settings (not in the TS type)
-        const mailExtra: MailSettingsWithExtras = mail;
-        if (mailExtra.forwarding) {
-          setForwardingGoto(mailExtra.forwarding.goto || '');
-          setKeepCopy(!!mailExtra.forwarding.keepCopy);
-        }
-        if (mailExtra.vacation) {
-          setVacationSettings({
-            enabled: !!mailExtra.vacation.enabled,
-            subject: mailExtra.vacation.subject || '',
-            body: mailExtra.vacation.body || '',
-            days: mailExtra.vacation.days || 1,
-          });
-        }
       } catch (err: unknown) {
         if (!cancelled) {
           setSettingsSyncError(errorMessage(err, 'Failed to load settings'));
@@ -275,70 +244,6 @@ function SettingsLoader() {
     }
   }, [rules]);
 
-  // --- Forwarding handlers ---
-  const handleForwardingChange = useCallback((value: string) => {
-    setForwardingGoto(value);
-  }, []);
-
-  const handleKeepCopyChange = useCallback((value: boolean) => {
-    setKeepCopy(value);
-  }, []);
-
-  const handleSaveForwarding = useCallback(async () => {
-    setSaving(true);
-    try {
-      const mailWithForwarding = {
-        ...mailSettings,
-        forwarding: { goto: forwardingGoto, keepCopy },
-      };
-      await saveUserSettings('mail', mailWithForwarding);
-      setSettingsSaveState('saved');
-      setTimeout(() => setSettingsSaveState('idle'), 2000);
-    } catch (err: unknown) {
-      setSettingsSyncError(errorMessage(err, 'Failed to save forwarding'));
-    } finally {
-      setSaving(false);
-    }
-  }, [mailSettings, forwardingGoto, keepCopy]);
-
-  // --- Vacation handler ---
-  const handleUpdateVacationSettings = useCallback((vs: {
-    enabled: boolean;
-    subject?: string;
-    body: string;
-    days?: number;
-  }) => {
-    setVacationSettings({
-      enabled: vs.enabled,
-      subject: vs.subject,
-      body: vs.body,
-      days: vs.days || 1,
-    });
-  }, []);
-
-  const handleSaveVacation = useCallback(async () => {
-    setSaving(true);
-    try {
-      const mailWithVacation = {
-        ...mailSettings,
-        vacation: {
-          enabled: vacationSettings.enabled,
-          subject: vacationSettings.subject,
-          body: vacationSettings.body,
-          days: vacationSettings.days || 1,
-        },
-      };
-      await saveUserSettings('mail', mailWithVacation);
-      setSettingsSaveState('saved');
-      setTimeout(() => setSettingsSaveState('idle'), 2000);
-    } catch (err: unknown) {
-      setSettingsSyncError(errorMessage(err, 'Failed to save vacation'));
-      setSettingsSaveState('error');
-    } finally {
-      setSaving(false);
-    }
-  }, [mailSettings, vacationSettings]);
-
   // --- Password handler ---
   const handlePasswordChange = useCallback((pw: { current: string; new: string; confirm: string }) => {
     setPasswords(pw);
@@ -434,9 +339,6 @@ function SettingsLoader() {
       contactsSettings={contactsSettings}
       availableSenders={availableSenders}
       calendars={calendars}
-      forwardingGoto={forwardingGoto}
-      keepCopy={keepCopy}
-      onKeepCopyChange={handleKeepCopyChange}
       passwords={passwords}
       appearance={appearance}
       copiedSetupField={copiedSetupField}
@@ -447,17 +349,12 @@ function SettingsLoader() {
       onDeleteRule={handleDeleteRule}
       onMoveRule={handleMoveRule}
       rulesDirty={rulesDirty}
-      vacationSettings={vacationSettings}
-      onUpdateVacationSettings={handleUpdateVacationSettings}
       onSaveRules={handleSaveRules}
-      onSaveVacation={handleSaveVacation}
       onAddSignature={handleAddSignature}
       onUpdateSignatures={handleUpdateSignatures}
       onMailSettingsChange={handleMailSettingsChange}
       onCalendarSettingsChange={handleCalendarSettingsChange}
       onContactsSettingsChange={handleContactsSettingsChange}
-      onForwardingChange={handleForwardingChange}
-      onSaveForwarding={handleSaveForwarding}
       onPasswordChange={handlePasswordChange}
       onAppearanceChange={handleAppearanceChange}
       onCopySetupValue={handleCopySetupValue}

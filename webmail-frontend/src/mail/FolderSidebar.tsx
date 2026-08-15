@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router';
-import { Inbox, Send, Star, Trash2, Archive, FolderOpen, Edit2 } from 'lucide-react';
+import { Inbox, Send, Star, Trash2, Archive, FolderOpen, Edit2, Clock } from 'lucide-react';
 import type { MailFolder } from '../shared/types';
 
 type FolderIcon = React.ComponentType<{ size?: number }>;
@@ -42,7 +42,7 @@ function buildFolderTree(folders: MailFolder[]): FolderTreeNode[] {
 }
 
 const ICON_MAP: Record<string, FolderIcon> = {
-  INBOX: Inbox, Sent: Send, Starred: Star, Trash: Trash2, Archive: Archive,
+  INBOX: Inbox, Sent: Send, Starred: Star, Trash: Trash2, Archive: Archive, SCHEDULED: Clock,
 };
 
 export function FolderSidebar({
@@ -90,6 +90,7 @@ function FolderItem({ node, activeFolder, expandedFolders, onToggleExpand, depth
   const hasChildren = Object.keys(node.children).length > 0;
   const IconComp = ICON_MAP[node.name] || FolderOpen;
   const isActive = activeFolder === node.fullPath;
+  const displayName = node.name === 'SCHEDULED' ? 'Scheduled' : node.name;
 
   const handleNavigate = () => {
     navigate(`/mail/${encodeURIComponent(node.fullPath)}`);
@@ -103,18 +104,27 @@ function FolderItem({ node, activeFolder, expandedFolders, onToggleExpand, depth
           fontWeight: isActive ? 600 : 400, background: isActive ? 'rgba(59,130,246,0.15)' : 'transparent',
           color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)', fontSize: '0.9rem' }}>
         {hasChildren ? (
-          <span style={{ fontSize: '0.7rem', width: 12, cursor: 'pointer' }}
-            onClick={(e) => { e.stopPropagation(); onToggleExpand(node.fullPath); }}>
+          <button type="button"
+            aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${displayName}`}
+            aria-expanded={Boolean(isExpanded)}
+            style={{ fontSize: '0.7rem', width: 12, cursor: 'pointer', padding: 0,
+              color: 'inherit', background: 'none', border: 0 }}
+            onClick={() => onToggleExpand(node.fullPath)}>
             {isExpanded ? '▼' : '▶'}
-          </span>
+          </button>
         ) : (
           <span style={{ fontSize: '0.7rem', width: 12 }} />
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}
+        <button type="button"
+          aria-label={`${displayName}${node.unseen > 0 ? `, ${node.unseen} unread` : ''}`}
+          aria-current={isActive ? 'page' : undefined}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0,
+            padding: 0, color: 'inherit', background: 'none', border: 0, cursor: 'pointer',
+            font: 'inherit', textAlign: 'left' }}
           onClick={handleNavigate}>
-          <IconComp size={16} />
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</span>
-        </div>
+          <IconComp size={16} aria-hidden="true" />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</span>
+        </button>
         {node.unseen > 0 && (
           <span style={{ background: 'var(--accent-primary)', color: 'white', borderRadius: 999,
             padding: '1px 6px', fontSize: '0.7rem', fontWeight: 600 }}>{node.unseen}</span>

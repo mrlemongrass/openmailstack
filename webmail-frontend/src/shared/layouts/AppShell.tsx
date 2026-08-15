@@ -156,10 +156,10 @@ export function AppShell() {
             }}>
               <Activity size={16} /> Sync
             </Link>
-            <Link to="/settings" style={{ color: 'var(--text-secondary)', padding: 4 }}>
+            <Link to="/settings" aria-label="Settings" style={{ color: 'var(--text-secondary)', padding: 4 }}>
               <Settings size={18} />
             </Link>
-            <Link to="/admin" style={{ color: 'var(--text-secondary)', padding: 4 }}>
+            <Link to="/admin" aria-label="Admin" style={{ color: 'var(--text-secondary)', padding: 4 }}>
               <ShieldAlert size={18} />
             </Link>
             <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{user?.email}</span>

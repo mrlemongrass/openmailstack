@@ -64,6 +64,9 @@ function loadComposeModule() {
     if (id === '../shared/hooks/useModalFocus') {
       return { useModalFocus: () => undefined };
     }
+    if (id === './outbound-send-feedback') {
+      return loadTypeScriptModule(path.resolve(__dirname, '../src/mail/outbound-send-feedback.ts'));
+    }
     return Module.prototype.require.call(componentModule, id);
   };
   componentModule._compile(compiled, componentPath);
@@ -155,4 +158,15 @@ test('compose autocomplete deduplicates case-insensitive email matches', () => {
     { name: 'Local Test', email: 'LOCALTEST@housevo.us' },
     { name: 'Another Person', email: 'another@housevo.us' },
   ]);
+});
+
+test('scheduled send arms cancellation feedback and exposes labelled local date/time controls', () => {
+  const source = fs.readFileSync(componentPath, 'utf8');
+
+  assert.match(source, /scheduledDateFromLocalInputs\(scheduleDate, scheduleTime\)/);
+  assert.match(source, /setDidSend\(true\);[\s\S]{0,160}mail\.handleSend\(sendAt\)/);
+  assert.match(source, /aria-label="Scheduled send date"/);
+  assert.match(source, /aria-label="Scheduled send time"/);
+  assert.match(source, /role="alert"[\s\S]{0,200}\{scheduleError\}/);
+  assert.match(source, /setScheduleError\('Choose a future date and time\.'\)/);
 });

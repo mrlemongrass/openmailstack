@@ -1,5 +1,5 @@
-import { useRef } from 'react';
-import { Star, Lock, StickyNote, PenLine, Plus } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Star, EyeOff, StickyNote, PenLine, Plus } from 'lucide-react';
 import { NoteSkeleton } from './components/NoteSkeleton';
 import { SortDropdown } from './components/SortDropdown';
 import { EmptyState } from '../shared/components/EmptyState';
@@ -9,6 +9,7 @@ import { ScrollToTop } from '../shared/components/ScrollToTop';
 import type { useNotes } from './hooks/useNotes';
 import type { Note } from '../shared/types';
 import { NoteSaveConflictError } from '../shared/api';
+import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 
 function formatRelativeTime(date: Date): string {
   const now = new Date();
@@ -46,14 +47,10 @@ export function NotesGrid({ notesCtx: n, isMobile = false }: {
   const filtered = n.notes.filter((note) => {
     if (n.notesView === 'pinned') {
       return note.is_pinned;
-    } else if (n.notesView === 'locked') {
-      return note.is_locked;
     } else if (n.notesView === 'archive') {
       return note.folder === 'archive';
-    } else if (n.notesView === 'trash') {
-      return note.folder === 'trash';
     } else if (n.notesView === 'notes') {
-      return note.folder !== 'trash' && note.folder !== 'archive';
+      return note.folder !== 'archive';
     } else if (n.notesLabels.includes(n.notesView)) {
       try { return JSON.parse(note.labels_json || '[]').includes(n.notesView); } catch { return false; }
     }
@@ -132,6 +129,7 @@ export function NotesGrid({ notesCtx: n, isMobile = false }: {
 
 function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
   const { showToast } = useToast();
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const labels = parseNoteLabels(note.labels_json);
   const isPinned = Boolean(note.is_pinned);
   const isLocked = Boolean(note.is_locked);
@@ -161,18 +159,37 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
   const deleteCard = async () => {
     try {
       await n.deleteNote(note.id);
-      showToast({ type: 'info', message: 'Note moved to trash' });
+      setConfirmDelete(false);
+      showToast({ type: 'info', message: 'Note deleted permanently' });
     } catch {
-      showToast({ type: 'error', message: 'The note could not be moved to trash. Try again.' });
+      showToast({ type: 'error', message: 'The note could not be deleted. Try again.' });
     }
   };
 
   return (
-    <div className="contact-card glass-panel" style={{
+    <>
+      <div className="contact-card glass-panel" style={{
       padding: 0, borderRadius: 'var(--radius-md)', overflow: 'hidden',
-      cursor: 'pointer', position: 'relative',
+      position: 'relative',
       borderTop: `4px solid ${note.color || '#3B82F6'}`,
-    }} onClick={() => { n.setEditingNote(note); n.setIsNoteModalOpen(true); }}>
+    }}>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={`Open note ${note.title || 'Untitled'}`}
+        onClick={() => { n.setEditingNote(note); n.setIsNoteModalOpen(true); }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            n.setEditingNote(note);
+            n.setIsNoteModalOpen(true);
+          }
+        }}
+        style={{
+          display: 'block', width: '100%', padding: 0, border: 0,
+          background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer',
+        }}
+      >
       <div style={{ padding: 16 }}>
         <div style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: 6,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -180,7 +197,7 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
         </div>
         {isLocked ? (
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
-            <Lock size={12} /> Locked Note
+            <EyeOff size={12} /> Preview hidden
           </div>
         ) : (
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)',
@@ -206,8 +223,9 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
         <span>{relativeTime || 'Draft'}</span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {isPinned && <Star size={11} style={{ color: '#f59e0b' }} />}
-          {isLocked && <Lock size={11} />}
+          {isLocked && <EyeOff size={11} />}
         </div>
+      </div>
       </div>
       {/* Hover actions */}
       <div className="note-card-actions" style={{
@@ -222,7 +240,7 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
             }}>
             Unarchive
           </button>
-        ) : note.folder !== 'trash' ? (
+        ) : (
           <button className="btn btn-ghost btn-xs"
             style={{ fontSize: '0.7rem' }}
             onClick={(e) => {
@@ -231,37 +249,43 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
             }}>
             Archive
           </button>
-        ) : null}
-        {note.folder !== 'trash' && (
-          <button className="btn btn-ghost btn-xs"
-            style={{ fontSize: '0.7rem', color: 'var(--danger)' }}
-            onClick={(e) => {
-              e.stopPropagation();
-              void deleteCard();
-            }}>
-            Delete
-          </button>
         )}
-        {note.folder !== 'trash' && (
-          <button className="btn btn-ghost btn-xs"
-            style={{ fontSize: '0.7rem', color: isPinned ? '#f59e0b' : undefined }}
-            onClick={(e) => {
-              e.stopPropagation();
-              const newPinned = !isPinned;
-              void saveCardChange(
-                { is_pinned: newPinned ? 1 : 0 },
-                newPinned ? 'Note pinned' : 'Note unpinned',
-              );
-            }}>
-            <Star size={12} fill={isPinned ? '#f59e0b' : 'none'} /> {isPinned ? 'Unpin' : 'Pin'}
-          </button>
-        )}
+        <button className="btn btn-ghost btn-xs"
+          style={{ fontSize: '0.7rem', color: 'var(--danger)' }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setConfirmDelete(true);
+          }}>
+          Delete
+        </button>
+        <button className="btn btn-ghost btn-xs"
+          style={{ fontSize: '0.7rem', color: isPinned ? '#f59e0b' : undefined }}
+          onClick={(e) => {
+            e.stopPropagation();
+            const newPinned = !isPinned;
+            void saveCardChange(
+              { is_pinned: newPinned ? 1 : 0 },
+              newPinned ? 'Note pinned' : 'Note unpinned',
+            );
+          }}>
+          <Star size={12} fill={isPinned ? '#f59e0b' : 'none'} /> {isPinned ? 'Unpin' : 'Pin'}
+        </button>
       </div>
       {isPinned ? (
         <div style={{ position: 'absolute', top: 8, right: 8 }}>
           <Star size={14} fill="#f59e0b" color="#f59e0b" />
         </div>
       ) : null}
-    </div>
+      </div>
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete note permanently?"
+        message="This permanently deletes the note, its attachments, and its reminder. This action cannot be undone."
+        confirmLabel="Delete permanently"
+        danger
+        onConfirm={() => { void deleteCard(); }}
+        onCancel={() => setConfirmDelete(false)}
+      />
+    </>
   );
 }

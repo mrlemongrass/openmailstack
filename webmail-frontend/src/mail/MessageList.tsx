@@ -13,6 +13,7 @@ import { Inbox, SearchX, Loader } from 'lucide-react';
 import type { useMail } from './hooks/useMail';
 import type { Message } from '../shared/types';
 import { groupMessagesByFolder, messageFolder, messageIdentityKey } from './mail-message-identity';
+import { isDraftFolder } from './draft-resume';
 
 interface MessageListProps {
   mail: ReturnType<typeof useMail>;
@@ -29,6 +30,8 @@ export function MessageList({ mail, density }: MessageListProps) {
   const decodedFolder = folder ? decodeURIComponent(folder) : 'INBOX';
   const {
     activeFolder,
+    fetchFolders,
+    fetchMessages,
     isSearchActive,
     loadOlderMessages,
     loadingOlderMessages,
@@ -41,6 +44,9 @@ export function MessageList({ mail, density }: MessageListProps) {
     setSelectedMessages,
   } = mail;
   const crossFolderSearch = isSearchActive && mail.searchScope === 'all';
+  const scheduledFolder = decodedFolder.toUpperCase() === 'SCHEDULED';
+  const draftFolder = isDraftFolder(decodedFolder);
+  const selectionDisabled = crossFolderSearch || scheduledFolder;
 
   useEffect(() => {
     if (decodedFolder !== activeFolder) {
@@ -53,6 +59,14 @@ export function MessageList({ mail, density }: MessageListProps) {
   useEffect(() => {
     parentRef.current?.scrollTo({ top: 0 });
   }, [decodedFolder]);
+
+  useEffect(() => {
+    if (!scheduledFolder || isSearchActive) return;
+    const timer = window.setInterval(() => {
+      void Promise.all([fetchMessages(), fetchFolders()]);
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [fetchFolders, fetchMessages, isSearchActive, scheduledFolder]);
 
   // Pre-fetch message bodies for the first batch of visible messages
   useEffect(() => {
@@ -184,7 +198,16 @@ export function MessageList({ mail, density }: MessageListProps) {
           {mail.searchInfo}
         </div>
       )}
-      <MailToolbar
+      {scheduledFolder ? (
+        <div role="status" aria-live="polite" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          padding: '10px 14px', borderBottom: '1px solid var(--border-glass)',
+          color: 'var(--text-secondary)', fontSize: '0.8rem',
+        }}>
+          <span>Scheduled and delivery-recovery messages</span>
+          <span>{mail.messages.length} {mail.messages.length === 1 ? 'message' : 'messages'}</span>
+        </div>
+      ) : <MailToolbar
         selectedCount={mail.selectedMessages.length}
         totalCount={mail.messages.length}
         activeFolder={mail.activeFolder}
@@ -192,7 +215,8 @@ export function MessageList({ mail, density }: MessageListProps) {
         searchField={mail.searchField}
         searchScope={mail.searchScope}
         isSearchActive={mail.isSearchActive}
-        selectionDisabled={crossFolderSearch}
+        selectionDisabled={selectionDisabled}
+        draftMode={draftFolder}
         folders={mail.folders}
         onSearchChange={mail.updateSearchQuery}
         onSearchSubmit={mail.submitSearchQuery}
@@ -200,16 +224,16 @@ export function MessageList({ mail, density }: MessageListProps) {
         onSearchScopeChange={mail.changeSearchScope}
         onClearSearch={mail.clearSearch}
         onSelectAll={() => {
-          if (crossFolderSearch) return;
+          if (selectionDisabled) return;
           if (mail.selectedMessages.length === mail.messages.length) {
             mail.setSelectedMessages([]);
           } else {
             mail.setSelectedMessages(mail.messages.map((m) => m.uid));
           }
         }}
-        onBulkAction={(action) => { if (!crossFolderSearch) void mail.messageAction(action); }}
+        onBulkAction={(action) => { if (!selectionDisabled) void mail.messageAction(action); }}
         onMoveSelected={(targetFolder) => {
-          if (!crossFolderSearch) {
+          if (!selectionDisabled) {
             void mail.messageAction('move', undefined, undefined, targetFolder).then((moved) => {
               if (!moved) {
                 showToast({ type: 'error', message: 'Could not move the selected messages. Try again.' });
@@ -217,23 +241,24 @@ export function MessageList({ mail, density }: MessageListProps) {
             });
           }
         }}
-        onMarkAllRead={crossFolderSearch ? undefined : () => {
+        onMarkAllRead={selectionDisabled || draftFolder ? undefined : () => {
           const allUids = mail.messages.map((m) => m.uid);
           if (allUids.length > 0) {
             mail.messageAction('read', allUids);
             showToast({ type: 'success', message: `${allUids.length} messages marked as read` });
           }
         }}
-      />
+      />}
       <div ref={parentRef} style={{ flex: 1, overflow: 'auto' }}>
         <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const msg = mail.messages[virtualRow.index];
             return (
               <MessageRow key={messageIdentityKey(msg, decodedFolder)} message={msg}
-                isSelected={!crossFolderSearch && mail.selectedMessages.includes(msg.uid)}
+                isSelected={!selectionDisabled && mail.selectedMessages.includes(msg.uid)}
                 isThreaded={false} density={density}
-                selectionDisabled={crossFolderSearch}
+                isDraft={isDraftFolder(messageFolder(msg, decodedFolder))}
+                selectionDisabled={selectionDisabled}
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
                 onSelect={handleSelect}
                 onClick={() => navigate(`/mail/${encodeURIComponent(messageFolder(msg, decodedFolder))}/${msg.uid}`)}

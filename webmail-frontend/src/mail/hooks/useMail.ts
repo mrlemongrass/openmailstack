@@ -1,14 +1,20 @@
-import { useState, useCallback, useEffect, useRef, type SetStateAction } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, type SetStateAction } from 'react';
 import type {
   Message, MailFolder, Signature, Rule, SavedSearch,
   MailUndoState,
   SearchField, SearchScope,
   SearchIndexStatusResponse, SearchWorkerStatusResponse,
-  UserIdentities, MailIdentity,
+  SendMessageResponse,
+  UserIdentities,
 } from '../../shared/types';
 import * as api from '../../shared/api';
 import type { MailUserSettings } from '../../settings/settingsApi';
-import { markMessageBodyLoaded, mergeMessageDetails, messageCacheKey } from '../message-cache';
+import {
+  createMessageDetailLoader,
+  mailboxPathsEqual,
+  markMessageBodyLoaded,
+  mergeMessageDetails,
+} from '../message-cache';
 import {
   appendOlderMessagePage,
   applyLoadedMessageAction,
@@ -16,6 +22,11 @@ import {
 } from '../mail-pagination';
 import { createMailSearchInputController } from '../mail-search-input';
 import { createMailSearchRequestCoordinator, isMailSearchAbort } from '../mail-search-request';
+import { mailIdentities, selectComposeFrom } from '../mail-runtime-settings';
+import { createDraftSaveCoordinator } from '../draft-save-coordinator';
+import { draftComposeState, hydrateDraftAttachments } from '../draft-resume';
+import { outboundIdentityFields } from '../outbound-identity';
+import { reopenRestoredScheduledDraft } from '../scheduled-undo-draft';
 
 interface UseMailOptions {
   mailSettings: MailUserSettings;
@@ -83,8 +94,10 @@ export function useMail(_opts: UseMailOptions) {
   const [viewingThread, setViewingThread] = useState<Message[] | null>(null);
   const [mailLowestUid, setMailLowestUid] = useState<number | null>(null);
   const [mailMoreAvailable, setMailMoreAvailable] = useState(false);
-  const messageDetailCacheRef = useRef<Map<string, Message>>(new Map());
-  const prefetchedRef = useRef<Set<string>>(new Set());
+  const messageDetailLoaderRef = useRef(createMessageDetailLoader(async (folder, uid) => {
+    const data = await api.fetchMessage(folder, uid);
+    return data.message ? markMessageBodyLoaded(data.message) : undefined;
+  }));
   const messageRequestIdRef = useRef(0);
   const olderMessageRequestIdRef = useRef(0);
   const olderMessageLoadingRef = useRef(false);
@@ -101,15 +114,10 @@ export function useMail(_opts: UseMailOptions) {
   // Undo
   const [mailUndo, setMailUndo] = useState<MailUndoState | null>(null);
   const [undoSendId, setUndoSendId] = useState<number | null>(null);
-
-  // Cancel an undo-send (delete scheduled message before it sends)
-  const cancelSendUndo = useCallback(async () => {
-    if (!undoSendId) return;
-    try {
-      await fetch(`/api/messages/send?scheduledId=${undoSendId}`, { method: 'DELETE' });
-      setUndoSendId(null);
-    } catch (e) { console.error('Cancel send failed', e); }
-  }, [undoSendId]);
+  const [undoSendMode, setUndoSendMode] = useState<'undo' | 'scheduled' | null>(null);
+  const [undoSendDelaySeconds, setUndoSendDelaySeconds] = useState(0);
+  const undoSendIdRef = useRef(undoSendId);
+  useEffect(() => { undoSendIdRef.current = undoSendId; }, [undoSendId]);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -125,22 +133,27 @@ export function useMail(_opts: UseMailOptions) {
   const [savedSearches, _setSavedSearches] = useState<SavedSearch[]>([]);
 
   // Derive send-as identities from auth context
-  const identities: MailIdentity[] = _opts.userIdentities?.address
-    ? [{ address: _opts.userIdentities.address, name: _opts.userIdentities.name || '' },
-       ...(_opts.userIdentities.aliases || []).map((a: { address: string; name?: string }) => ({ address: a.address, name: a.name || '' }))]
-    : [];
+  const identities = useMemo(() => mailIdentities(_opts.userIdentities), [_opts.userIdentities]);
 
   // Compose state
   const [isComposing, setIsComposing] = useState(false);
+  const isComposingRef = useRef(isComposing);
+  useEffect(() => { isComposingRef.current = isComposing; }, [isComposing]);
   const [composeDocked, setComposeDocked] = useState(false);
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
   const [composeTo, setComposeTo] = useState('');
   const [composeCc, setComposeCc] = useState('');
   const [composeBcc, setComposeBcc] = useState('');
+  const [composeReplyTo, setComposeReplyTo] = useState<string | null>(null);
   const [composeSubject, setComposeSubject] = useState('');
   const [composeBody, setComposeBody] = useState('');
-  const [composeFrom, setComposeFrom] = useState(identities[0]?.address || '');
+  const [selectedComposeFrom, setComposeFrom] = useState('');
+  const composeFrom = selectComposeFrom(
+    selectedComposeFrom,
+    identities,
+    _opts.mailSettings.identity.defaultFrom,
+  );
   const [composeSignature, setComposeSignature] = useState('none');
   const [composeAttachments, setComposeAttachments] = useState<File[]>([]);
   const [composeMode, setComposeMode] = useState<'rich' | 'plain'>('rich');
@@ -149,11 +162,48 @@ export function useMail(_opts: UseMailOptions) {
   const [draftSaveStatus, setDraftSaveStatus] = useState<'saving' | 'saved' | 'error' | null>(null);
   const [composeError, setComposeError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [lastSendResult, setLastSendResult] = useState<SendMessageResponse | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftSaveCoordinatorRef = useRef(createDraftSaveCoordinator());
+  const draftSaveRevisionRef = useRef(0);
 
   // Inline reply state
   const [replyText, setReplyText] = useState('');
   const [replySending, setReplySending] = useState(false);
+
+  const startCompose = useCallback((initial: {
+    to?: string;
+    cc?: string;
+    bcc?: string;
+    subject?: string;
+    body?: string;
+  } = {}) => {
+    if (isComposing) return;
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+      draftTimerRef.current = null;
+    }
+    draftSaveCoordinatorRef.current.reset();
+    setDraftUid(null);
+    setDraftId(null);
+    setDraftSaveStatus(null);
+    setComposeError(null);
+    setLastSendResult(null);
+    setComposeTo(initial.to || '');
+    setComposeCc(initial.cc || '');
+    setComposeBcc(initial.bcc || '');
+    setComposeReplyTo(null);
+    setComposeSubject(initial.subject || '');
+    setComposeBody(initial.body || '');
+    setComposeAttachments([]);
+    setComposeFrom('');
+    setComposeSignature('none');
+    setComposeMode('rich');
+    setShowCc(Boolean(initial.cc));
+    setShowBcc(Boolean(initial.bcc));
+    setComposeDocked(false);
+    setIsComposing(true);
+  }, [isComposing]);
 
   // ---- Data fetching (must be before handleSend) ----
   const fetchFolders = useCallback(async () => {
@@ -190,7 +240,7 @@ export function useMail(_opts: UseMailOptions) {
         if (requestId !== messageRequestIdRef.current || activeFolderRef.current !== folder) return;
         const refreshed = data.messages.map((message) => mergeMessageDetails(
           message,
-          messageDetailCacheRef.current.get(messageCacheKey(folder, message.uid)),
+          messageDetailLoaderRef.current.cached(folder, message.uid),
         ));
         const result = mode === 'reset'
           ? { messages: refreshed, preservedTail: false }
@@ -212,53 +262,238 @@ export function useMail(_opts: UseMailOptions) {
     }
   }, [activeFolder, invalidateOlderMessageRequest, setMessages]);
 
+  const removeScheduledMessage = useCallback(async (scheduledId: number) => {
+    await api.removeScheduledMessage(scheduledId);
+    setMessages(current => current.filter(message => (
+      message.scheduled_id !== scheduledId && message.uid !== scheduledId + 100000000
+    )));
+    await fetchFolders();
+    return true;
+  }, [fetchFolders, setMessages]);
+
+  const saveCurrentDraft = useCallback(async (): Promise<boolean> => {
+    const hasDraftContent = Boolean(
+      composeTo || composeCc || composeBcc || composeSubject || composeBody || composeAttachments.length,
+    );
+    if (!hasDraftContent) {
+      const existingDraft = await draftSaveCoordinatorRef.current.flush();
+      if (!existingDraft.draftId && !existingDraft.draftUid) return true;
+    }
+
+    const saveRevision = ++draftSaveRevisionRef.current;
+    setDraftSaveStatus('saving');
+    try {
+      const result = await draftSaveCoordinatorRef.current.enqueue(async currentDraft => {
+        const formData = new FormData();
+        const identityFields = outboundIdentityFields({
+          from: composeFrom,
+          replyTo: composeReplyTo ?? _opts.mailSettings.identity.replyTo,
+          bcc: composeBcc,
+          alwaysBccSelf: _opts.mailSettings.identity.alwaysBccSelf,
+          selfAddress: _opts.userIdentities.address || composeFrom,
+        });
+        if (identityFields.from) formData.append('from', identityFields.from);
+        if (identityFields.replyTo) formData.append('replyTo', identityFields.replyTo);
+        if (identityFields.bcc) formData.append('bcc', identityFields.bcc);
+        formData.append('to', composeTo);
+        if (composeCc) formData.append('cc', composeCc);
+        formData.append('subject', composeSubject || '(no subject)');
+        formData.append('html', composeBody);
+        if (currentDraft.draftId) formData.append('draftId', currentDraft.draftId);
+        if (currentDraft.draftUid) formData.append('draftUid', currentDraft.draftUid);
+        composeAttachments.forEach(file => formData.append('attachments', file));
+        return api.saveDraft(formData);
+      });
+      if (result.draftId) setDraftId(result.draftId);
+      if (result.draftUid) setDraftUid(result.draftUid);
+      if (saveRevision === draftSaveRevisionRef.current) setDraftSaveStatus('saved');
+      return true;
+    } catch (error) {
+      console.error('Draft save failed', error);
+      if (saveRevision === draftSaveRevisionRef.current) setDraftSaveStatus('error');
+      return false;
+    }
+  }, [composeAttachments, composeBcc, composeBody, composeCc, composeFrom, composeReplyTo,
+    composeSubject, composeTo, _opts.mailSettings.identity.alwaysBccSelf,
+    _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
+
+  const resumeDraft = useCallback(async (message: Message, folder: string) => {
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+      draftTimerRef.current = null;
+    }
+    await draftSaveCoordinatorRef.current.flush();
+    const attachments = await hydrateDraftAttachments(message, folder);
+    const state = draftComposeState(message, attachments);
+    const restoredFrom = selectComposeFrom(
+      state.from,
+      identities,
+      _opts.mailSettings.identity.defaultFrom,
+    );
+    const senderChanged = Boolean(
+      identities.length > 0
+      && state.from
+      && restoredFrom.toLowerCase() !== state.from.toLowerCase(),
+    );
+
+    draftSaveCoordinatorRef.current.reset({
+      draftId: state.draftId,
+      draftUid: state.draftUid,
+    });
+    setDraftUid(state.draftUid);
+    setDraftId(state.draftId);
+    setDraftSaveStatus('saved');
+    setComposeError(null);
+    setLastSendResult(null);
+    // Preserve the requested alias while identities are still loading. The
+    // derived compose sender remains restricted to an allowed identity.
+    setComposeFrom(state.from);
+    setComposeTo(state.to);
+    setComposeCc(state.cc);
+    setComposeBcc(state.bcc);
+    setComposeReplyTo(state.replyTo);
+    setComposeSubject(state.subject);
+    setComposeBody(state.body);
+    setComposeAttachments(state.attachments);
+    setComposeSignature('none');
+    setComposeMode('rich');
+    setShowCc(Boolean(state.cc));
+    setShowBcc(Boolean(state.bcc));
+    setComposeDocked(false);
+    setIsComposing(true);
+    return { senderChanged };
+  }, [identities, _opts.mailSettings.identity.defaultFrom]);
+
+  const cancelScheduledDelivery = useCallback(async (scheduledId: number) => {
+    const undo = await api.undoAction({ scheduledId });
+    if (undoSendIdRef.current === scheduledId) {
+      setUndoSendId(null);
+      setUndoSendMode(null);
+      setUndoSendDelaySeconds(0);
+    }
+    try {
+      return await reopenRestoredScheduledDraft(undo, {
+        isComposerOpen: () => isComposingRef.current,
+        fetchDraft: async (folder, uid) => {
+          const data = await api.fetchMessage(folder, uid);
+          return data.message;
+        },
+        resumeDraft,
+      });
+    } catch (error) {
+      // Cancellation is already durable on the server. A local fetch/hydration
+      // failure must not be reported as if the message were still scheduled.
+      console.error('Cancelled message Draft could not be reopened', error);
+      return {
+        ...(undo.draftFolder ? { draftFolder: undo.draftFolder } : {}),
+        ...(undo.draftUid ? { draftUid: undo.draftUid } : {}),
+        reopened: false,
+      };
+    }
+  }, [resumeDraft]);
+
+  const cancelSendUndo = useCallback(async (scheduledId = undoSendId) => {
+    if (!scheduledId) return { reopened: false };
+    const restoration = await cancelScheduledDelivery(scheduledId);
+    await fetchFolders();
+    if (activeFolderRef.current.toUpperCase() === 'SCHEDULED') await fetchMessages('reset');
+    return restoration;
+  }, [cancelScheduledDelivery, fetchFolders, fetchMessages, undoSendId]);
+
+  const cancelScheduledSend = useCallback(async (scheduledId: number) => {
+    const restoration = await cancelScheduledDelivery(scheduledId);
+    setMessages(current => current.filter(message => (
+      message.scheduled_id !== scheduledId && message.uid !== scheduledId + 100000000
+    )));
+    await fetchFolders();
+    return restoration;
+  }, [cancelScheduledDelivery, fetchFolders, setMessages]);
+
+  const closeComposer = useCallback(async (): Promise<boolean> => {
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+      draftTimerRef.current = null;
+    }
+    const saved = await saveCurrentDraft();
+    if (saved) setIsComposing(false);
+    return saved;
+  }, [saveCurrentDraft]);
+
   // Compose send
   const handleSend = useCallback(async (sendAt?: Date | null) => {
     setSending(true);
     setComposeError(null);
+    setLastSendResult(null);
     try {
+      if (draftTimerRef.current) {
+        clearTimeout(draftTimerRef.current);
+        draftTimerRef.current = null;
+      }
+      const currentDraft = await draftSaveCoordinatorRef.current.flush();
       const formData = new FormData();
-      if (composeFrom) formData.append('from', composeFrom);
+      const identityFields = outboundIdentityFields({
+        from: composeFrom,
+        replyTo: composeReplyTo ?? _opts.mailSettings.identity.replyTo,
+        bcc: composeBcc,
+        alwaysBccSelf: _opts.mailSettings.identity.alwaysBccSelf,
+        selfAddress: _opts.userIdentities.address || composeFrom,
+      });
+      if (identityFields.from) formData.append('from', identityFields.from);
+      if (identityFields.replyTo) formData.append('replyTo', identityFields.replyTo);
+      if (identityFields.bcc) formData.append('bcc', identityFields.bcc);
       formData.append('to', composeTo);
       if (composeCc) formData.append('cc', composeCc);
-      if (composeBcc) formData.append('bcc', composeBcc);
       formData.append('subject', composeSubject || '(no subject)');
       formData.append('html', composeBody);
-      if (draftUid) formData.append('draftUid', draftUid);
+      if (currentDraft.draftId) formData.append('draftId', currentDraft.draftId);
+      if (currentDraft.draftUid) formData.append('draftUid', currentDraft.draftUid);
       composeAttachments.forEach((file) => {
         formData.append('attachments', file);
       });
+      let delaySeconds = 0;
+      let sendMode: 'undo' | 'scheduled' | null = null;
       if (sendAt && sendAt.getTime() > Date.now()) {
-        const delaySeconds = Math.ceil((sendAt.getTime() - Date.now()) / 1000);
-        formData.append('delaySeconds', String(delaySeconds));
+        delaySeconds = Math.ceil((sendAt.getTime() - Date.now()) / 1000);
+        sendMode = 'scheduled';
+      } else if (!sendAt && _opts.mailSettings.compose.undoSendSeconds > 0) {
+        delaySeconds = _opts.mailSettings.compose.undoSendSeconds;
+        sendMode = 'undo';
       }
-      // Undo send: add 8-second delay so user can cancel
-      if (!sendAt) formData.append('delaySeconds', '8');
+      if (delaySeconds > 0) formData.append('delaySeconds', String(delaySeconds));
       const result = await api.sendMessage(formData);
-      // Store scheduled ID for undo
-      if (result.scheduledId) setUndoSendId(result.scheduledId);
+      setLastSendResult(result);
+      if (result.scheduledId && sendMode) {
+        setUndoSendId(result.scheduledId);
+        setUndoSendMode(sendMode);
+        setUndoSendDelaySeconds(delaySeconds);
+      } else {
+        setUndoSendId(null);
+        setUndoSendMode(null);
+        setUndoSendDelaySeconds(0);
+      }
       // Clear compose state on success
       setComposeTo(''); setComposeCc(''); setComposeBcc('');
+      setComposeReplyTo(null);
       setComposeSubject(''); setComposeBody('');
+      setComposeFrom(''); setComposeSignature('none');
       setComposeAttachments([]);
       setDraftUid(null); setDraftId(null);
+      draftSaveCoordinatorRef.current.reset();
       setDraftSaveStatus(null);
       setShowCc(false); setShowBcc(false);
       setIsComposing(false);
-      fetchFolders();
+      void Promise.all([fetchFolders(), fetchMessages()]);
+      return true;
     } catch (e: unknown) {
       console.error('Send failed', e);
       setComposeError(errorMessage(e, 'Failed to send message'));
+      return false;
     } finally {
       setSending(false);
     }
-  }, [composeFrom, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments, draftUid, fetchFolders]);
-
-  const handleSendAndArchive = useCallback(async (sendAt?: Date | null) => {
-    // For new compose, "Send & Archive" sends the message.
-    // If replying, archive would apply to the source thread.
-    await handleSend(sendAt);
-  }, [handleSend]);
+  }, [composeFrom, composeReplyTo, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments,
+    fetchFolders, fetchMessages, _opts.mailSettings.compose.undoSendSeconds, _opts.mailSettings.identity.alwaysBccSelf,
+    _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
 
   // Other mail state
   const [signatures, setSignatures] = useState<Signature[]>([]);
@@ -271,60 +506,77 @@ export function useMail(_opts: UseMailOptions) {
     setReplySending(true);
     try {
       const formData = new FormData();
+      const replyFrom = selectComposeFrom(
+        '',
+        identities,
+        _opts.mailSettings.identity.defaultFrom,
+      );
+      const identityFields = outboundIdentityFields({
+        from: replyFrom,
+        replyTo: _opts.mailSettings.identity.replyTo,
+        alwaysBccSelf: _opts.mailSettings.identity.alwaysBccSelf,
+        selfAddress: _opts.userIdentities.address || replyFrom,
+      });
+      if (identityFields.from) formData.append('from', identityFields.from);
+      if (identityFields.replyTo) formData.append('replyTo', identityFields.replyTo);
+      if (identityFields.bcc) formData.append('bcc', identityFields.bcc);
       formData.append('to', to);
       formData.append('subject', subject.startsWith('Re:') ? subject : `Re: ${subject}`);
       formData.append('body', replyText);
       formData.append('inReplyTo', inReplyTo);
       formData.append('references', references);
-      await api.sendMessage(formData);
+      const undoDelaySeconds = Math.max(0, Math.trunc(_opts.mailSettings.compose.undoSendSeconds));
+      if (undoDelaySeconds > 0) formData.append('delaySeconds', String(undoDelaySeconds));
+      const result = await api.sendMessage(formData);
+      if (result.scheduledId && undoDelaySeconds > 0) {
+        setUndoSendId(result.scheduledId);
+        setUndoSendMode('undo');
+        setUndoSendDelaySeconds(undoDelaySeconds);
+      } else {
+        setUndoSendId(null);
+        setUndoSendMode(null);
+        setUndoSendDelaySeconds(0);
+      }
       setReplyText('');
       await fetchFolders();
       await fetchMessages();
-      return true;
-    } catch (e) { console.error('Reply failed', e); return false; }
+      return result;
+    } catch (e) {
+      console.error('Reply failed', e);
+      throw e;
+    }
     finally { setReplySending(false); }
-  }, [replyText, fetchFolders, fetchMessages]);
+  }, [identities, replyText, fetchFolders, fetchMessages, _opts.mailSettings.compose.undoSendSeconds,
+    _opts.mailSettings.identity.alwaysBccSelf, _opts.mailSettings.identity.defaultFrom,
+    _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
 
   // Fetch a single message body (full content)
   const fetchMessageBody = useCallback(async (uid: number, folderPath: string) => {
-    const cacheKey = messageCacheKey(folderPath, uid);
-    if (prefetchedRef.current.has(cacheKey)) return; // already fetched or in-flight
-    prefetchedRef.current.add(cacheKey);
     try {
-      const data = await api.fetchMessage(folderPath, uid);
-      if (data.message) {
-        const detail = markMessageBodyLoaded(data.message);
-        messageDetailCacheRef.current.set(cacheKey, detail);
-        if (activeFolderRef.current !== folderPath) return;
-        setMessages((prev) => prev.map((m) =>
-          m.uid === uid ? mergeMessageDetails(m, detail) : m
-        ));
-        setViewingThread((prev) => {
-          if (prev?.some((m) => m.uid === uid)) {
-            return prev.map((m) => m.uid === uid ? mergeMessageDetails(m, detail) : m);
-          }
-          return [detail];
-        });
-      }
-    } catch (e) { console.error('Failed to fetch message body', e); prefetchedRef.current.delete(cacheKey); }
+      const detail = await messageDetailLoaderRef.current.load(folderPath, uid);
+      if (!detail || !mailboxPathsEqual(activeFolderRef.current, folderPath)) return;
+      setMessages((prev) => prev.map((m) =>
+        m.uid === uid ? mergeMessageDetails(m, detail) : m
+      ));
+      setViewingThread((prev) => {
+        if (prev?.some((m) => m.uid === uid)) {
+          return prev.map((m) => m.uid === uid ? mergeMessageDetails(m, detail) : m);
+        }
+        return [detail];
+      });
+    } catch (e) { console.error('Failed to fetch message body', e); }
   }, [setMessages]);
 
   // Pre-fetch message bodies in the background (non-blocking, silent)
   const prefetchBodies = useCallback((uids: number[], folderPath: string) => {
     for (const uid of uids) {
-      const cacheKey = messageCacheKey(folderPath, uid);
-      if (prefetchedRef.current.has(cacheKey)) continue;
-      prefetchedRef.current.add(cacheKey);
-      api.fetchMessage(folderPath, uid).then((data) => {
-        if (data.message) {
-          const detail = markMessageBodyLoaded(data.message);
-          messageDetailCacheRef.current.set(cacheKey, detail);
-          if (activeFolderRef.current !== folderPath) return;
-          setMessages((prev) => prev.map((m) =>
-            (m.folder || folderPath) === folderPath && m.uid === uid ? mergeMessageDetails(m, detail) : m
-          ));
-        }
-      }).catch(() => { prefetchedRef.current.delete(cacheKey); });
+      if (messageDetailLoaderRef.current.cached(folderPath, uid)) continue;
+      void messageDetailLoaderRef.current.load(folderPath, uid).then((detail) => {
+        if (!detail || !mailboxPathsEqual(activeFolderRef.current, folderPath)) return;
+        setMessages((prev) => prev.map((m) =>
+          (m.folder || folderPath) === folderPath && m.uid === uid ? mergeMessageDetails(m, detail) : m
+        ));
+      }).catch(() => {});
     }
   }, [setMessages]);
 
@@ -349,17 +601,6 @@ export function useMail(_opts: UseMailOptions) {
     } catch (e) { console.error('Snooze failed', e); }
   }, [activeFolder, fetchMessages, fetchFolders, isSearchActive, setMessages]);
 
-  // Mute thread
-  const muteThread = useCallback(async (uids: number[]) => {
-    try {
-      await fetch('/api/messages/mute', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uids }),
-      });
-      await fetchMessages();
-    } catch (e) { console.error('Mute failed', e); }
-  }, [fetchMessages]);
-
   const loadOlderMessages = useCallback(async () => {
     if (olderMessageLoadingRef.current || !mailMoreAvailable || !mailLowestUid || isSearchActive) return;
     const folder = activeFolder;
@@ -373,7 +614,7 @@ export function useMail(_opts: UseMailOptions) {
       if (requestId !== olderMessageRequestIdRef.current || activeFolderRef.current !== folder) return;
       const older = (data.messages || []).map((message) => mergeMessageDetails(
         message,
-        messageDetailCacheRef.current.get(messageCacheKey(folder, message.uid)),
+        messageDetailLoaderRef.current.cached(folder, message.uid),
       ));
       const nextCursor = data.lowestUid || null;
       setMessages((current) => appendOlderMessagePage(current, older));
@@ -595,45 +836,24 @@ export function useMail(_opts: UseMailOptions) {
 
   // ---- Draft auto-save ----
   useEffect(() => {
-    if (!isComposing) return;
+    if (!isComposing || sending) return;
 
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current);
     }
 
-    draftTimerRef.current = setTimeout(async () => {
-      if (!composeTo && !composeSubject && !composeBody && composeAttachments.length === 0) return;
-
-      setDraftSaveStatus('saving');
-      try {
-        const formData = new FormData();
-        if (composeFrom) formData.append('from', composeFrom);
-        formData.append('to', composeTo);
-        if (composeCc) formData.append('cc', composeCc);
-        if (composeBcc) formData.append('bcc', composeBcc);
-        formData.append('subject', composeSubject || '(no subject)');
-        formData.append('html', composeBody);
-        if (draftUid) formData.append('draftUid', draftUid);
-        composeAttachments.forEach((file) => {
-          formData.append('attachments', file);
-        });
-
-        const result = await api.saveDraft(formData);
-        if (result.draftId) setDraftId(result.draftId);
-        if (result.draftUid) setDraftUid(result.draftUid);
-        setDraftSaveStatus('saved');
-      } catch (e) {
-        console.error('Draft save failed', e);
-        setDraftSaveStatus('error');
-      }
+    draftTimerRef.current = setTimeout(() => {
+      draftTimerRef.current = null;
+      void saveCurrentDraft();
     }, 2000);
 
     return () => {
       if (draftTimerRef.current) {
         clearTimeout(draftTimerRef.current);
+        draftTimerRef.current = null;
       }
     };
-  }, [isComposing, composeFrom, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments, draftUid]);
+  }, [isComposing, saveCurrentDraft, sending]);
 
   return {
     folders, activeFolder, setActiveFolder, expandedFolders, setExpandedFolders: setExpandedPersisted,
@@ -641,7 +861,7 @@ export function useMail(_opts: UseMailOptions) {
     viewingThread, setViewingThread,
     mailLowestUid, mailMoreAvailable,
     mailLoading, isRefreshing, loadingOlderMessages, mailPaginationError,
-    mailUndo, setMailUndo, undoSendId, cancelSendUndo,
+    mailUndo, setMailUndo, undoSendId, undoSendMode, undoSendDelaySeconds, cancelSendUndo,
     searchQuery, setSearchQuery, updateSearchQuery, submitSearchQuery, resetSearchState, clearSearch, searchField, setSearchField, changeSearchField,
     searchScope, setSearchScope, changeSearchScope, isSearchActive, setIsSearchActive,
     searchLoading, searchError, searchInfo,
@@ -649,21 +869,23 @@ export function useMail(_opts: UseMailOptions) {
     searchIndexStatus, searchWorkerStatus,
     savedSearches,
     showSearchHints, setShowSearchHints,
-    isComposing, setIsComposing, composeDocked, setComposeDocked,
+    isComposing, setIsComposing, startCompose, resumeDraft, composeDocked, setComposeDocked,
     showCc, setShowCc, showBcc, setShowBcc,
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc,
+    composeReplyTo, setComposeReplyTo,
     composeSubject, setComposeSubject, composeBody, setComposeBody,
     composeFrom, setComposeFrom, composeIdentities: identities, composeSignature, setComposeSignature,
     composeAttachments, setComposeAttachments,
     composeMode, setComposeMode,
     draftUid, setDraftUid, draftId, setDraftId,
     draftSaveStatus, setDraftSaveStatus, composeError, setComposeError,
-    sending, handleSend, handleSendAndArchive,
+    sending, handleSend, lastSendResult, closeComposer,
     replyText, setReplyText, replySending, sendReply,
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
     fetchFolders, fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,
-    messageAction, undoAction, doSearch, snoozeMessages, muteThread,
+    messageAction, undoAction, doSearch, snoozeMessages, cancelScheduledSend, removeScheduledMessage,
+    mailSettings: _opts.mailSettings,
   };
 }
 

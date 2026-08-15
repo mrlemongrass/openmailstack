@@ -88,9 +88,6 @@ interface SettingsContentProps {
   contactsSettings: ContactsUserSettings;
   availableSenders: string[];
   calendars: CalendarOption[];
-  forwardingGoto: string;
-  keepCopy: boolean;
-  onKeepCopyChange: (value: boolean) => void;
   passwords: { current: string; new: string; confirm: string };
   appearance: AppearancePreferences;
   copiedSetupField: string | null;
@@ -110,17 +107,12 @@ interface SettingsContentProps {
   onDeleteRule: (id: string) => void;
   onMoveRule: (id: string, direction: 'up' | 'down') => void;
   rulesDirty: boolean;
-  vacationSettings: { enabled: boolean; subject?: string; body: string; days?: number; startDate?: string; endDate?: string };
-  onUpdateVacationSettings: (settings: { enabled: boolean; subject?: string; body: string; days?: number; startDate?: string; endDate?: string }) => void;
   onSaveRules: () => void;
-  onSaveVacation: () => void;
   onAddSignature: () => void;
   onUpdateSignatures: (signatures: Signature[]) => void;
   onMailSettingsChange: (settings: MailUserSettings) => void;
   onCalendarSettingsChange: (settings: CalendarUserSettings) => void;
   onContactsSettingsChange: (settings: ContactsUserSettings) => void;
-  onForwardingChange: (value: string) => void;
-  onSaveForwarding: () => void;
   onPasswordChange: (passwords: { current: string; new: string; confirm: string }) => void;
   onAppearanceChange: (preferences: AppearancePreferences) => void;
   onCopySetupValue: (fieldKey: string, value: string) => void;
@@ -218,8 +210,6 @@ export function SettingsContent(props: SettingsContentProps) {
   else if (activeTab === 'mail_identity') content = <MailIdentityPane {...props} />;
   else if (activeTab === 'mail_signatures') content = <SignaturesPane {...props} />;
   else if (activeTab === 'mail_reading') content = <MailReadingPane {...props} />;
-  else if (activeTab === 'mail_forwarding') content = <ForwardingPane {...props} />;
-  else if (activeTab === 'mail_vacation') content = <VacationPane {...props} />;
   else if (activeTab === 'mail_filters') content = <FiltersPane {...props} />;
   else if (activeTab === 'mail_spam') content = <MailSpamPane {...props} />;
   else if (activeTab === 'calendar_defaults') content = <CalendarPane {...props} />;
@@ -581,11 +571,7 @@ function MailReadingPane({ mailSettings, onMailSettingsChange }: SettingsContent
 
       <div className="settings-grid">
         <section className="settings-section">
-          <h3>Conversation View</h3>
-          <label className="settings-toggle-row">
-            <span>Group messages by conversation</span>
-            <input type="checkbox" checked={mailSettings.reading.threaded} onChange={event => updateReading({ threaded: event.target.checked })} />
-          </label>
+          <h3>Message List</h3>
           <label className="settings-toggle-row">
             <span>Show message snippets</span>
             <input type="checkbox" checked={mailSettings.reading.snippets} onChange={event => updateReading({ snippets: event.target.checked })} />
@@ -628,120 +614,8 @@ function MailReadingPane({ mailSettings, onMailSettingsChange }: SettingsContent
               <option value={5}>5 seconds</option>
             </select>
           </label>
-          <div className="settings-disabled-note">Preview-pane and external-image behavior are stored now; the message viewer wiring is a follow-up pass.</div>
         </section>
       </div>
-    </div>
-  );
-}
-
-function ForwardingPane({ forwardingGoto, keepCopy, saving, onForwardingChange, onKeepCopyChange, onSaveForwarding }: SettingsContentProps) {
-  return (
-    <div className="settings-page">
-      <SettingsHeader
-        title="Forwarding"
-        eyebrow="Mail"
-        action={<button className="btn btn-primary" type="button" onClick={onSaveForwarding} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>}
-      />
-      <section className="settings-section">
-        <div className="settings-disabled-note" style={{ marginBottom: 16 }}>
-          Incoming messages will be automatically forwarded to the addresses below. You can enter multiple addresses separated by commas.
-        </div>
-        <label className="settings-field">
-          <span>Forward To</span>
-          <input
-            className="glass-input"
-            placeholder="personal@example.com, work@example.com"
-            value={forwardingGoto}
-            onChange={event => onForwardingChange(event.target.value)}
-          />
-        </label>
-        <label className="settings-field" style={{ marginTop: '16px' }}>
-          <input
-            type="checkbox"
-            checked={keepCopy}
-            onChange={event => onKeepCopyChange(event.target.checked)}
-          />
-          <span>Keep a copy of forwarded messages in my inbox</span>
-        </label>
-        {keepCopy && (
-          <div className="settings-disabled-note" style={{ marginTop: '8px' }}>
-            When enabled, forwarded messages will also be delivered to your mailbox so you can read them here.
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function VacationPane({ vacationSettings, onUpdateVacationSettings, saving, onSaveVacation }: SettingsContentProps) {
-  return (
-    <div className="settings-page">
-      <SettingsHeader
-        title="Auto-Responder"
-        eyebrow="Mail"
-        action={<button className="btn btn-primary" type="button" onClick={onSaveVacation} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>}
-      />
-      <section className="settings-section">
-        <label className="settings-field">
-          <span>Enable Auto-Responder</span>
-          <input
-            type="checkbox"
-            checked={vacationSettings.enabled}
-            onChange={event => onUpdateVacationSettings({ ...vacationSettings, enabled: event.target.checked })}
-          />
-        </label>
-        {vacationSettings.enabled && (
-          <>
-            <label className="settings-field">
-              <span>Subject (Optional)</span>
-              <input
-                className="glass-input"
-                placeholder="Out of office"
-                value={vacationSettings.subject || ''}
-                onChange={event => onUpdateVacationSettings({ ...vacationSettings, subject: event.target.value })}
-              />
-            </label>
-            <label className="settings-field">
-              <span>Message Body</span>
-              <textarea
-                className="glass-input"
-                style={{ minHeight: '150px' }}
-                placeholder="I am currently out of the office and will reply when I return."
-                value={vacationSettings.body}
-                onChange={event => onUpdateVacationSettings({ ...vacationSettings, body: event.target.value })}
-              />
-            </label>
-            <label className="settings-field">
-              <span>Reply Interval (Days)</span>
-              <input
-                type="number"
-                min="1"
-                className="glass-input"
-                value={vacationSettings.days || 1}
-                onChange={event => onUpdateVacationSettings({ ...vacationSettings, days: parseInt(event.target.value, 10) || 1 })}
-              />
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <label className="settings-field">
-                <span>Start Date (Optional)</span>
-                <input type="date" className="glass-input"
-                  value={vacationSettings.startDate || ''}
-                  onChange={event => onUpdateVacationSettings({ ...vacationSettings, startDate: event.target.value })} />
-              </label>
-              <label className="settings-field">
-                <span>End Date (Optional)</span>
-                <input type="date" className="glass-input"
-                  value={vacationSettings.endDate || ''}
-                  onChange={event => onUpdateVacationSettings({ ...vacationSettings, endDate: event.target.value })} />
-              </label>
-            </div>
-            <div className="settings-disabled-note">
-              The reply interval ensures that the same sender will only receive the auto-responder once every X days.
-            </div>
-          </>
-        )}
-      </section>
     </div>
   );
 }

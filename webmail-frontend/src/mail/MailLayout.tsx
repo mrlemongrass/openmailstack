@@ -36,7 +36,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
         {showViewer ? <MessageViewer mail={mail} /> : <Outlet />}
         {!showViewer && (
           <button
-            onClick={() => mail.setIsComposing(true)}
+            onClick={() => mail.startCompose()}
             style={{
               position: 'fixed', bottom: 72, right: 16, zIndex: 50,
               width: 48, height: 48, borderRadius: '50%',
@@ -71,7 +71,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
             <FolderSidebar folders={mail.folders} activeFolder={mail.activeFolder}
               expandedFolders={mail.expandedFolders}
               onToggleExpand={(path) => mail.setExpandedFolders((prev) => ({ ...prev, [path]: !prev[path] }))}
-              onCompose={() => mail.setIsComposing(true)} quota={mail.userQuota} />
+              onCompose={() => mail.startCompose()} quota={mail.userQuota} />
           </div>
         </Panel>
 

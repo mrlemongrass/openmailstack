@@ -10,6 +10,7 @@ exports.authorizeNoteCollaboration = authorizeNoteCollaboration;
 exports.installNotesSignalingServer = installNotesSignalingServer;
 const crypto_1 = __importDefault(require("crypto"));
 const ws_1 = require("ws");
+const browser_origin_1 = require("./browser-origin");
 exports.NOTES_SIGNALING_PATH = '/notes-signal';
 exports.NOTE_COLLABORATION_CAPABILITY_TTL_MS = 5 * 60 * 1000;
 const MAX_SIGNALING_CONNECTIONS_PER_ROOM = 32;
@@ -94,7 +95,7 @@ async function authorizeNoteCollaboration({ enabled, noteId, owner, sessionId, s
     return issueNoteCollaborationCapability({ noteId, owner, sessionId, secret, now });
 }
 const rejectUpgrade = (socket, statusCode) => {
-    const reason = statusCode === 404 ? 'Not Found' : 'Unauthorized';
+    const reason = statusCode === 404 ? 'Not Found' : statusCode === 403 ? 'Forbidden' : 'Unauthorized';
     if (socket.writable) {
         socket.end(`HTTP/1.1 ${statusCode} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
         return;
@@ -213,6 +214,10 @@ function installNotesSignalingServer(server, { enabled, secret, authenticate, no
         }
         if (url.pathname !== exports.NOTES_SIGNALING_PATH)
             return;
+        if (!(0, browser_origin_1.browserRequestHasSameOrigin)(request)) {
+            rejectUpgrade(socket, 403);
+            return;
+        }
         if (!enabled) {
             rejectUpgrade(socket, 404);
             return;

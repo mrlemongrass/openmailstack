@@ -56,6 +56,9 @@ function renderEventModal() {
         wallDateToInstant: date => date,
       };
     }
+    if (id === './freeBusy') {
+      return { freeBusyStatusForUser: () => 'unavailable' };
+    }
     if (id === '../shared/hooks/useModalFocus') {
       return { useModalFocus: () => undefined };
     }
@@ -85,6 +88,7 @@ function renderEventModal() {
       eventSaving: false,
       eventError: null,
       freeBusy: {},
+      freeBusyUnavailable: [],
       freeBusyLoading: false,
       setNewEvent: noop,
       setIsEventModalOpen: noop,
@@ -125,4 +129,14 @@ test('mobile event creation uses an opaque full-screen sheet', () => {
     css,
     /@media \(max-width: 767px\)[\s\S]*\.event-modal-overlay\s*\{[\s\S]*padding:\s*0[\s\S]*\.event-dialog\s*\{[\s\S]*width:\s*100%[\s\S]*height:\s*100dvh[\s\S]*max-height:\s*none[\s\S]*border-radius:\s*0/,
   );
+});
+
+test('removing the final guest persists an empty attendee list', () => {
+  const source = fs.readFileSync(componentPath, 'utf8');
+
+  assert.match(
+    source,
+    /const handleRemoveGuest[\s\S]*setNewEvent\(\(previous\) => \(\{ \.\.\.previous, guests: nextGuests \}\)\)[\s\S]*lookupFreeBusy\(nextGuests/,
+  );
+  assert.match(source, /onClick=\{\(\) => handleRemoveGuest\(g\)\}/);
 });

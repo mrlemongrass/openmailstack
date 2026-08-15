@@ -10,10 +10,12 @@ interface InlineReplyProps {
   onSend: () => void;
   onSendAndArchive: () => void;
   onOpenFullCompose: () => void;
+  showSendAndArchive?: boolean;
 }
 
 export function InlineReply({
-  replyTo, replyText, replySending, onReplyTextChange, onSend, onSendAndArchive, onOpenFullCompose,
+  replyTo, replyText, replySending, onReplyTextChange, onSend, onSendAndArchive,
+  onOpenFullCompose, showSendAndArchive = true,
 }: InlineReplyProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -30,6 +32,7 @@ export function InlineReply({
         className="glass-input"
         placeholder="Type your reply..."
         value={replyText}
+        disabled={replySending}
         onChange={(e) => onReplyTextChange(e.target.value)}
         onFocus={() => setExpanded(true)}
         rows={expanded ? 6 : 3}
@@ -44,11 +47,14 @@ export function InlineReply({
             onClick={onSend} style={{ fontSize: '0.85rem', padding: '6px 14px' }}>
             <Send size={14} /> {replySending ? <><Spinner size={12} /> Sending...</> : 'Send'}
           </button>
-          <button className="btn btn-ghost" disabled={!replyText.trim() || replySending}
-            onClick={onSendAndArchive} style={{ fontSize: '0.8rem' }} title="Send & Archive">
-            <Archive size={14} /> Send & Archive
-          </button>
-          <button className="btn btn-ghost" onClick={onOpenFullCompose} style={{ fontSize: '0.8rem' }}>
+          {showSendAndArchive && (
+            <button className="btn btn-ghost" disabled={!replyText.trim() || replySending}
+              onClick={onSendAndArchive} style={{ fontSize: '0.8rem' }} title="Send & Archive">
+              <Archive size={14} /> Send & Archive
+            </button>
+          )}
+          <button className="btn btn-ghost" disabled={replySending}
+            onClick={onOpenFullCompose} style={{ fontSize: '0.8rem' }}>
             <Maximize2 size={14} /> Rich editor
           </button>
         </div>

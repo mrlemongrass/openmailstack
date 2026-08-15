@@ -7,6 +7,8 @@ import type { useNotes } from '../hooks/useNotes';
 import { NoteSaveConflictError, saveNote } from '../../shared/api';
 import { useToast } from '../../shared/components/Toast';
 import type { Note } from '../../shared/types';
+import { useModalFocus } from '../../shared/hooks/useModalFocus';
+import { createNoteSaveCoordinator } from '../note-save-coordinator';
 
 const NOTE_COLORS = [
   '#ffffff', '#f28b82', '#fbbc04', '#fff475', '#ccff90',
@@ -21,8 +23,16 @@ interface NoteEditorModalProps {
 export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
   const { showToast } = useToast();
   const titleRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const latestDraftRef = useRef<Partial<Note>>(n.editingNote);
+  const draftRevisionRef = useRef(0);
+  const wasModalOpenRef = useRef(false);
+  const closePromiseRef = useRef<Promise<void> | null>(null);
+  const saveCoordinatorRef = useRef(createNoteSaveCoordinator({
+    id: n.editingNote.id || null,
+    syncToken: n.editingNote.sync_token ?? null,
+  }));
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | null>(null);
 
   // ── All hooks MUST be before the early return ──────────────────────────
@@ -31,96 +41,114 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     latestDraftRef.current = n.editingNote;
   }, [n.editingNote]);
 
+  useEffect(() => {
+    if (n.isNoteModalOpen && !wasModalOpenRef.current) {
+      latestDraftRef.current = n.editingNote;
+      draftRevisionRef.current = 0;
+      saveCoordinatorRef.current.reset({
+        id: n.editingNote.id || null,
+        syncToken: n.editingNote.sync_token ?? null,
+      });
+      setSaveStatus(null);
+    }
+    wasModalOpenRef.current = n.isNoteModalOpen;
+  }, [n.editingNote, n.isNoteModalOpen]);
+
+  const queueLatestSave = useCallback(() => saveCoordinatorRef.current.enqueue(async (identity) => {
+    const latest = latestDraftRef.current;
+    const title = titleRef.current?.value ?? latest.title ?? '';
+    const content = latest.content || '';
+    const id = identity.id || latest.id;
+    if (!id && !title && !content) {
+      setSaveStatus(null);
+      return {};
+    }
+
+    const savingRevision = draftRevisionRef.current;
+    setSaveStatus('saving');
+    const saved = await saveNote({
+      id,
+      title: title || 'Untitled',
+      content,
+      color: latest.color,
+      is_pinned: latest.is_pinned,
+      is_locked: latest.is_locked,
+      folder: latest.folder || 'notes',
+      labels_json: latest.labels_json || '[]',
+      expected_sync_token: identity.syncToken ?? latest.sync_token,
+    });
+    if (saved?.id) {
+      latestDraftRef.current = {
+        ...latestDraftRef.current,
+        id: saved.id,
+        sync_token: saved.sync_token,
+      };
+      n.setEditingNote((prev) => ({
+        ...prev,
+        id: saved.id,
+        sync_token: saved.sync_token,
+      }));
+      if (!id) void n.fetchNotes();
+    }
+    setSaveStatus(draftRevisionRef.current === savingRevision ? 'saved' : 'saving');
+    return saved;
+  }), [n]);
+
+  const reportSaveError = useCallback((error: unknown, automatic: boolean) => {
+    if (error instanceof NoteSaveConflictError) {
+      showToast({ type: 'error', message: error.message });
+    } else {
+      showToast({ type: 'error', message: 'The note could not be saved. Your draft is still open.' });
+    }
+    console.error(automatic ? 'Auto-save failed' : 'Save on close failed', error);
+    setSaveStatus(null);
+  }, [showToast]);
+
   const scheduleAutoSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaveStatus('saving');
-    saveTimerRef.current = setTimeout(async () => {
-      const latest = latestDraftRef.current;
-      const title = titleRef.current?.value || latest.title || '';
-      const content = latest.content || '';
-      if (title || content) {
-        try {
-          const saved = await saveNote({
-            id: latest.id,
-            title: title || 'Untitled',
-            content: content || '',
-            color: latest.color,
-            is_pinned: latest.is_pinned,
-            is_locked: latest.is_locked,
-            folder: latest.folder || 'notes',
-            labels_json: latest.labels_json || '[]',
-            expected_sync_token: latest.sync_token,
-          });
-          if (saved?.id) {
-            latestDraftRef.current = {
-              ...latestDraftRef.current,
-              id: saved.id,
-              sync_token: saved.sync_token,
-            };
-            n.setEditingNote((prev) => ({
-              ...prev,
-              id: saved.id,
-              sync_token: saved.sync_token,
-            }));
-          }
-          if (!latest.id && saved?.id) {
-            n.fetchNotes();
-          }
-          setSaveStatus('saved');
-        } catch (e) {
-          if (e instanceof NoteSaveConflictError) {
-            showToast({ type: 'error', message: e.message });
-          } else {
-            showToast({ type: 'error', message: 'The note could not be saved. Your draft is still open.' });
-          }
-          console.error('Auto-save failed', e);
-          setSaveStatus(null);
-        }
-      }
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = undefined;
+      void queueLatestSave().catch((error) => reportSaveError(error, true));
     }, 1500);
-  }, [n, showToast]);
+  }, [queueLatestSave, reportSaveError]);
 
-  const handleClose = useCallback(async () => {
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    const latest = latestDraftRef.current;
-    const title = titleRef.current?.value || latest.title || '';
-    const content = latest.content || '';
-    if (title || content) {
+  const handleClose = useCallback(() => {
+    if (closePromiseRef.current) return closePromiseRef.current;
+    const operation = (async () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = undefined;
+      }
       try {
-        await saveNote({
-          id: latest.id,
-          title: title || 'Untitled',
-          content: content || '',
-          color: latest.color,
-          is_pinned: latest.is_pinned,
-          is_locked: latest.is_locked,
-          folder: latest.folder || 'notes',
-          labels_json: latest.labels_json || '[]',
-          expected_sync_token: latest.sync_token,
-        });
-      } catch (e) {
-        if (e instanceof NoteSaveConflictError) {
-          showToast({ type: 'error', message: e.message });
-          return;
-        }
-        console.error('Save on close failed', e);
-        showToast({ type: 'error', message: 'The note could not be saved. Your draft is still open.' });
+        await queueLatestSave();
+      } catch (error) {
+        reportSaveError(error, false);
         return;
       }
-    }
-    n.setIsNoteModalOpen(false);
-    n.setEditingNote({});
-    n.fetchNotes();
-    if (title || content) showToast({ type: 'success', message: 'Note saved' });
-  }, [n, showToast]);
+      const latest = latestDraftRef.current;
+      const title = titleRef.current?.value ?? latest.title ?? '';
+      const content = latest.content || '';
+      n.setIsNoteModalOpen(false);
+      n.setEditingNote({});
+      await n.fetchNotes();
+      if (latest.id || title || content) showToast({ type: 'success', message: 'Note saved' });
+    })();
+    closePromiseRef.current = operation.finally(() => {
+      closePromiseRef.current = null;
+    });
+    return closePromiseRef.current;
+  }, [n, queueLatestSave, reportSaveError, showToast]);
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    draftRevisionRef.current += 1;
     latestDraftRef.current = { ...latestDraftRef.current, title: e.target.value };
     n.setEditingNote((prev) => ({ ...prev, title: e.target.value }));
     scheduleAutoSave();
   }, [n, scheduleAutoSave]);
 
   const handleContentChange = useCallback((content: string) => {
+    draftRevisionRef.current += 1;
     latestDraftRef.current = { ...latestDraftRef.current, content };
     n.setEditingNote((prev) => ({ ...prev, content }));
     scheduleAutoSave();
@@ -139,6 +167,12 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     }
   }, [n.editingNote.id]);
 
+  useModalFocus({
+    dialogRef,
+    open: n.isNoteModalOpen,
+    onClose: handleClose,
+  });
+
   // ── Early return after all hooks ──────────────────────────────────────
 
   if (!n.isNoteModalOpen) return null;
@@ -149,7 +183,14 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
     <div className="note-modal-overlay" onClick={(e) => {
       if (e.target === e.currentTarget) handleClose();
     }}>
-      <div className="note-modal">
+      <div
+        ref={dialogRef}
+        className="note-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={note.id ? `Edit note ${note.title || 'Untitled'}` : 'New note'}
+        tabIndex={-1}
+      >
         <div className="note-modal-header">
           <input
             ref={titleRef}
@@ -168,6 +209,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
                   style={{ backgroundColor: color }}
                   title={color}
                   onClick={() => {
+                    draftRevisionRef.current += 1;
                     latestDraftRef.current = { ...latestDraftRef.current, color };
                     n.setEditingNote((prev) => ({ ...prev, color }));
                     scheduleAutoSave();
@@ -192,7 +234,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
             </div>
           </div>
           <div className="note-modal-actions">
-            <button className="btn btn-ghost btn-sm" onClick={handleClose} title="Close">
+            <button className="btn btn-ghost btn-sm" aria-label="Close note editor" onClick={handleClose} title="Close">
               <X size={18} />
             </button>
           </div>

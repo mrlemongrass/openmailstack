@@ -96,8 +96,8 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
       borderBottom: '1px solid var(--border-glass)', flexWrap: 'wrap' }}>
       <button className="btn btn-ghost" onClick={() => { cal.setCurrentDate(cal.displayNow); showToast({ type: 'info', message: 'Jumped to today' }); }}
         style={{ fontSize: '0.85rem' }}>Today</button>
-      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={nav.prev}><ChevronLeft size={16} /></button>
-      <button className="btn btn-ghost" style={{ padding: '4px 8px' }} onClick={nav.next}><ChevronRight size={16} /></button>
+      <button className="btn btn-ghost" aria-label={`Previous ${cal.calendarView}`} style={{ padding: '4px 8px' }} onClick={nav.prev}><ChevronLeft size={16} /></button>
+      <button className="btn btn-ghost" aria-label={`Next ${cal.calendarView}`} style={{ padding: '4px 8px' }} onClick={nav.next}><ChevronRight size={16} /></button>
       <span style={{ fontWeight: 600, fontSize: '1rem' }}>{nav.label}</span>
       <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
         · {cal.events.filter((e) => cal.calendarVisibility[e.calendarId] !== false).length} events

@@ -6,7 +6,6 @@ import { WbxmlParser } from './wbxml/parser';
 import { WbxmlWriter } from './wbxml/writer';
 import { ImapService } from './imap';
 import { apiRouter } from './api';
-import cors from 'cors';
 import nodemailer from 'nodemailer';
 import { pool } from './db';
 import { getPublicBaseUrl, normalizeMailboxUsername, serverConfig, smtpTransportOptions } from './config';
@@ -145,11 +144,16 @@ import { getSession, initializeSessionStore, requireSession } from './auth';
 import { ensureAccountSecuritySchema } from './account-security';
 import { createMozillaAutoconfigRouter } from './mail-autoconfig';
 import { installNotesSignalingServer } from './notes-collaboration';
+import {
+    allowSameOriginSocketRequest,
+    requireSameOriginBrowserRequest,
+} from './browser-origin';
+import { createPrivateUploadsRouter } from './private-uploads';
 
 const app = express();
 const server = http.createServer(app);
 export const io = new SocketIOServer(server, {
-    cors: { origin: true, credentials: true }
+    allowRequest: allowSameOriginSocketRequest,
 });
 
 installNotesSignalingServer(server, {
@@ -178,6 +182,7 @@ io.on('connection', (socket) => {
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(securityHeaders);
+app.use('/api', requireSameOriginBrowserRequest);
 app.use('/Microsoft-Server-ActiveSync', bodyParser.raw({
     type: () => true,
     limit: `${ACTIVE_SYNC_MAX_REQUEST_BYTES}b`,
@@ -194,11 +199,10 @@ app.use(bodyParser.raw({
 }));
 
 import * as path from 'path';
-app.use('/uploads', (req, res, next) => {
-    requireSession(req, res, () => {
-        next();
-    });
-}, express.static(path.join(__dirname, '..', 'uploads')));
+app.use('/uploads', createPrivateUploadsRouter({
+    rootDirectory: path.join(__dirname, '..', 'uploads'),
+    authenticate: requireSession,
+}));
 
 import caldavRouter from './caldav';
 import carddavRouter from './carddav';
@@ -292,9 +296,9 @@ function isContactsCollection(collectionId: string): boolean {
 }
 
 app.use('/api/auth/login', rateLimit(15 * 60 * 1000, 20));
-app.use('/api', cors({ credentials: true, origin: true }), apiRouter);
-app.use('/api/apps', cors({ credentials: true, origin: true }), appsApiRouter);
-app.use('/api', cors({ credentials: true, origin: true }), schedulerRouter);
+app.use('/api', apiRouter);
+app.use('/api/apps', appsApiRouter);
+app.use('/api', schedulerRouter);
 app.use('/caldav', caldavRouter);
 
 app.all('/', (req, res, next) => {

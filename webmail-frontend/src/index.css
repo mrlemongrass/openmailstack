@@ -2642,7 +2642,8 @@ li[data-checked="true"] .ql-checkbox {
 }
 
 /* ---- Note card actions ---- */
-.contact-card:hover .note-card-actions {
+.contact-card:hover .note-card-actions,
+.contact-card:focus-within .note-card-actions {
   opacity: 1;
 }
 

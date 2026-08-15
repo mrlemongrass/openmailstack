@@ -172,11 +172,18 @@ function AdminLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreMenuFocusRef = useRef(false);
 
   const closeSidebar = useCallback(() => {
+    restoreMenuFocusRef.current = true;
     setSidebarOpen(false);
-    window.requestAnimationFrame(() => menuButtonRef.current?.focus());
   }, []);
+
+  useEffect(() => {
+    if (sidebarOpen || !restoreMenuFocusRef.current) return;
+    restoreMenuFocusRef.current = false;
+    menuButtonRef.current?.focus();
+  }, [sidebarOpen]);
 
   useEffect(() => {
     if (!sidebarOpen || !sidebarRef.current) return;

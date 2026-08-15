@@ -1,8 +1,12 @@
 export declare function getTagToken(page: number, tagName: string): number | null;
 export declare class WbxmlWriter {
-    private buffer;
+    private chunks;
+    private pendingBytes;
     private currentPage;
     constructor();
+    private pushBytes;
+    private flushPendingBytes;
+    private pushBuffer;
     private writeMbU32;
     private writeStringInline;
     private writeOpaque;

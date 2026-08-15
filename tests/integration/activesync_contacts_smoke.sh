@@ -24,6 +24,25 @@ addressbook_url="${BASE_URL}/carddav/addressbooks/${SMOKE_USER}/personal/"
 contact_url="${addressbook_url}${contact_uid}.vcf"
 eas_base="${BASE_URL}/Microsoft-Server-ActiveSync?User=${SMOKE_USER}&DeviceId=OMSEASContactsSmoke&DeviceType=CodexSmoke"
 
+options_status=$(curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X OPTIONS \
+  -D "${tmpdir}/options.headers" \
+  -o "${tmpdir}/options.out" \
+  -w '%{http_code}' \
+  "${eas_base}")
+if [[ "${options_status}" != "200" ]]; then
+  echo "FAIL: ActiveSync OPTIONS returned HTTP ${options_status}"
+  exit 1
+fi
+options_commands=$(tr -d '\r' < "${tmpdir}/options.headers" | awk -F': *' 'tolower($1) == "ms-asprotocolcommands" { print $2; exit }')
+if [[ -z "${options_commands}" ]]; then
+  echo "FAIL: ActiveSync OPTIONS omitted MS-ASProtocolCommands"
+  exit 1
+fi
+if [[ ",${options_commands}," == *",GetItemEstimate,"* ]]; then
+  echo "FAIL: ActiveSync OPTIONS advertised unsupported GetItemEstimate"
+  exit 1
+fi
+
 vcard_file="${tmpdir}/${contact_uid}.vcf"
 cat > "${vcard_file}" <<VCF
 BEGIN:VCARD
@@ -90,48 +109,6 @@ if [[ -z "${contacts_collection_id}" ]]; then
   echo "FAIL: ActiveSync Contacts collection id was empty"
   exit 1
 fi
-
-node - "${contacts_collection_id}" <<'NODE' > "${tmpdir}/estimate.wbxml"
-const { WbxmlWriter } = require('./webmail-backend/src/wbxml/writer.js');
-const collectionId = process.argv[2];
-const writer = new WbxmlWriter();
-writer.writeNode({
-  tag: 'GetItemEstimate',
-  page: 6,
-  children: [
-    { tag: 'Collections', page: 6, children: [
-      { tag: 'Collection', page: 6, children: [
-        { tag: 'Class', page: 6, content: 'Contacts' },
-        { tag: 'CollectionId', page: 6, content: collectionId }
-      ]}
-    ]}
-  ]
-});
-process.stdout.write(writer.getBuffer());
-NODE
-
-curl -sS -u "${SMOKE_USER}:${SMOKE_PASSWORD}" -X POST \
-  -H 'Content-Type: application/vnd.ms-sync.wbxml' \
-  --data-binary @"${tmpdir}/estimate.wbxml" \
-  -o "${tmpdir}/estimate.out" \
-  "${eas_base}&Cmd=GetItemEstimate"
-
-node - "${tmpdir}/estimate.out" <<'NODE'
-const fs = require('fs');
-const { WbxmlParser } = require('./webmail-backend/src/wbxml/parser.js');
-const ast = new WbxmlParser(fs.readFileSync(process.argv[2])).parse();
-let ok = false;
-let estimate = -1;
-function walk(node) {
-  if (!node) return;
-  if (node.tag === 'Status' && node.content?.toString() === '1') ok = true;
-  if (node.tag === 'Estimate' && node.content) estimate = Number(node.content.toString());
-  for (const child of node.children || []) walk(child);
-}
-walk(ast);
-if (!ok) throw new Error('GetItemEstimate did not return Status 1');
-if (!Number.isFinite(estimate) || estimate < 1) throw new Error(`GetItemEstimate returned invalid estimate ${estimate}`);
-NODE
 
 node - "${contacts_collection_id}" <<'NODE' > "${tmpdir}/contacts-sync.wbxml"
 const { WbxmlWriter } = require('./webmail-backend/src/wbxml/writer.js');

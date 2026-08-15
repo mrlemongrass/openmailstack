@@ -8,6 +8,7 @@ process.env.OMS_DB_PASSWORD ||= 'calendar-events-route-test';
 const user = 'calendar-route@example.test';
 const calendarId = 7;
 const storedEvents = new Map();
+const tombstones = [];
 
 const db = require('../src/db.js');
 db.pool.query = async (sql, params = []) => {
@@ -15,6 +16,14 @@ db.pool.query = async (sql, params = []) => {
   if (compact.startsWith('SELECT c.id FROM calendars')) return [[{ id: calendarId }], []];
   if (compact.startsWith('INSERT INTO events')) {
     storedEvents.set(params[1], params[2]);
+    return [{ affectedRows: 1 }, []];
+  }
+  if (compact.startsWith('INSERT INTO calendar_tombstones')) {
+    tombstones.push({ calendarId: params[0], uid: params[1] });
+    return [{ affectedRows: 1 }, []];
+  }
+  if (compact.startsWith('DELETE FROM events WHERE calendar_id')) {
+    storedEvents.delete(params[1]);
     return [{ affectedRows: 1 }, []];
   }
   if (compact.startsWith('UPDATE calendars SET sync_token')) return [{ affectedRows: 1 }, []];
@@ -64,6 +73,22 @@ function postEvent(port, icalData) {
   });
 }
 
+function deleteEvent(port, uid) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path: `/api/apps/events/${calendarId}/${encodeURIComponent(uid)}`,
+      method: 'DELETE',
+    }, response => {
+      response.resume();
+      response.on('end', () => resolve(response.statusCode));
+    });
+    request.on('error', reject);
+    request.end();
+  });
+}
+
 test('editing an event upserts the exact submitted UID instead of inserting a copy', async (t) => {
   storedEvents.clear();
   const app = express();
@@ -91,4 +116,22 @@ test('editing an event upserts the exact submitted UID instead of inserting a co
   assert.equal(await postEvent(port, event('Edited')), 200);
   assert.equal(storedEvents.size, 1);
   assert.equal(storedEvents.get(uid), event('Edited'));
+});
+
+test('deleting an event records the tombstone required by sync clients', async (t) => {
+  storedEvents.clear();
+  tombstones.length = 0;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/apps', appsApiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const uid = 'calendar-delete-regression@example.test';
+  storedEvents.set(uid, 'event payload');
+
+  assert.equal(await deleteEvent(server.address().port, uid), 200);
+  assert.equal(storedEvents.has(uid), false);
+  assert.deepEqual(tombstones, [{ calendarId: String(calendarId), uid }]);
 });

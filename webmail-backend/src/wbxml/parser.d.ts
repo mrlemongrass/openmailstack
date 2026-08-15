@@ -5,15 +5,23 @@ export interface WbxmlNode {
     content?: string | Buffer;
 }
 export declare class WbxmlParser {
+    private static readonly MAX_NESTING_DEPTH;
+    private static readonly MAX_ELEMENT_COUNT;
+    private static readonly MAX_TOKEN_COUNT;
+    private static readonly MAX_INLINE_CONTENT_BYTES;
     private buffer;
     private pos;
     private currentPage;
+    private elementCount;
+    private tokenCount;
+    private inlineContentBytes;
     version: number;
     publicId: number;
     charset: number;
     stringTable: Buffer;
     constructor(buffer: Buffer);
     private readByte;
+    private readTokenByte;
     private readMbU32;
     private readStringInline;
     private readOpaque;

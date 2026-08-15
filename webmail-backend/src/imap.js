@@ -741,20 +741,38 @@ class ImapService {
             return null;
         }
     }
-    async getMessageByUid(folderPath, uid) {
-        const mbx = await this.client.mailboxOpen(folderPath);
-        let result = null;
-        for await (let msg of this.client.fetch(uid.toString(), { envelope: true, source: true, uid: true, flags: true }, { uid: true })) {
-            result = {
-                uid: msg.uid,
-                flags: Array.from(msg.flags || []),
-                envelope: msg.envelope,
-                source: msg.source
+    async getMessageByUid(folderPath, uid, maxSourceBytes) {
+        await this.client.mailboxOpen(folderPath);
+        try {
+            const bounded = Number.isFinite(maxSourceBytes) && Number(maxSourceBytes) > 0;
+            const sourceLimit = bounded ? Math.max(1, Math.floor(Number(maxSourceBytes))) : 0;
+            const query = {
+                envelope: true,
+                source: bounded ? { start: 0, maxLength: sourceLimit } : true,
+                size: true,
+                uid: true,
+                flags: true,
             };
-            break;
+            for await (const msg of this.client.fetch(uid.toString(), query, { uid: true })) {
+                const source = msg.source || Buffer.alloc(0);
+                const reportedSize = Number(msg.size);
+                const hasReportedSize = Number.isFinite(reportedSize) && reportedSize >= 0;
+                const size = hasReportedSize ? reportedSize : source.length;
+                return {
+                    uid: msg.uid,
+                    flags: Array.from(msg.flags || []),
+                    envelope: msg.envelope,
+                    source,
+                    size,
+                    sourceComplete: !bounded
+                        || (hasReportedSize ? source.length >= reportedSize : source.length < sourceLimit),
+                };
+            }
+            return null;
         }
-        await this.client.mailboxClose();
-        return result;
+        finally {
+            await this.client.mailboxClose();
+        }
     }
     async appendMessage(folderPath, content, flags) {
         await this.client.append(folderPath, content, flags);

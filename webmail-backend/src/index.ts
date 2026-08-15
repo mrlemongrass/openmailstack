@@ -8,9 +8,8 @@ import { ImapService } from './imap';
 import { apiRouter } from './api';
 import cors from 'cors';
 import nodemailer from 'nodemailer';
-import { simpleParser } from 'mailparser';
 import { pool } from './db';
-import { getPublicBaseUrl, normalizeMailboxUsername, serverConfig, smtpConfig, smtpTransportOptions } from './config';
+import { getPublicBaseUrl, normalizeMailboxUsername, serverConfig, smtpTransportOptions } from './config';
 import { rateLimit, securityHeaders } from './security';
 import { ensureMailSearchSchema } from './search-index';
 import { ensureUserSettingsSchema } from './user-settings';
@@ -30,8 +29,7 @@ import {
     normalizeDavUid,
     saveContactFromVCard
 } from './contact-utils';
-import { ensureNotesSchema, ensureRemindersSchema, ensureAttachmentsSchema, listNotes, saveNote, deleteNote, getNotesSyncToken } from './notes-utils';
-import { activeSyncToDbNote, dbNoteToActiveSync } from './eas-notes';
+import { ensureNotesSchema, ensureRemindersSchema, ensureAttachmentsSchema } from './notes-utils';
 import { activeSyncContactApplicationDataToVCard, contactToActiveSyncApplicationData } from './eas-contacts';
 import { activeSyncCalendarApplicationDataToIcal, calendarEventToActiveSyncApplicationData, normalizeCalendarEventUid } from './eas-calendar';
 import { shouldSendActiveSyncServerChanges } from './eas-sync';
@@ -55,8 +53,31 @@ import {
     type MailSyncKnownItems,
     type StoredMailSyncState,
 } from './eas-mail-sync';
-import { buildActiveSyncSendMailEnvelope, extractActiveSyncSendMailMime, summarizeActiveSyncNodeForLog } from './eas-send';
-import { syncNotesWithImap } from './notes-imap-sync';
+import { buildActiveSyncSendMailEnvelope, extractActiveSyncSendMailMime } from './eas-send';
+import {
+    ACTIVE_SYNC_ADVERTISED_COMMANDS,
+    ACTIVE_SYNC_MAX_REQUEST_BYTES,
+    ACTIVE_SYNC_UNSUPPORTED_COMMANDS,
+    activeSyncDeleteCommand,
+    activeSyncRequestLogSummary,
+    classifyActiveSyncCollection,
+    staticActiveSyncServiceFolders,
+    unsupportedSyncCollectionResponse,
+} from './eas-protocol';
+import {
+    ITEM_OPERATIONS_MAX_AGGREGATE_SOURCE_BYTES,
+    ITEM_OPERATIONS_MAX_BODY_BYTES,
+    ITEM_OPERATIONS_MAX_FETCHES,
+    ITEM_OPERATIONS_MAX_RESPONSE_BODY_BYTES,
+    itemOperationsBodyAllowance,
+    itemOperationsFetchRequest,
+    itemOperationsFetchError,
+    itemOperationsFetchBodyBytes,
+    itemOperationsFetchSuccess,
+    itemOperationsMailboxTarget,
+    itemOperationsRequestFetches,
+    itemOperationsSourceAllowance,
+} from './eas-item-operations';
 import { startSearchWorker } from './search-worker';
 import { startScheduledSender } from './scheduled-send';
 import { startCalendarSubscriptionWorker } from './calendar-subscription';
@@ -119,11 +140,17 @@ ensureAccountSecuritySchema().catch(err => console.error('Failed to initialize a
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(securityHeaders);
+app.use('/Microsoft-Server-ActiveSync', bodyParser.raw({
+    type: () => true,
+    limit: `${ACTIVE_SYNC_MAX_REQUEST_BYTES}b`,
+}));
 app.use(express.json({ limit: `${serverConfig.uploadLimitBytes}b` }));
 app.use(bodyParser.raw({
     type: (req: any) => {
         const contentType = String(req.headers['content-type'] || '').toLowerCase();
-        return !req.url.startsWith('/api/') && !contentType.includes('multipart/form-data');
+        return !req.url.startsWith('/api/')
+            && !req.url.startsWith('/Microsoft-Server-ActiveSync')
+            && !contentType.includes('multipart/form-data');
     },
     limit: `${serverConfig.uploadLimitBytes}b`
 }));
@@ -235,31 +262,16 @@ app.all(['/autodiscover/autodiscover.xml', '/Autodiscover/Autodiscover.xml'], (r
 });
 
 app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
-    console.log(`\n--- [EAS] Received ${req.method} Request ---`);
-    console.log(`Cmd: ${req.query.Cmd}`);
-
     if (req.method === 'OPTIONS') {
         res.set('MS-Server-ActiveSync', '14.1');
         res.set('MS-ASProtocolVersions', '14.0,14.1');
-        res.set('MS-ASProtocolCommands', 'Sync,SendMail,SmartForward,SmartReply,FolderSync,FolderCreate,FolderDelete,FolderUpdate,GetItemEstimate,Settings,Ping,Provision');
+        res.set('MS-ASProtocolCommands', ACTIVE_SYNC_ADVERTISED_COMMANDS.join(','));
         res.set('Public', 'OPTIONS,POST');
         return res.status(200).send();
     }
 
-    if (req.body && req.body.length > 0) {
-        // console.log("Raw Body (hex):", req.body.toString('hex'));
-        try {
-            const parser = new WbxmlParser(req.body);
-            const decoded = parser.parse();
-            const activeSyncCommand = String(req.query.Cmd || '');
-            const decodedForLog = ['SendMail', 'SmartForward', 'SmartReply'].includes(activeSyncCommand)
-                ? summarizeActiveSyncNodeForLog(decoded)
-                : decoded;
-            console.log("Decoded Request:", JSON.stringify(decodedForLog, null, 2));
-        } catch (err) {
-            console.error("Failed to parse WBXML:", err);
-        }
-    }
+    const requestBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (requestBody.length > ACTIVE_SYNC_MAX_REQUEST_BYTES) return res.status(413).send();
     
     // Helper to get auth from header
     function getAuthCredentials() {
@@ -278,7 +290,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     }
 
     // Check command and respond
-    const cmd = req.query.Cmd;
+    const cmd = String(req.query.Cmd || '');
     const requestCredentials = getAuthCredentials();
     if (!requestCredentials) return res.status(401).send();
     const authenticationImap = new ImapService(requestCredentials.user, requestCredentials.pass, false);
@@ -288,6 +300,27 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         return res.status(401).send();
     } finally {
         try { await authenticationImap.logout(); } catch {}
+    }
+
+    let decodedForStructure: any = null;
+    let requestParseFailed = false;
+    if (requestBody.length > 0) {
+        try {
+            decodedForStructure = new WbxmlParser(requestBody).parse();
+        } catch {
+            requestParseFailed = true;
+        }
+    }
+    console.log('[EAS] Request', JSON.stringify(activeSyncRequestLogSummary(
+        req.method,
+        cmd,
+        requestBody.length,
+        decodedForStructure,
+        requestParseFailed,
+    )));
+    if (requestParseFailed) return res.status(400).send();
+    if ((ACTIVE_SYNC_UNSUPPORTED_COMMANDS as readonly string[]).includes(cmd)) {
+        return res.status(501).send();
     }
 
     if (cmd === 'FolderSync') {
@@ -347,31 +380,20 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 ]};
             });
 
-            let serviceFolders = [
-                { tag: "Add", page: 7, children: [
-                    { tag: "ServerId", page: 7, content: CONTACTS_COLLECTION_ID },
-                    { tag: "ParentId", page: 7, content: "0" },
-                    { tag: "DisplayName", page: 7, content: "Contacts" },
-                    { tag: "Type", page: 7, content: "9" }
-                ]},
-                { tag: "Add", page: 7, children: [
-                    { tag: "ServerId", page: 7, content: "mock-tasks" },
-                    { tag: "ParentId", page: 7, content: "0" },
-                    { tag: "DisplayName", page: 7, content: "Reminders" },
-                    { tag: "Type", page: 7, content: "7" }
-                ]},
-                { tag: "Add", page: 7, children: [
-                    { tag: "ServerId", page: 7, content: "mock-notes" },
-                    { tag: "ParentId", page: 7, content: "0" },
-                    { tag: "DisplayName", page: 7, content: "Notes" },
-                    { tag: "Type", page: 7, content: "10" }
-                ]}
-            ];
-            folderDescriptors.push(
-                { serverId: CONTACTS_COLLECTION_ID, displayName: "Contacts", type: "9" },
-                { serverId: "mock-tasks", displayName: "Reminders", type: "7" },
-                { serverId: "mock-notes", displayName: "Notes", type: "10" }
-            );
+            const staticFolders = staticActiveSyncServiceFolders();
+            const serviceFolders = staticFolders.map(folder => ({
+                tag: 'Add', page: 7, children: [
+                    { tag: 'ServerId', page: 7, content: folder.serverId },
+                    { tag: 'ParentId', page: 7, content: folder.parentId },
+                    { tag: 'DisplayName', page: 7, content: folder.displayName },
+                    { tag: 'Type', page: 7, content: folder.type },
+                ],
+            }));
+            folderDescriptors.push(...staticFolders.map(folder => ({
+                serverId: folder.serverId,
+                displayName: folder.displayName,
+                type: folder.type,
+            })));
 
             try {
                 const cals = await getVisibleCalendars(creds.user);
@@ -395,7 +417,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
             const currentSyncKey = getCalendarFolderSyncKey(folderDescriptors);
 
             if (syncKey !== "0" && syncKey === currentSyncKey) {
-                console.log(`Client sent current FolderSync key ${syncKey}. Returning no changes.`);
+                console.log('[EAS] FolderSync hierarchy unchanged');
                 responseAst = {
                     tag: "FolderSync",
                     page: 7,
@@ -405,7 +427,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     ]
                 };
             } else if (syncKey !== "0") {
-                console.log(`Client sent stale FolderSync key ${syncKey}. Forcing hierarchy reset to ${currentSyncKey}.`);
+                console.log('[EAS] FolderSync rejected a stale hierarchy key');
                 responseAst = {
                     tag: "FolderSync",
                     page: 7,
@@ -414,7 +436,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     ]
                 };
             } else {
-                console.log(`Client sent SyncKey 0. Returning full folder hierarchy with key ${currentSyncKey}.`);
+                console.log(`[EAS] FolderSync returning ${allNodes.length} folders`);
                 responseAst = {
                     tag: "FolderSync",
                     page: 7,
@@ -429,7 +451,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 };
             }
         } catch (err: any) {
-            console.error("IMAP Error during FolderSync:", err);
+            console.error('[EAS] FolderSync failed');
             if (err && err.message && err.message.toLowerCase().includes('auth')) {
                 return res.status(401).send();
             }
@@ -587,107 +609,6 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         return res.status(200).send(writer.getBuffer());
     }
 
-    if (cmd === 'GetItemEstimate') {
-        const creds = getAuthCredentials();
-        if (!creds) return res.status(401).send();
-
-        try {
-            let collectionNodes: any[] = [];
-            if (req.body && req.body.length > 0) {
-                const parser = new WbxmlParser(req.body);
-                const decoded = parser.parse();
-                collectionNodes = childNode(decoded, 'Collections')?.children?.filter((node: any) => node.tag === 'Collection') || [];
-                if (collectionNodes.length === 0) {
-                    collectionNodes = decoded?.children?.filter((node: any) => node.tag === 'Collection') || [];
-                }
-            }
-
-            const responses: any[] = [];
-            let imap: ImapService | null = null;
-
-            try {
-                for (const collectionNode of collectionNodes) {
-                    const collectionId = childText(collectionNode, 'CollectionId');
-                    const requestedClass = childText(collectionNode, 'Class');
-                    let estimate = 0;
-                    let status = '1';
-
-                    try {
-                        if (isContactsCollection(collectionId)) {
-                            estimate = (await listContacts(creds.user)).length;
-                        } else if (collectionId === 'mock-calendar' || collectionId.startsWith('cal-')) {
-                            if (collectionId.startsWith('cal-')) {
-                                const calendarId = collectionId.slice(4);
-                                const [rows]: any = await pool.query(
-                                    'SELECT COUNT(*) AS event_count FROM events e JOIN calendars c ON c.id = e.calendar_id WHERE c.id = ? AND c.user_id = ?',
-                                    [calendarId, creds.user]
-                                );
-                                estimate = Number(rows[0]?.event_count || 0);
-                            } else {
-                                const calendar = await ensureDefaultCalendar(creds.user);
-                                const [rows]: any = await pool.query('SELECT COUNT(*) AS event_count FROM events WHERE calendar_id = ?', [calendar.id]);
-                                estimate = Number(rows[0]?.event_count || 0);
-                            }
-                        } else if (collectionId && !collectionId.startsWith('mail%')) {
-                            if (!imap) {
-                                imap = new ImapService(creds.user, creds.pass);
-                                await imap.connect();
-                            }
-                            const folderPath = Buffer.from(collectionId, 'base64').toString('utf8');
-                            const mailbox = await imap.client.mailboxOpen(folderPath);
-                            estimate = mailbox.exists || 0;
-                            await imap.client.mailboxClose();
-                        } else {
-                            status = '8';
-                        }
-                    } catch (estimateErr) {
-                        console.error('[EAS] GetItemEstimate failed for collection:', collectionId, estimateErr);
-                        status = '8';
-                    }
-
-                    responses.push({
-                        tag: 'Response',
-                        page: 6,
-                        children: [
-                            { tag: 'Status', page: 6, content: status },
-                            { tag: 'Collection', page: 6, children: [
-                                ...(requestedClass ? [{ tag: 'Class', page: 6, content: requestedClass }] : []),
-                                { tag: 'CollectionId', page: 6, content: collectionId },
-                                { tag: 'Estimate', page: 6, content: estimate.toString() }
-                            ]}
-                        ]
-                    });
-                }
-            } finally {
-                if (imap) {
-                    try { await imap.logout(); } catch(e) {}
-                }
-            }
-
-            const responseAst = {
-                tag: 'GetItemEstimate',
-                page: 6,
-                children: responses.length > 0 ? responses : [
-                    { tag: 'Response', page: 6, children: [
-                        { tag: 'Status', page: 6, content: '1' },
-                        { tag: 'Collection', page: 6, children: [
-                            { tag: 'CollectionId', page: 6, content: '' },
-                            { tag: 'Estimate', page: 6, content: '0' }
-                        ]}
-                    ]}
-                ]
-            };
-
-            const writer = new WbxmlWriter();
-            writer.writeNode(responseAst);
-            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
-            return res.status(200).send(writer.getBuffer());
-        } catch (e) {
-            console.error('Failed to process GetItemEstimate:', e);
-            return res.status(500).send();
-        }
-    }
-
     if (cmd === 'Sync') {
         let collectionId = "";
         let syncKey = "1";
@@ -824,7 +745,6 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     children: [
                         { tag: 'Collections', page: 0, children: [
                             { tag: 'Collection', page: 0, children: [
-                                { tag: 'Class', page: 0, content: 'Contacts' },
                                 { tag: 'SyncKey', page: 0, content: nextSyncKey },
                                 { tag: 'CollectionId', page: 0, content: collectionId },
                                 { tag: 'Status', page: 0, content: '1' },
@@ -837,11 +757,11 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 
                 const writer = new WbxmlWriter();
                 writer.writeNode(responseAst);
-                console.log(`[SYNC] Sending Contacts Sync Response for ${collectionId} with ${commandNodes.length} commands. SyncKey going to ${nextSyncKey}`);
+                console.log(`[EAS] Contacts Sync returning ${commandNodes.length} commands and ${responses.length} responses`);
                 res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
                 return res.status(200).send(writer.getBuffer());
-            } catch (e) {
-                console.error('Failed to sync contacts:', e);
+            } catch {
+                console.error('[EAS] Contacts Sync failed');
                 return res.status(500).send();
             }
         }
@@ -1033,13 +953,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                         [calendar.id]
                     );
                     for (const t of tombstones) {
-                        addNodes.push({
-                            tag: "Add",
-                            page: 0,
-                            children: [
-                                { tag: "ServerId", page: 0, content: t.uid }
-                            ]
-                        });
+                        addNodes.push(activeSyncDeleteCommand(t.uid));
                     }
                     // Clean old tombstones
                     pool.query('DELETE FROM calendar_tombstones WHERE deleted_at < DATE_SUB(NOW(), INTERVAL 30 DAY)').catch(() => {});
@@ -1051,7 +965,6 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     children: [
                         { tag: "Collections", page: 0, children: [
                             { tag: "Collection", page: 0, children: [
-                                { tag: "Class", page: 0, content: "Calendar" },
                                 { tag: "SyncKey", page: 0, content: nextSyncKey },
                                 { tag: "CollectionId", page: 0, content: responseCollectionId },
                                 { tag: "Status", page: 0, content: "1" },
@@ -1064,205 +977,46 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 
                 const writer = new WbxmlWriter();
                 writer.writeNode(responseAst);
-                console.log(`[SYNC] Sending Calendar Sync Response for ${responseCollectionId} with ${addNodes.length} items. SyncKey going to ${nextSyncKey}`);
+                console.log(`[EAS] Calendar Sync returning ${addNodes.length} commands and ${responses.length} responses`);
                 res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
                 return res.status(200).send(writer.getBuffer());
-            } catch (e) {
-                console.error("Failed to sync calendar:", e);
+            } catch {
+                console.error('[EAS] Calendar Sync failed');
                 return res.status(500).send();
             }
         }
 
-        if (collectionId === 'mock-notes') {
-            const creds = getAuthCredentials();
-            if (!creds) return res.status(401).send();
-            
-            console.log(`[SYNC] Notes sync for ${creds.user}, SyncKey=${syncKey}`);
-            let responses: any[] = [];
-            
-            try {
-                const commandsNode = childNode(syncCollectionNode, 'Commands');
-                if (commandsNode) {
-                    for (const cmd of commandsNode.children || []) {
-                        if (cmd.tag === 'Add') {
-                            const clientId = childText(cmd, 'ClientId');
-                            const appData = childNode(cmd, 'ApplicationData');
-                            const noteData = activeSyncToDbNote(appData);
-                            const saved = await saveNote({ ...noteData, owner: creds.user });
-                            responses.push({
-                                tag: 'Add', page: 0, children: [
-                                    { tag: 'ClientId', page: 0, content: clientId },
-                                    { tag: 'ServerId', page: 0, content: saved.id },
-                                    { tag: 'Status', page: 0, content: '1' }
-                                ]
-                            });
-                        } else if (cmd.tag === 'Change') {
-                            const serverId = childText(cmd, 'ServerId');
-                            const appData = childNode(cmd, 'ApplicationData');
-                            const noteData = activeSyncToDbNote(appData);
-                            await saveNote({ ...noteData, id: serverId, owner: creds.user });
-                            responses.push({
-                                tag: 'Change', page: 0, children: [
-                                    { tag: 'ServerId', page: 0, content: serverId },
-                                    { tag: 'Status', page: 0, content: '1' }
-                                ]
-                            });
-                        } else if (cmd.tag === 'Delete') {
-                            const serverId = childText(cmd, 'ServerId');
-                            if (serverId) {
-                                await deleteNote(serverId, creds.user);
-                            }
-                            responses.push({
-                                tag: 'Delete', page: 0, children: [
-                                    { tag: 'ServerId', page: 0, content: serverId },
-                                    { tag: 'Status', page: 0, content: '1' }
-                                ]
-                            });
-                        }
-                    }
-                    if (responses.length > 0) {
-                        syncNotesWithImap(creds.user, creds.pass).catch(e => console.error(e));
-                    }
-                }
-                
-                let addNodes: any[] = [];
-                let dbToken = await getNotesSyncToken(creds.user);
-                let nextSyncKey = `notes-${dbToken}`;
-                
-                if (syncKey === '0') {
-                    nextSyncKey = "1";
-                } else if (syncKey === '1') {
-                    const allNotes = await listNotes(creds.user);
-                    for (const note of allNotes) {
-                        addNodes.push({
-                            tag: 'Add', page: 0, children: [
-                                { tag: 'ServerId', page: 0, content: note.id },
-                                dbNoteToActiveSync(note)
-                            ]
-                        });
-                    }
-                } else {
-                    const currentSyncKey = parseInt(syncKey.replace('notes-', '')) || 1;
-                    if (currentSyncKey !== dbToken) {
-                        const allNotes = await listNotes(creds.user, true);
-                        const changedNotes = allNotes.filter(n => n.sync_token > currentSyncKey);
-                        for (const note of changedNotes) {
-                            if ((note as any).is_deleted) {
-                                addNodes.push({
-                                    tag: 'Delete',
-                                    page: 0,
-                                    children: [
-                                        { tag: 'ServerId', page: 0, content: note.id }
-                                    ]
-                                });
-                            } else {
-                                addNodes.push({
-                                    tag: 'Change',
-                                    page: 0,
-                                    children: [
-                                        { tag: 'ServerId', page: 0, content: note.id },
-                                        dbNoteToActiveSync(note)
-                                    ]
-                                });
-                            }
-                        }
-                    }
-                }
-                
-                const responseAst = {
-                    tag: "Sync", page: 0, children: [
-                        { tag: "Collections", page: 0, children: [
-                            { tag: "Collection", page: 0, children: [
-                                { tag: "Class", page: 0, content: "Notes" },
-                                { tag: "SyncKey", page: 0, content: nextSyncKey },
-                                { tag: "CollectionId", page: 0, content: collectionId },
-                                { tag: "Status", page: 0, content: "1" },
-                                ...(responses.length > 0 ? [{ tag: "Responses", page: 0, children: responses }] : []),
-                                ...(addNodes.length > 0 ? [{ tag: "Commands", page: 0, children: addNodes }] : [])
-                            ]}
-                        ]}
-                    ]
-                };
-                
-                const writer = new WbxmlWriter();
-                writer.writeNode(responseAst);
-                res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
-                return res.status(200).send(writer.getBuffer());
-                
-            } catch (e) {
-                console.error("Notes sync error:", e);
-                return res.status(500).send();
-            }
+        if (['mock-notes', 'mock-tasks', 'mock-reminders'].includes(collectionId)) {
+            const writer = new WbxmlWriter();
+            writer.writeNode(unsupportedSyncCollectionResponse(collectionId, syncKey));
+            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+            return res.status(200).send(writer.getBuffer());
         }
 
         if (collectionId.startsWith('mock-')) {
-            console.log(`Mock Sync for ${collectionId}`);
-            let cls = "Email";
-            if (collectionId === "mock-contacts") cls = "Contacts";
-            if (collectionId === "mock-calendar") cls = "Calendar";
-            if (collectionId === "mock-tasks") cls = "Tasks";
-            if (collectionId === "mock-notes") cls = "Notes";
-            
-            const nextSyncKey = ((parseInt(syncKey) || 0) + 1).toString();
-            const responseAst = {
-                tag: "Sync",
-                page: 0,
-                children: [
-                    {
-                        tag: "Collections",
-                        page: 0,
-                        children: [
-                            {
-                                tag: "Collection",
-                                page: 0,
-                                children: [
-                                    { tag: "Class", page: 0, content: cls },
-                                    { tag: "SyncKey", page: 0, content: nextSyncKey },
-                                    { tag: "CollectionId", page: 0, content: collectionId },
-                                    { tag: "Status", page: 0, content: "1" }
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            };
             const writer = new WbxmlWriter();
-            writer.writeNode(responseAst);
+            writer.writeNode(unsupportedSyncCollectionResponse(collectionId, syncKey));
             res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
             return res.status(200).send(writer.getBuffer());
         }
 
         if (collectionId.startsWith('mail%')) {
-            console.log(`Rejecting SOGo CollectionId ${collectionId} with Status 8`);
-            const responseAst = {
-                tag: "Sync",
-                page: 0,
-                children: [
-                    {
-                        tag: "Collections",
-                        page: 0,
-                        children: [
-                            {
-                                tag: "Collection",
-                                page: 0,
-                                children: [
-                                    { tag: "SyncKey", page: 0, content: syncKey },
-                                    { tag: "CollectionId", page: 0, content: collectionId },
-                                    { tag: "Status", page: 0, content: "8" } // Object Not Found
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            };
             const writer = new WbxmlWriter();
-            writer.writeNode(responseAst);
+            writer.writeNode(unsupportedSyncCollectionResponse(collectionId, syncKey));
+            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+            return res.status(200).send(writer.getBuffer());
+        }
+
+        const classifiedCollection = classifyActiveSyncCollection(collectionId);
+        if (classifiedCollection.kind !== 'mail') {
+            const writer = new WbxmlWriter();
+            writer.writeNode(unsupportedSyncCollectionResponse(collectionId, syncKey));
             res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
             return res.status(200).send(writer.getBuffer());
         }
 
         // Real IMAP Folder
-        const folderPath = Buffer.from(collectionId, 'base64').toString('utf8');
+        const folderPath = classifiedCollection.folderPath;
         const creds = getAuthCredentials();
         if (!creds) return res.status(401).send();
         const deviceId = validateActiveSyncDeviceId(req.query.DeviceId);
@@ -1341,7 +1095,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     truncationSize: childText(bodyPreferenceNode, 'TruncationSize') || undefined,
                 }, fallbackOptions);
             } catch (error) {
-                console.warn(`[SYNC] Invalid mail options for scope ${scopeHash.slice(0, 12)}:`, error);
+                console.warn(`[EAS] Invalid mail options for scope ${scopeHash.slice(0, 12)}`);
                 return sendMailSyncStatus('4');
             }
             const fetchServerIds = requestedFetchServerIds.slice(0, effectiveMailSyncWindow(syncOptions));
@@ -1528,7 +1282,6 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     tag: 'Sync', page: 0, children: [{
                         tag: 'Collections', page: 0, children: [{
                             tag: 'Collection', page: 0, children: [
-                                { tag: 'Class', page: 0, content: 'Email' },
                                 { tag: 'SyncKey', page: 0, content: nextSyncKey },
                                 { tag: 'CollectionId', page: 0, content: collectionId },
                                 { tag: 'Status', page: 0, content: '1' },
@@ -1565,8 +1318,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 console.log(`[SYNC] Scope ${scopeHash.slice(0, 12)}: ${commandNodes.length} commands, ${responses.length} responses, MoreAvailable=${moreAvailable}`);
                 res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
                 return res.status(200).send(responseBuffer);
-            } catch (error) {
-                console.error(`Failed to sync IMAP scope ${scopeHash.slice(0, 12)}:`, error);
+            } catch {
+                console.error(`[EAS] Mail Sync failed for scope ${scopeHash.slice(0, 12)}`);
                 return res.status(500).send();
             } finally {
                 try { await imap.logout(); } catch {}
@@ -1659,8 +1412,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 mimeContent = extractActiveSyncSendMailMime(decoded);
                 const saveNode = findNode(decoded, 'SaveInSentItems');
                 if (saveNode) saveInSent = true;
-            } catch (e) {
-                console.error(`Failed to parse ${cmd} WBXML:`, e);
+            } catch {
+                console.error(`[EAS] ${cmd} WBXML parsing failed`);
             }
         }
 
@@ -1672,7 +1425,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 }));
 
                 const envelope = await buildActiveSyncSendMailEnvelope(mimeContent, creds.user);
-                console.log(`[EAS] Sending email for ${creds.user} to ${envelope.to.length} recipient(s) via SMTP ${smtpConfig.host}:${smtpConfig.port}...`);
+                console.log(`[EAS] Sending email to ${envelope.to.length} recipient(s)`);
                 await transporter.sendMail({ raw: mimeContent, envelope });
                 console.log(`[EAS] Email sent successfully.`);
 
@@ -1686,14 +1439,14 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     let sentFolderObj = folders.find((f: any) => f.path.toUpperCase() === 'SENT' || f.path.toUpperCase() === 'SENT MESSAGES');
                     if (sentFolderObj) {
                         await imap.appendMessage(sentFolderObj.path, mimeContent, ['\\Seen']);
-                        console.log(`[EAS] Saved to ${sentFolderObj.path}.`);
+                        console.log('[EAS] Saved outgoing email to the Sent mailbox');
                     }
                     await imap.logout();
                 }
 
                 return res.status(200).send();
-            } catch (err) {
-                console.error(`[EAS] Error sending email:`, err);
+            } catch {
+                console.error('[EAS] SendMail failed');
                 return res.status(500).send();
             }
         } else {
@@ -1735,7 +1488,6 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                             const parts = srcMsgId.split('-');
                             const uid = parseInt(parts[parts.length - 1]);
 
-                            console.log(`[EAS] Moving item ${uid} from ${sourceFolder} to ${destFolder}`);
                             await imap.moveMessage(sourceFolder, destFolder, uid);
 
                             responseNodes.push({
@@ -1745,8 +1497,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                                     { tag: "DstMsgId", page: 5, content: `${dstFldId}-${uid}` } // Rough approximation of new ID
                                 ]
                             });
-                        } catch (e) {
-                            console.error(`[EAS] MoveItems Error:`, e);
+                        } catch {
+                            console.error('[EAS] MoveItems operation failed');
                             responseNodes.push({
                                 tag: "Response", page: 5, children: [
                                     { tag: "SrcMsgId", page: 5, content: srcMsgId },
@@ -1767,8 +1519,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
                 return res.status(200).send(writer.getBuffer());
 
-            } catch (err) {
-                console.error("Failed to process MoveItems:", err);
+            } catch {
+                console.error('[EAS] MoveItems request failed');
                 return res.status(500).send();
             }
         }
@@ -1776,105 +1528,118 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     }
 
     if (cmd === 'ItemOperations') {
-        const creds = getAuthCredentials();
-        if (!creds) return res.status(401).send();
+        const sendItemOperations = (status: string, responses: any[] = []) => {
+            const writer = new WbxmlWriter();
+            writer.writeNode({
+                tag: 'ItemOperations',
+                page: 20,
+                children: [
+                    { tag: 'Status', page: 20, content: status },
+                    ...(responses.length > 0 ? [{ tag: 'Response', page: 20, children: responses }] : []),
+                ],
+            });
+            res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+            return res.status(200).send(writer.getBuffer());
+        };
 
-        if (req.body && req.body.length > 0) {
-            try {
-                const parser = new WbxmlParser(req.body);
-                const decoded = parser.parse();
+        if (requestBody.length === 0) return sendItemOperations('2');
 
-                const responses: any[] = [];
-                const fetches = decoded?.children?.filter((c: any) => c.tag === 'Fetch') || [];
+        const operations = itemOperationsRequestFetches(decodedForStructure);
+        if (!operations) return sendItemOperations('2');
+        if (operations.length > ITEM_OPERATIONS_MAX_FETCHES) return sendItemOperations('2');
+        if (operations.length === 0) return sendItemOperations('2');
 
-                const imap = new ImapService(creds.user, creds.pass);
-                await imap.connect();
+        const responses: any[] = [];
+        let remainingBodyBytes = ITEM_OPERATIONS_MAX_RESPONSE_BODY_BYTES;
+        let remainingSourceBytes = ITEM_OPERATIONS_MAX_AGGREGATE_SOURCE_BYTES;
+        let globalFailureStatus: string | null = null;
+        const imap = new ImapService(requestCredentials.user, requestCredentials.pass);
+        try {
+            await imap.connect();
+        } catch {
+            try { await imap.logout(); } catch {}
+            return sendItemOperations('3');
+        }
 
-                for (let fetchNode of fetches) {
-                    let collectionId = "";
-                    let serverId = "";
-                    for (let child of fetchNode.children || []) {
-                        if (child.tag === 'CollectionId') collectionId = child.content?.toString() || "";
-                        if (child.tag === 'ServerId') serverId = child.content?.toString() || "";
+        try {
+            for (const fetchNode of operations) {
+                const fetchRequest = itemOperationsFetchRequest(fetchNode);
+                if (fetchRequest.ok === false) {
+                    responses.push(itemOperationsFetchError(
+                        fetchRequest.collectionId,
+                        fetchRequest.serverId,
+                        fetchRequest.status,
+                    ));
+                    continue;
+                }
+                const { collectionId, serverId } = fetchRequest;
+                const target = itemOperationsMailboxTarget(fetchRequest.store, collectionId, serverId);
+                if (target.ok === false) {
+                    if (target.status === '9') {
+                        globalFailureStatus = '9';
+                        break;
                     }
-
-                    if (collectionId && serverId) {
-                        try {
-                            const folderPath = Buffer.from(collectionId, 'base64').toString('utf8');
-                            const parts = serverId.split('-');
-                            const uid = parseInt(parts[parts.length - 1]);
-
-                            console.log(`[EAS] ItemOperations Fetching full message ${uid} in ${folderPath}`);
-                            const msg = await imap.getMessageByUid(folderPath, uid);
-
-                            if (msg && msg.source) {
-                                const parsed = await simpleParser(msg.source);
-                                const isRead = msg.flags.includes('\\Seen') ? "1" : "0";
-                                
-                                // iOS usually prefers HTML if available, otherwise text
-                                const bodyType = parsed.html ? "2" : "1";
-                                const bodyData = parsed.html || parsed.text || "No content.";
-
-                                responses.push({
-                                    tag: "Fetch", page: 20, children: [
-                                        { tag: "Status", page: 20, content: "1" },
-                                        { tag: "ServerId", page: 20, content: serverId },
-                                        { tag: "CollectionId", page: 20, content: collectionId },
-                                        { tag: "Class", page: 20, content: "Email" },
-                                        { tag: "Properties", page: 20, children: [
-                                            { tag: "To", page: 2, content: (parsed.to as any)?.text || "" },
-                                            { tag: "From", page: 2, content: (parsed.from as any)?.text || "" },
-                                            { tag: "Subject", page: 2, content: parsed.subject || "" },
-                                            { tag: "DateReceived", page: 2, content: (parsed.date || new Date()).toISOString() },
-                                            { tag: "DisplayTo", page: 2, content: (parsed.to as any)?.text || "" },
-                                            { tag: "Read", page: 2, content: isRead },
-                                            { tag: "MessageClass", page: 2, content: "IPM.Note" },
-                                            { tag: "Body", page: 17, children: [
-                                                { tag: "Type", page: 17, content: bodyType },
-                                                { tag: "Data", page: 17, content: bodyData },
-                                                { tag: "EstimatedDataSize", page: 17, content: bodyData.length.toString() }
-                                            ]}
-                                        ]}
-                                    ]
-                                });
-                            } else {
-                                responses.push({
-                                    tag: "Fetch", page: 20, children: [
-                                        { tag: "Status", page: 20, content: "2" }, // Not found
-                                        { tag: "ServerId", page: 20, content: serverId },
-                                        { tag: "CollectionId", page: 20, content: collectionId }
-                                    ]
-                                });
-                            }
-                        } catch (e) {
-                            console.error(`[EAS] ItemOperations Error:`, e);
-                        }
-                    }
+                    responses.push(itemOperationsFetchError(collectionId, serverId, target.status));
+                    continue;
+                }
+                const sourceAllowance = itemOperationsSourceAllowance(remainingSourceBytes);
+                if (remainingBodyBytes === 0 || sourceAllowance === 0) {
+                    responses.push(itemOperationsFetchError(collectionId, serverId, '11'));
+                    continue;
                 }
 
-                await imap.logout();
+                let message: any;
+                try {
+                    message = await imap.getMessageByUid(
+                        target.folderPath,
+                        target.uid,
+                        sourceAllowance,
+                    );
+                } catch {
+                    globalFailureStatus = '12';
+                    break;
+                }
+                if (!message) {
+                    responses.push(itemOperationsFetchError(collectionId, serverId, '6'));
+                    continue;
+                }
+                const sourceBytes = Buffer.isBuffer(message.source) ? message.source.length : sourceAllowance;
+                remainingSourceBytes = Math.max(0, remainingSourceBytes - sourceBytes);
+                if (sourceBytes > sourceAllowance) {
+                    remainingSourceBytes = 0;
+                    responses.push(itemOperationsFetchError(collectionId, serverId, '11'));
+                    continue;
+                }
 
-                const responseAst = {
-                    tag: "ItemOperations", page: 20, children: [
-                        { tag: "Status", page: 20, content: "1" },
-                        { tag: "Response", page: 20, children: responses }
-                    ]
-                };
-
-                const writer = new WbxmlWriter();
-                writer.writeNode(responseAst);
-                res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
-                return res.status(200).send(writer.getBuffer());
-
-            } catch (err) {
-                console.error("Failed to process ItemOperations:", err);
-                return res.status(500).send();
+                try {
+                    const bodyAllowance = itemOperationsBodyAllowance(
+                        remainingBodyBytes,
+                        ITEM_OPERATIONS_MAX_BODY_BYTES,
+                    );
+                    const fetchResponse = await itemOperationsFetchSuccess({
+                        collectionId,
+                        serverId,
+                        message,
+                        maxBodyBytes: bodyAllowance,
+                        bodyPreferences: fetchRequest.bodyPreferences,
+                    });
+                    remainingBodyBytes = Math.max(
+                        0,
+                        remainingBodyBytes - itemOperationsFetchBodyBytes(fetchResponse),
+                    );
+                    responses.push(fetchResponse);
+                } catch {
+                    responses.push(itemOperationsFetchError(collectionId, serverId, '14'));
+                }
             }
+        } finally {
+            try { await imap.logout(); } catch {}
         }
-        return res.status(500).send();
-    }
 
-    res.status(200).send();
+        if (globalFailureStatus) return sendItemOperations(globalFailureStatus);
+        return sendItemOperations('1', responses);
+    }
+    res.status(400).send();
 });
 
 server.listen(serverConfig.port, serverConfig.host, () => {

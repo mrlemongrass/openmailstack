@@ -1631,6 +1631,10 @@ appsApiRouter.delete('/events/:calendar_id/:uid', async (req: Request, res: Resp
             }
             await pool.query('UPDATE events SET ical_data = ? WHERE calendar_id=? AND uid=?', [icalData, calendar_id, uid]);
         } else {
+            await pool.query(
+                'INSERT INTO calendar_tombstones (calendar_id, uid) VALUES (?, ?)',
+                [calendar_id, uid]
+            );
             await pool.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [calendar_id, uid]);
         }
         await pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar_id]);

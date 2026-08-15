@@ -13,15 +13,30 @@ export function getTagToken(page: number, tagName: string): number | null {
 }
 
 export class WbxmlWriter {
-    private buffer: number[] = [];
+    private chunks: Buffer[] = [];
+    private pendingBytes: number[] = [];
     private currentPage: number = 0;
 
     constructor() {
         // Default Header for ActiveSync WBXML 1.3
-        this.buffer.push(0x03); // Version 1.3
-        this.buffer.push(0x01); // Public ID 1
-        this.buffer.push(0x6a); // Charset UTF-8
-        this.buffer.push(0x00); // String Table Length 0
+        this.pushBytes(0x03, 0x01, 0x6a, 0x00);
+    }
+
+    private pushBytes(...bytes: number[]): void {
+        this.pendingBytes.push(...bytes);
+        if (this.pendingBytes.length >= 4096) this.flushPendingBytes();
+    }
+
+    private flushPendingBytes(): void {
+        if (this.pendingBytes.length === 0) return;
+        this.chunks.push(Buffer.from(this.pendingBytes));
+        this.pendingBytes = [];
+    }
+
+    private pushBuffer(data: Buffer): void {
+        if (data.length === 0) return;
+        this.flushPendingBytes();
+        this.chunks.push(data);
     }
 
     private writeMbU32(val: number): void {
@@ -33,32 +48,27 @@ export class WbxmlWriter {
         } while (temp > 0);
         
         for (let i = 0; i < buf.length - 1; i++) {
-            this.buffer.push(buf[i] | 0x80);
+            this.pushBytes(buf[i] | 0x80);
         }
-        this.buffer.push(buf[buf.length - 1]);
+        this.pushBytes(buf[buf.length - 1]);
     }
 
     private writeStringInline(str: string): void {
-        this.buffer.push(0x03); // STR_I
+        this.pushBytes(0x03); // STR_I
         const strBuffer = Buffer.from(str, 'utf8');
-        for (let i = 0; i < strBuffer.length; i++) {
-            this.buffer.push(strBuffer[i]);
-        }
-        this.buffer.push(0x00); // Null terminator
+        this.pushBuffer(strBuffer);
+        this.pushBytes(0x00); // Null terminator
     }
 
     private writeOpaque(data: Buffer): void {
-        this.buffer.push(0xC3); // OPAQUE
+        this.pushBytes(0xC3); // OPAQUE
         this.writeMbU32(data.length);
-        for (let i = 0; i < data.length; i++) {
-            this.buffer.push(data[i]);
-        }
+        this.pushBuffer(data);
     }
 
     public writeNode(node: any): void {
         if (node.page !== undefined && node.page !== this.currentPage) {
-            this.buffer.push(0x00); // SWITCH_PAGE
-            this.buffer.push(node.page);
+            this.pushBytes(0x00, node.page); // SWITCH_PAGE
             this.currentPage = node.page;
         }
 
@@ -74,11 +84,11 @@ export class WbxmlWriter {
         if (hasContent) token |= 0x40;
         if (hasAttributes) token |= 0x80;
 
-        this.buffer.push(token);
+        this.pushBytes(token);
 
         if (hasAttributes) {
             // EAS rarely uses this, skipped for now to keep it simple, just write END
-            this.buffer.push(0x01);
+            this.pushBytes(0x01);
         }
 
         if (hasContent) {
@@ -96,11 +106,12 @@ export class WbxmlWriter {
                 }
             }
 
-            this.buffer.push(0x01); // END token for the node
+            this.pushBytes(0x01); // END token for the node
         }
     }
 
     public getBuffer(): Buffer {
-        return Buffer.from(this.buffer);
+        this.flushPendingBytes();
+        return Buffer.concat(this.chunks);
     }
 }

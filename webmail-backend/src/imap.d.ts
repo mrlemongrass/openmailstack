@@ -98,7 +98,14 @@ export declare class ImapService {
         moreAvailable: boolean;
     }>;
     getQuota(): Promise<false | import("imapflow").QuotaResponse>;
-    getMessageByUid(folderPath: string, uid: number): Promise<any>;
+    getMessageByUid(folderPath: string, uid: number, maxSourceBytes?: number): Promise<{
+        uid: number;
+        flags: string[];
+        envelope: import("imapflow").MessageEnvelopeObject;
+        source: Buffer<ArrayBufferLike>;
+        size: number;
+        sourceComplete: boolean;
+    }>;
     appendMessage(folderPath: string, content: string | Buffer, flags?: string[]): Promise<void>;
     moveMessage(sourceFolder: string, targetFolder: string, uid: number): Promise<void>;
     messageAction(folderPath: string, uids: number[], action: 'delete' | 'hardDelete' | 'archive' | 'spam' | 'move' | 'read' | 'unread' | 'star' | 'unstar', targetFolder?: string): Promise<{

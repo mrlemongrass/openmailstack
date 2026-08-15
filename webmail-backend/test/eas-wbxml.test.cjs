@@ -126,3 +126,68 @@ test('ActiveSync Calendar reminder and exception nodes survive the real WBXML wr
   assert.equal(exceptions.children[0].children.find(node => node.tag === 'Deleted').content, '1');
   assert.equal(exceptions.children[0].children.find(node => node.tag === 'ExceptionStartTime').content, '20260710T170000Z');
 });
+
+test('WBXML parser rejects excessive nesting before the JavaScript call stack is exhausted', () => {
+  const depth = 96;
+  const body = [
+    ...Array(depth).fill(0x45), // Sync with content
+    0x05, // empty Sync leaf
+    ...Array(depth).fill(0x01),
+  ];
+  const payload = Buffer.from([0x03, 0x01, 0x6a, 0x00, ...body]);
+
+  assert.throws(
+    () => new WbxmlParser(payload).parse(),
+    /WBXML nesting depth exceeds limit/,
+  );
+});
+
+test('WBXML parser rejects excessive element counts', () => {
+  const body = [
+    0x45, // Sync with content
+    ...Array(4_097).fill(0x05), // empty Sync children
+    0x01,
+  ];
+  const payload = Buffer.from([0x03, 0x01, 0x6a, 0x00, ...body]);
+
+  assert.throws(
+    () => new WbxmlParser(payload).parse(),
+    /WBXML element count exceeds limit/,
+  );
+});
+
+test('WBXML parser rejects excessive token counts within one element', () => {
+  const body = [0x45]; // Sync with content
+  for (let index = 0; index < 16_500; index += 1) body.push(0x03, 0x00); // empty STR_I
+  body.push(0x01);
+  const payload = Buffer.from([0x03, 0x01, 0x6a, 0x00, ...body]);
+
+  assert.throws(
+    () => new WbxmlParser(payload).parse(),
+    /WBXML token count exceeds limit/,
+  );
+});
+
+test('WBXML parser rejects a second root or trailing bytes', () => {
+  const payload = Buffer.from([
+    0x03, 0x01, 0x6a, 0x00,
+    0x05, // empty Sync root
+    0x05, // unexpected second root
+  ]);
+  assert.throws(
+    () => new WbxmlParser(payload).parse(),
+    /WBXML trailing data after root element/,
+  );
+});
+
+test('WBXML writer stores large content in Buffer chunks instead of byte-number arrays', () => {
+  const writer = new WbxmlWriter();
+  const content = 'x'.repeat(1024 * 1024);
+  writer.writeNode({ tag: 'Data', page: 17, content });
+
+  assert.equal(writer.buffer, undefined);
+  assert.ok(writer.chunks.some(chunk => Buffer.isBuffer(chunk) && chunk.length === content.length));
+  assert.ok(writer.pendingBytes.length < 4096);
+  const output = writer.getBuffer();
+  assert.equal(new WbxmlParser(output).parse().content.length, content.length);
+});

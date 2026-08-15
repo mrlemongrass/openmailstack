@@ -22,6 +22,10 @@ source "${REPO_DIR}/config.conf"
 source "${SCRIPT_DIR}/lib_os.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib_scheduler.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib_protocol_guard.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib_webmail_runtime.sh"
 detect_openmailstack_os
 
 PROTOCOL_GATE_REQUIRED_FILE="${OMS_PROTOCOL_GATE_REQUIRED_FILE:-/etc/openmailstack/protocol-gate.required}"
@@ -251,10 +255,27 @@ render_backend_env() {
     chmod 0600 "${ENV_FILE}"
 }
 
-deploy_backend() {
-    echo -e "Building and deploying webmail backend..."
+build_backend() {
+    echo -e "Building webmail backend..."
     npm_install_for_build "${BACKEND_SRC}"
     npm --prefix "${BACKEND_SRC}" run build
+}
+
+check_deployed_webmail_backend_readiness() {
+    local readiness_status
+
+    readiness_status=$(curl --silent --output /dev/null --write-out '%{http_code}' --noproxy '*' \
+        --connect-timeout 1 --max-time 1 \
+        "http://${WEBMAIL_HOST}:${WEBMAIL_PORT}/api/auth/me") || return 1
+    [[ "${readiness_status}" == "401" ]]
+}
+
+deploy_backend() {
+    echo -e "Deploying webmail backend..."
+
+    if [[ "${OMS_PROTOCOL_GUARDED_DEPLOY:-0}" == "1" ]]; then
+        openmailstack_quiesce_webmail_runtime_for_tree_mutation || return 1
+    fi
 
     ensure_service_user
     install_remediation_bridge
@@ -263,7 +284,7 @@ deploy_backend() {
         --exclude node_modules \
         --exclude .npm \
         --exclude uploads \
-        "${BACKEND_SRC}/" "${BACKEND_DIR}/"
+        "${BACKEND_SRC}/" "${BACKEND_DIR}/" || return 1
     install -m 0644 "${REPO_DIR}/VERSION" "${BACKEND_DIR}/VERSION"
 
     (
@@ -274,28 +295,38 @@ deploy_backend() {
         else
             npm install --omit=dev
         fi
-    )
+    ) || return 1
     chown -R "${WEBMAIL_USER}:${WEBMAIL_GROUP}" "${BACKEND_DIR}"
 
     render_backend_env
     install -m 0644 "${REPO_DIR}/packaging/systemd/openmailstack.service" "${SERVICE_FILE}"
     systemctl daemon-reload
     if [[ "${OMS_PROTOCOL_GUARDED_DEPLOY:-0}" == "1" ]]; then
-        systemctl restart openmailstack.service
+        openmailstack_start_quiesced_webmail_unit openmailstack.service || return 1
     else
         systemctl enable --now openmailstack.service
         systemctl restart openmailstack.service
     fi
-    if [[ -f /etc/openmailstack/scheduler.enabled && -f /etc/systemd/system/openmailstack-scheduler-worker.service ]]; then
-        systemctl restart openmailstack-scheduler-worker.service
+    if openmailstack_webmail_scheduler_worker_managed; then
+        if [[ "${OMS_PROTOCOL_GUARDED_DEPLOY:-0}" == "1" ]]; then
+            openmailstack_start_quiesced_webmail_unit openmailstack-scheduler-worker.service || return 1
+        else
+            systemctl restart openmailstack-scheduler-worker.service
+        fi
         systemctl is-active --quiet openmailstack-scheduler-worker.service
     fi
+    systemctl is-active --quiet openmailstack.service
+    protocol_retry_command 30 1 check_deployed_webmail_backend_readiness || return 1
+}
+
+build_frontend() {
+    echo -e "Building webmail frontend..."
+    npm_install_for_build "${FRONTEND_SRC}"
+    npm --prefix "${FRONTEND_SRC}" run build
 }
 
 deploy_frontend() {
-    echo -e "Building and deploying webmail frontend..."
-    npm_install_for_build "${FRONTEND_SRC}"
-    npm --prefix "${FRONTEND_SRC}" run build
+    echo -e "Deploying webmail frontend..."
 
     install -d -m 0755 "${FRONTEND_DIR}"
     rsync -a --delete "${FRONTEND_SRC}/dist/" "${FRONTEND_DIR}/"
@@ -594,8 +625,10 @@ require_path "${REPO_DIR}/VERSION"
 require_path "${REPO_DIR}/packaging/systemd/openmailstack.service"
 
 install_node_toolchain
-deploy_frontend
+build_frontend
+build_backend
 deploy_backend
+deploy_frontend
 configure_nginx
 
 echo -e "${GREEN}Modern webmail deployment complete!${NC}"

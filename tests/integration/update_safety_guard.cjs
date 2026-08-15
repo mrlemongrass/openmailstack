@@ -16,6 +16,7 @@ const upgradeScript = read('upgrade.sh');
 const webmailDeploy = read('functions/10_webmail.sh');
 const guardedDeploy = read('functions/protocol_guarded_deploy.sh');
 const protocolGuardLibrary = read('functions/lib_protocol_guard.sh');
+const webmailRuntimeLibrary = read('functions/lib_webmail_runtime.sh');
 const installationGuide = read('INSTALLATION.md');
 const architecture = read('docs/engineering/ARCHITECTURE.md');
 const adminRbacAudit = read('docs/engineering/ADMIN_RBAC_AUDIT.md');
@@ -163,6 +164,35 @@ test('guarded webmail rollback validates the snapshot and remains reversible', (
   );
   assert.match(readinessProbe, /--noproxy '\*'/);
   assert.match(guardedDeploy, /rsync -a --delete --exclude uploads[^\n]+\|\| return 1/);
+  const webmailRestore = guardedDeploy.slice(
+    guardedDeploy.indexOf('restore_webmail_from()'),
+    guardedDeploy.indexOf('restore_webmail()'),
+  );
+  assert.match(webmailRestore, /openmailstack_quiesce_webmail_runtime_for_tree_mutation \|\| return 1/);
+  assert.ok(webmailRestore.indexOf('openmailstack_quiesce_webmail_runtime_for_tree_mutation') < webmailRestore.indexOf('rsync -a --delete --exclude uploads'));
+  assert.ok(webmailRestore.indexOf('cp -a "${snapshot_dir}\/openmailstack.service"') < webmailRestore.indexOf('openmailstack_start_quiesced_webmail_unit openmailstack.service'));
+  assert.match(webmailRuntimeLibrary, /systemctl stop --no-block "\$\{unit_name\}"/);
+  assert.match(webmailRuntimeLibrary, /protocol_retry_command 30 1 openmailstack_webmail_unit_quiesced/);
+  assert.match(webmailRuntimeLibrary, /--property=LoadState --value openmailstack-scheduler-worker\.service/);
+  const runtimeQuiesce = webmailRuntimeLibrary.slice(
+    webmailRuntimeLibrary.indexOf('openmailstack_quiesce_webmail_runtime_for_tree_mutation()'),
+    webmailRuntimeLibrary.indexOf('openmailstack_start_quiesced_webmail_unit()'),
+  );
+  assert.match(runtimeQuiesce, /Refusing backend mutation while an unmanaged Scheduler worker is not quiesced/);
+  assert.ok(runtimeQuiesce.indexOf('! openmailstack_webmail_unit_quiesced openmailstack-scheduler-worker.service') < runtimeQuiesce.indexOf('openmailstack_stop_webmail_unit_for_tree_mutation openmailstack.service'));
+  const resetAndStart = webmailRuntimeLibrary.slice(
+    webmailRuntimeLibrary.indexOf('openmailstack_start_quiesced_webmail_unit()'),
+  );
+  assert.ok(resetAndStart.indexOf('systemctl reset-failed "${unit_name}"') < resetAndStart.indexOf('systemctl start "${unit_name}"'));
+  const forwardBackendDeploy = webmailDeploy.slice(
+    webmailDeploy.indexOf('deploy_backend()'),
+    webmailDeploy.indexOf('build_frontend()'),
+  );
+  assert.ok(forwardBackendDeploy.indexOf('openmailstack_quiesce_webmail_runtime_for_tree_mutation') < forwardBackendDeploy.indexOf('rsync -a --delete'));
+  assert.ok(forwardBackendDeploy.indexOf('rsync -a --delete') < forwardBackendDeploy.indexOf('npm ci --omit=dev'));
+  assert.match(forwardBackendDeploy, /protocol_retry_command 30 1 check_deployed_webmail_backend_readiness \|\| return 1/);
+  const releaseActivation = webmailDeploy.slice(webmailDeploy.lastIndexOf('\ninstall_node_toolchain\n'));
+  assert.match(releaseActivation, /install_node_toolchain\s+build_frontend\s+build_backend\s+deploy_backend\s+deploy_frontend\s+configure_nginx/);
   assert.match(guardedDeploy, /if restore_webmail; then\s+restore_status=0\s+else\s+restore_status=\$\?/);
   assert.match(guardedDeploy, /return "\$\{restore_status\}"/);
   assert.match(guardedDeploy, /validate_webmail_runtime/);

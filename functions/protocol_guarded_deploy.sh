@@ -9,6 +9,8 @@ readonly CANONICAL_REPO_DIR="${REPO_DIR}"
 source "${SCRIPT_DIR}/lib_protocol_guard.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib_protocol_pending_runs.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib_webmail_runtime.sh"
 ACTION="${1:-}"
 RESTORE_SOURCE="${2:-}"
 INHERITED_PROTOCOL_GATE_RUN_ID="${OMS_PROTOCOL_GATE_RUN_ID:-}"
@@ -254,6 +256,11 @@ prepare_snapshot() {
 
 restore_webmail_from() {
     local snapshot_dir="$1"
+
+    # A failed backend can be inside systemd's restart loop. Prove every process
+    # that executes from the backend tree is stopped before rsync can expose a
+    # partially restored module graph.
+    openmailstack_quiesce_webmail_runtime_for_tree_mutation || return 1
     rsync -a --delete --exclude uploads "${snapshot_dir}/backend/" "${BACKEND_DIR}/" || return 1
     rsync -a --delete "${snapshot_dir}/frontend/" "${FRONTEND_DIR}/" || return 1
     rsync -a --delete "${snapshot_dir}/legacy-admin/" "${LEGACY_ADMIN_DIR}/" || return 1
@@ -270,10 +277,10 @@ restore_webmail_from() {
     retire_legacy_upgrade_bridge || return 1
     systemctl daemon-reload || return 1
     nginx -t || return 1
-    systemctl restart openmailstack.service || return 1
+    openmailstack_start_quiesced_webmail_unit openmailstack.service || return 1
     systemctl reload nginx || return 1
-    if [[ -f /etc/openmailstack/scheduler.enabled && -f /etc/systemd/system/openmailstack-scheduler-worker.service ]]; then
-        systemctl restart openmailstack-scheduler-worker.service || return 1
+    if openmailstack_webmail_scheduler_worker_managed; then
+        openmailstack_start_quiesced_webmail_unit openmailstack-scheduler-worker.service || return 1
     fi
     return 0
 }

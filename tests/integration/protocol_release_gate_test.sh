@@ -517,6 +517,7 @@ mkdir -p "${GUARD_FIXTURE_ROOT}/functions" "${GUARD_FIXTURE_ROOT}/tests/integrat
 cp "${PROJECT_ROOT}/functions/protocol_guarded_deploy.sh" "${GUARD_FIXTURE_ROOT}/functions/"
 cp "${PROJECT_ROOT}/functions/lib_protocol_guard.sh" "${GUARD_FIXTURE_ROOT}/functions/"
 cp "${PROJECT_ROOT}/functions/lib_protocol_pending_runs.sh" "${GUARD_FIXTURE_ROOT}/functions/"
+cp "${PROJECT_ROOT}/functions/lib_webmail_runtime.sh" "${GUARD_FIXTURE_ROOT}/functions/"
 install -m 0755 /dev/null "${GUARD_FIXTURE_ROOT}/tests/integration/protocol_release_gate.sh"
 cat > "${GUARD_FIXTURE_ROOT}/config.conf" <<'EOF'
 GATE_SCRIPT="/tmp/not-the-openmailstack-gate"
@@ -612,6 +613,8 @@ if grep -Fq 'RECOVERY_REENTERED' "${SIGNAL_OUTPUT}" \
 fi
 
 echo "PASS: guarded recovery masks repeated signals until proof and journal clearance"
+
+bash "${PROJECT_ROOT}/tests/integration/protocol_guarded_restore_quiesce_test.sh"
 
 echo "PASS: sourced config and credential overrides cannot bypass canonical production gates"
 

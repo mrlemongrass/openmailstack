@@ -8664,3 +8664,151 @@ Branch: `main`
   Restoring that snapshot returned the host to the new pair and passed the same
   authenticated public IMAPS/ActiveSync gate. No mailbox or user data outside
   the dedicated canary was changed.
+
+## 2026-08-15 — Cycle 3: Protocol, PIM, Startup, And Release Safety
+
+Agent/tool: Codex with delegated protocol/DAV/security review, focused TDD,
+guarded deployment, and recovery validation
+
+Branch: `main`
+
+### Goal and acceptance criteria
+
+- [x] Bound ActiveSync/WBXML inputs and preserve protocol semantics across mail,
+  calendar, contacts, and notes paths.
+- [x] Make Calendar/PIM identity, mutation, tombstone, and free/busy behavior
+  authorization-aware and fail closed.
+- [x] Fail application startup before listeners/workers when required additive
+  schemas cannot be established.
+- [x] Quiesce runtime consumers while a guarded deployment replaces or restores
+  backend artifacts.
+- [x] Keep protocol-canary cleanup exact and compatible with the installed gate.
+- [ ] Complete the guarded production deployment.
+
+### Implementation and proof
+
+- Commits `0b04bb67` through `f94f084e` harden ActiveSync boundaries,
+  Calendar/PIM synchronization, protocol attestation/cleanup, exact duplicate
+  tombstone repair, application startup barriers, and runtime quiescence.
+- Focused backend/protocol suites, generated-runtime parity, the repository
+  integration harness, ShellCheck, and local recovery cases passed before the
+  deployment attempt.
+- The guarded rollout found two exact tombstones for one calendar resource and
+  automatically restored the known-good application pair. Read-only inspection
+  identified the newer retention candidate and confirmed no live event, but no
+  production row was deleted without separate explicit approval.
+- Recovery snapshot:
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260815T203206Z/`.
+
+### Release interpretation
+
+The code is locally validated, but Cycle 3 did not deploy. The exact production
+tombstone repair, guarded retry, and protocol/live verification remain gates.
+
+## 2026-08-15 — Cycle 4: Runtime Mail Privacy And Honest Controls
+
+Agent/tool: Codex delegated frontend implementation with TDD
+
+Branch: `main`
+
+Starting git state: dirty from parallel cycle work
+
+Ending git state: dirty from this and parallel cycle work
+
+### Selected task
+
+Make stored Mail reading and identity settings control the live mail experience,
+block external message content according to the selected privacy policy, and
+remove controls for behavior that OpenMailStack does not currently implement.
+
+### Why this task
+
+Remote message resources could load despite an Ask preference, read state
+ignored the configured delay, and several visible controls implied behavior
+that did not exist. These are high-reach privacy and user-trust defects in the
+primary mail workflow.
+
+### Changes made
+
+- Mail routes now load Mail settings and send-as identities independently with
+  safe defaults. Legacy string aliases normalize to the typed identity shape.
+- Compose derives From from the current valid identity set, honors a valid
+  default, preserves an intentional valid choice, and falls back when an alias
+  is revoked.
+- Message viewing blocks remote image/srcset and CSS URL targets for Ask, loads
+  them only after explicit per-message consent, and auto-loads Trusted content
+  only for an exact safe-sender mailbox match. Embedded and local content stays.
+- Configured mark-read delay is enforced and pending work is cancelled on
+  message navigation.
+- Removed the nonfunctional conversation toggle, forwarding/auto-responder
+  pages, mute-thread action, and new-compose Send and Archive action. The
+  working inline-reply Send and Archive flow remains.
+
+### Proof / checks run
+
+- The final focused privacy/Undo/scheduled-state file passes 11/11.
+- The complete frontend suite passes 143/143; ESLint and the TypeScript/Vite
+  production build pass.
+- The final deterministic browser matrix passes 176/176 across Chromium and
+  WebKit desktop/mobile with zero unexpected browser or network findings.
+
+### Acceptance criteria
+
+- [x] Runtime Mail settings and identities load with independent safe fallback.
+- [x] Compose From remains a currently authorized identity.
+- [x] Ask/Trusted/Always external-content policy is enforced.
+- [x] Remote fetch markup is absent while blocked, with per-message consent.
+- [x] Delayed read state cancels on navigation.
+- [x] False Mail controls are removed without regressing inline reply archive.
+- [x] Focused tests, lint, and production build pass.
+- [x] Complete frontend suite and deterministic browser matrix are green.
+
+### Risks / notes
+
+- No deployment or production mutation was performed in this delegated pass.
+- The browser matrix uses deterministic API fixtures. Authenticated live-stack
+  and physical-client validation remain separate release gates.
+
+### Next recommended task
+
+Complete the durable immediate-send outbox and its disposable MariaDB proof,
+then rerun the guarded live-stack and physical-client release gates.
+
+## 2026-08-15 — Cycle 5: Independent Qualification And Release Decision
+
+Agent/tool: Codex with independent security/spec/architecture review,
+Chromium/WebKit browser qualification, and local disaster-recovery testing
+
+Branch: `main`
+
+### Completed work
+
+- Commit `869bb27b` closes overlapping web Notes saves, mobile message-loader
+  races, Draft identity/resume/keyboard defects, unsafe or incomplete scheduled
+  Cancel/Undo behavior, Bcc loss in Sent, partial-recipient misreporting,
+  private-upload IDOR, free/busy cancellation/authorization, remote-content
+  privacy, misleading controls, and accessibility/focus defects.
+- Commit `e33c6df6` adds a root-only, checksummed, explicitly inventoried,
+  exclusively locked backup/restore state machine with continuous quiescence,
+  verified safety snapshots, exact service-state recovery, and fail-closed
+  rollback on file, database, health, or resume failures.
+- The final frontend browser matrix passes 176/176 across Chromium and WebKit
+  desktop/mobile. Frontend tests pass 143/143; backend passes 690/694 with four
+  documented skips and zero failures; builds, lint, audits, integration,
+  ShellCheck, generated-runtime parity, and diff checks pass.
+- The destructive opt-in scheduled-send database test was not run because only
+  the Notes fake SQL/IMAP regression seam was approved.
+
+### Second-pass finding and decision
+
+- Immediate web and ActiveSync sends still call SMTP before durable replay
+  state exists. A crash or lost response can therefore cause duplicate delivery
+  when the user retries.
+- The independent architecture pass specifies reuse of `scheduled_emails` as a
+  universal outbox with owner-scoped idempotency keys, server-computed request
+  fingerprints, terminal delivery uncertainty, Sent reconciliation, and web/EAS
+  parity. Enabling it safely requires disposable MariaDB migration/concurrency
+  proof and live read-only schema preflight.
+- Final decision: **NO-GO** for paid-quality small-business or enterprise use.
+  The complete risk register, five-cycle account, and next plan are in
+  `docs/engineering/RELEASE_READINESS_2026-08-15.md`.

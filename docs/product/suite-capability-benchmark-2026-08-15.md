@@ -1,6 +1,6 @@
 # OpenMailStack Suite Capability Benchmark
 
-Status: `Cycle 1 research baseline`
+Status: `Cycle 5 implementation snapshot; release gates remain`
 
 Research date: 2026-08-15
 
@@ -10,15 +10,33 @@ Scope: Gmail/Google Workspace, Outlook/Microsoft 365, Yahoo Mail, Proton Mail, F
 
 OpenMailStack is not an empty prototype. Current source contains a broad web suite, advanced indexed mail search and saved searches, scheduled and undo send, snooze, server-side mail rules, templates, Calendar free/busy plus sharing/import/export foundations, rich Contacts, Notes attachments/reminders/checklists/pinning, TOTP and app passwords, standards-based client sync, Scheduler booking workflows, and a substantial Admin/operations surface.
 
-It is not yet a product that should be represented as enterprise-ready. The highest-risk gaps are:
+It is not yet a product that should be represented as paid-quality or
+enterprise-ready. The highest-risk gaps are:
 
-1. **Notes correctness:** the reported edit-on-macOS duplicate is consistent with the known SQL/IMAP reconciliation seam. A note must have one durable identity and concurrent sync must be idempotent before any Notes feature expansion.
-2. **Mail collaboration and conversations:** the UI exposes a conversation preference, but the current message list hard-codes `isThreaded={false}`. Delegated/shared mailboxes are also absent.
-3. **Enterprise identity and governance:** OMS has TOTP, recovery codes, app passwords, sessions, and global Admin/Superadmin roles, but no passkeys/security keys, enforced MFA policy, domain-scoped RBAC, SAML/OIDC SSO, or SCIM lifecycle.
-4. **Compliance and recovery:** operational audit and health telemetry exist, but retention policy, legal hold/eDiscovery, DLP, point-in-time recovery, and a routinely proven restore workflow are not product capabilities.
-5. **Migration and offline continuity:** Contacts and Calendar have file-level import/export foundations, but no resumable mail/calendar/contact provider migration center. The web client has no service worker or offline data layer.
+1. **Immediate-send durability:** web and ActiveSync can accept SMTP before a
+   durable outbound record exists. A process crash or lost response in that
+   interval can make a user retry and duplicate delivery. This is a P1 release
+   blocker until both paths use the durable outbox and replay contract.
+2. **Notes physical-client proof:** the SQL/IMAP reconciliation and web
+   autosave races are now deterministic regressions and the code paths are
+   serialized/idempotent. Physical macOS edit/delete confirmation remains a
+   release gate for the original client symptom.
+3. **Mail collaboration and conversations:** the unimplemented conversation
+   preference is now hidden, but true thread assembly and delegated/shared
+   mailboxes remain absent.
+4. **Enterprise identity and governance:** OMS has TOTP, recovery codes, app
+   passwords, sessions, and global Admin/Superadmin roles, but no
+   passkeys/security keys, enforced MFA policy, domain-scoped RBAC, SAML/OIDC
+   SSO, or SCIM lifecycle.
+5. **Compliance, recovery, migration, and offline continuity:** the new local
+   backup/restore state machine is fail-closed and regression-tested, but it
+   has not passed a clean-host drill and does not provide off-host retention,
+   encryption, or point-in-time recovery. Retention/legal hold/DLP, a resumable
+   provider migration center, and an offline web data layer remain absent.
 
-The honest target for five delivery cycles is a defensible paid-quality **small-business release candidate** plus enterprise foundations. Full Microsoft 365/Google Workspace compliance parity is a multi-release program, not a credible five-cycle promise.
+Five delivery cycles materially improved correctness and release mechanics,
+but did not reach a defensible paid-quality release candidate. Full Microsoft
+365/Google Workspace compliance parity remains a multi-release program.
 
 ## 2. Method And Status Language
 
@@ -35,7 +53,7 @@ The honest target for five delivery cycles is a defensible paid-quality **small-
 | Surface | Current evidence |
 |---|---|
 | Suite shell | Mail, Calendar, Contacts, Notes, Scheduler, Settings, Admin, and Sync routes in `webmail-frontend/src/App.tsx` |
-| Mail | Compose/drafts/attachments, schedule and undo send, snooze, mute storage, templates, signatures, server-side rules, indexed body/attachment search, saved searches, cross-folder search, message actions, and calendar-invite rendering in `webmail-backend/src/api.ts`, `search-index.ts`, `scheduled-send.ts`, and `webmail-frontend/src/mail/` |
+| Mail | Compose, resumable drafts with attachments/Bcc, schedule and undo send with Draft restoration, partial-recipient truth, snooze, templates, signatures, server-side rules, indexed body/attachment search, saved searches, cross-folder search, message actions, and calendar-invite rendering in `webmail-backend/src/api.ts`, `search-index.ts`, `scheduled-send.ts`, and `webmail-frontend/src/mail/` |
 | Calendar | Month/week/day, recurrence and exceptions, guests, timezone-aware editing, free/busy, birthdays, CalDAV, ActiveSync, public booking through Scheduler, and backend sharing/ICS endpoints in `webmail-frontend/src/calendar/`, `webmail-backend/src/apps-api.ts`, `caldav.ts`, and `scheduler/` |
 | Contacts | Rich fields, favorites, groups/labels, directory lookup, trash/restore, activity, vCard/CSV import/export, duplicate review/merge, CardDAV, and ActiveSync in `webmail-frontend/src/contacts/`, `webmail-backend/src/apps-api.ts`, and `carddav.ts` |
 | Notes | Rich editing, code/checklist blocks, images/files, reminders, color/pin/archive, optimistic revision conflicts, ActiveSync Notes, IMAP projection, optional same-owner signaling, and stored label/folder/lock/delete metadata in `webmail-frontend/src/notes/`, `webmail-backend/src/notes-utils.ts`, `notes-imap-sync.ts`, and `notes-collaboration.ts` |
@@ -47,15 +65,16 @@ The honest target for five delivery cycles is a defensible paid-quality **small-
 
 | Capability | Current finding | Consequence |
 |---|---|---|
-| Conversation view | A persisted `threaded` preference and `threadCount` types exist, but `MessageList.tsx` always passes `isThreaded={false}` and no conversation assembly consumes `Message-ID`, `In-Reply-To`, or `References`. | The setting promises behavior that is not implemented. |
-| Forwarding and vacation responder | Settings controls are rendered, but the current save path does not persist or activate those controls. | These controls are misleading and must be wired or disabled before release. |
+| Immediate-send durability | Scheduled mail has durable leases and terminal uncertainty, but immediate web and ActiveSync sends still call SMTP before committing replay state. | A crash or lost response can lead to duplicate delivery on user retry; release is blocked. |
+| Conversation view | A persisted legacy `threaded` preference and `threadCount` types exist, but no conversation assembly consumes `Message-ID`, `In-Reply-To`, or `References`; the user-facing preference is hidden. | The capability is absent without a misleading control. |
+| Forwarding and vacation responder | No complete user-facing implementation is present; the previously misleading settings controls were removed. | These capabilities are absent, but the released UI no longer promises them. |
 | Tasks | CRUD routes exist under `/api/apps/tasks`; there is no Tasks route, user UI, mail-to-task flow, or real task collection sync. | Backend scaffolding is not a shipped task product. |
 | Notes collaboration | Optional signaling authorizes the signed-in note owner. No invitation, membership, per-note ACL, participant identity, or cross-account authorization model was found. | It is same-owner multi-tab/device collaboration, not shared Notes. |
 | Contact sharing | The share route creates vCard content for an email handoff. It is not a shared/delegated address book. | Useful export, but not team Contacts parity. |
 | Calendar scheduling | Guest free/busy exists. No room/resource directory, capacity/equipment policy, or suggestion engine was found. | Scheduling Assistant parity is incomplete. |
 | Calendar sharing/import/export | Backend share and ICS endpoints/types exist, but no current frontend flow calls them. | Protocol/backend foundation exists; the user-facing capability is incomplete. |
-| Notes organization/protection | Label/folder/lock fields and filters exist, but the editor cannot fully assign/manage them. “Locked” hides the card preview but does not enforce re-authentication or encrypt content. | Stored metadata must not be described as Apple Notes-style folders, tags, or protected notes. |
-| Notes trash/recovery | Delete sets `is_deleted=1`, while normal listing excludes deleted rows and the UI Trash view looks for `folder === 'trash'` within that normal list. Delete also removes reminders and attachments immediately; no restore flow was found. | The UI says “moved to trash,” but the Trash view cannot recover the note or its deleted attachments. |
+| Notes organization/protection | Label/folder/lock fields exist, but the editor cannot fully manage them. The former “Locked” claim was replaced with the accurate “Preview hidden” description. | Stored metadata is not described as Apple Notes-style protected notes. |
+| Notes trash/recovery | A recoverable Trash lifecycle is not implemented. The nonfunctional Trash navigation was removed and deletion now requires explicit confirmation that the note, attachments, and reminder are permanently deleted with no undo. | Recovery remains absent, but the UI is honest and legacy `folder='trash'` rows no longer disappear from All Notes. |
 | Admin roles | Regular Admin and Superadmin exist, but the login path explicitly describes the Admin app as global-only until domain scoping exists. | Multi-domain delegated administration is unsafe to promise. |
 | Migration | Contacts vCard/CSV and Calendar ICS foundations exist; provider migration remains a roadmap. Scheduler can import configuration, not a user's mailbox suite. | No guided, resumable tenant/user migration path. |
 | Offline | No service worker, Workbox, IndexedDB mail cache, or web manifest registration was found in the active frontend. | A network interruption stops the web suite. |
@@ -125,9 +144,9 @@ Yahoo is primarily a consumer comparator here; the reviewed sources do not estab
 | Mail | Core compose/drafts/attachments/actions | Implemented | ● | ● | ● | ● | ● | ● |
 | Mail | True conversation assembly and thread actions | **Partial** | ● | ● | · | ● | ● | · |
 | Mail | Body/attachment/advanced search and saved searches | Implemented | ● | · | ● | ● | ● | ● |
-| Mail | User rules, forwarding, vacation, signatures | Implemented | ● | ● | ● | ● | ● | ● |
+| Mail | User rules, forwarding, vacation, signatures | **Partial** (rules/signatures) | ● | ● | ● | ● | ● | ● |
 | Mail | Schedule send, undo, and snooze | Implemented | ● | ● | · | ● | ● | ◐ |
-| Mail | True thread mute/pin behavior | **Partial** | ● | ● | · | ● | ● | · |
+| Mail | True thread mute/pin behavior | **Absent** (hidden) | ● | ● | · | ● | ● | · |
 | Mail | Reusable message templates | Implemented | ● | ● | · | · | · | · |
 | Mail | Delegated/shared mailboxes with scoped send/read/delete | **Absent** | ● | ● | · | · | · | · |
 | Mail | Self-service masked/disposable addresses | **Partial** | · | · | ● | ● | ● | ● |
@@ -141,8 +160,8 @@ Yahoo is primarily a consumer comparator here; the reviewed sources do not estab
 | Notes | Rich text, checklists, files, reminders, color and pin | Implemented | · | · | · | · | · | ● |
 | Notes | User-managed labels/folders and protected notes | **Partial** | · | · | · | · | · | ● |
 | Notes | Cross-account sharing, ACLs, participants and activity | **Partial** | · | ● | · | · | · | ● |
-| Notes | Stable cross-client identity without duplicate/re-import | **Blocker** | · | · | · | · | · | · |
-| Notes | Recoverable trash/restore lifecycle | **Blocker** | · | · | · | · | · | ● |
+| Notes | Stable cross-client identity without duplicate/re-import | Implemented; physical gate | · | · | · | · | · | · |
+| Notes | Recoverable trash/restore lifecycle | **Absent** (permanent delete is explicit) | · | · | · | · | · | ● |
 | Tasks | User-facing task lists integrated with mail/calendar | **Partial** (API only) | ● | ● | · | · | · | ● |
 | Security | TOTP, recovery codes, app passwords, session revocation | Implemented | ● | ● | ● | ● | ● | ● |
 | Security | Passkeys/WebAuthn/FIDO security keys and MFA enforcement | **Absent** | ● | ● | ● | ● | ● | ● |
@@ -163,14 +182,15 @@ Abbreviations: G = Gmail/Google Workspace, M = Outlook/Microsoft 365, Y = Yahoo 
 
 ### Must — paid-quality release blockers and foundations
 
-1. **M0: Make Notes identity, deletion, and sync idempotent.** One logical note maps to one durable OMS ID and one current IMAP representation. Serialize per-user reconciliation, fence stale writers, preserve stable identity across macOS edits, and prevent deleted content from being re-imported. Make Trash real and recoverable—including attachment/reminder retention until permanent deletion—or stop presenting soft deletion as “moved to trash.” Gate on deterministic concurrent-save/delete/restore tests plus a physical macOS edit/close/reopen/delete observation.
-2. **M1: Ship real conversation view.** Assemble by normalized `Message-ID`/`In-Reply-To`/`References`, preserve folder+UID identity, render all members, and apply bulk/thread actions deterministically. Hide the preference until the behavior is real.
-3. **M2: Add shared/delegated mailboxes.** Model owner, delegate, read/send/delete/manage permissions, Send As/On Behalf identity, audit, and revocation. Do not implement this as shared passwords.
-4. **M3: Establish enterprise identity/security.** WebAuthn/passkeys/security keys, administrator-enforced MFA with recovery policy, SAML or OIDC SSO, SCIM provisioning/deprovisioning, domain-scoped RBAC, and break-glass administration.
-5. **M4: Deliver a recoverable Migration Center.** Start with reviewed vCard/CSV/ICS and IMAP import, then Google/Microsoft connectors. Every job needs preview, source IDs, idempotency, resume, rate-limit handling, progress, per-item errors, dedup policy, notification suppression, report, and safe undo/rollback boundaries.
-6. **M5: Make backup/restore a product capability.** Document storage ownership, encrypted backups, retention, point-in-time database recovery, mail/DAV/uploads consistency, per-tenant export where feasible, clean-host restore, RPO/RTO, and routine restore-drill evidence.
-7. **M6: Add a compliance minimum.** Immutable/exportable Admin and mailbox-access audit, configurable retention, deletion policy, user/admin data export, legal-hold boundary, and explicit private-mailbox administrator-access semantics. Treat full eDiscovery and DLP as later expansions of this foundation.
-8. **M7: Provide offline continuity.** Installable PWA, encrypted/local bounded cache, offline read/search for recent mail/calendar/contacts, safe draft and action outbox, conflict UX, remote-wipe/cache-expiry policy, and explicit unavailable states for operations that require the server.
+1. **M0: Put every immediate send behind one durable idempotent outbox.** Reserve the complete canonical message before SMTP, bind a server-verified request fingerprint to a user-scoped idempotency key, never replay an uncertain post-DATA attempt, reconcile Sent by stable Message-ID, and cover both web and ActiveSync. Gate enablement on additive-migration and concurrency proof against a disposable MariaDB matching production.
+2. **M1: Close the Notes physical-client and recovery boundary.** Repeat the macOS edit/close/reopen/delete lifecycle against the stabilized identity model. Then make Trash genuinely recoverable—including attachment/reminder retention until permanent deletion—or retain the current honest permanent-delete contract.
+3. **M2: Ship real conversation view.** Assemble by normalized `Message-ID`/`In-Reply-To`/`References`, preserve folder+UID identity, render all members, and apply bulk/thread actions deterministically. Keep the preference hidden until the behavior is real.
+4. **M3: Add shared/delegated mailboxes.** Model owner, delegate, read/send/delete/manage permissions, Send As/On Behalf identity, audit, and revocation. Do not implement this as shared passwords.
+5. **M4: Establish enterprise identity/security.** WebAuthn/passkeys/security keys, administrator-enforced MFA with recovery policy, SAML or OIDC SSO, SCIM provisioning/deprovisioning, domain-scoped RBAC, and break-glass administration.
+6. **M5: Deliver a recoverable Migration Center.** Start with reviewed vCard/CSV/ICS and IMAP import, then Google/Microsoft connectors. Every job needs preview, source IDs, idempotency, resume, rate-limit handling, progress, per-item errors, dedup policy, notification suppression, report, and safe undo/rollback boundaries.
+7. **M6: Complete backup/restore as a product capability.** Extend the fail-closed local snapshot/restore foundation with encrypted off-host backups, retention, point-in-time database recovery, mail/DAV/uploads consistency, per-tenant export where feasible, a clean-host restore drill, RPO/RTO, and routine evidence.
+8. **M7: Add a compliance minimum.** Immutable/exportable Admin and mailbox-access audit, configurable retention, deletion policy, user/admin data export, legal-hold boundary, and explicit private-mailbox administrator-access semantics. Treat full eDiscovery and DLP as later expansions of this foundation.
+9. **M8: Provide offline continuity.** Installable PWA, encrypted/local bounded cache, offline read/search for recent mail/calendar/contacts, safe draft and action outbox, conflict UX, remote-wipe/cache-expiry policy, and explicit unavailable states for operations that require the server.
 
 ### Should — strong differentiation after the Must gates
 
@@ -193,7 +213,10 @@ Abbreviations: G = Gmail/Google Workspace, M = Outlook/Microsoft 365, Y = Yahoo 
 
 ## 7. Five-Cycle Delivery Map
 
-This sequence is dependency-ordered. A cycle closes only when its acceptance gates pass; unfinished Must work rolls forward and displaces lower-priority features.
+This is the benchmark's original dependency-ordered delivery proposal, retained
+as roadmap context. The five executed hardening cycles diverged as newly found
+P1 defects displaced planned features; their actual scope and outcome are in
+`docs/engineering/RELEASE_READINESS_2026-08-15.md`.
 
 ### Cycle 1 — Stop correctness regressions
 
@@ -256,4 +279,9 @@ Exit: the release checklist below passes. Enterprise capabilities not actually c
 
 ## 9. Recommended Immediate Next Task
 
-Finish M0 before expanding scope: lock the Notes SQL/IMAP duplicate and delete/re-import cases into deterministic tests, apply the smallest identity/reconciliation fix, then validate the exact edit sequence through macOS Notes. Once that gate is green, true conversation view is the highest-value bounded user-facing slice.
+Finish M0 before expanding scope: implement the universal immediate-send outbox
+for web and ActiveSync, prove its additive migration and claim/replay races on a
+disposable MariaDB matching production, and then run the guarded live send
+matrix. In parallel, obtain the explicit production tombstone-repair approval
+and physical macOS Notes confirmation needed to release the already completed
+correctness work.

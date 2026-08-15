@@ -1,5 +1,33 @@
 # Implementation State
 
+## 2026-08-15 Five-Cycle Hardening Closeout
+
+**Status: locally validated, not deployed, and NO-GO for release.** Commit
+`869bb27b` adds serialized web Notes and Draft saves, complete Draft resume,
+durable scheduled Cancel/Undo restoration, distinct transport versus
+Bcc-preserving Sent MIME, partial-recipient truth, private same-origin
+owner-scoped uploads, free/busy authorization/cancellation, mail privacy,
+mobile message-cache identity, honest feature surfaces, and accessibility/focus
+hardening. Commit `e33c6df6` adds a fail-closed checksummed backup/restore
+transaction with explicit inventory, exclusive locking, continuous quiescence,
+a verified safety snapshot, and rollback of files, logical database state, and
+exact prior service activity.
+
+Final permitted validation passes: backend 690/694 with four documented skips,
+frontend 143/143, deterministic Chromium/WebKit browser qualification 176/176,
+builds, lint, production dependency audits, repository integration, ShellCheck,
+and generated-runtime parity. The opt-in `scheduled-send-db.test.cjs` was not
+run because it creates and drops a database table and only the Notes fake
+SQL/IMAP seam was approved.
+
+The latest guarded deployment correctly rolled back on an existing exact
+calendar-tombstone duplicate; no production row was mutated. Immediate web and
+ActiveSync send still have a P1 crash window after SMTP acceptance but before a
+durable replay record. Release requires a universal idempotent outbox with
+disposable MariaDB proof, the narrow production tombstone repair, guarded live
+validation, physical macOS Notes confirmation, and a clean-host restore drill.
+See `docs/engineering/RELEASE_READINESS_2026-08-15.md`.
+
 ## 2026-08-15 Paired Web Release And Manual Update Boundary
 
 **Status: Deployed, rollback-round-trip validated, and independently
@@ -445,7 +473,14 @@ Installer and platform scripts:
 - `install.sh` uses strict bash mode, detects OS through `functions/lib_os.sh`, supports `--dry-run`, checks root/config/default passwords/domain, detects existing components, offers missing-component install, reinstall, rollback, or exit, and reports soft errors on exit.
 - Supported platforms in code: Debian 11/12/13, Ubuntu 22/24/25, Alma/Rocky/RHEL 8/9, CentOS Stream 9.
 - `functions/lib_os.sh` centralizes package manager, web user/group, package translation, PHP-FPM detection, and Rspamd repo codename mapping.
-- `functions/backup_restore.sh` provides backup/restore for existing installs.
+- `functions/backup_restore.sh` provides a fail-closed backup/restore transaction
+  for existing installs: explicit present/absent inventory, root-only paths,
+  checksums, a nonblocking exclusive lock, continuous service quiescence,
+  verified pre-mutation safety snapshots, exact service-state restoration, and
+  rollback after filesystem, database, health, or service-resume failure. It
+  deliberately excludes package-managed MySQL configuration. A clean-host
+  restore drill, encrypted off-host retention, and point-in-time recovery remain
+  release work.
 - Several module scripts still `source ./config.conf`, so direct module execution assumes the repo root as current working directory even though `install.sh` itself is path-aware.
 - `tests/lint/run.sh` runs `bash -n` and optional `shellcheck`. `tests/integration/run.sh` checks installer/config guard patterns and a local `install.sh --dry-run`.
 - `functions/10_webmail.sh` deploys the modern webmail: installs Node/npm/rsync, enforces Node.js >= 20.19.0, builds frontend/backend, installs `/opt/openmailstack-backend`, renders `/etc/openmailstack/webmail-backend.env`, installs `openmailstack.service`, deploys static frontend files to `/var/www/openmailstack`, and injects Nginx routes for `/`, `/api`, `/caldav`, autodiscover, well-known CalDAV/CardDAV, and ActiveSync.
@@ -498,8 +533,8 @@ React frontend:
 - `webmail-frontend/src/App.tsx` is the main app and is large/monolithic. It includes login, webmail, compose, signatures, rules, forwarding, admin screens, calendar, contacts, and settings.
 - Settings now has a component boundary in `webmail-frontend/src/settings/SettingsPanel.tsx`, with settings tab normalization in `webmail-frontend/src/settings/tabs.ts` and local appearance preference application in `webmail-frontend/src/settings/appearance.ts`.
 - It uses React 19, Vite, lucide-react, DOMPurify, ReactQuill, react-resizable-panels, and date-fns.
-- Message HTML rendering is sanitized with DOMPurify before `dangerouslySetInnerHTML`.
-- UI state uses server-backed settings for signatures, threaded mode, and appearance after authenticated hydration, with `localStorage` retained for migration/fallback and for active app section/tab. Auth now bootstraps through `/api/auth/me` and the session cookie; old `oms_token`, `oms_isAdmin`, and `oms_username` keys are removed during login/logout cleanup.
+- Message HTML rendering is sanitized with DOMPurify before `dangerouslySetInnerHTML`. Mail runtime settings now enforce Ask/Trusted/Always external-content behavior: blocked messages contain no remote image/srcset/CSS URL fetch target, per-message consent is explicit, and Trusted requires an exact safe-sender mailbox match while embedded/local content remains.
+- UI state uses server-backed settings for signatures, reading behavior, send-as identities, and appearance after authenticated hydration, with `localStorage` retained for migration/fallback and for active app section/tab. Compose From is constrained to the current identity set. Auth now bootstraps through `/api/auth/me` and the session cookie; old `oms_token`, `oms_isAdmin`, and `oms_username` keys are removed during login/logout cleanup.
 - `webmail-frontend/src/App.tsx` now has typed domain models for mail folders, messages, signatures, contacts, calendars, admin records, and app refresh responses. `npm --prefix webmail-frontend run lint` passes as of Phase 2.
 - `webmail-frontend/src/App.tsx` includes mail search controls with field filters including attachment-name search, current-folder/all-folder scope, loading/clear states, update-index action, save-search action, saved-search chips, background current-folder incremental index sync, indexed/mailbox search status text, cross-folder result folder labels, and bulk-action safeguards for all-folder results. Folder message lists use backend UID pagination metadata to prefetch 25-message batches near the bottom, de-duplicate page boundaries, prevent concurrent/stale appends, preserve loaded depth across overlapping refreshes and actions, and expose an accessible manual retry fallback. Search retains its separate bounded-result behavior. Desktop observes the constrained mail pane; mobile observes the viewport so a growing page does not cascade-load the mailbox.
 - `webmail-frontend/src/App.tsx` marks messages read when opened, updates unread folder counts immediately, refreshes folder counts for server reconciliation, exposes toolbar/row actions for read/unread and starring, and displays opened-message attachments with preview/download actions.
@@ -508,7 +543,7 @@ React frontend:
 - Calendar event chips open a details dialog with edit/delete actions and human recurrence labels; raw `FREQ`/`UNTIL` syntax is not rendered in the month grid. Chips are keyboard-focusable buttons with recurrence-inclusive accessible names, and the Repeat control resolves stored rules to daily/weekly/monthly/yearly choices. The deployed web save path preserves the server-issued UID as an opaque value, and complete stored recurrence rules remain byte-for-byte intact even when `FREQ` is not the first rule part; deliberate Repeat changes still write simple frequency rules.
 - Calendar sidebar editing uses authenticated calendar APIs to persist calendar name/color changes and calendar deletion. Event chips inherit updated calendar colors; deletion removes that calendar's events, refreshes from the server, and refuses to delete the last visible calendar.
 - Sync Info generates copyable CalDAV, CardDAV, IMAP/SMTP, ActiveSync, iOS/Android, and desktop setup settings from the current web origin and signed-in mailbox address. Calendar/Contacts shortcut buttons route to the full Sync Info page.
-- Settings navigation is grouped into Personalization, Mail, Apps, and Account. Appearance controls are functional server-backed preferences for theme, accent, density, type size, corner shape, reduced motion, and named profiles. Mail settings include functional identity/compose defaults, signature defaults, and threaded-mode persistence; forwarding remains alias-backed and filters remain Sieve-backed. Calendar settings drive new event default calendar/duration/time zone/reminder and default view. Contacts settings drive address-book sort, name format, and list density. Spam & Senders, Password, and Advanced still expose honest read-only/planned states where product behavior is not implemented yet.
+- Settings navigation is grouped into Personalization, Mail, Apps, and Account. Appearance controls are functional server-backed preferences for theme, accent, density, type size, corner shape, reduced motion, and named profiles. Mail settings include functional identity/compose defaults, signature defaults, external-content policy, and mark-read delay; conversation threading, forwarding, and auto-responder controls are hidden until their behavior is implemented, while filters remain Sieve-backed. Calendar settings drive new event default calendar/duration/time zone/reminder and default view. Contacts settings drive address-book sort, name format, and list density. Spam & Senders, Password, and Advanced still expose honest read-only/planned states where product behavior is not implemented yet.
 - Admin users have an Admin > Branding panel for global app branding. The live app loads one shared branding state across the login page, authenticated header, document title/favicon, Sync copy, and public Scheduler header; it caches the last successful settings, bounds initial loading, retries after transient failures, and reconciles legacy default login titles to a custom site name. Image uploads accept PNG/JPG/WebP/GIF sources up to 40 MB, show target dimensions as outcomes rather than requirements, and progressively crop/contain, compress, and downscale with browser yields before saving. The server rejects an image it cannot preserve instead of silently clearing it. This reliability hardening is deployed from commit `8b83b268` with rollback snapshot `/var/backups/openmailstack/20260712T213933Z_branding_8b83b268`.
 - Admin users also have an Admin > Settings hub backed by `/api/admin/settings/:namespace` for organization metadata, public URL hints, security defaults, mail policy defaults, update channel, telemetry mode, maintenance window, and admin notice. These settings are currently stored and editable; enforcement remains separate follow-up work.
 - Admin users can use Admin > Domains, Cross-Domain Routing, Mailboxes, and Aliases against live Node API routes. DNS Settings opens a copyable records overlay; create/edit/delete/suspend/reset actions refresh admin data and show success/error banners. Aliases have a modal group-member editor with bulk/member removal and mailbox/manual address adds. Mailboxes have a profile editor for display name, quota, phone, alternate email, company/title/address metadata, notes, and Global Directory visibility backed by additive `webmail_mailbox_profiles`.

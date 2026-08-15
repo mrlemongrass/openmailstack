@@ -1779,3 +1779,44 @@ Future entry template:
   `/var/backups/openmailstack/protocol-guarded-webmail-20260815T103128Z/`.
   Verified new-pair restore point:
   `/var/backups/openmailstack/protocol-guarded-webmail-20260815T103335Z/`.
+
+## 2026-08-15 — Runtime Mail Privacy And Honest Controls
+
+- Mail now hydrates user Mail settings and send-as identities at runtime with
+  independent safe fallback and normalization for typed or legacy aliases.
+- Compose From is always derived from an authorized current identity and falls
+  back to the configured valid default or primary address after revocation.
+- Message HTML remains DOMPurify-sanitized and now strips external image,
+  srcset, and CSS URL fetch targets for Ask. Per-message consent loads them;
+  Trusted loads only for an exact mailbox in safe senders; embedded/local
+  content remains.
+- Mark-read honors the stored delay and cancels pending work on navigation.
+- Removed unimplemented conversation, forwarding/auto-responder, mute-thread,
+  and new-compose Send and Archive controls. Inline reply Send and Archive is
+  retained.
+- The final focused privacy/Undo/scheduled-state file passes 11/11. The complete
+  frontend suite passes 143/143; lint, production build, and the 176/176
+  Chromium/WebKit desktop/mobile fixture matrix pass.
+
+## 2026-08-15 — Five-Cycle Suite Hardening Closeout
+
+- Commit `869bb27b` hardens web Notes/Draft save serialization, complete Draft
+  resume, scheduled Cancel/Undo restoration, Bcc-preserving Sent copies,
+  partial-recipient truth, private uploads, same-origin browser boundaries,
+  free/busy authorization/cancellation, mail privacy, mobile cache identity,
+  keyboard behavior, honest feature surfaces, and accessibility/focus.
+- Commit `e33c6df6` replaces the minimal backup helper with a fail-closed,
+  root-only, checksummed, explicitly inventoried restore transaction. Restore
+  stays quiesced through validation and uses a verified safety snapshot to
+  recover files, logical database state, and exact prior service activity.
+- Final permitted validation is green: backend 690/694 with four documented
+  skips and zero failures; frontend 143/143; browser 176/176; builds, lint,
+  audits, full integration, ShellCheck, generated-runtime parity, and diff
+  checks pass. The destructive opt-in scheduled-send database test was not run.
+- The latest guarded rollout remains rolled back because production contains an
+  exact duplicate calendar tombstone pair. No production row was changed;
+  separate approval is required for the narrow repair.
+- Release remains NO-GO: immediate web and ActiveSync send accept SMTP before a
+  durable replay record exists. Next work is a universal idempotent outbox with
+  disposable MariaDB migration/concurrency proof, then guarded live and physical
+  client validation. See `docs/engineering/RELEASE_READINESS_2026-08-15.md`.

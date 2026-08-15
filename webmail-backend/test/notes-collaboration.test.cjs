@@ -25,7 +25,11 @@ const {
   verifyNoteCollaborationCapability,
 } = require('../src/notes-collaboration');
 const { pool } = require('../src/db');
-const { NoteConflictError, saveNote } = require('../src/notes-utils');
+const {
+  NoteConflictError,
+  deleteNoteIfRevisionMatches,
+  saveNote,
+} = require('../src/notes-utils');
 
 const SECRET = 'notes-collaboration-test-secret-that-is-long-enough';
 
@@ -56,7 +60,7 @@ const waitForClose = (socket) => new Promise((resolve) => {
   socket.once('close', (code) => resolve(code));
 });
 
-test('stale identical saves converge while stale divergent saves are rejected', async (t) => {
+test('identical saves are no-ops while stale divergent saves are rejected', async (t) => {
   const existing = {
     id: 'owned-note',
     owner: 'owner@example.test',
@@ -78,6 +82,14 @@ test('stale identical saves converge while stale divergent saves are rejected', 
     return [{ affectedRows: 1 }, []];
   };
   t.after(() => { pool.query = originalQuery; });
+
+  const unchanged = await saveNote({
+    ...existing,
+    owner: existing.owner,
+    expected_sync_token: 8,
+  });
+  assert.equal(unchanged.sync_token, 8);
+  assert.equal(writes, 0, 'a current identical save should not create another revision');
 
   const converged = await saveNote({
     ...existing,
@@ -147,6 +159,74 @@ test('concurrent divergent saves allow one atomic revision winner', async (t) =>
   assert.ok(rejected && rejected.reason instanceof NoteConflictError);
   assert.equal(state.sync_token, 9);
   assert.match(state.content, /Writer (one|two)/);
+});
+
+test('a stale IMAP deletion cannot delete a newer note revision or its dependents', async (t) => {
+  let state = {
+    id: 'delete-race-note',
+    owner: 'owner@example.test',
+    sync_token: 2,
+    imap_sync_token: 2,
+    imap_uid: 42,
+    is_deleted: 0,
+  };
+  const cleanupQueries = [];
+  const originalQuery = pool.query;
+  let injectConcurrentEdit = true;
+  pool.query = async (sql, params = []) => {
+    const query = String(sql).replace(/\s+/g, ' ').trim();
+    if (query.startsWith('UPDATE notes SET is_deleted = 1')) {
+      if (injectConcurrentEdit) {
+        injectConcurrentEdit = false;
+        state = { ...state, sync_token: 3 };
+      }
+      const [id, owner, syncToken, imapSyncToken, imapUid] = params;
+      const matches = state.id === id
+        && state.owner === owner
+        && state.sync_token === syncToken
+        && state.imap_sync_token === imapSyncToken
+        && state.imap_uid === imapUid
+        && state.is_deleted === 0;
+      if (!matches) return [{ affectedRows: 0 }, []];
+      state = {
+        ...state,
+        is_deleted: 1,
+        sync_token: syncToken + 1,
+        imap_sync_token: syncToken + 1,
+        imap_uid: null,
+      };
+      return [{ affectedRows: 1 }, []];
+    }
+    cleanupQueries.push(query);
+    if (query.startsWith('SELECT a.storage_path')) return [[], []];
+    return [{ affectedRows: 1 }, []];
+  };
+  t.after(() => { pool.query = originalQuery; });
+
+  const staleDeleteWon = await deleteNoteIfRevisionMatches(
+    state.id,
+    state.owner,
+    2,
+    42,
+  );
+  assert.equal(staleDeleteWon, false);
+  assert.equal(state.is_deleted, 0);
+  assert.equal(state.sync_token, 3);
+  assert.deepEqual(cleanupQueries, []);
+
+  state = { ...state, imap_sync_token: 3 };
+  const currentDeleteWon = await deleteNoteIfRevisionMatches(
+    state.id,
+    state.owner,
+    3,
+    42,
+  );
+  assert.equal(currentDeleteWon, true);
+  assert.equal(state.is_deleted, 1);
+  assert.equal(state.sync_token, 4);
+  assert.equal(state.imap_sync_token, 4);
+  assert.equal(state.imap_uid, null);
+  assert.ok(cleanupQueries.some((query) => query.startsWith('DELETE FROM note_reminders')));
 });
 
 test('capabilities are opaque, owner- and session-bound, tamper-evident, and expiring', () => {

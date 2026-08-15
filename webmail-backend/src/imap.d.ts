@@ -46,6 +46,7 @@ export declare class ImapService {
     connect(): Promise<void>;
     logout(): Promise<void>;
     getFolders(): Promise<any[]>;
+    getMessageIdentities(folderPath: string): Promise<any[]>;
     getSearchFolderSnapshot(): Promise<{
         folderPaths: string[];
         uidNextByFolder: Map<string, number>;

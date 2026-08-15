@@ -39,6 +39,7 @@ exports.listNotes = listNotes;
 exports.getNote = getNote;
 exports.saveNote = saveNote;
 exports.deleteNote = deleteNote;
+exports.deleteNoteIfRevisionMatches = deleteNoteIfRevisionMatches;
 exports.hardDeleteNote = hardDeleteNote;
 exports.ensureRemindersSchema = ensureRemindersSchema;
 exports.getNoteReminder = getNoteReminder;
@@ -143,6 +144,12 @@ async function saveNote(note) {
             throw new NoteConflictError();
         }
     }
+    if (existing
+        && note.imap_uid === undefined
+        && note.imap_msgid === undefined
+        && noteContentMatches(existing, expectedContent)) {
+        return existing;
+    }
     if (existing) {
         let updateQuery = 'UPDATE notes SET title = ?, content = ?, color = ?, is_pinned = ?, is_locked = ?, folder = ?, labels_json = ?, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP';
         let queryParams = [title, content, color, is_pinned, is_locked, folder, labels_json];
@@ -179,9 +186,7 @@ async function saveNote(note) {
     catch (e) { }
     return saved;
 }
-async function deleteNote(id, owner) {
-    await db_1.pool.query('UPDATE notes SET is_deleted = 1, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner = ?', [id, owner]);
-    // Clean up associated reminders and attachments
+async function cleanupDeletedNoteDependents(id, owner) {
     try {
         await db_1.pool.query('DELETE FROM note_reminders WHERE note_id = ?', [id]);
         // Delete attachment files from disk before removing DB records
@@ -205,11 +210,41 @@ async function deleteNote(id, owner) {
     catch (e) {
         console.error('deleteNote: failed to clean up reminders/attachments', e);
     }
+}
+function emitNoteDeleted(id, owner) {
     try {
         const { io } = require('./index');
         io.to(owner).emit('note_deleted', { noteId: id });
     }
     catch (e) { }
+}
+async function deleteNote(id, owner) {
+    const [result] = await db_1.pool.query('UPDATE notes SET is_deleted = 1, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner = ? AND is_deleted = 0', [id, owner]);
+    if (result.affectedRows === 0)
+        return;
+    await cleanupDeletedNoteDependents(id, owner);
+    emitNoteDeleted(id, owner);
+}
+async function deleteNoteIfRevisionMatches(id, owner, expectedSyncToken, expectedImapUid) {
+    const syncToken = Number(expectedSyncToken);
+    const imapUid = Number(expectedImapUid);
+    if (!Number.isSafeInteger(syncToken) || syncToken < 1 || !Number.isSafeInteger(imapUid) || imapUid < 1) {
+        return false;
+    }
+    const [result] = await db_1.pool.query(`UPDATE notes
+         SET is_deleted = 1,
+             sync_token = sync_token + 1,
+             imap_sync_token = imap_sync_token + 1,
+             imap_uid = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND owner = ?
+           AND sync_token = ? AND imap_sync_token = ?
+           AND imap_uid = ? AND is_deleted = 0`, [id, owner, syncToken, syncToken, imapUid]);
+    if (result.affectedRows === 0)
+        return false;
+    await cleanupDeletedNoteDependents(id, owner);
+    emitNoteDeleted(id, owner);
+    return true;
 }
 async function hardDeleteNote(id, owner) {
     await db_1.pool.query('DELETE FROM notes WHERE id = ? AND owner = ?', [id, owner]);

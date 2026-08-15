@@ -27,6 +27,7 @@ export declare function saveNote(note: Partial<NoteRow> & {
     expected_sync_token?: number;
 }): Promise<NoteRow>;
 export declare function deleteNote(id: string, owner: string): Promise<void>;
+export declare function deleteNoteIfRevisionMatches(id: string, owner: string, expectedSyncToken: number, expectedImapUid: number): Promise<boolean>;
 export declare function hardDeleteNote(id: string, owner: string): Promise<void>;
 export interface NoteReminder {
     note_id: string;

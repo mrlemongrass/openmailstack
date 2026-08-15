@@ -126,6 +126,14 @@ export async function saveNote(note: Partial<NoteRow> & {
             throw new NoteConflictError();
         }
     }
+    if (
+        existing
+        && note.imap_uid === undefined
+        && note.imap_msgid === undefined
+        && noteContentMatches(existing, expectedContent)
+    ) {
+        return existing;
+    }
     if (existing) {
         let updateQuery = 'UPDATE notes SET title = ?, content = ?, color = ?, is_pinned = ?, is_locked = ?, folder = ?, labels_json = ?, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP';
         let queryParams = [title, content, color, is_pinned, is_locked, folder, labels_json];
@@ -168,9 +176,7 @@ export async function saveNote(note: Partial<NoteRow> & {
     return saved!;
 }
 
-export async function deleteNote(id: string, owner: string): Promise<void> {
-    await pool.query('UPDATE notes SET is_deleted = 1, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner = ?', [id, owner]);
-    // Clean up associated reminders and attachments
+async function cleanupDeletedNoteDependents(id: string, owner: string): Promise<void> {
     try {
         await pool.query('DELETE FROM note_reminders WHERE note_id = ?', [id]);
         // Delete attachment files from disk before removing DB records
@@ -194,10 +200,54 @@ export async function deleteNote(id: string, owner: string): Promise<void> {
     } catch (e) {
         console.error('deleteNote: failed to clean up reminders/attachments', e);
     }
+}
+
+function emitNoteDeleted(id: string, owner: string): void {
     try {
         const { io } = require('./index');
         io.to(owner).emit('note_deleted', { noteId: id });
     } catch(e) {}
+}
+
+export async function deleteNote(id: string, owner: string): Promise<void> {
+    const [result]: any = await pool.query(
+        'UPDATE notes SET is_deleted = 1, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner = ? AND is_deleted = 0',
+        [id, owner],
+    );
+    if (result.affectedRows === 0) return;
+    await cleanupDeletedNoteDependents(id, owner);
+    emitNoteDeleted(id, owner);
+}
+
+export async function deleteNoteIfRevisionMatches(
+    id: string,
+    owner: string,
+    expectedSyncToken: number,
+    expectedImapUid: number,
+): Promise<boolean> {
+    const syncToken = Number(expectedSyncToken);
+    const imapUid = Number(expectedImapUid);
+    if (!Number.isSafeInteger(syncToken) || syncToken < 1 || !Number.isSafeInteger(imapUid) || imapUid < 1) {
+        return false;
+    }
+
+    const [result]: any = await pool.query(
+        `UPDATE notes
+         SET is_deleted = 1,
+             sync_token = sync_token + 1,
+             imap_sync_token = imap_sync_token + 1,
+             imap_uid = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND owner = ?
+           AND sync_token = ? AND imap_sync_token = ?
+           AND imap_uid = ? AND is_deleted = 0`,
+        [id, owner, syncToken, syncToken, imapUid],
+    );
+    if (result.affectedRows === 0) return false;
+
+    await cleanupDeletedNoteDependents(id, owner);
+    emitNoteDeleted(id, owner);
+    return true;
 }
 
 export async function hardDeleteNote(id: string, owner: string): Promise<void> {

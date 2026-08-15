@@ -56,6 +56,29 @@ class ImapService {
             unseen: Number(f.status?.unseen || 0),
         }));
     }
+    async getMessageIdentities(folderPath) {
+        const mailbox = await this.client.mailboxOpen(folderPath);
+        const messages = [];
+        try {
+            if (mailbox.exists === 0)
+                return messages;
+            for await (const message of this.client.fetch('1:*', {
+                envelope: true,
+                uid: true,
+                flags: true,
+            })) {
+                messages.push({
+                    uid: message.uid,
+                    flags: Array.from(message.flags || []),
+                    envelope: message.envelope,
+                });
+            }
+            return messages;
+        }
+        finally {
+            await this.client.mailboxClose();
+        }
+    }
     async getSearchFolderSnapshot() {
         const folders = await this.client.list({
             statusQuery: { uidNext: true, uidValidity: true },

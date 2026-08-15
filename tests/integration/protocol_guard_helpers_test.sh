@@ -28,6 +28,24 @@ if protocol_read_release_version "${TEST_ROOT}/symlink-version" >/dev/null 2>&1;
     exit 1
 fi
 
+retry_attempts=0
+retry_on_third_attempt() {
+    ((retry_attempts += 1))
+    (( retry_attempts >= 3 ))
+}
+protocol_retry_command 3 0 retry_on_third_attempt
+[[ ${retry_attempts} -eq 3 ]]
+retry_attempts=0
+set +e
+protocol_retry_command 2 0 retry_on_third_attempt
+retry_status=$?
+set -e
+[[ ${retry_status} -eq 1 && ${retry_attempts} -eq 2 ]]
+if protocol_retry_command 0 0 true; then
+    echo "FAIL: retry helper accepted zero attempts" >&2
+    exit 1
+fi
+
 resolved=$(protocol_safe_directory "${TEST_ROOT}/allowed/live" "${TEST_ROOT}/allowed" "fixture live root")
 [[ "${resolved}" == "${TEST_ROOT}/allowed/live" ]]
 resolved=$(protocol_safe_root_directory "${TEST_ROOT}/allowed/live" "${TEST_ROOT}/allowed" "fixture rollback root" "$(id -u)")

@@ -265,8 +265,15 @@ validate_webmail_snapshot() {
     printf '%s\n' "${snapshot_real}"
 }
 
-validate_webmail_runtime() {
+check_webmail_backend_readiness() {
     local readiness_status
+
+    readiness_status=$(curl --silent --output /dev/null --write-out '%{http_code}' --noproxy '*' \
+        --connect-timeout 1 --max-time 1 http://127.0.0.1:20000/api/auth/me) || return 1
+    [[ "${readiness_status}" == "401" ]]
+}
+
+validate_webmail_runtime() {
     nginx -t || return 1
     systemctl is-active --quiet openmailstack.service || return 1
     systemctl is-active --quiet nginx.service || return 1
@@ -277,8 +284,10 @@ validate_webmail_runtime() {
     if [[ -f /etc/openmailstack/scheduler.enabled && -f /etc/systemd/system/openmailstack-scheduler-worker.service ]]; then
         systemctl is-active --quiet openmailstack-scheduler-worker.service || return 1
     fi
-    readiness_status=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:20000/api/auth/me) || return 1
-    [[ "${readiness_status}" == "401" ]] || return 1
+    protocol_retry_command 30 1 check_webmail_backend_readiness || {
+        echo "Webmail backend did not become ready within the bounded startup window" >&2
+        return 1
+    }
     curl --fail --silent --show-error --max-time 15 --noproxy '*' \
         --resolve "${MAIL_HOSTNAME}:443:127.0.0.1" \
         "https://${MAIL_HOSTNAME}/" -o /dev/null || return 1

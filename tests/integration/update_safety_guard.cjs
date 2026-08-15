@@ -142,6 +142,7 @@ test('guarded webmail rollback validates the snapshot and remains reversible', (
   assert.match(protocolGuardLibrary, /must be a direct child of \$\{allowed_parent\}/);
   assert.match(protocolGuardLibrary, /protocol_read_release_version\(\)/);
   assert.match(protocolGuardLibrary, /protocol_version_file_matches\(\)/);
+  assert.match(protocolGuardLibrary, /protocol_retry_command\(\)/);
   assert.match(guardedDeploy, /RELEASE_VERSION=\$\(protocol_read_release_version "\$\{REPO_DIR\}\/VERSION"\)/);
   assert.match(guardedDeploy, /protocol_run_reversible_restore/);
   assert.match(guardedDeploy, /apply_requested_webmail/);
@@ -154,6 +155,13 @@ test('guarded webmail rollback validates the snapshot and remains reversible', (
   assert.match(guardedDeploy, /protocol_version_file_matches "\$\{RELEASE_VERSION\}" "\$\{LEGACY_ADMIN_DIR\}\/VERSION"/);
   assert.match(guardedDeploy, /validate_deployed_target/);
   assert.match(guardedDeploy, /validate_webmail_runtime \|\| return 1/);
+  assert.match(guardedDeploy, /protocol_retry_command 30 1 check_webmail_backend_readiness/);
+  assert.match(guardedDeploy, /--connect-timeout 1 --max-time 1 http:\/\/127\.0\.0\.1:20000\/api\/auth\/me/);
+  const readinessProbe = guardedDeploy.slice(
+    guardedDeploy.indexOf('check_webmail_backend_readiness()'),
+    guardedDeploy.indexOf('validate_webmail_runtime()'),
+  );
+  assert.match(readinessProbe, /--noproxy '\*'/);
   assert.match(guardedDeploy, /rsync -a --delete --exclude uploads[^\n]+\|\| return 1/);
   assert.match(guardedDeploy, /if restore_webmail; then\s+restore_status=0\s+else\s+restore_status=\$\?/);
   assert.match(guardedDeploy, /return "\$\{restore_status\}"/);

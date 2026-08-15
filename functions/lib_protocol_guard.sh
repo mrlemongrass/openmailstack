@@ -21,6 +21,26 @@ protocol_version_file_matches() {
     [[ "${actual_version}" == "${expected_version}" ]]
 }
 
+protocol_retry_command() {
+    local attempts="$1"
+    local delay_seconds="$2"
+    shift 2
+    local attempt
+
+    [[ "${attempts}" =~ ^[1-9][0-9]*$ ]] || return 1
+    [[ "${delay_seconds}" =~ ^[0-9]+$ ]] || return 1
+    [[ $# -gt 0 ]] || return 1
+    for ((attempt = 1; attempt <= attempts; attempt += 1)); do
+        if "$@"; then
+            return 0
+        fi
+        if (( attempt < attempts )); then
+            sleep "${delay_seconds}"
+        fi
+    done
+    return 1
+}
+
 # Resolve a live directory without allowing lexical traversal or symlink escapes.
 # The resolved directory must be a strict descendant of the allowed parent.
 protocol_safe_directory() {

@@ -372,8 +372,8 @@ SET @oms_birthday_calendar_id = IF(
     LAST_INSERT_ID(),
     @oms_birthday_calendar_id
 );
-SELECT CONCAT_WS(CHAR(9), 'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR',
-    @oms_birthday_calendar_id, @oms_birthday_calendar_created)
+SELECT 'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR',
+    @oms_birthday_calendar_id, @oms_birthday_calendar_created
 FROM calendars
 WHERE id=@oms_birthday_calendar_id
   AND user_id=${SMOKE_USER_SQL_LITERAL}
@@ -483,8 +483,8 @@ WHERE user_id=${SMOKE_USER_SQL_LITERAL}
   AND subscribed_url IS NULL;
 CREATE TEMPORARY TABLE oms_protocol_contact_targets (
     contact_id BIGINT NULL,
-    dav_uid VARCHAR(255) NOT NULL PRIMARY KEY,
-    birthday_uid VARCHAR(255) NOT NULL,
+    dav_uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
+    birthday_uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     UNIQUE KEY oms_protocol_contact_id (contact_id)
 ) ENGINE=MEMORY;
 INSERT IGNORE INTO oms_protocol_contact_targets (contact_id, dav_uid, birthday_uid)
@@ -536,7 +536,7 @@ FROM DUAL
 WHERE ${contact_added_dav_uid_sql_literal} IS NOT NULL;
 CREATE TEMPORARY TABLE oms_protocol_birthday_targets (
     calendar_id BIGINT NOT NULL,
-    uid VARCHAR(255) NOT NULL,
+    uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     PRIMARY KEY (calendar_id, uid)
 ) ENGINE=MEMORY;
 INSERT IGNORE INTO oms_protocol_birthday_targets (calendar_id, uid)
@@ -552,12 +552,14 @@ INSERT IGNORE INTO oms_protocol_birthday_changed_calendars (calendar_id)
 SELECT birthday_events.calendar_id
 FROM events AS birthday_events
 JOIN oms_protocol_birthday_targets AS targets
-  ON targets.calendar_id=birthday_events.calendar_id AND targets.uid=birthday_events.uid;
+  ON targets.calendar_id=birthday_events.calendar_id
+ AND BINARY targets.uid = BINARY birthday_events.uid;
 INSERT IGNORE INTO oms_protocol_birthday_changed_calendars (calendar_id)
 SELECT birthday_tombstones.calendar_id
 FROM calendar_tombstones AS birthday_tombstones
 JOIN oms_protocol_birthday_targets AS targets
-  ON targets.calendar_id=birthday_tombstones.calendar_id AND targets.uid=birthday_tombstones.uid;
+  ON targets.calendar_id=birthday_tombstones.calendar_id
+ AND BINARY targets.uid = BINARY birthday_tombstones.uid;
 DELETE gate_shares
 FROM calendar_shares AS gate_shares
 JOIN oms_protocol_calendar_targets AS targets ON targets.calendar_id=gate_shares.calendar_id;
@@ -585,7 +587,7 @@ SET @oms_cleanup_changes = @oms_cleanup_changes + ROW_COUNT();
 DELETE tombstones
 FROM contact_tombstones AS tombstones
 JOIN oms_protocol_contact_targets AS targets
-  ON targets.dav_uid=tombstones.dav_uid
+  ON BINARY targets.dav_uid = BINARY tombstones.dav_uid
 WHERE tombstones.username=${SMOKE_USER_SQL_LITERAL};
 SET @oms_cleanup_changes = @oms_cleanup_changes + ROW_COUNT();
 DELETE contacts
@@ -596,12 +598,14 @@ SET @oms_cleanup_changes = @oms_cleanup_changes + ROW_COUNT();
 DELETE birthday_events
 FROM events AS birthday_events
 JOIN oms_protocol_birthday_targets AS targets
-  ON targets.calendar_id=birthday_events.calendar_id AND targets.uid=birthday_events.uid;
+  ON targets.calendar_id=birthday_events.calendar_id
+ AND BINARY targets.uid = BINARY birthday_events.uid;
 SET @oms_cleanup_changes = @oms_cleanup_changes + ROW_COUNT();
 DELETE birthday_tombstones
 FROM calendar_tombstones AS birthday_tombstones
 JOIN oms_protocol_birthday_targets AS targets
-  ON targets.calendar_id=birthday_tombstones.calendar_id AND targets.uid=birthday_tombstones.uid;
+  ON targets.calendar_id=birthday_tombstones.calendar_id
+ AND BINARY targets.uid = BINARY birthday_tombstones.uid;
 SET @oms_cleanup_changes = @oms_cleanup_changes + ROW_COUNT();
 UPDATE calendars
 JOIN oms_protocol_birthday_changed_calendars AS changed
@@ -674,16 +678,19 @@ WHERE username=${SMOKE_USER_SQL_LITERAL}
        OR (${contact_added_dav_uid_sql_literal} IS NOT NULL AND dav_uid=${contact_added_dav_uid_sql_literal}));
 SELECT COUNT(*) INTO @oms_contact_tombstones
 FROM contact_tombstones AS tombstones
-JOIN oms_protocol_contact_targets AS targets ON targets.dav_uid=tombstones.dav_uid
+JOIN oms_protocol_contact_targets AS targets
+  ON BINARY targets.dav_uid = BINARY tombstones.dav_uid
 WHERE tombstones.username=${SMOKE_USER_SQL_LITERAL};
 SELECT COUNT(*) INTO @oms_birthday_events
 FROM events AS birthday_events
 JOIN oms_protocol_birthday_targets AS targets
-  ON targets.calendar_id=birthday_events.calendar_id AND targets.uid=birthday_events.uid;
+  ON targets.calendar_id=birthday_events.calendar_id
+ AND BINARY targets.uid = BINARY birthday_events.uid;
 SELECT COUNT(*) INTO @oms_birthday_tombstones
 FROM calendar_tombstones AS birthday_tombstones
 JOIN oms_protocol_birthday_targets AS targets
-  ON targets.calendar_id=birthday_tombstones.calendar_id AND targets.uid=birthday_tombstones.uid;
+  ON targets.calendar_id=birthday_tombstones.calendar_id
+ AND BINARY targets.uid = BINARY birthday_tombstones.uid;
 SELECT COUNT(*) INTO @oms_birthday_exact_calendar_rows
 FROM calendars
 WHERE id=@oms_birthday_calendar_id
@@ -735,11 +742,11 @@ DROP TEMPORARY TABLE oms_protocol_birthday_targets;
 DROP TEMPORARY TABLE oms_protocol_contact_targets;
 DROP TEMPORARY TABLE oms_protocol_calendar_targets;
 COMMIT;
-SELECT CONCAT_WS(CHAR(9), 'OMS_PROTOCOL_GATE_RESIDUE', @oms_contact_active,
+SELECT 'OMS_PROTOCOL_GATE_RESIDUE', @oms_contact_active,
     @oms_contact_deleted, @oms_contact_tombstones, @oms_birthday_events,
     @oms_birthday_tombstones, @oms_birthday_calendar_rows, @oms_calendar_events,
     @oms_calendar_tombstones, @oms_calendar_shares, @oms_calendar_rows,
-    @oms_mail_states, @oms_pim_states, @oms_webmail_sessions, @oms_cleanup_changes);
+    @oms_mail_states, @oms_pim_states, @oms_webmail_sessions, @oms_cleanup_changes;
 SQL
         ) || cleanup_status=$?
     else
@@ -806,9 +813,9 @@ PREPARE oms_session_count_statement FROM @oms_session_count;
 EXECUTE oms_session_count_statement;
 DEALLOCATE PREPARE oms_session_count_statement;
 COMMIT;
-SELECT CONCAT_WS(CHAR(9), 'OMS_PROTOCOL_GATE_RESIDUE', 0, 0, 0, 0, 0, 0,
+SELECT 'OMS_PROTOCOL_GATE_RESIDUE', 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, @oms_mail_states, @oms_pim_states, @oms_webmail_sessions,
-    @oms_cleanup_changes);
+    @oms_cleanup_changes;
 SQL
         ) || cleanup_status=$?
     fi

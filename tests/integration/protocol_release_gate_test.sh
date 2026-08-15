@@ -62,12 +62,29 @@ if grep -Fq "'OMS_PROTOCOL_GATE_CANARY_ATTESTATION'" <<< "${sql}"; then
 fi
 
 if grep -Fq "'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR'" <<< "${sql}"; then
+    if grep -Fq "SELECT 'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR'," <<< "${sql}"; then
+        birthday_output_format='columns'
+    elif grep -Fq "SELECT CONCAT_WS(CHAR(9), 'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR'," <<< "${sql}"; then
+        # mysql --batch escapes tabs embedded inside a field unless --raw is used.
+        birthday_output_format='escaped-field'
+    else
+        echo "unexpected fake birthday calendar query shape" >&2
+        exit 2
+    fi
     printf '%s\n' 'setup' >> "${OMS_PROTOCOL_GATE_ORDER_LOG}"
     if [[ "${OMS_PROTOCOL_GATE_FAKE_SETUP_PROOF:-present}" != "missing" ]]; then
         if [[ "${OMS_PROTOCOL_GATE_FAKE_BIRTHDAY_CALENDAR_PREEXISTING:-false}" == "true" ]]; then
-            printf 'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR\t700\t0\n'
+            if [[ "${birthday_output_format}" == 'columns' ]]; then
+                printf 'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR\t700\t0\n'
+            else
+                printf 'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR\\t700\\t0\n'
+            fi
         else
-            printf 'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR\t701\t1\n'
+            if [[ "${birthday_output_format}" == 'columns' ]]; then
+                printf 'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR\t701\t1\n'
+            else
+                printf 'OMS_PROTOCOL_GATE_BIRTHDAY_CALENDAR\\t701\\t1\n'
+            fi
         fi
     fi
     if [[ "${OMS_PROTOCOL_GATE_FAKE_SETUP_FAIL:-false}" == "true" ]]; then
@@ -78,6 +95,30 @@ fi
 
 printf '%s\n' 'cleanup' >> "${OMS_PROTOCOL_GATE_ORDER_LOG}"
 
+if grep -Fq "SELECT 'OMS_PROTOCOL_GATE_RESIDUE'," <<< "${sql}"; then
+    residue_output_format='columns'
+elif grep -Fq "SELECT CONCAT_WS(CHAR(9), 'OMS_PROTOCOL_GATE_RESIDUE'," <<< "${sql}"; then
+    # mysql --batch escapes tabs embedded inside a field unless --raw is used.
+    residue_output_format='escaped-field'
+else
+    echo "unexpected fake cleanup residue query shape" >&2
+    exit 2
+fi
+
+if grep -Fq 'CREATE TEMPORARY TABLE oms_protocol_contact_targets' <<< "${sql}"; then
+    contact_uid_joins=$(grep -Fc 'BINARY targets.dav_uid = BINARY tombstones.dav_uid' <<< "${sql}" || true)
+    event_uid_joins=$(grep -Fc 'BINARY targets.uid = BINARY birthday_events.uid' <<< "${sql}" || true)
+    tombstone_uid_joins=$(grep -Fc 'BINARY targets.uid = BINARY birthday_tombstones.uid' <<< "${sql}" || true)
+    if [[ "${contact_uid_joins}" != '2' || "${event_uid_joins}" != '3'
+        || "${tombstone_uid_joins}" != '3'
+        || "${sql}" != *'dav_uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin'*
+        || "${sql}" != *'birthday_uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin'*
+        || "${sql}" != *'uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin'* ]]; then
+        echo 'ERROR 1267 (HY000): Illegal mix of collations in protocol target UID cleanup' >&2
+        exit 1
+    fi
+fi
+
 cleanup_changes=0
 if [[ "${OMS_PROTOCOL_GATE_FAKE_CLEANUP_CHANGES:-none}" == "once" \
     && ! -e "${OMS_PROTOCOL_GATE_FAKE_CHANGE_MARKER}" ]]; then
@@ -87,7 +128,11 @@ fi
 
 emit_residue() {
     printf 'OMS_PROTOCOL_GATE_RESIDUE'
-    printf '\t%s' "$@"
+    if [[ "${residue_output_format}" == 'columns' ]]; then
+        printf '\t%s' "$@"
+    else
+        printf '\\t%s' "$@"
+    fi
     printf '\n'
 }
 
@@ -311,8 +356,12 @@ grep -Fq 'DELETE gate_shares' "${CLEANUP_LOG}"
 grep -Fq 'DELETE gate_calendar' "${CLEANUP_LOG}"
 grep -Fq 'DELETE birthday_events' "${CLEANUP_LOG}"
 grep -Fq 'DELETE birthday_tombstones' "${CLEANUP_LOG}"
-grep -Fq 'ON targets.calendar_id=birthday_events.calendar_id AND targets.uid=birthday_events.uid;' "${CLEANUP_LOG}"
-grep -Fq 'ON targets.calendar_id=birthday_tombstones.calendar_id AND targets.uid=birthday_tombstones.uid;' "${CLEANUP_LOG}"
+grep -Fq 'dav_uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin' "${CLEANUP_LOG}"
+grep -Fq 'birthday_uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin' "${CLEANUP_LOG}"
+grep -Fq 'uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin' "${CLEANUP_LOG}"
+grep -Fq 'BINARY targets.dav_uid = BINARY tombstones.dav_uid' "${CLEANUP_LOG}"
+grep -Fq 'BINARY targets.uid = BINARY birthday_events.uid' "${CLEANUP_LOG}"
+grep -Fq 'BINARY targets.uid = BINARY birthday_tombstones.uid' "${CLEANUP_LOG}"
 grep -Fq 'JOIN oms_protocol_birthday_changed_calendars AS changed' "${CLEANUP_LOG}"
 grep -Fq 'sync_token = calendars.sync_token + 1' "${CLEANUP_LOG}"
 if grep -Eq '^DELETE FROM (events|calendar_tombstones)([[:space:]]|;)' "${CLEANUP_LOG}"; then
@@ -330,7 +379,7 @@ fi
 grep -Fq '0x6f276d732d63616e617279406578616d706c652e74657374' "${CLEANUP_LOG}"
 grep -Fq 'deleted_at IS NULL' "${CLEANUP_LOG}"
 grep -Fq 'deleted_at IS NOT NULL' "${CLEANUP_LOG}"
-grep -Fq "'OMS_PROTOCOL_GATE_RESIDUE'" "${CLEANUP_LOG}"
+grep -Fq "SELECT 'OMS_PROTOCOL_GATE_RESIDUE'," "${CLEANUP_LOG}"
 contact_run_id=$(sed -n 's/^CONTACT_RUN=//p' "${OUTPUT_PATH}")
 contact_seed_email="oms-eas-seed-${contact_run_id}@example.invalid"
 contact_added_email="oms-eas-added-${contact_run_id}@example.invalid"

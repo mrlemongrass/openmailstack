@@ -262,6 +262,10 @@ test_mozilla_autoconfig_guards() {
     node "${PROJECT_ROOT}/tests/integration/mozilla_autoconfig_guard.cjs"
 }
 
+test_backup_restore_guards() {
+    bash "${PROJECT_ROOT}/tests/integration/backup_restore_test.sh"
+}
+
 test_dry_run_local() {
     if [[ "$(uname -s)" != "Linux" ]]; then
         echo "[skip] Local dry-run integration requires Linux."
@@ -311,6 +315,7 @@ test_admin_rbac_guards
 test_update_safety_guards
 test_dependency_security_guards
 test_mozilla_autoconfig_guards
+test_backup_restore_guards
 test_dry_run_local
 
 echo "[ok] Integration checks completed."

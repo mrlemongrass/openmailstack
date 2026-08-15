@@ -138,7 +138,7 @@ import {
     itemOperationsSourceAllowance,
 } from './eas-item-operations';
 import { startSearchWorker } from './search-worker';
-import { startScheduledSender } from './scheduled-send';
+import { ensureScheduledEmailsSchema, startScheduledSender } from './scheduled-send';
 import { ensureCalendarSubscriptionSchema, startCalendarSubscriptionWorker } from './calendar-subscription';
 import { schedulerRouter } from './scheduler/router';
 import { getSession, initializeSessionStore, requireSession } from './auth';
@@ -175,20 +175,6 @@ io.on('connection', (socket) => {
         }
     });
 });
-ensureMailSearchSchema().catch(err => console.error('Failed to initialize mail search index:', err));
-initializeSessionStore()
-    .then(() => {
-        startSearchWorker();
-        startScheduledSender();
-    })
-    .catch(err => {
-        console.error('Failed to initialize secure session storage:', err);
-        process.exit(1);
-    });
-ensureUserSettingsSchema().catch(err => console.error('Failed to initialize user settings schema:', err));
-ensureAdminSettingsSchema().catch(err => console.error('Failed to initialize admin settings schema:', err));
-ensureBrandingSchema().catch(err => console.error('Failed to initialize branding schema:', err));
-ensureAccountSecuritySchema().catch(err => console.error('Failed to initialize account security schema:', err));
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(securityHeaders);
@@ -2149,8 +2135,15 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 async function startServer(): Promise<void> {
     try {
         await startApplicationAfterRequiredMigrations({
+            ensureMailSearchSchema,
+            initializeSessionStore,
+            ensureUserSettingsSchema,
+            ensureAdminSettingsSchema,
+            ensureBrandingSchema,
+            ensureAccountSecuritySchema,
             ensureCalendarSchema,
             ensureCalendarSubscriptionSchema,
+            ensureScheduledEmailsSchema,
             ensureNotesSchema,
             ensureRemindersSchema,
             ensureAttachmentsSchema,
@@ -2158,6 +2151,8 @@ async function startServer(): Promise<void> {
             ensureEasMailSyncSchema,
             ensureEasPimSyncSchema,
             repairBirthdayCalendarProjections: repairAllBirthdayCalendarProjections,
+            startSearchWorker,
+            startScheduledSender,
             startCalendarSubscriptionWorker,
             listen: () => server.listen(serverConfig.port, serverConfig.host, () => {
                 console.log(`OpenMailStack webmail backend listening on ${serverConfig.host}:${serverConfig.port}`);

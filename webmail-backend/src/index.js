@@ -104,20 +104,6 @@ exports.io.on('connection', (socket) => {
         }
     });
 });
-(0, search_index_1.ensureMailSearchSchema)().catch(err => console.error('Failed to initialize mail search index:', err));
-(0, auth_1.initializeSessionStore)()
-    .then(() => {
-    (0, search_worker_1.startSearchWorker)();
-    (0, scheduled_send_1.startScheduledSender)();
-})
-    .catch(err => {
-    console.error('Failed to initialize secure session storage:', err);
-    process.exit(1);
-});
-(0, user_settings_1.ensureUserSettingsSchema)().catch(err => console.error('Failed to initialize user settings schema:', err));
-(0, admin_settings_1.ensureAdminSettingsSchema)().catch(err => console.error('Failed to initialize admin settings schema:', err));
-(0, branding_1.ensureBrandingSchema)().catch(err => console.error('Failed to initialize branding schema:', err));
-(0, account_security_1.ensureAccountSecuritySchema)().catch(err => console.error('Failed to initialize account security schema:', err));
 app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(security_1.securityHeaders);
@@ -1987,8 +1973,15 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 async function startServer() {
     try {
         await (0, application_startup_1.startApplicationAfterRequiredMigrations)({
+            ensureMailSearchSchema: search_index_1.ensureMailSearchSchema,
+            initializeSessionStore: auth_1.initializeSessionStore,
+            ensureUserSettingsSchema: user_settings_1.ensureUserSettingsSchema,
+            ensureAdminSettingsSchema: admin_settings_1.ensureAdminSettingsSchema,
+            ensureBrandingSchema: branding_1.ensureBrandingSchema,
+            ensureAccountSecuritySchema: account_security_1.ensureAccountSecuritySchema,
             ensureCalendarSchema: calendar_utils_1.ensureCalendarSchema,
             ensureCalendarSubscriptionSchema: calendar_subscription_1.ensureCalendarSubscriptionSchema,
+            ensureScheduledEmailsSchema: scheduled_send_1.ensureScheduledEmailsSchema,
             ensureNotesSchema: notes_utils_1.ensureNotesSchema,
             ensureRemindersSchema: notes_utils_1.ensureRemindersSchema,
             ensureAttachmentsSchema: notes_utils_1.ensureAttachmentsSchema,
@@ -1996,6 +1989,8 @@ async function startServer() {
             ensureEasMailSyncSchema: eas_mail_sync_1.ensureEasMailSyncSchema,
             ensureEasPimSyncSchema: eas_pim_sync_1.ensureEasPimSyncSchema,
             repairBirthdayCalendarProjections: birthday_calendar_1.repairAllBirthdayCalendarProjections,
+            startSearchWorker: search_worker_1.startSearchWorker,
+            startScheduledSender: scheduled_send_1.startScheduledSender,
             startCalendarSubscriptionWorker: calendar_subscription_1.startCalendarSubscriptionWorker,
             listen: () => server.listen(config_1.serverConfig.port, config_1.serverConfig.host, () => {
                 console.log(`OpenMailStack webmail backend listening on ${config_1.serverConfig.host}:${config_1.serverConfig.port}`);

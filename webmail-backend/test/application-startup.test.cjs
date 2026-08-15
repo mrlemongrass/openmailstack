@@ -1,55 +1,90 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { startApplicationAfterRequiredMigrations } = require('../src/application-startup.js');
 
-const migrationNames = [
-  'calendar', 'subscriptions', 'notes', 'reminders', 'attachments', 'contacts',
-  'eas-mail', 'eas-pim', 'birthdays',
+const prerequisiteNames = [
+  'mail-search', 'session', 'user-settings', 'admin-settings', 'branding',
+  'account-security', 'calendar', 'subscriptions', 'scheduled-send', 'notes',
+  'reminders', 'attachments', 'contacts', 'eas-mail', 'eas-pim', 'birthdays',
 ];
 
-function startupDependencies(failingMigration = null) {
+const activationNames = [
+  'search-worker', 'scheduled-sender', 'subscription-worker', 'listener',
+];
+
+function startupDependencies(failingPrerequisite = null) {
   const calls = [];
-  let workerStarts = 0;
-  let listenerStarts = 0;
-  const migration = name => async () => {
+  const starts = Object.fromEntries(activationNames.map(name => [name, 0]));
+  const prerequisite = name => async () => {
     calls.push(name);
-    if (name === failingMigration) throw new Error(`${name} migration failed`);
+    if (name === failingPrerequisite) throw new Error(`${name} prerequisite failed`);
+  };
+  const activate = name => () => {
+    calls.push(name);
+    starts[name] += 1;
   };
   return {
     dependencies: {
-      ensureCalendarSchema: migration('calendar'),
-      ensureCalendarSubscriptionSchema: migration('subscriptions'),
-      ensureNotesSchema: migration('notes'),
-      ensureRemindersSchema: migration('reminders'),
-      ensureAttachmentsSchema: migration('attachments'),
-      ensureContactsSchema: migration('contacts'),
-      ensureEasMailSyncSchema: migration('eas-mail'),
-      ensureEasPimSyncSchema: migration('eas-pim'),
-      repairBirthdayCalendarProjections: migration('birthdays'),
-      startCalendarSubscriptionWorker: () => { workerStarts += 1; },
-      listen: () => { listenerStarts += 1; },
+      ensureMailSearchSchema: prerequisite('mail-search'),
+      initializeSessionStore: prerequisite('session'),
+      ensureUserSettingsSchema: prerequisite('user-settings'),
+      ensureAdminSettingsSchema: prerequisite('admin-settings'),
+      ensureBrandingSchema: prerequisite('branding'),
+      ensureAccountSecuritySchema: prerequisite('account-security'),
+      ensureCalendarSchema: prerequisite('calendar'),
+      ensureCalendarSubscriptionSchema: prerequisite('subscriptions'),
+      ensureScheduledEmailsSchema: prerequisite('scheduled-send'),
+      ensureNotesSchema: prerequisite('notes'),
+      ensureRemindersSchema: prerequisite('reminders'),
+      ensureAttachmentsSchema: prerequisite('attachments'),
+      ensureContactsSchema: prerequisite('contacts'),
+      ensureEasMailSyncSchema: prerequisite('eas-mail'),
+      ensureEasPimSyncSchema: prerequisite('eas-pim'),
+      repairBirthdayCalendarProjections: prerequisite('birthdays'),
+      startSearchWorker: activate('search-worker'),
+      startScheduledSender: activate('scheduled-sender'),
+      startCalendarSubscriptionWorker: activate('subscription-worker'),
+      listen: activate('listener'),
     },
     calls,
-    counters: () => ({ workerStarts, listenerStarts }),
+    starts,
   };
 }
 
-test('required application migrations complete in dependency order before writers or traffic start', async () => {
+test('all prerequisites complete in order before each application worker and the listener start exactly once', async () => {
   const harness = startupDependencies();
   await startApplicationAfterRequiredMigrations(harness.dependencies);
-  assert.deepEqual(harness.calls, migrationNames);
-  assert.deepEqual(harness.counters(), { workerStarts: 1, listenerStarts: 1 });
+  assert.deepEqual(harness.calls, [...prerequisiteNames, ...activationNames]);
+  assert.deepEqual(
+    harness.starts,
+    Object.fromEntries(activationNames.map(name => [name, 1])),
+  );
 });
 
-for (const [index, migrationName] of migrationNames.entries()) {
-  test(`a rejected ${migrationName} migration keeps the worker and listener stopped`, async () => {
-    const harness = startupDependencies(migrationName);
+for (const prerequisiteName of ['mail-search', 'subscriptions', 'birthdays']) {
+  test(`a rejected ${prerequisiteName} prerequisite keeps application workers and the listener stopped`, async () => {
+    const harness = startupDependencies(prerequisiteName);
     await assert.rejects(
       startApplicationAfterRequiredMigrations(harness.dependencies),
-      new RegExp(`${migrationName} migration failed`),
+      new RegExp(`${prerequisiteName} prerequisite failed`),
     );
-    assert.deepEqual(harness.calls, migrationNames.slice(0, index + 1));
-    assert.deepEqual(harness.counters(), { workerStarts: 0, listenerStarts: 0 });
+    const failureIndex = prerequisiteNames.indexOf(prerequisiteName);
+    assert.deepEqual(harness.calls, prerequisiteNames.slice(0, failureIndex + 1));
+    assert.deepEqual(
+      harness.starts,
+      Object.fromEntries(activationNames.map(name => [name, 0])),
+    );
   });
 }
+
+test('the entrypoint does not start prerequisites or application workers outside the startup barrier', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  const moduleSetup = source.slice(0, source.indexOf('async function startServer()'));
+  assert.doesNotMatch(
+    moduleSetup,
+    /^(?:ensureMailSearchSchema|initializeSessionStore|ensureUserSettingsSchema|ensureAdminSettingsSchema|ensureBrandingSchema|ensureAccountSecuritySchema|startSearchWorker|startScheduledSender|startCalendarSubscriptionWorker)\(/m,
+  );
+});

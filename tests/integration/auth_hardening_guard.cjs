@@ -11,6 +11,7 @@ const adminInstaller = read('functions/09_admin_portal.sh');
 const auth = read('webmail-backend/src/auth.ts');
 const davAuth = read('webmail-backend/src/dav-auth.ts');
 const index = read('webmail-backend/src/index.ts');
+const applicationStartup = read('webmail-backend/src/application-startup.ts');
 const searchWorker = read('webmail-backend/src/search-worker.ts');
 const config = read('webmail-backend/src/config.ts');
 const accountSecurity = read('webmail-backend/src/account-security.ts');
@@ -43,7 +44,8 @@ assert.match(adminInstaller, /Password must be between 12 and 128 characters/);
 assert.match(auth, /sanitizeStoredMailboxCredentials/);
 assert.match(auth, /delegatedAuthEnabled \? '' : data\.password/);
 assert.match(davAuth, /new ImapService\(user, pass, false\)/);
-assert.match(index, /initializeSessionStore\(\)/);
+assert.match(index, /\binitializeSessionStore,\s*\n/);
+assert.match(applicationStartup, /await dependencies\.initializeSessionStore\(\)/);
 assert.match(searchWorker, /if \(delegatedAuthEnabled\)/);
 assert.match(config, /Production requires OMS_ACCOUNT_SECURITY_KEY/);
 

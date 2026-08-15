@@ -6,6 +6,11 @@
 set -euo pipefail
 trap 'echo -e "\033[0;31mERROR in ${BASH_SOURCE[0]} at line ${LINENO}: ${BASH_COMMAND}\033[0m" >&2' ERR
 
+# Retire the historical web-to-root upgrade bridge before configuration,
+# deployment, database, or interactive work can fail.
+rm -f -- /etc/sudoers.d/openmailstack-upgrade
+rm -f -- /usr/local/bin/openmailstack-upgrade.sh
+
 # Colors for output
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -203,13 +208,7 @@ if [[ "$ADMIN_OPT" == "1" ]]; then
     echo -e "${YELLOW}This legacy-only account cannot use the modern app or two-factor authentication. Promote a mailbox-backed account for production administration.${NC}"
 fi
 
-# Build Sudoers Bridge for Upgrade System
-echo -e "Configuring secure upgrade bridge..."
-cp "${SCRIPT_DIR}/../upgrade.sh" /usr/local/bin/openmailstack-upgrade.sh
-chmod +x /usr/local/bin/openmailstack-upgrade.sh
-echo "${WEB_USER} ALL=(root) NOPASSWD: /usr/local/bin/openmailstack-upgrade.sh" > /etc/sudoers.d/openmailstack-upgrade
-chmod 0440 /etc/sudoers.d/openmailstack-upgrade
-cp "${SCRIPT_DIR}/../VERSION" /var/www/openmailstack-admin/VERSION
+install -o root -g "${WEB_GROUP}" -m 0640 "${SCRIPT_DIR}/../VERSION" /var/www/openmailstack-admin/VERSION
 rm -f /var/www/openmailstack-admin/public/test_pw.php
 
 # Set up quarantine filter

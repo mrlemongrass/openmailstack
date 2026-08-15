@@ -54,7 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     async function renderUpdates() {
-        viewContent.innerHTML = '<div class="loader">Checking for updates...</div>';
+        viewContent.innerHTML = '<div class="loader">Loading version information...</div>';
         const res = await apiCall('check_updates');
         
         if(!res.success) {
@@ -67,86 +67,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div style="font-size: 3rem; margin-bottom:20px;">📦</div>
                 <h2>System Updates</h2>
                 <p style="margin-top:20px; font-size:1.1rem;">Current Version: <strong>v${res.current_version}</strong></p>
-                <p style="font-size:1.1rem; margin-bottom:30px;">Latest Release: <strong>v${res.latest_version}</strong></p>
-        `;
-        
-        if (res.has_update) {
-            html += `
-                <div style="background: rgba(0, 255, 0, 0.1); border: 1px solid var(--success); padding: 20px; border-radius: 8px; margin-bottom: 30px;">
-                    <h3 style="color: var(--success); margin-bottom: 10px;">Update Available!</h3>
-                    <p style="color: var(--text-secondary); margin-bottom: 20px;">A new version of OpenMailStack is available. Click below to safely perform an in-place upgrade.</p>
-                    <button id="btn-run-upgrade" class="btn btn-primary" style="font-size: 1.1rem; padding: 12px 24px;">Install Update Now</button>
+                <div style="text-align: left; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); padding: 20px; border-radius: 8px; margin-top: 24px;">
+                    <h3 style="color: var(--text-primary); margin-bottom: 10px;">Manual update procedure</h3>
+                    <p style="color: var(--text-secondary); line-height: 1.5;">${escapeHTML(res.update_policy?.message || 'Follow the release-specific manual update procedure. This page does not check for or install releases.')}</p>
                 </div>
-            `;
-        } else {
-            html += `
-                <div style="background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); padding: 20px; border-radius: 8px; margin-bottom: 30px;">
-                    <h3 style="color: var(--text-primary); margin-bottom: 10px;">System is Up to Date</h3>
-                    <p style="color: var(--text-secondary);">You are running the latest version of OpenMailStack.</p>
-                </div>
-            `;
-        }
-        
-        if (res.release_notes) {
-            html += `
-                <div style="text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                    <h4 style="margin-bottom:15px;">Release Notes:</h4>
-                    <pre style="white-space: pre-wrap; font-family: inherit; color: var(--text-secondary); line-height: 1.5;">${escapeHTML(res.release_notes)}</pre>
-                </div>
-            `;
-        }
-        
-        html += `</div>`;
-        
-        // Add component versions table
-        html += `
-            <div class="form-card" style="margin-top: 20px;">
-                <h3 style="margin-bottom: 15px;">Component Versions</h3>
-                <table style="width: 100%; border-collapse: collapse; text-align: left;">
-                    <thead>
-                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
-                            <th style="padding: 10px;">Component</th>
-                            <th style="padding: 10px;">Version</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-        `;
-        
-        for (const [comp, ver] of Object.entries(res.components || {})) {
-            html += `
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-                    <td style="padding: 10px; font-weight: 500;">${escapeHTML(comp)}</td>
-                    <td style="padding: 10px; font-family: monospace; color: var(--text-secondary);">${escapeHTML(ver)}</td>
-                </tr>
-            `;
-        }
-        
-        html += `
-                    </tbody>
-                </table>
             </div>
         `;
         
         viewContent.innerHTML = html;
-        
-        const btnUpgrade = document.getElementById('btn-run-upgrade');
-        if (btnUpgrade) {
-            btnUpgrade.addEventListener('click', async () => {
-                if(!confirm('Are you sure you want to upgrade the system? Services may briefly restart.')) return;
-                btnUpgrade.disabled = true;
-                btnUpgrade.innerHTML = 'Upgrading... Please wait (this may take a minute)';
-                
-                const upRes = await apiCall('run_upgrade');
-                if (upRes.success) {
-                    alert("Upgrade completed successfully!\n\n" + upRes.output);
-                    window.location.reload();
-                } else {
-                    alert("Upgrade failed: " + upRes.error);
-                    btnUpgrade.disabled = false;
-                    btnUpgrade.innerHTML = 'Install Update Now';
-                }
-            });
-        }
     };
 
     navLinks.forEach(link => {

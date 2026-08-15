@@ -63,6 +63,7 @@ const search_worker_1 = require("./search-worker");
 const rspamd_health_1 = require("./rspamd-health");
 const password_verification_1 = require("./password-verification");
 const security_1 = require("./security");
+const version_info_1 = require("./version-info");
 const account_security_1 = require("./account-security");
 exports.apiRouter = (0, express_1.Router)();
 // Auth failure log for fail2ban integration
@@ -3320,6 +3321,7 @@ exports.apiRouter.delete('/admin/apikeys/:id', requireAuth, requireAdmin, async 
 });
 exports.apiRouter.get('/admin/updates', requireAuth, requireAdmin, async (req, res) => {
     try {
+        const currentVersion = (0, version_info_1.readInstalledVersion)();
         const components = {};
         try {
             const { stdout } = await execPromise("nginx -v 2>&1 | awk -F/ '{print $2}' | awk '{print $1}'");
@@ -3345,14 +3347,17 @@ exports.apiRouter.get('/admin/updates', requireAuth, requireAdmin, async (req, r
         const componentList = Object.entries(components).map(([name, version]) => ({ name, version: version }));
         res.json({
             success: true,
-            current_version: '1.2.0',
-            latest_version: '1.2.0',
-            has_update: false,
+            current_version: currentVersion,
+            update_policy: {
+                mode: 'manual',
+                message: 'Updates use the release-specific manual procedure; this page does not check for or install releases.',
+            },
             components: componentList
         });
     }
     catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        const status = err instanceof version_info_1.InstalledVersionError ? 503 : 500;
+        res.status(status).json({ success: false, error: err.message });
     }
 });
 exports.apiRouter.get('/admin/spam_policies', requireAuth, requireAdmin, async (req, res) => {

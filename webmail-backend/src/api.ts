@@ -44,6 +44,7 @@ import {
 import { parseRspamdHealthStatus } from './rspamd-health';
 import { verifyStoredPassword } from './password-verification';
 import { rateLimit } from './security';
+import { InstalledVersionError, readInstalledVersion } from './version-info';
 import {
     beginTotpSetup,
     confirmTotpSetup,
@@ -3605,6 +3606,7 @@ apiRouter.delete('/admin/apikeys/:id', requireAuth, requireAdmin, async (req: an
 
 apiRouter.get('/admin/updates', requireAuth, requireAdmin, async (req: any, res) => {
     try {
+        const currentVersion = readInstalledVersion();
         const components: any = {};
         
         try { const { stdout } = await execPromise("nginx -v 2>&1 | awk -F/ '{print $2}' | awk '{print $1}'"); components.Nginx = stdout.trim(); } catch(e) { components.Nginx = 'Not Installed'; }
@@ -3614,13 +3616,16 @@ apiRouter.get('/admin/updates', requireAuth, requireAdmin, async (req: any, res)
         const componentList = Object.entries(components).map(([name, version]) => ({ name, version: version as string }));
         res.json({
             success: true,
-            current_version: '1.2.0',
-            latest_version: '1.2.0',
-            has_update: false,
+            current_version: currentVersion,
+            update_policy: {
+                mode: 'manual',
+                message: 'Updates use the release-specific manual procedure; this page does not check for or install releases.',
+            },
             components: componentList
         });
     } catch (err: any) {
-        res.status(500).json({ success: false, error: err.message });
+        const status = err instanceof InstalledVersionError ? 503 : 500;
+        res.status(status).json({ success: false, error: err.message });
     }
 });
 

@@ -504,16 +504,18 @@ export async function deleteApiKey(id: number): Promise<void> {
 
 export interface UpdatesInfo {
   current_version: string;
-  latest_version: string;
-  has_update: boolean;
+  update_policy: {
+    mode: 'manual';
+    message: string;
+  };
   components: { name: string; version: string }[];
 }
 
 export async function getUpdates(): Promise<UpdatesInfo> {
   const r = await fetch('/api/admin/updates', { credentials: 'include' });
-  const b = await r.json() as { success: boolean; current_version: string; latest_version: string; has_update: boolean; components: { name: string; version: string }[]; error?: string };
-  if (!r.ok || !b.success) throw new Error(b.error || 'Failed to check updates');
-  return { current_version: b.current_version, latest_version: b.latest_version, has_update: b.has_update, components: b.components };
+  const b = await r.json() as { success: boolean; current_version: string; update_policy: { mode: 'manual'; message: string }; components: { name: string; version: string }[]; error?: string };
+  if (!r.ok || !b.success) throw new Error(b.error || 'Failed to load version information');
+  return { current_version: b.current_version, update_policy: b.update_policy, components: b.components };
 }
 
 // ─── Spam Policies ───────────────────────────────────────────────────────────

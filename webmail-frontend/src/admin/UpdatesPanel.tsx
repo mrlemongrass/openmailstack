@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, CheckCircle, AlertCircle, Box } from 'lucide-react';
+import { RefreshCw, Info, Box } from 'lucide-react';
 import { adminErrorMessage, getUpdates, type UpdatesInfo } from './adminSettingsApi';
 
 export function UpdatesPanel() {
@@ -28,7 +28,7 @@ export function UpdatesPanel() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40, color: 'var(--text-secondary)' }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ width: 24, height: 24, border: '3px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
-          <p>Checking for updates...</p>
+          <p>Loading version information...</p>
         </div>
       </div>
     );
@@ -54,25 +54,33 @@ export function UpdatesPanel() {
           <Box size={20} /> Updates & Versions
         </h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {lastChecked && <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Last checked {lastChecked.toLocaleTimeString()}</span>}
+          {lastChecked && <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Last refreshed {lastChecked.toLocaleTimeString()}</span>}
           <button className="btn btn-secondary" onClick={load} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <RefreshCw size={14} /> Check Again
+            <RefreshCw size={14} /> Refresh
           </button>
         </div>
       </div>
 
-      <div className="glass-panel" style={{ padding: 20, marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          {updates.has_update ? (
-            <AlertCircle size={20} style={{ color: '#f59e0b' }} />
-          ) : (
-            <CheckCircle size={20} style={{ color: 'var(--success, #4caf50)' }} />
-          )}
-          <span style={{ fontSize: '1rem' }}>
-            {updates.has_update
-              ? `Update available: ${updates.current_version} → ${updates.latest_version}`
-              : `You are running the latest version (${updates.current_version})`}
-          </span>
+      <div className="glass-panel" style={{ padding: 24, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+          <div style={{ display: 'grid', placeItems: 'center', width: 36, height: 36, borderRadius: 10, background: 'color-mix(in srgb, var(--accent-primary) 14%, transparent)', color: 'var(--accent-primary)', flex: '0 0 auto' }}>
+            <Info size={19} aria-hidden="true" />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 5 }}>
+              Installed OpenMailStack version
+            </div>
+            <div style={{ fontSize: '1.25rem', fontFamily: 'monospace', fontWeight: 600, marginBottom: 16 }}>
+              {updates.current_version}
+            </div>
+            <div style={{ fontSize: '0.9rem', lineHeight: 1.55 }}>
+              <strong style={{ display: 'block', marginBottom: 4 }}>Manual update policy</strong>
+              <span style={{ color: 'var(--text-secondary)' }}>{updates.update_policy.message}</span>
+              <span style={{ display: 'block', color: 'var(--text-secondary)', marginTop: 4 }}>
+                This page does not check for or install releases.
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 

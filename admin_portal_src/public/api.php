@@ -717,63 +717,37 @@ try {
         // --- System & Updates ---
         case 'check_updates':
             require_superadmin($is_superadmin);
-            $current_version = file_exists('/var/www/openmailstack-admin/VERSION') 
-                ? trim(file_get_contents('/var/www/openmailstack-admin/VERSION')) 
-                : '0.1.0';
-            
-            $context = stream_context_create([
-                'http' => [
-                    'header' => "User-Agent: OpenMailStack-Admin\r\n",
-                    'ignore_errors' => true
-                ]
-            ]);
-            $response = @file_get_contents('https://api.github.com/repos/mrlemongrass/openmailstack/releases/latest', false, $context);
-            $data = $response ? json_decode($response, true) : null;
-            
-            if (isset($data['message']) && $data['message'] === 'Not Found') {
-                $latest_version = $current_version;
-                $has_update = false;
-                $release_notes = "No public releases have been published to GitHub yet. Once you create a Release on GitHub, it will appear here.";
-            } else if ($data && isset($data['tag_name'])) {
-                $latest_version = str_replace('v', '', $data['tag_name']);
-                $has_update = version_compare($latest_version, $current_version, '>');
-                $release_notes = $data['body'] ?? '';
-            } else {
-                echo json_encode(['success' => false, 'error' => 'Failed to check GitHub API. Rate limit exceeded or network error.']);
-                exit;
+            $version_file = '/var/www/openmailstack-admin/VERSION';
+            if (!is_readable('/var/www/openmailstack-admin/VERSION')) {
+                http_response_code(503);
+                echo json_encode(['success' => false, 'error' => 'OpenMailStack VERSION file is unavailable.']);
+                break;
+            }
+            $current_version = trim(file_get_contents($version_file));
+            if (!preg_match('/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/', $current_version)) {
+                http_response_code(503);
+                echo json_encode(['success' => false, 'error' => 'OpenMailStack VERSION file is invalid.']);
+                break;
             }
 
-            $components = [
-                'Nginx' => trim(shell_exec("nginx -v 2>&1 | awk -F/ '{print $2}' | awk '{print $1}'")),
-                'Postfix' => trim(shell_exec("postconf -h mail_version 2>/dev/null")),
-                'Dovecot' => trim(shell_exec("dovecot --version 2>/dev/null | awk '{print $1}'")),
-                'MariaDB' => trim(shell_exec("mysql -V 2>/dev/null | awk '{print $5}' | cut -d- -f1")),
-                'Rspamd' => trim(shell_exec("rspamd --version 2>/dev/null | awk '{print $4}'")),
-                'Redis' => trim(shell_exec("redis-server --version 2>/dev/null | awk '{print $3}' | cut -d= -f2")),
-                'ClamAV' => trim(shell_exec("clamd --version 2>/dev/null | awk '{print $2}' | cut -d/ -f1"))
-            ];
-            
-            foreach ($components as $k => $v) {
-                if (empty($v)) $components[$k] = 'Not Installed';
-            }
-            
             echo json_encode([
                 'success' => true,
                 'current_version' => $current_version,
-                'latest_version' => $latest_version,
-                'has_update' => $has_update,
-                'release_notes' => $release_notes,
-                'components' => $components
+                'update_policy' => [
+                    'mode' => 'manual',
+                    'message' => 'Updates use the release-specific manual procedure; this page does not check for or install releases.'
+                ]
             ]);
             break;
             
         case 'run_upgrade':
             require_superadmin($is_superadmin);
-            audit_log($pdo, $_SESSION['admin_username'], 'ALL', 'system_upgrade', "Triggered system upgrade via Web Panel");
-            
-            $output = shell_exec('sudo /usr/local/bin/openmailstack-upgrade.sh 2>&1');
-            
-            echo json_encode(['success' => true, 'output' => $output]);
+            audit_log($pdo, $_SESSION['admin_username'], 'ALL', 'system_upgrade_blocked', "Automatic upgrade request rejected; manual release process required");
+            http_response_code(409);
+            echo json_encode([
+                'success' => false,
+                'error' => 'Automatic upgrades are disabled. OpenMailStack upgrades require the manual, release-specific procedure.'
+            ]);
             break;
             
         // --- Quarantine & Security ---

@@ -1,6 +1,6 @@
 # Admin RBAC Audit
 
-Last verified: 2026-07-29
+Last verified: 2026-08-15
 
 ## Policy
 
@@ -54,7 +54,7 @@ All 47 routes below passed the automated middleware inventory in `tests/integrat
 | GET | `/api/admin/apikeys` | Active superadmin |
 | POST | `/api/admin/apikeys` | Active superadmin |
 | DELETE | `/api/admin/apikeys/:id` | Active superadmin |
-| GET | `/api/admin/updates` | Active superadmin |
+| GET | `/api/admin/updates` | Active superadmin; installed VERSION and manual policy only |
 | GET | `/api/admin/spam_policies` | Active superadmin |
 | POST | `/api/admin/spam_policies` | Active superadmin |
 | GET | `/api/admin/scheduler/v1/mailboxes` | Scheduler installed and active superadmin |
@@ -130,8 +130,8 @@ These six actions operate only on the signed-in mailbox identity:
 | `get_api_keys` | Global provisioning credentials |
 | `create_api_key` | Global provisioning credentials |
 | `delete_api_key` | Global provisioning credentials |
-| `check_updates` | Host-global operations |
-| `run_upgrade` | Root-bridged host mutation |
+| `check_updates` | Installed VERSION reporting; no shell execution |
+| `run_upgrade` | Disabled fail-closed compatibility action |
 
 The legacy portal now uses strict, secure, HTTP-only, SameSite cookies and regenerates its session ID after login. Accounts with OpenMailStack two-factor authentication enabled cannot use the password-only legacy login and are directed to the modern app.
 

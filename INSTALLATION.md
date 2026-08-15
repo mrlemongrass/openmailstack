@@ -76,16 +76,38 @@ Grab a coffee. The script will take 5 to 10 minutes to download, install, and co
 
 If you run `./install.sh` on a server that already has OpenMailStack installed, the script will intelligently detect your existing state. Instead of blindly overwriting your data, it will present an interactive menu:
 
-1. **Install/Configure only missing components**: Perfect for upgrading or adding newly developed features (like the new Admin Portal) without disrupting your working mailflow.
-2. **Reinstall everything**: Forces an overwrite of the existing setup.
-3. **Revert to a previous safety snapshot (Rollback)**: Allows you to instantly rewind your server state.
+1. **Install/Configure only missing components**: Adds components that are not already installed. Option 1 does not upgrade already-installed components.
+2. **Reinstall everything**: Re-runs component installers and can overwrite the existing setup. This is not the supported release-upgrade path.
+3. **Revert to a previous safety snapshot (Rollback)**: Restores only the files and database content captured by one of the installer's snapshots.
 
 ### Automated Safety Snapshots
-Any time you choose Option 1 or 2 on an existing installation, the script automatically takes a complete backup of your database schemas, configuration files, and web directories. These are securely stored in `/var/backups/openmailstack/`. 
+Any time you choose Option 1 or 2 on an existing installation, the script takes a limited snapshot of selected database schemas, configuration files, and web directories. These are stored in `/var/backups/openmailstack/`. This snapshot is not a complete disaster-recovery backup: in particular, do not assume that it includes the mail store, every service configuration, or every deployed application file.
 * **Data Retention & Cleanups**: After creating a backup, the script will notify you if it finds backups older than 30 days. It will interactively ask if you'd like to purge them, allowing you to selectively delete old snapshots to save disk space, or retain them for strict compliance auditing.
 
 ### Performing a Rollback
-If a new component breaks your server, simply run `./install.sh` again and select Option 3 (`Revert to a previous safety snapshot`). You will be presented with a list of timestamped backups. Selecting one will instantly restore your databases, configurations, and web files to that exact moment in time, ensuring maximum uptime and zero headaches.
+If an installer-managed component breaks your server, run `./install.sh` again and select Option 3 (`Revert to a previous safety snapshot`). You will be presented with a list of timestamped snapshots. Selecting one restores the database and filesystem items captured by that snapshot; it does not restore uncaptured mail data or operating-system state.
+
+## Manual release upgrade procedure
+
+Automatic and browser-triggered upgrades are disabled. Use this procedure only for a release whose release notes say that it is compatible with the currently installed mail-stack schema and configuration. Run it as `root` from a clean checkout of that exact release. Review the release notes first and take a separately tested, complete backup of the database, mail store, `/etc/openmailstack`, service configuration, and TLS material.
+
+The guarded command below updates the modern web application and the legacy Admin Portal as one transaction under one global lock. Immediately after acquiring the lock it permanently retires the historical passwordless web-to-root bridge. Before either application changes, it captures both deployed applications and their runtime configuration in one root-only snapshot. It then deploys only the repository's bounded web assets, validates both applications locally, and runs authenticated public IMAPS and ActiveSync checks. HUP, INT, and TERM interruptions enter the same validated recovery path. It does not update Postfix, Dovecot, MariaDB, the mail store, or operating-system packages; a release that changes those components needs release-specific migration and rollback instructions.
+
+```bash
+set -euo pipefail
+test "$(id -u)" -eq 0
+test -s VERSION
+functions/protocol_guarded_deploy.sh webmail
+```
+
+On success, the final line identifies the rollback snapshot, for example `/var/backups/openmailstack/protocol-guarded-webmail-20260815T120000Z`. Keep it until physical-client checks and normal mail flow have remained healthy for the release's observation period. Exit `1` means deployment never reached an application mutation, although the passwordless bridge may already have been retired after the lock was acquired. Exit `20` means both previous applications were restored and validated. Exit `30` means recovery failed. Exit `31` means files were restored but readiness or the protocol gate is still failing. The retired passwordless bridge remains absent after every recovery outcome.
+
+To roll back both web applications to a retained guarded snapshot, use the same guarded state machine. It first snapshots the current pair, applies and validates the requested pair, and recovers the current pair if the requested snapshot fails:
+
+```bash
+functions/protocol_guarded_deploy.sh restore-webmail \
+  /var/backups/openmailstack/protocol-guarded-webmail-20260815T120000Z
+```
 
 ---
 

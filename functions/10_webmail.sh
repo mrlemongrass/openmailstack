@@ -16,8 +16,11 @@ echo -e "${YELLOW}Starting Modern Webmail Deployment...${NC}"
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
+# shellcheck source=/dev/null
 source "${REPO_DIR}/config.conf"
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib_os.sh"
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib_scheduler.sh"
 detect_openmailstack_os
 
@@ -130,17 +133,23 @@ write_env_line() {
 }
 
 install_node_toolchain() {
-    echo -e "Installing Node.js/npm and deployment helpers..."
-    openmailstack_install_required_packages nodejs npm rsync
+    if [[ "${OMS_PROTOCOL_GUARDED_DEPLOY:-0}" == "1" ]]; then
+        echo -e "Verifying Node.js/npm and deployment helpers for guarded release..."
+    else
+        echo -e "Installing Node.js/npm and deployment helpers..."
+        openmailstack_install_required_packages nodejs npm rsync
+    fi
 
-    if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-        echo -e "${RED}Error: node and npm are required for modern webmail deployment.${NC}" >&2
+    if ! command -v node >/dev/null 2>&1 \
+        || ! command -v npm >/dev/null 2>&1 \
+        || ! command -v rsync >/dev/null 2>&1; then
+        echo -e "${RED}Error: node, npm, and rsync are required for modern webmail deployment.${NC}" >&2
         exit 1
     fi
 
-    local node_version major minor patch
+    local node_version major minor
     node_version="$(node -p 'process.versions.node')"
-    IFS='.' read -r major minor patch <<< "${node_version}"
+    IFS='.' read -r major minor _ <<< "${node_version}"
     if (( major < 20 || (major == 20 && minor < 19) )); then
         echo -e "${RED}Error: Modern webmail requires Node.js >= 20.19.0 for the current Vite stack; found ${node_version}.${NC}" >&2
         echo -e "${YELLOW}Install a current Node.js LTS package and rerun this module.${NC}" >&2
@@ -162,6 +171,13 @@ npm_install_for_build() {
 }
 
 ensure_service_user() {
+    if [[ "${OMS_PROTOCOL_GUARDED_DEPLOY:-0}" == "1" ]]; then
+        getent group "${WEBMAIL_GROUP}" >/dev/null \
+            || { echo -e "${RED}Error: guarded deployment requires the existing ${WEBMAIL_GROUP} group.${NC}" >&2; exit 1; }
+        getent passwd "${WEBMAIL_USER}" >/dev/null \
+            || { echo -e "${RED}Error: guarded deployment requires the existing ${WEBMAIL_USER} user.${NC}" >&2; exit 1; }
+        return
+    fi
     if ! getent group "${WEBMAIL_GROUP}" >/dev/null; then
         groupadd --system "${WEBMAIL_GROUP}"
     fi
@@ -248,6 +264,7 @@ deploy_backend() {
         --exclude .npm \
         --exclude uploads \
         "${BACKEND_SRC}/" "${BACKEND_DIR}/"
+    install -m 0644 "${REPO_DIR}/VERSION" "${BACKEND_DIR}/VERSION"
 
     (
         umask 022
@@ -263,8 +280,12 @@ deploy_backend() {
     render_backend_env
     install -m 0644 "${REPO_DIR}/packaging/systemd/openmailstack.service" "${SERVICE_FILE}"
     systemctl daemon-reload
-    systemctl enable --now openmailstack.service
-    systemctl restart openmailstack.service
+    if [[ "${OMS_PROTOCOL_GUARDED_DEPLOY:-0}" == "1" ]]; then
+        systemctl restart openmailstack.service
+    else
+        systemctl enable --now openmailstack.service
+        systemctl restart openmailstack.service
+    fi
     if [[ -f /etc/openmailstack/scheduler.enabled && -f /etc/systemd/system/openmailstack-scheduler-worker.service ]]; then
         systemctl restart openmailstack-scheduler-worker.service
         systemctl is-active --quiet openmailstack-scheduler-worker.service
@@ -569,6 +590,7 @@ EOF
 
 require_path "${BACKEND_SRC}"
 require_path "${FRONTEND_SRC}"
+require_path "${REPO_DIR}/VERSION"
 require_path "${REPO_DIR}/packaging/systemd/openmailstack.service"
 
 install_node_toolchain

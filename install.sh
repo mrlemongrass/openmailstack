@@ -112,6 +112,11 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
+# Every mutating installer run retires the historical web-to-root upgrade
+# bridge, even when the already-installed Admin Portal module is skipped.
+rm -f -- /etc/sudoers.d/openmailstack-upgrade
+rm -f -- /usr/local/bin/openmailstack-upgrade.sh
+
 # 4. Config File Check
 if [[ ! -f "${SCRIPT_DIR}/config.conf" ]]; then
     echo -e "${RED}Error: No config.conf found.${NC}"

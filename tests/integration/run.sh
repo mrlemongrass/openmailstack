@@ -196,6 +196,10 @@ test_protocol_release_gate() {
     pass "Public IMAPS and ActiveSync release gate is fail-closed and deployment-enforced"
 }
 
+test_protocol_guard_helpers() {
+    bash "${PROJECT_ROOT}/tests/integration/protocol_guard_helpers_test.sh"
+}
+
 test_mail_message_view_regression() {
     (
         cd "${PROJECT_ROOT}/webmail-frontend"
@@ -222,6 +226,10 @@ test_auth_hardening_guards() {
 
 test_admin_rbac_guards() {
     node "${PROJECT_ROOT}/tests/integration/admin_rbac_guard.cjs"
+}
+
+test_update_safety_guards() {
+    node --test "${PROJECT_ROOT}/tests/integration/update_safety_guard.cjs"
 }
 
 test_dependency_security_guards() {
@@ -271,12 +279,14 @@ test_mysql_e_reduction_guards
 test_modern_webmail_deployment_guards
 test_authenticated_smoke_guards
 test_protocol_release_gate
+test_protocol_guard_helpers
 test_mail_message_view_regression
 test_scheduler_documentation_guards
 test_scheduler_phase1_guards
 test_scheduler_phase3_guards
 test_auth_hardening_guards
 test_admin_rbac_guards
+test_update_safety_guards
 test_dependency_security_guards
 test_mozilla_autoconfig_guards
 test_dry_run_local

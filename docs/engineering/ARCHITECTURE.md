@@ -187,7 +187,7 @@ Expected pipeline:
 | 6 | `06_roundcube.sh` | Install legacy Roundcube fallback webmail | Needs Verification |
 | 7 | `07_fail2ban.sh` | Install/configure Fail2ban jails | Needs Verification |
 | 8 | `08_ufw_ssl.sh` | Configure UFW firewall and Let’s Encrypt certificates | Needs Verification |
-| 9 | `09_admin_portal.sh` | Deploy custom Admin Portal and sudoers bridge | Needs Verification |
+| 9 | `09_admin_portal.sh` | Deploy the custom Admin Portal and retire the legacy upgrade bridge | Partial |
 | 10 | `10_webmail.sh` | Build/deploy modern webmail frontend/backend and Nginx routes | Needs Verification |
 
 Agents should verify whether these scripts exist, whether they are idempotent, whether they are safe to re-run, and whether they make destructive changes.
@@ -930,38 +930,35 @@ Security concerns to verify:
 - whether non-admin users can access health data
 - whether health data leaks sensitive host information
 
-### 8.2 In-place GitHub upgrades
+### 8.2 Release updates
 
-Status: `Needs Verification`
+Status: `Partial`
 
-Previously documented behavior:
+The modern and legacy Admin surfaces report the deployed package's validated
+`VERSION` and a manual-update policy. They do not fetch or fabricate a latest
+release, and a missing, unreadable, or invalid deployed version is an error
+rather than an invitation to update.
 
-- Admin UI checks the latest GitHub release.
-- Admin UI compares local and remote versions.
-- A restricted sudoers rule allows `www-data` to execute a single upgrade script as root.
-- Upgrade script may run `git pull` in the repository directory.
-- Upgrade script may copy updated web files and restart services.
+Automatic and browser-triggered updates are disabled. The legacy compatibility
+action and the repository's update entry point fail closed without changing
+files, repository state, packages, or services. During installation and Admin
+Portal deployment, the retired passwordless bridge is removed before other
+fallible setup work begins.
 
-Previously referenced paths:
+`INSTALLATION.md` defines the bounded manual release procedure for the modern
+web application and legacy Admin Portal. One `protocol_guarded_deploy.sh
+webmail` transaction holds the global release lock while it snapshots, deploys,
+and validates both applications. The transaction passes through the
+authenticated protocol release gate, restores both application versions on a
+failed deploy or validation, and handles HUP, INT, and TERM through the same
+validated recovery path. Its guarded `restore-webmail` mode also treats a
+retained pair as one reversible transaction. The historical passwordless
+upgrade bridge is retired after the lock is acquired and is intentionally not
+restored during application rollback.
 
-```text
-/etc/sudoers.d/openmailstack-upgrade
-/usr/local/bin/openmailstack-upgrade.sh
-/root/openmailstack/
-/var/www/openmailstack-admin/
-```
-
-High-risk area. Agents should verify carefully:
-
-- exact sudoers rule
-- whether the upgrade script is root-writable only
-- whether arguments are accepted
-- whether `git pull` can execute untrusted hooks or unexpected code
-- whether release verification exists
-- whether rollback exists
-- whether service restarts are safe
-- whether local modifications are preserved
-- whether the feature is appropriate for production installs
+There is not yet a general transactional full-stack upgrade mechanism. Releases
+that change Postfix, Dovecot, MariaDB, mail data, operating-system packages, or
+their configuration require release-specific migration and rollback steps.
 
 ### 8.3 Audit logs
 
@@ -1287,8 +1284,8 @@ Agents should verify or improve:
 
 Known high-risk areas to verify:
 
-- web-triggered upgrade flow
-- `www-data` sudoers bridge
+- manual release and rollback boundary
+- removal of retired privilege-escalation artifacts on repeated installs
 - PHP shell execution for health checks
 - quarantine release through `sendmail -t`
 - Rspamd proxy authentication
@@ -1408,7 +1405,7 @@ Agents should prioritize verification of:
 7. Whether Yjs/WebRTC collaborative notes actually exist
 8. Whether SSE, Socket.IO, and WebSocket are all used or only some are present
 9. Whether `10_webmail.sh` builds and deploys the modern app reliably
-10. Whether web-triggered GitHub upgrades are safe enough for production
+10. How to provide a transactional, verified full-stack release upgrade and rollback path
 11. Whether the admin portal’s RBAC is fully enforced server-side
 12. Whether spam quarantine can be bypassed or spoofed through headers
 13. Whether all database tables listed here are created by scripts/migrations

@@ -220,6 +220,7 @@ db.pool.query = async (sql, params = []) => {
   const compact = String(sql).replace(/\s+/g, ' ').trim();
   if (compact === "SHOW FULL COLUMNS FROM events LIKE 'uid'"
     || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'uid'"
+    || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'calendar_id'"
     || compact === "SHOW FULL COLUMNS FROM events LIKE 'resource_name'"
     || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'resource_name'") {
     return [[{ Collation: 'utf8mb4_bin', Null: 'NO' }], []];
@@ -254,7 +255,8 @@ db.pool.query = async (sql, params = []) => {
   if (compact.startsWith('CREATE TABLE')) return [[], []];
   if (compact.startsWith('UPDATE events AS event_rows SET event_rows.resource_name')) return [{ affectedRows: 0 }, []];
   if (compact.startsWith('UPDATE calendar_tombstones SET resource_name = uid')) return [{ affectedRows: 0 }, []];
-  if (compact.startsWith('SELECT calendar_id, resource_name, COUNT(*) AS duplicate_count')) return [[], []];
+  if (compact.startsWith('SELECT calendar_id, resource_name, COUNT(*) AS duplicate_count')
+    || compact.startsWith('SELECT calendar_id, MIN(BINARY resource_name) AS resource_name')) return [[], []];
   if (compact.startsWith('DELETE calendar_tombstones FROM calendar_tombstones')) return [{ affectedRows: 0 }, []];
   if (compact.startsWith('SELECT id, user_id, name, dav_slug FROM calendars')) return [[calendar], []];
   if (compact.startsWith('SELECT c.*, COUNT(e.uid) AS event_count')) {

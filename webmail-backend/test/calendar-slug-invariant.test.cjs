@@ -12,6 +12,7 @@ function installSchemaDatabase({ calendars = [], duplicateSlug = null, uniqueSlu
 
     if (compact === "SHOW FULL COLUMNS FROM events LIKE 'uid'"
       || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'uid'"
+      || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'calendar_id'"
       || compact === "SHOW FULL COLUMNS FROM events LIKE 'resource_name'"
       || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'resource_name'") {
       return [[{ Collation: 'utf8mb4_bin', Null: 'NO' }], []];

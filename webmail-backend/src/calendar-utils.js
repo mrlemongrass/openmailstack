@@ -78,6 +78,222 @@ async function allocateCalendarCollectionRevisionOnConnection(connection, calend
     return nextRevision;
 }
 let schemaPromise = null;
+const TOMBSTONE_REPAIR_LOCK = 'oms:calendar-tombstone-repair:v1';
+const TOMBSTONE_REPAIR_REASON = 'exact_duplicate_resource_v1';
+const MAX_TOMBSTONE_REPAIR_GROUPS = 100;
+const MAX_TOMBSTONES_PER_REPAIR_GROUP = 100;
+const tombstoneDuplicateQuery = `SELECT calendar_id, MIN(BINARY resource_name) AS resource_name,
+        COUNT(*) AS duplicate_count,
+        COUNT(DISTINCT BINARY uid) AS distinct_uid_count,
+        COUNT(DISTINCT sync_token) AS distinct_sync_token_count
+     FROM calendar_tombstones
+     WHERE resource_name IS NOT NULL AND resource_name != ''
+     GROUP BY calendar_id, BINARY resource_name
+     HAVING COUNT(*) > 1
+     ORDER BY calendar_id ASC, BINARY resource_name ASC`;
+function identifierBytes(value) {
+    return Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8');
+}
+function sameIdentifier(left, right) {
+    return identifierBytes(left).equals(identifierBytes(right));
+}
+function assertRepairableTombstoneGroups(groups) {
+    if (groups.length > MAX_TOMBSTONE_REPAIR_GROUPS) {
+        throw new Error(`Calendar schema migration blocked: more than ${MAX_TOMBSTONE_REPAIR_GROUPS} duplicate DAV `
+            + 'tombstone groups require repair. No tombstones were deleted.');
+    }
+    for (const group of groups) {
+        const distinctUids = Number(group.distinct_uid_count);
+        const distinctSyncTokens = Number(group.distinct_sync_token_count);
+        if (Number(group.duplicate_count) > MAX_TOMBSTONES_PER_REPAIR_GROUP) {
+            throw new Error(`Calendar schema migration blocked: calendar ${String(group.calendar_id)} contains more than `
+                + `${MAX_TOMBSTONES_PER_REPAIR_GROUP} tombstones for one DAV resource. No tombstones were deleted.`);
+        }
+        if (distinctUids === 1 && distinctSyncTokens === 1)
+            continue;
+        throw new Error(`Calendar schema migration blocked: calendar ${String(group.calendar_id)} contains ambiguous DAV `
+            + `tombstone resource name "${String(group.resource_name)}" across ${String(group.duplicate_count)} rows `
+            + `(binary UID count ${String(group.distinct_uid_count)}, sync-token count `
+            + `${String(group.distinct_sync_token_count)}). No tombstones were deleted.`);
+    }
+}
+function sameTimestamp(left, right) {
+    if (left instanceof Date && right instanceof Date)
+        return left.getTime() === right.getTime();
+    return String(left) === String(right);
+}
+function sameTombstoneRepairRow(left, right) {
+    return Number(left.id) === Number(right.id)
+        && Number(left.calendar_id) === Number(right.calendar_id)
+        && sameIdentifier(left.uid, right.uid)
+        && sameIdentifier(left.resource_name, right.resource_name)
+        && String(left.sync_token) === String(right.sync_token)
+        && sameTimestamp(left.deleted_at, right.deleted_at);
+}
+async function repairExactDuplicateCalendarTombstones() {
+    const connection = await db_1.pool.getConnection();
+    let acquired = false;
+    let transactionStarted = false;
+    let connectionUsable = true;
+    try {
+        const [lockRows] = await connection.query('SELECT GET_LOCK(?, 30) AS acquired', [TOMBSTONE_REPAIR_LOCK]);
+        if (Number(lockRows[0]?.acquired || 0) !== 1) {
+            throw new Error('Timed out waiting for the calendar tombstone repair lock');
+        }
+        acquired = true;
+        await connection.beginTransaction();
+        transactionStarted = true;
+        const [currentDuplicateGroups] = await connection.query(`${tombstoneDuplicateQuery} LIMIT ${MAX_TOMBSTONE_REPAIR_GROUPS + 1}`);
+        assertRepairableTombstoneGroups(currentDuplicateGroups);
+        const duplicateGroups = [];
+        for (const duplicate of currentDuplicateGroups) {
+            const [candidateRows] = await connection.query(`SELECT id, calendar_id, uid, resource_name, CAST(sync_token AS CHAR) AS sync_token, deleted_at
+                 FROM calendar_tombstones
+                 WHERE calendar_id = ? AND BINARY resource_name = BINARY ?
+                 ORDER BY deleted_at DESC, id DESC
+                 LIMIT ${MAX_TOMBSTONES_PER_REPAIR_GROUP + 1}`, [duplicate.calendar_id, duplicate.resource_name]);
+            if (candidateRows.length !== Number(duplicate.duplicate_count)) {
+                throw new Error('Calendar tombstone repair group changed while the migration was discovering it');
+            }
+            const candidates = candidateRows;
+            assertRepairableTombstoneGroups([{
+                    calendar_id: duplicate.calendar_id,
+                    resource_name: duplicate.resource_name,
+                    duplicate_count: candidates.length,
+                    distinct_uid_count: new Set(candidates.map(row => identifierBytes(row.uid).toString('base64'))).size,
+                    distinct_sync_token_count: new Set(candidates.map(row => String(row.sync_token))).size,
+                }]);
+            const candidateIds = candidates.map(row => Number(row.id));
+            if (candidateIds.some(id => !Number.isSafeInteger(id) || id < 1)
+                || new Set(candidateIds).size !== candidateIds.length) {
+                throw new Error('Calendar tombstone repair encountered invalid candidate source IDs');
+            }
+            const placeholders = candidateIds.map(() => '?').join(',');
+            const [lockedRows] = await connection.query(`SELECT id, calendar_id, uid, resource_name, CAST(sync_token AS CHAR) AS sync_token, deleted_at
+                 FROM calendar_tombstones FORCE INDEX (PRIMARY)
+                 WHERE id IN (${placeholders})
+                 ORDER BY deleted_at DESC, id DESC
+                 FOR UPDATE`, candidateIds);
+            const lockedGroup = lockedRows;
+            const candidateById = new Map(candidates.map(row => [Number(row.id), row]));
+            if (lockedGroup.length !== candidates.length
+                || lockedGroup.some(row => {
+                    const candidate = candidateById.get(Number(row.id));
+                    return !candidate || !sameTombstoneRepairRow(candidate, row);
+                })) {
+                throw new Error('Calendar tombstone repair group changed before its primary-key lock was acquired');
+            }
+            assertRepairableTombstoneGroups([{
+                    calendar_id: duplicate.calendar_id,
+                    resource_name: duplicate.resource_name,
+                    duplicate_count: lockedGroup.length,
+                    distinct_uid_count: new Set(lockedGroup.map(row => identifierBytes(row.uid).toString('base64'))).size,
+                    distinct_sync_token_count: new Set(lockedGroup.map(row => String(row.sync_token))).size,
+                }]);
+            duplicateGroups.push(lockedGroup);
+        }
+        const archivedRows = [];
+        const redundantIds = [];
+        for (const group of duplicateGroups) {
+            // The SELECT order makes the first row deterministic: newest
+            // deletion timestamp, then highest source ID.
+            const retainedId = Number(group[0].id);
+            if (!Number.isSafeInteger(retainedId) || retainedId < 1) {
+                throw new Error('Calendar tombstone repair encountered an invalid source ID');
+            }
+            for (const row of group) {
+                const sourceId = Number(row.id);
+                if (!Number.isSafeInteger(sourceId) || sourceId < 1) {
+                    throw new Error('Calendar tombstone repair encountered an invalid source ID');
+                }
+                await connection.query(`INSERT INTO calendar_tombstone_repair_archive
+                        (source_tombstone_id, calendar_id, uid, resource_name, sync_token, deleted_at,
+                         retained_tombstone_id, repair_reason)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE source_tombstone_id = VALUES(source_tombstone_id)`, [
+                    sourceId,
+                    row.calendar_id,
+                    row.uid,
+                    row.resource_name,
+                    row.sync_token,
+                    row.deleted_at,
+                    retainedId,
+                    TOMBSTONE_REPAIR_REASON,
+                ]);
+                archivedRows.push({ source: row, retainedId });
+                if (sourceId !== retainedId)
+                    redundantIds.push(sourceId);
+            }
+        }
+        // Verify the durable recovery copy before removing any canonical-table
+        // row. Chunking keeps the one-time migration within query limits.
+        for (let offset = 0; offset < archivedRows.length; offset += 200) {
+            const expectedChunk = archivedRows.slice(offset, offset + 200);
+            const placeholders = expectedChunk.map(() => '?').join(',');
+            const [archiveRows] = await connection.query(`SELECT source_tombstone_id, calendar_id, uid, resource_name, CAST(sync_token AS CHAR) AS sync_token,
+                        deleted_at, retained_tombstone_id, repair_reason
+                 FROM calendar_tombstone_repair_archive
+                 WHERE repair_reason = ? AND source_tombstone_id IN (${placeholders})
+                 FOR UPDATE`, [TOMBSTONE_REPAIR_REASON, ...expectedChunk.map(item => Number(item.source.id))]);
+            const archivedBySourceId = new Map(archiveRows.map((row) => [Number(row.source_tombstone_id), row]));
+            for (const expected of expectedChunk) {
+                const sourceId = Number(expected.source.id);
+                const archived = archivedBySourceId.get(sourceId);
+                if (!archived
+                    || Number(archived.calendar_id) !== Number(expected.source.calendar_id)
+                    || !sameIdentifier(archived.uid, expected.source.uid)
+                    || !sameIdentifier(archived.resource_name, expected.source.resource_name)
+                    || String(archived.sync_token) !== String(expected.source.sync_token)
+                    || !sameTimestamp(archived.deleted_at, expected.source.deleted_at)
+                    || Number(archived.retained_tombstone_id) !== expected.retainedId
+                    || String(archived.repair_reason) !== TOMBSTONE_REPAIR_REASON) {
+                    throw new Error(`Calendar tombstone repair archive verification failed for source row ${sourceId}`);
+                }
+            }
+        }
+        for (let offset = 0; offset < redundantIds.length; offset += 200) {
+            const chunk = redundantIds.slice(offset, offset + 200);
+            const placeholders = chunk.map(() => '?').join(',');
+            const [deleteResult] = await connection.query(`DELETE FROM calendar_tombstones WHERE id IN (${placeholders})`, chunk);
+            if (Number(deleteResult.affectedRows || 0) !== chunk.length) {
+                throw new Error('Calendar tombstone repair did not remove the expected redundant rows');
+            }
+        }
+        const [remainingDuplicates] = await connection.query(`${tombstoneDuplicateQuery} LIMIT 1`);
+        if (remainingDuplicates.length > 0) {
+            throw new Error('Calendar tombstone repair left duplicate DAV resource names');
+        }
+        await connection.commit();
+        transactionStarted = false;
+    }
+    catch (error) {
+        if (transactionStarted) {
+            try {
+                await connection.rollback();
+            }
+            catch {
+                connectionUsable = false;
+            }
+        }
+        throw error;
+    }
+    finally {
+        if (acquired) {
+            try {
+                const [releaseRows] = await connection.query('SELECT RELEASE_LOCK(?) AS released', [TOMBSTONE_REPAIR_LOCK]);
+                if (Number(releaseRows[0]?.released || 0) !== 1)
+                    connectionUsable = false;
+            }
+            catch {
+                connectionUsable = false;
+            }
+        }
+        if (connectionUsable)
+            connection.release();
+        else
+            connection.destroy();
+    }
+}
 async function ensureCalendarSchema() {
     if (!schemaPromise) {
         schemaPromise = (async () => {
@@ -239,6 +455,15 @@ async function ensureCalendarSchema() {
                 await db_1.pool.query(`ALTER TABLE calendar_tombstones MODIFY COLUMN uid VARCHAR(255)
                      CHARACTER SET utf8mb4 COLLATE utf8mb4_bin ${nullability}`);
             }
+            const [tombstoneCalendarIdColumns] = await db_1.pool.query("SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'calendar_id'");
+            if (tombstoneCalendarIdColumns.length !== 1) {
+                throw new Error('Calendar tombstone calendar ID column is missing');
+            }
+            const tombstoneCalendarIdIsNotNull = String(tombstoneCalendarIdColumns[0].Null || '').toUpperCase() === 'NO';
+            if (!tombstoneCalendarIdIsNotNull) {
+                throw new Error('Calendar schema migration blocked: calendar_tombstones.calendar_id is nullable. '
+                    + 'Resolve tombstone ownership before startup; owner IDs are never inferred or repaired.');
+            }
             const [tombstoneResourceNameColumns] = await db_1.pool.query("SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'resource_name'");
             const tombstoneResourceNameNeedsNormalization = tombstoneResourceNameColumns.length === 0
                 || String(tombstoneResourceNameColumns[0].Collation || '').toLowerCase() !== 'utf8mb4_bin'
@@ -247,23 +472,79 @@ async function ensureCalendarSchema() {
                 await db_1.pool.query(`ALTER TABLE calendar_tombstones ADD COLUMN resource_name VARCHAR(255)
                      CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL AFTER uid`);
             }
-            await db_1.pool.query(`UPDATE calendar_tombstones SET resource_name = uid
-                 WHERE resource_name IS NULL OR resource_name = ''`);
-            const [duplicateTombstoneResourceNames] = await db_1.pool.query(`SELECT calendar_id, resource_name, COUNT(*) AS duplicate_count
-                 FROM calendar_tombstones
-                 WHERE resource_name IS NOT NULL AND resource_name != ''
-                 GROUP BY calendar_id, resource_name
-                 HAVING duplicate_count > 1
-                 LIMIT 1`);
-            if (duplicateTombstoneResourceNames.length > 0) {
-                const duplicate = duplicateTombstoneResourceNames[0];
-                throw new Error(`Calendar schema migration blocked: calendar ${duplicate.calendar_id} contains DAV tombstone `
-                    + `resource name "${String(duplicate.resource_name)}" in ${duplicate.duplicate_count} rows. `
-                    + 'Resolve duplicate tombstones before startup.');
+            const [tombstoneIndexes] = await db_1.pool.query('SHOW INDEX FROM calendar_tombstones');
+            const tombstoneIndexColumns = new Map();
+            const uniqueTombstoneIndexColumns = new Map();
+            for (const index of tombstoneIndexes) {
+                const column = {
+                    name: String(index.Column_name),
+                    fullLength: index.Sub_part === null || index.Sub_part === undefined,
+                };
+                const columns = tombstoneIndexColumns.get(index.Key_name) || [];
+                columns[Number(index.Seq_in_index) - 1] = column;
+                tombstoneIndexColumns.set(index.Key_name, columns);
+                if (Number(index.Non_unique) === 0) {
+                    const uniqueColumns = uniqueTombstoneIndexColumns.get(index.Key_name) || [];
+                    uniqueColumns[Number(index.Seq_in_index) - 1] = column;
+                    uniqueTombstoneIndexColumns.set(index.Key_name, uniqueColumns);
+                }
             }
-            if (tombstoneResourceNameNeedsNormalization) {
-                await db_1.pool.query(`ALTER TABLE calendar_tombstones MODIFY COLUMN resource_name VARCHAR(255)
-                     CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL`);
+            const hasFullUniqueTombstoneResourceName = Array.from(uniqueTombstoneIndexColumns.values())
+                .some(columns => (columns.length === 2
+                && columns[0]?.name === 'calendar_id'
+                && columns[1]?.name === 'resource_name'
+                && columns.every(column => column.fullLength)));
+            const hasSteadyTombstoneResourceInvariant = !tombstoneResourceNameNeedsNormalization
+                && hasFullUniqueTombstoneResourceName;
+            if (!hasSteadyTombstoneResourceInvariant) {
+                await db_1.pool.query(`UPDATE calendar_tombstones SET resource_name = uid
+                     WHERE resource_name IS NULL OR resource_name = ''`);
+                await db_1.pool.query(`
+                    CREATE TABLE IF NOT EXISTS calendar_tombstone_repair_archive (
+                        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                        source_tombstone_id INT NOT NULL,
+                        calendar_id INT NOT NULL,
+                        uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                        resource_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                        sync_token BIGINT UNSIGNED NOT NULL,
+                        deleted_at TIMESTAMP NOT NULL,
+                        retained_tombstone_id INT NOT NULL,
+                        repair_reason VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                        archived_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE KEY uniq_calendar_tombstone_repair_source (source_tombstone_id, repair_reason),
+                        KEY idx_calendar_tombstone_repair_resource (calendar_id, resource_name)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                `);
+                const [duplicateTombstoneResourceNames] = await db_1.pool.query(`${tombstoneDuplicateQuery} LIMIT ${MAX_TOMBSTONE_REPAIR_GROUPS + 1}`);
+                if (duplicateTombstoneResourceNames.length > 0) {
+                    assertRepairableTombstoneGroups(duplicateTombstoneResourceNames);
+                    await repairExactDuplicateCalendarTombstones();
+                }
+                const [remainingDuplicateTombstoneResourceNames] = await db_1.pool.query(`${tombstoneDuplicateQuery} LIMIT 1`);
+                if (remainingDuplicateTombstoneResourceNames.length > 0) {
+                    const duplicate = remainingDuplicateTombstoneResourceNames[0];
+                    throw new Error(`Calendar schema migration blocked: calendar ${String(duplicate.calendar_id)} still contains `
+                        + `DAV tombstone resource name "${String(duplicate.resource_name)}" in `
+                        + `${String(duplicate.duplicate_count)} rows after repair.`);
+                }
+                if (tombstoneResourceNameNeedsNormalization) {
+                    await db_1.pool.query(`ALTER TABLE calendar_tombstones MODIFY COLUMN resource_name VARCHAR(255)
+                         CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL`);
+                }
+                if (!hasFullUniqueTombstoneResourceName) {
+                    const baseIndexName = 'uniq_calendar_tombstone_resource_name';
+                    let resourceIndexName = baseIndexName;
+                    let suffix = 2;
+                    while (tombstoneIndexColumns.has(resourceIndexName)) {
+                        resourceIndexName = `${baseIndexName}_${suffix++}`;
+                    }
+                    if (resourceIndexName === baseIndexName) {
+                        await db_1.pool.query('ALTER TABLE calendar_tombstones ADD UNIQUE KEY uniq_calendar_tombstone_resource_name (calendar_id, resource_name)');
+                    }
+                    else {
+                        await db_1.pool.query(`ALTER TABLE calendar_tombstones ADD UNIQUE KEY \`${resourceIndexName}\` (calendar_id, resource_name)`);
+                    }
+                }
             }
             if (addedEventSyncToken || addedTombstoneSyncToken) {
                 // One-time compatibility bridge: clients holding a pre-revision
@@ -281,36 +562,21 @@ async function ensureCalendarSchema() {
                    ON events.calendar_id = calendar_tombstones.calendar_id
                   AND BINARY COALESCE(NULLIF(events.resource_name, ''), events.uid)
                       = BINARY COALESCE(NULLIF(calendar_tombstones.resource_name, ''), calendar_tombstones.uid)`);
-            const [tombstoneIndexes] = await db_1.pool.query('SHOW INDEX FROM calendar_tombstones');
-            const tombstoneIndexColumns = new Map();
-            const uniqueTombstoneIndexColumns = new Map();
-            for (const index of tombstoneIndexes) {
-                const columns = tombstoneIndexColumns.get(index.Key_name) || [];
-                columns[index.Seq_in_index - 1] = index.Column_name;
-                tombstoneIndexColumns.set(index.Key_name, columns);
-                if (index.Non_unique === 0) {
-                    const uniqueColumns = uniqueTombstoneIndexColumns.get(index.Key_name) || [];
-                    uniqueColumns[index.Seq_in_index - 1] = index.Column_name;
-                    uniqueTombstoneIndexColumns.set(index.Key_name, uniqueColumns);
-                }
-            }
-            const hasUniqueTombstoneResourceName = Array.from(uniqueTombstoneIndexColumns.values()).some(columns => (columns.length === 2 && columns[0] === 'calendar_id' && columns[1] === 'resource_name'));
-            if (!hasUniqueTombstoneResourceName) {
-                await db_1.pool.query('ALTER TABLE calendar_tombstones ADD UNIQUE KEY uniq_calendar_tombstone_resource_name (calendar_id, resource_name)');
-            }
             // Tombstones track the DAV href that disappeared. A historical
             // unique logical-UID key incorrectly prevents deleting a resource
             // re-created under a new href, so retire it after the href key is
-            // established. Never merge or delete duplicate migration rows.
+            // established. The bounded repair above consolidates only fully
+            // archived, byte-identical duplicate rows; do not infer any broader
+            // UID-based merge or deletion here.
             for (const [indexName, columns] of uniqueTombstoneIndexColumns.entries()) {
-                if (columns.length === 2 && columns[0] === 'calendar_id' && columns[1] === 'uid') {
+                if (columns.length === 2 && columns[0]?.name === 'calendar_id' && columns[1]?.name === 'uid') {
                     if (!/^[A-Za-z0-9_$]+$/.test(indexName)) {
                         throw new Error('Calendar tombstone UID index has an unsafe identifier');
                     }
                     await db_1.pool.query(`ALTER TABLE calendar_tombstones DROP INDEX \`${indexName}\``);
                 }
             }
-            const hasTombstoneSyncIndex = Array.from(tombstoneIndexColumns.values()).some(columns => (columns.length >= 2 && columns[0] === 'calendar_id' && columns[1] === 'sync_token'));
+            const hasTombstoneSyncIndex = Array.from(tombstoneIndexColumns.values()).some(columns => (columns.length >= 2 && columns[0]?.name === 'calendar_id' && columns[1]?.name === 'sync_token'));
             if (!hasTombstoneSyncIndex) {
                 await db_1.pool.query('ALTER TABLE calendar_tombstones ADD KEY idx_tombstones_calendar_sync (calendar_id, sync_token)');
             }

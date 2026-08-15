@@ -57,13 +57,15 @@ test('legacy calendar rows are migrated onto collection revisions without retain
     if (compact === "SHOW COLUMNS FROM calendar_tombstones LIKE 'sync_token'") return [[], []];
     if (compact === "SHOW FULL COLUMNS FROM events LIKE 'uid'"
       || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'uid'"
+      || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'calendar_id'"
       || compact === "SHOW FULL COLUMNS FROM events LIKE 'resource_name'") {
       return [[{ Collation: 'utf8mb4_bin', Null: 'NO' }], []];
     }
     if (compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'resource_name'") {
       return [[{ Collation: 'utf8mb4_bin', Null: 'YES' }], []];
     }
-    if (compact.startsWith('SELECT calendar_id, resource_name, COUNT(*) AS duplicate_count')) return [[], []];
+    if (compact.startsWith('SELECT calendar_id, resource_name, COUNT(*) AS duplicate_count')
+      || compact.startsWith('SELECT calendar_id, MIN(BINARY resource_name) AS resource_name')) return [[], []];
     if (compact.startsWith('SHOW INDEX FROM calendars')) return [[{ Key_name: 'idx_calendars_user_dav_slug' }], []];
     if (compact === 'SHOW INDEX FROM events') {
       return [[
@@ -91,7 +93,10 @@ test('legacy calendar rows are migrated onto collection revisions without retain
   assert.match(createTombstones, /resource_name VARCHAR\(255\).*utf8mb4_bin NOT NULL/);
   assert.match(createTombstones, /UNIQUE KEY uniq_calendar_tombstone_resource_name \(calendar_id, resource_name\)/);
   const resourceBackfillIndex = statements.findIndex(sql => sql.startsWith('UPDATE calendar_tombstones SET resource_name = uid'));
-  const duplicateCheckIndex = statements.findIndex(sql => sql.startsWith('SELECT calendar_id, resource_name, COUNT\(\*\) AS duplicate_count FROM calendar_tombstones'));
+  const duplicateCheckIndex = statements.findIndex(sql => (
+    sql.startsWith('SELECT calendar_id, MIN(BINARY resource_name) AS resource_name')
+    && sql.includes('FROM calendar_tombstones')
+  ));
   const resourceNotNullIndex = statements.findIndex(sql => sql.startsWith('ALTER TABLE calendar_tombstones MODIFY COLUMN resource_name'));
   const resourceUniqueIndex = statements.findIndex(sql => sql.startsWith(
     'ALTER TABLE calendar_tombstones ADD UNIQUE KEY uniq_calendar_tombstone_resource_name',
@@ -110,6 +115,7 @@ test('adding only the event revision column still backfills existing rows to the
     if (compact === "SHOW COLUMNS FROM events LIKE 'sync_token'") return [[], []];
     if (compact === "SHOW FULL COLUMNS FROM events LIKE 'uid'"
       || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'uid'"
+      || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'calendar_id'"
       || compact === "SHOW FULL COLUMNS FROM events LIKE 'resource_name'"
       || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'resource_name'") {
       return [[{ Collation: 'utf8mb4_bin', Null: 'NO' }], []];
@@ -157,6 +163,7 @@ test('calendar UID migration preserves case-distinct opaque event and tombstone 
     }
     if (compact === "SHOW FULL COLUMNS FROM events LIKE 'uid'"
       || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'uid'"
+      || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'calendar_id'"
       || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'resource_name'") {
       return [[{ Collation: 'utf8mb4_unicode_ci', Null: 'NO' }], []];
     }
@@ -216,6 +223,7 @@ test('calendar schema initialization fails closed when duplicate event UIDs prev
     statements.push(compact);
     if (compact === "SHOW FULL COLUMNS FROM events LIKE 'uid'"
       || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'uid'"
+      || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'calendar_id'"
       || compact === "SHOW FULL COLUMNS FROM events LIKE 'resource_name'"
       || compact === "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'resource_name'") {
       return [[{ Collation: 'utf8mb4_bin', Null: 'NO' }], []];

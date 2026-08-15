@@ -203,13 +203,13 @@ verify_dedicated_canary_identity() {
         --host=127.0.0.1 \
         --user="${POSTFIXADMIN_DB_USER}" \
         "${POSTFIXADMIN_DB_NAME}" 2>&1 <<SQL
-SELECT CONCAT_WS(CHAR(9), 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION',
+SELECT 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION',
     (SELECT COUNT(*) FROM mailbox
      WHERE username=${SMOKE_USER_SQL_LITERAL} AND active=1
        AND email_other=${CANARY_ATTESTATION_SQL_LITERAL}),
     (SELECT COUNT(*) FROM mailbox WHERE username=${SMOKE_USER_SQL_LITERAL}),
     (SELECT COUNT(*) FROM alias
-     WHERE address=${SMOKE_USER_SQL_LITERAL} AND goto=${SMOKE_USER_SQL_LITERAL} AND active=1));
+     WHERE address=${SMOKE_USER_SQL_LITERAL} AND goto=${SMOKE_USER_SQL_LITERAL} AND active=1);
 SQL
     ) || attestation_status=$?
     if (( attestation_status != 0 )); then

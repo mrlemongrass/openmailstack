@@ -31,10 +31,31 @@ sql=$(cat)
 } >> "${OMS_PROTOCOL_GATE_CLEANUP_LOG}"
 
 if grep -Fq "'OMS_PROTOCOL_GATE_CANARY_ATTESTATION'" <<< "${sql}"; then
+    if grep -Fq "SELECT 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION'," <<< "${sql}"; then
+        attestation_output_format='columns'
+    elif grep -Fq "SELECT CONCAT_WS(CHAR(9), 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION'," <<< "${sql}"; then
+        # mysql --batch escapes tabs embedded inside a field unless --raw is used.
+        attestation_output_format='escaped-field'
+    else
+        echo "unexpected fake canary attestation query shape" >&2
+        exit 2
+    fi
     case "${OMS_PROTOCOL_GATE_FAKE_CANARY_ATTESTATION:-present}" in
-        present) printf 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION\t1\t1\t1\n' ;;
+        present)
+            if [[ "${attestation_output_format}" == 'columns' ]]; then
+                printf 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION\t1\t1\t1\n'
+            else
+                printf 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION\\t1\\t1\\t1\n'
+            fi
+            ;;
         missing) : ;;
-        mismatched) printf 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION\t0\t1\t1\n' ;;
+        mismatched)
+            if [[ "${attestation_output_format}" == 'columns' ]]; then
+                printf 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION\t0\t1\t1\n'
+            else
+                printf 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION\\t0\\t1\\t1\n'
+            fi
+            ;;
         *) echo "unexpected fake canary attestation" >&2; exit 2 ;;
     esac
     exit 0
@@ -215,7 +236,7 @@ if OMS_PROTOCOL_GATE_CREDENTIAL_FILE="${CREDENTIAL_PATH}" \
     exit 1
 fi
 grep -Fq 'Dedicated protocol canary database attestation is missing or ambiguous' "${OUTPUT_PATH}"
-grep -Fq "'OMS_PROTOCOL_GATE_CANARY_ATTESTATION'" "${CLEANUP_LOG}"
+grep -Fq "SELECT 'OMS_PROTOCOL_GATE_CANARY_ATTESTATION'," "${CLEANUP_LOG}"
 if grep -Fq 'DELETE FROM webmail_sessions' "${CLEANUP_LOG}"; then
     echo "FAIL: missing database attestation triggered account-wide session cleanup" >&2
     exit 1

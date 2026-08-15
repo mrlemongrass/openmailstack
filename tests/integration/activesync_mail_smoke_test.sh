@@ -39,6 +39,8 @@ require_text 'await assertNoSeedMessages(client, cleanupFolders)'
 require_text "if (cleanupFailed) throw new Error('Protocol smoke cleanup did not complete')"
 require_text 'validateMailChangeResponse'
 require_text 'validateItemOperationsFetchResponse'
+require_text 'fetchRequiredMailBodies'
+require_text 'profilePassMessage'
 require_text 'reconcileSeedCleanup'
 require_text 'removeExactQueuedSeedMessages'
 require_text 'await cleanupSeedMessage();'
@@ -298,29 +300,79 @@ async function fixtureRunner() {
     'suite',
   ), 'suite-next');
 
-  const legacyItemOperations = {
+  const suiteItemOperations = {
     tag: 'ItemOperations', page: 20, children: [
       { tag: 'Status', page: 20, content: '1' },
       { tag: 'Response', page: 20, children: [{ tag: 'Fetch', page: 20, children: [
         { tag: 'Status', page: 20, content: '1' },
-        { tag: 'ServerId', page: 20, content: 'legacy-message' },
+        { tag: 'ServerId', page: 0, content: 'suite-message' },
         { tag: 'Properties', page: 20, children: [{ tag: 'Body', page: 17, children: [
-          { tag: 'Type', page: 17, content: '1' },
+          { tag: 'Type', page: 17, content: '4' },
           { tag: 'Data', page: 17, content: bodyPrefix },
         ] }] },
       ] }] },
     ],
   };
   assert.doesNotThrow(() => validateItemOperationsFetchResponse(
-    legacyItemOperations,
-    'legacy-message',
-    'mail',
+    suiteItemOperations,
+    'suite-message',
   ));
-  assert.throws(() => validateItemOperationsFetchResponse(
-    legacyItemOperations,
-    'legacy-message',
+  const wrongPageItemOperations = JSON.parse(JSON.stringify(suiteItemOperations));
+  descendants(wrongPageItemOperations, 'ServerId')[0].page = 20;
+  assert.throws(
+    () => validateItemOperationsFetchResponse(wrongPageItemOperations, 'suite-message'),
+    /did not return/,
+  );
+  const wrongTypeItemOperations = JSON.parse(JSON.stringify(suiteItemOperations));
+  descendants(wrongTypeItemOperations, 'Type')[0].content = '1';
+  assert.throws(
+    () => validateItemOperationsFetchResponse(wrongTypeItemOperations, 'suite-message'),
+    /Type-4 MIME body/,
+  );
+  const truncatedItemOperations = JSON.parse(JSON.stringify(suiteItemOperations));
+  descendants(truncatedItemOperations, 'Body')[0].children.push({
+    tag: 'Truncated', page: 17, content: '1',
+  });
+  assert.throws(
+    () => validateItemOperationsFetchResponse(truncatedItemOperations, 'suite-message'),
+    /unexpectedly truncated/,
+  );
+
+  const profileCalls = [];
+  const profileDependencies = {
+    itemOperationsFetch: async serverId => {
+      profileCalls.push(`item:${serverId}`);
+    },
+    syncFetch: async (syncKey, serverId) => {
+      profileCalls.push(`sync:${syncKey}:${serverId}`);
+      return `${syncKey}-next`;
+    },
+  };
+  assert.equal(await fetchRequiredMailBodies(
+    'mail',
+    'mail-key',
+    'mail-message',
+    profileDependencies,
+  ), 'mail-key-next');
+  assert.equal(profileCalls.join(','), 'sync:mail-key:mail-message');
+  profileCalls.length = 0;
+  assert.equal(await fetchRequiredMailBodies(
     'suite',
-  ), /did not return/);
+    'suite-key',
+    'suite-message',
+    profileDependencies,
+  ), 'suite-key-next');
+  assert.equal(
+    profileCalls.join(','),
+    'item:suite-message,sync:suite-key:suite-message',
+  );
+  await assert.rejects(
+    () => fetchRequiredMailBodies('unknown', 'key', 'message', profileDependencies),
+    /Unsupported mail smoke profile/,
+  );
+  assert.match(profilePassMessage('mail'), /legacy mail profile.*ItemOperations deferred/);
+  assert.match(profilePassMessage('suite'), /suite profile.*ItemOperations Type-4 no-truncation/);
+  assert.throws(() => profilePassMessage('unknown'), /Unsupported mail smoke profile/);
 
   let nowMs = 0;
   const cleanupCycles = [];

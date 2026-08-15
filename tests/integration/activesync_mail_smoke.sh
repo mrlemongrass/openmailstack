@@ -185,7 +185,7 @@ function validateMailChangeResponse(ast, serverId, syncKey, profile = protocolPr
   return nextKey;
 }
 
-function validateItemOperationsFetchResponse(ast, serverId, profile = protocolProfile) {
+function validateItemOperationsFetchResponse(ast, serverId) {
   if (ast?.tag !== 'ItemOperations' || ast?.page !== 20) {
     throw new Error('ItemOperations Fetch returned an invalid response root');
   }
@@ -194,7 +194,7 @@ function validateItemOperationsFetchResponse(ast, serverId, profile = protocolPr
   }
   const responseFetch = descendants(ast, 'Fetch').find(node => (
     node.page === 20 && descendants(node, 'ServerId').some(id => (
-      id.content?.toString() === serverId && (profile === 'mail' || id.page === 0)
+      id.content?.toString() === serverId && id.page === 0
     ))
   ));
   if (!responseFetch || text(responseFetch, 'Status') !== '1') {
@@ -203,13 +203,13 @@ function validateItemOperationsFetchResponse(ast, serverId, profile = protocolPr
   const properties = descendants(responseFetch, 'Properties').find(node => node.page === 20);
   const bodyNode = descendants(properties, 'Body').find(node => node.page === 17);
   const bodyType = text(bodyNode, 'Type');
-  if (!bodyNode || (profile === 'suite' ? bodyType !== '4' : !['1', '2', '4'].includes(bodyType))) {
-    throw new Error('ItemOperations Fetch did not return a MIME body');
+  if (!bodyNode || bodyType !== '4') {
+    throw new Error('ItemOperations Fetch did not return a Type-4 MIME body');
   }
   if (!text(bodyNode, 'Data').includes(bodyPrefix)) {
     throw new Error('ItemOperations Fetch returned no smoke message content');
   }
-  if (profile === 'suite' && child(bodyNode, 'Truncated')) {
+  if (child(bodyNode, 'Truncated')) {
     throw new Error('ItemOperations Fetch unexpectedly truncated the smoke message');
   }
 }
@@ -704,6 +704,28 @@ async function itemOperationsFetchMailBody(serverId) {
   validateItemOperationsFetchResponse(ast, serverId);
 }
 
+async function fetchRequiredMailBodies(profile, syncKey, serverId, {
+  itemOperationsFetch = itemOperationsFetchMailBody,
+  syncFetch = fetchMailBody,
+} = {}) {
+  if (profile === 'suite') {
+    await itemOperationsFetch(serverId);
+  } else if (profile !== 'mail') {
+    throw new Error(`Unsupported mail smoke profile: ${profile}`);
+  }
+  return syncFetch(syncKey, serverId);
+}
+
+function profilePassMessage(profile) {
+  if (profile === 'suite') {
+    return 'PASS: ActiveSync mail smoke completed (suite profile): ItemOperations Type-4 no-truncation, Sync Type-4 full MIME Fetch, read/unread, efficient no-change Sync, and Junk/Trash delete propagation';
+  }
+  if (profile === 'mail') {
+    return 'PASS: ActiveSync mail smoke completed (legacy mail profile): public IMAPS body retrieval, Sync Type-4 full MIME Fetch, read/unread, efficient no-change Sync, and Junk/Trash delete propagation; ItemOperations deferred to suite profile';
+  }
+  throw new Error(`Unsupported mail smoke profile: ${profile}`);
+}
+
 function findSmokeAdd(ast) {
   return descendants(ast, 'Add').find(node => {
     const appData = child(node, 'ApplicationData');
@@ -793,8 +815,11 @@ async function assertSeenState(expectedSeen) {
     if (!bodyNode || text(bodyNode, 'Truncated') !== '1') throw new Error('Mail Sync did not honor body truncation');
     if (Buffer.byteLength(text(bodyNode, 'Data')) > 500) throw new Error('Mail Sync body exceeded requested TruncationSize');
 
-    await itemOperationsFetchMailBody(serverId);
-    const fetchKey = await fetchMailBody(initial.nextKey, serverId);
+    const fetchKey = await fetchRequiredMailBodies(
+      protocolProfile,
+      initial.nextKey,
+      serverId,
+    );
     const readKey = await changeReadFlag(serverId, fetchKey, '1');
     await assertSeenState(true);
     const unreadKey = await changeReadFlag(serverId, readKey, '0');
@@ -829,7 +854,7 @@ async function assertSeenState(expectedSeen) {
     const trashInitial = await initialMailSync(trashCollectionId);
     if (!findSmokeAdd(trashInitial.ast)) throw new Error('Trash Sync did not emit Add for the moved message');
 
-    console.log('PASS: ActiveSync mail smoke completed with ItemOperations, full MIME Fetch, Junk/Trash deletes, and efficient no-change Sync');
+    console.log(profilePassMessage(protocolProfile));
   } finally {
     let cleanupFailed = false;
     if (!cleanupOnly) {

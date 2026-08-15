@@ -16,6 +16,21 @@ const compiled = ts.transpileModule(source, {
 const moduleUnderTest = { exports: {} };
 new Function('module', 'exports', 'require', compiled)(moduleUnderTest, moduleUnderTest.exports, require);
 
+const validatorSource = fs.readFileSync(
+  path.join(__dirname, '../../webmail-backend/src/calendar-ical-validation.ts'),
+  'utf8',
+);
+const compiledValidator = ts.transpileModule(validatorSource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const validatorModule = { exports: {} };
+new Function('module', 'exports', 'require', compiledValidator)(
+  validatorModule,
+  validatorModule.exports,
+  require,
+);
+const { validateICalendarDocument } = validatorModule.exports;
+
 const {
   addWallDays,
   buildCalendarEventIcal,
@@ -201,6 +216,74 @@ test('whole-series edits preserve VTIMEZONE, EXDATE, and RECURRENCE-ID component
   assert.match(ical, /EXDATE;TZID=OMS-Eastern:20260710T090000/);
   assert.match(ical, /RECURRENCE-ID;TZID=OMS-Eastern:20260717T090000/);
   assert.match(ical, /SUMMARY:Moved occurrence/);
+});
+
+test('web calendar serialization passes the backend strict validator for master and preserved exceptions', () => {
+  const rawIcal = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VEVENT',
+    'UID:strict-series',
+    'DTSTART:20260816T120000Z',
+    'DTEND:20260816T130000Z',
+    'RRULE:FREQ=DAILY;COUNT=2',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:strict-series',
+    'RECURRENCE-ID:20260817T120000Z',
+    'DTSTART:20260817T140000Z',
+    'DTEND:20260817T150000Z',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const ical = buildCalendarEventIcal({
+    title: 'Strict series',
+    start: new Date(2026, 7, 16, 12, 0, 0),
+    end: new Date(2026, 7, 16, 13, 0, 0),
+    timeKind: 'utc',
+    recurrence: 'FREQ=DAILY;COUNT=2',
+    rawIcal,
+  }, 'UTC', 'strict-series', () => 'unused', () => new Date('2026-08-15T12:34:56Z'));
+
+  const validated = validateICalendarDocument(ical);
+  assert.equal(validated.resources.length, 1);
+  assert.equal(validated.resources[0].componentCount, 2);
+  assert.equal(ical.split('DTSTAMP:20260815T123456Z').length - 1, 2);
+  assert.match(ical, /\r\nPRODID:-\/\/OpenMailStack\/\/WebCalendar\/\/EN\r\n/);
+});
+
+test('web calendar serialization escapes TEXT and rejects attendee header injection', () => {
+  const ical = buildCalendarEventIcal({
+    title: 'Planning, review; path\\name\nsecond line',
+    location: 'Room 1, west; wing\\A\nlevel 2',
+    description: 'First, item; second\\item\nfinal line',
+    start: new Date(2026, 7, 16, 12, 0, 0),
+    end: new Date(2026, 7, 16, 13, 0, 0),
+    timeKind: 'utc',
+    notifications: [{ id: 1, type: 'notification', time: 15 }],
+    guests: ['valid+tag@example.test'],
+  }, 'UTC', 'escaped-text', () => 'unused', () => new Date('2026-08-15T12:34:56Z'));
+
+  assert.equal(validateICalendarDocument(ical).canonicalUid, 'escaped-text');
+  assert.match(ical, /^SUMMARY:Planning\\, review\\; path\\\\name\\nsecond line$/m);
+  assert.match(ical, /^LOCATION:Room 1\\, west\\; wing\\\\A\\nlevel 2$/m);
+  assert.match(ical, /^DESCRIPTION:First\\, item\\; second\\\\item\\nfinal line$/m);
+  assert.match(ical, /^ATTENDEE:mailto:valid%2Btag@example\.test$/m);
+  assert.equal(
+    ical.split('DESCRIPTION:Planning\\, review\\; path\\\\name\\nsecond line').length - 1,
+    1,
+  );
+
+  assert.throws(
+    () => buildCalendarEventIcal({
+      title: 'Hostile attendee',
+      start: new Date(2026, 7, 16, 12, 0, 0),
+      end: new Date(2026, 7, 16, 13, 0, 0),
+      timeKind: 'utc',
+      guests: ['victim@example.test\r\nORGANIZER:mailto:attacker@example.test'],
+    }, 'UTC', 'hostile-attendee'),
+    /invalid attendee email address/i,
+  );
 });
 
 test('changing a master zone retains VTIMEZONE definitions used by preserved exceptions', () => {

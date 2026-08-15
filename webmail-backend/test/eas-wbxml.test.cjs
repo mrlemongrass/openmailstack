@@ -127,6 +127,30 @@ test('ActiveSync Calendar reminder and exception nodes survive the real WBXML wr
   assert.equal(exceptions.children[0].children.find(node => node.tag === 'ExceptionStartTime').content, '20260710T170000Z');
 });
 
+test('Contacts, Contacts2, and Notes use their official WBXML code-page tokens', () => {
+  const writer = new WbxmlWriter();
+  writer.writeNode({ tag: 'ApplicationData', page: 0, children: [
+    { tag: 'RadioPhoneNumber', page: 1, content: 'radio' },
+    { tag: 'Picture', page: 1, content: 'cGljdHVyZQ==' },
+    { tag: 'NickName', page: 12, content: 'nick' },
+    { tag: 'IMAddress', page: 12, content: 'im@example.test' },
+    { tag: 'Subject', page: 23, content: 'note' },
+  ] });
+  const decoded = new WbxmlParser(writer.getBuffer()).parse();
+  assert.deepEqual(decoded.children.map(node => [node.page, node.tag, node.content]), [
+    [1, 'RadioPhoneNumber', 'radio'],
+    [1, 'Picture', 'cGljdHVyZQ=='],
+    [12, 'NickName', 'nick'],
+    [12, 'IMAddress', 'im@example.test'],
+    [23, 'Subject', 'note'],
+  ]);
+});
+
+test('WBXML writer rejects embedded NUL and arbitrary scalar coercion', () => {
+  assert.throws(() => new WbxmlWriter().writeNode({ tag: 'Status', page: 0, content: '1\0forged' }), /cannot contain NUL/);
+  assert.throws(() => new WbxmlWriter().writeNode({ tag: 'Status', page: 0, content: 1 }), /string or Buffer/);
+});
+
 test('WBXML parser rejects excessive nesting before the JavaScript call stack is exhausted', () => {
   const depth = 96;
   const body = [

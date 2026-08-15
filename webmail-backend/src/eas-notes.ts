@@ -3,9 +3,9 @@ import { NoteRow, getNote, saveNote, deleteNote, getNotesSyncToken, listNotes } 
 export function dbNoteToActiveSync(note: NoteRow): any {
     return {
         tag: 'ApplicationData', page: 0, children: [
-            { tag: 'Subject', page: 12, content: note.title || 'Untitled' },
-            { tag: 'MessageClass', page: 12, content: 'IPM.StickyNote' },
-            { tag: 'LastModifiedDate', page: 12, content: new Date(note.updated_at).toISOString() },
+            { tag: 'Subject', page: 23, content: note.title || 'Untitled' },
+            { tag: 'MessageClass', page: 23, content: 'IPM.StickyNote' },
+            { tag: 'LastModifiedDate', page: 23, content: new Date(note.updated_at).toISOString() },
             { tag: 'Body', page: 17, children: [
                 { tag: 'Type', page: 17, content: '2' }, // HTML
                 { tag: 'Data', page: 17, content: note.content || '' },

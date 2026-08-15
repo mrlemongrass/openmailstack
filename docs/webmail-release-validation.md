@@ -78,6 +78,15 @@ creates a dedicated canary mailbox and a generated root-only credential at
 `/etc/openmailstack/protocol-smoke.env`; neither the password nor message
 content belongs in logs, docs, or commits.
 
+For an exact legacy canary created before durable identity attestation, first
+review it and then run
+`rtk bash functions/provision_protocol_canary.sh --rotate-legacy`. The explicit
+mode requires one active mailbox named `OMS Protocol Canary`, an empty legacy
+marker, one active self-alias, no identity file or prior attestation, and a
+root-only credential whose user and password match that mailbox. Near-matches
+fail without mutation. A second run is idempotent. Do not use this option for a
+normal mailbox or as a generic password-reset command.
+
 Run `rtk bash tests/integration/protocol_release_gate.sh` after any change that
 can affect IMAP, ActiveSync, SMTP submission, mail routing, TLS, or their public
 proxy. The gate fails when credentials are missing or exposed, when the smoke

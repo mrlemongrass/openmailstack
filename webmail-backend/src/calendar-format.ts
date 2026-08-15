@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { splitEscapedTextList } from './structured-text';
 
 export interface ParsedIcalEvent {
     uid: string;
@@ -20,7 +21,20 @@ export interface ParsedIcalEvent {
     excludedOccurrenceIds?: Set<string>;
     recurrenceExceptions?: ParsedRecurrenceException[];
     attendees?: string;
+    activeSyncAttendees?: Array<{ email: string; name?: string; status?: string; type?: string }>;
+    organizerEmail?: string;
+    organizerName?: string;
+    categories?: string[];
     busyStatus?: string;
+    activeSyncBusyStatus?: string;
+    sensitivity?: string;
+    meetingStatus?: string;
+    responseRequested?: boolean;
+    disallowNewTimeProposal?: boolean;
+    activeSyncCalendarType?: string;
+    activeSyncIsLeapMonth?: string;
+    activeSyncRecurrenceDayOfWeekOmitted?: boolean;
+    recurrenceExceptionOverflow?: boolean;
     notifications?: Array<{id: number; type: string; time: number}>;
 }
 
@@ -708,14 +722,44 @@ function parseEventComponent(
     const busyStatus = transpValue ? (transpValue === 'TRANSPARENT' ? 'free' : 'busy') : fallback?.busyStatus || 'busy';
 
     const attendeeLines = eventLines.filter(l => l.split(':')[0].split(';')[0].toUpperCase() === 'ATTENDEE');
+    const attendeesCleared = firstIcalValue(eventLines, 'X-OMS-ACTIVESYNC-ATTENDEES-CLEARED')?.value === '1';
+    const attendeesPresent = attendeeLines.length > 0 || attendeesCleared;
+    const activeSyncAttendees = attendeeLines.map(line => {
+        const mailto = line.match(/mailto:([^\s]+)/i);
+        if (!mailto) return null;
+        const name = line.match(/(?:^|;)CN=(?:"([^"]*)"|([^;:]*))/i)?.slice(1).find(Boolean);
+        const partstat = line.match(/(?:^|;)PARTSTAT=([^;:]+)/i)?.[1]?.toUpperCase();
+        const role = line.match(/(?:^|;)ROLE=([^;:]+)/i)?.[1]?.toUpperCase();
+        const status = ({ 'NEEDS-ACTION': '0', TENTATIVE: '2', ACCEPTED: '3', DECLINED: '4' } as Record<string, string>)[partstat || ''];
+        const type = ({ 'REQ-PARTICIPANT': '1', 'OPT-PARTICIPANT': '2', 'NON-PARTICIPANT': '3' } as Record<string, string>)[role || ''];
+        return { email: mailto[1], ...(name ? { name } : {}), ...(status ? { status } : {}), ...(type ? { type } : {}) };
+    }).filter((value): value is NonNullable<typeof value> => Boolean(value));
     const attendees = attendeeLines.map(l => {
         const mailto = l.match(/mailto:([^\s]+)/i);
         return mailto ? mailto[1] : '';
     }).filter(Boolean).join(', ');
+    const organizerLine = eventLines.find(line => line.split(':')[0].split(';')[0].toUpperCase() === 'ORGANIZER');
+    const organizerEmail = organizerLine?.match(/mailto:([^\s]+)/i)?.[1] || '';
+    const organizerName = organizerLine?.match(/(?:^|;)CN=(?:"([^"]*)"|([^;:]*))/i)?.slice(1).find(Boolean) || '';
+    const categoryLines = eventLines
+        .filter(line => line.split(':')[0].split(';')[0].toUpperCase() === 'CATEGORIES');
+    const categories = categoryLines
+        .flatMap(line => splitEscapedTextList(line.slice(line.indexOf(':') + 1)).map(unescapeIcalText))
+        .filter(Boolean);
     const titleField = firstIcalValue(eventLines, 'SUMMARY');
     const locationField = firstIcalValue(eventLines, 'LOCATION');
     const descriptionField = firstIcalValue(eventLines, 'DESCRIPTION');
     const alarm = parseDisplayAlarm(componentBody);
+    const responseRequested = firstIcalValue(eventLines, 'X-OMS-RESPONSE-REQUESTED')?.value;
+    const disallowNewTimeProposal = firstIcalValue(eventLines, 'X-OMS-DISALLOW-NEW-TIME-PROPOSAL')?.value;
+    const activeSyncBusyStatus = firstIcalValue(eventLines, 'X-OMS-ACTIVESYNC-BUSY-STATUS')?.value;
+    const activeSyncSensitivity = firstIcalValue(eventLines, 'X-OMS-ACTIVESYNC-SENSITIVITY')?.value;
+    const activeSyncMeetingStatus = firstIcalValue(eventLines, 'X-OMS-ACTIVESYNC-MEETING-STATUS')?.value;
+    const activeSyncCalendarType = firstIcalValue(eventLines, 'X-OMS-ACTIVESYNC-CALENDAR-TYPE')?.value;
+    const activeSyncIsLeapMonth = firstIcalValue(eventLines, 'X-OMS-ACTIVESYNC-IS-LEAP-MONTH')?.value;
+    const activeSyncDayOfWeekOmitted = firstIcalValue(eventLines, 'X-OMS-ACTIVESYNC-DAY-OF-WEEK-OMITTED')?.value;
+    const classValue = firstIcalValue(eventLines, 'CLASS')?.value?.toUpperCase();
+    const statusValue = firstIcalValue(eventLines, 'STATUS')?.value?.toUpperCase();
 
     return {
         uid: firstIcalValue(eventLines, 'UID')?.value || uid,
@@ -735,8 +779,34 @@ function parseEventComponent(
         recurrence,
         recurrenceLabel: recurrenceLabel(recurrence),
         type: isTask ? 'task' : 'event',
-        attendees: attendees || fallback?.attendees || undefined,
+        attendees: attendeesPresent ? attendees : fallback?.attendees || undefined,
+        activeSyncAttendees: attendeesPresent ? activeSyncAttendees : fallback?.activeSyncAttendees,
+        organizerEmail: organizerEmail || fallback?.organizerEmail || undefined,
+        organizerName: organizerName || fallback?.organizerName || undefined,
+        categories: categoryLines.length ? categories : fallback?.categories,
         busyStatus,
+        activeSyncBusyStatus: /^(?:0|1|2|3|4)$/.test(activeSyncBusyStatus || '')
+            ? activeSyncBusyStatus
+            : fallback?.activeSyncBusyStatus || (busyStatus === 'free' ? '0' : '2'),
+        sensitivity: /^[0-3]$/.test(activeSyncSensitivity || '')
+            ? activeSyncSensitivity
+            : fallback?.sensitivity || ({ PUBLIC: '0', PERSONAL: '1', PRIVATE: '2', CONFIDENTIAL: '3' } as Record<string, string>)[classValue || ''] || '0',
+        meetingStatus: /^(?:0|1|3|5|7|9|11|13|15)$/.test(activeSyncMeetingStatus || '')
+            ? activeSyncMeetingStatus
+            : fallback?.meetingStatus || (statusValue === 'CANCELLED' ? '5' : '0'),
+        responseRequested: responseRequested === undefined ? fallback?.responseRequested : responseRequested === '1',
+        disallowNewTimeProposal: disallowNewTimeProposal === undefined
+            ? fallback?.disallowNewTimeProposal
+            : disallowNewTimeProposal === '1',
+        activeSyncCalendarType: /^(?:[0-9]|1[0-2]|14|15|20)$/.test(activeSyncCalendarType || '')
+            ? activeSyncCalendarType
+            : fallback?.activeSyncCalendarType,
+        activeSyncIsLeapMonth: /^[01]$/.test(activeSyncIsLeapMonth || '')
+            ? activeSyncIsLeapMonth
+            : fallback?.activeSyncIsLeapMonth,
+        activeSyncRecurrenceDayOfWeekOmitted: activeSyncDayOfWeekOmitted === undefined
+            ? fallback?.activeSyncRecurrenceDayOfWeekOmitted
+            : activeSyncDayOfWeekOmitted === '1',
         notifications: alarm,
     };
 }
@@ -783,13 +853,16 @@ export function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & { t
     const exdates = parseExdates(masterLines, master, timeZones);
     const recurrenceExceptions = new Map<string, ParsedRecurrenceException>();
 
-    for (const body of eventBodies.slice(0, 257)) {
+    let exceptionBodyCount = 0;
+    for (const body of eventBodies) {
         if (body === masterBody) continue;
         const properties = directPropertyLines(body);
         const recurrenceIdField = firstIcalValue(properties, 'RECURRENCE-ID');
         if (!recurrenceIdField) continue;
         const exceptionUid = firstIcalValue(properties, 'UID')?.value || master.uid;
         if (exceptionUid !== master.uid) continue;
+        exceptionBodyCount += 1;
+        if (exceptionBodyCount > 256) continue;
         const recurrenceId = parseIcalDate(recurrenceIdField, master.isAllDay, master, timeZones).date;
         const deleted = firstIcalValue(properties, 'STATUS')?.value?.toUpperCase() === 'CANCELLED';
         recurrenceExceptions.set(formatActiveSyncDate(recurrenceId), {
@@ -804,6 +877,7 @@ export function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & { t
         exdates: exdates.raw,
         excludedOccurrenceIds: exdates.occurrenceIds,
         recurrenceExceptions: Array.from(recurrenceExceptions.values()),
+        recurrenceExceptionOverflow: exceptionBodyCount > 256,
     };
 }
 

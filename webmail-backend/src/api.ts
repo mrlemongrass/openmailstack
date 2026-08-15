@@ -9,7 +9,12 @@ import type { PoolConnection } from 'mysql2/promise';
 import { ManageSieveClient } from './managesieve';
 import bcrypt from 'bcryptjs';
 import { pool } from './db';
-import { createContactUid, nextContactSyncToken, patchVCardData } from './contact-utils';
+import {
+    createContactUid,
+    nextContactSyncTokenOnConnection,
+    patchVCardData,
+    withContactMutation,
+} from './contact-utils';
 import { canDemoteGlobalAdmin, clearSession, createSession, hasGlobalAdminAccess, requireAdminSession, requireSession, SESSION_COOKIE } from './auth';
 import { imapConfig, normalizeMailboxUsername, schedulerConfig, serverConfig, sieveConfig, smtpConfig, smtpTransportOptions } from './config';
 import { compileSieve, extractJsonFromSieve, type SieveRule, type SieveRulesDocument } from './sieve-compiler';
@@ -2694,13 +2699,15 @@ apiRouter.post('/contacts', requireAuth, async (req: any, res) => {
             email: cleanEmail,
             phone: cleanPhone,
         });
-        const syncToken = await nextContactSyncToken(user);
-        await pool.query(
-            `INSERT INTO contacts (username, name, email, phone, vcard_data, dav_uid, sync_token)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone), sync_token = VALUES(sync_token)`,
-            [user, cleanName, cleanEmail, cleanPhone, vcard, davUid, syncToken]
-        );
+        await withContactMutation(user, async connection => {
+            const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+            await connection.query(
+                `INSERT INTO contacts (username, name, email, phone, vcard_data, dav_uid, sync_token)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone), sync_token = VALUES(sync_token)`,
+                [user, cleanName, cleanEmail, cleanPhone, vcard, davUid, syncToken],
+            );
+        });
         res.json({ success: true });
     } catch (err: any) {
         res.status(500).json({ success: false, error: err.message });
@@ -3653,7 +3660,7 @@ apiRouter.post('/admin/spam_policies', requireAuth, requireAdmin, async (req: an
     }
 });
 
-import { listNotesWithReminders, getNote, saveNote, deleteNote, getNoteReminder, saveNoteReminder, deleteNoteReminder, listNoteAttachments, saveNoteAttachment, deleteNoteAttachment, NoteConflictError } from './notes-utils';
+import { listNotesWithReminders, getNote, saveNote, deleteNote, getNoteReminder, saveNoteReminder, deleteNoteReminder, listNoteAttachments, saveNoteAttachment, deleteNoteAttachment, noteValidationErrorBody, NoteConflictError, NoteValidationError } from './notes-utils';
 import { syncNotesWithImap } from './notes-imap-sync';
 import { authorizeNoteCollaboration, NOTES_SIGNALING_PATH, NoteCollaborationError } from './notes-collaboration';
 import path from 'path';
@@ -3731,6 +3738,10 @@ apiRouter.post('/notes', requireAuth, async (req: any, res) => {
         syncNotesWithImap(req.user.username, req.user.password).catch(e => console.error(e));
         res.json({ success: true, note });
     } catch (err: any) {
+        if (err instanceof NoteValidationError) {
+            res.status(err.statusCode).json(noteValidationErrorBody(err));
+            return;
+        }
         console.error('Notes POST error:', err);
         res.status(500).json({ success: false, error: err.message });
     }
@@ -3778,6 +3789,10 @@ apiRouter.put('/notes/:id', requireAuth, async (req: any, res) => {
     } catch (err: any) {
         if (err instanceof NoteConflictError) {
             res.status(409).json({ success: false, error: err.message });
+            return;
+        }
+        if (err instanceof NoteValidationError) {
+            res.status(err.statusCode).json(noteValidationErrorBody(err));
             return;
         }
         res.status(500).json({ success: false, error: err.message });

@@ -1,3 +1,26 @@
+export declare const NOTE_TITLE_MAX_BYTES: number;
+export declare const NOTE_CONTENT_MAX_BYTES: number;
+export declare const NOTE_LABELS_MAX_BYTES: number;
+export declare const NOTE_LABELS_MAX_COUNT = 100;
+export declare class NoteValidationError extends Error {
+    readonly statusCode: 400 | 413;
+    readonly code: 'NOTE_FIELD_INVALID' | 'NOTE_FIELD_TOO_LARGE';
+    readonly field: 'title' | 'content' | 'labels_json';
+    readonly limitBytes?: number;
+    constructor(field: 'title' | 'content' | 'labels_json', message: string, statusCode?: 400 | 413, limitBytes?: number);
+}
+export declare function noteValidationErrorBody(error: NoteValidationError): {
+    success: false;
+    error: string;
+    code: NoteValidationError['code'];
+    field: NoteValidationError['field'];
+    limit_bytes?: number;
+};
+export declare function validateNoteFields(input: {
+    title?: unknown;
+    content?: unknown;
+    labels_json?: unknown;
+}): Pick<NoteRow, 'title' | 'content' | 'labels_json'>;
 export interface NoteRow {
     id: string;
     owner: string;

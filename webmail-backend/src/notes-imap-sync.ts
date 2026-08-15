@@ -1,8 +1,43 @@
 import { ImapService } from './imap';
-import { deleteNoteIfRevisionMatches, listNotes, saveNote } from './notes-utils';
+import { deleteNoteIfRevisionMatches, listNotes, saveNote, validateNoteFields } from './notes-utils';
 import { pool } from './db';
 import * as crypto from 'crypto';
 import { simpleParser } from 'mailparser';
+
+const MailComposer = require('nodemailer/lib/mail-composer');
+export const NOTE_IMAP_MESSAGE_MAX_BYTES = 16 * 1024 * 1024;
+
+function deterministicNoteMessageId(owner: string, noteId: string, syncToken: number): string {
+    const digest = crypto.createHash('sha256')
+        .update(`${owner.trim().toLowerCase()}\0${noteId}\0${syncToken}`)
+        .digest('hex')
+        .slice(0, 48);
+    return `<oms-note-${digest}@openmailstack.local>`;
+}
+
+function safeNoteSubject(value: unknown): string {
+    const subject = typeof value === 'string' && value.length > 0 ? value : 'Untitled';
+    return subject.replace(/[\r\n]+/g, ' ').trim() || 'Untitled';
+}
+
+async function buildNoteMime(note: any, owner: string, messageId: string): Promise<Buffer> {
+    const requestedDate = new Date(note.created_at || Date.now());
+    const date = Number.isFinite(requestedDate.getTime()) ? requestedDate : new Date();
+    const composer = new MailComposer({
+        date,
+        from: { address: owner },
+        to: { address: owner },
+        subject: safeNoteSubject(note.title),
+        messageId,
+        html: typeof note.content === 'string' ? note.content : '',
+        headers: {
+            'X-Uniform-Type-Identifier': 'com.apple.mail-note',
+        },
+        disableFileAccess: true,
+        disableUrlAccess: true,
+    });
+    return composer.compile().build();
+}
 
 function cleanMessageId(value: unknown): string {
     return typeof value === 'string' ? value.replace(/[<>]/g, '').trim() : '';
@@ -50,14 +85,23 @@ async function syncNotesWithImapOnce(user: string, pass: string): Promise<void> 
     const imap = new ImapService(user, pass);
     let lockConnection: any = null;
     let lockAcquired = false;
+    let destroyLockConnection = false;
     const lockName = `oms-notes-${crypto.createHash('sha256')
         .update(user.trim().toLowerCase())
         .digest('hex')
         .slice(0, 48)}`;
     try {
         lockConnection = await pool.getConnection();
-        const [lockRows]: any = await lockConnection.query('SELECT GET_LOCK(?, 30) AS acquired', [lockName]);
-        if (Number(lockRows[0]?.acquired) !== 1) {
+        let lockRows: any;
+        try {
+            [lockRows] = await lockConnection.query('SELECT GET_LOCK(?, 30) AS acquired', [lockName]);
+        } catch (error) {
+            destroyLockConnection = true;
+            throw error;
+        }
+        const acquired = Number(lockRows[0]?.acquired);
+        if (acquired !== 1) {
+            if (acquired !== 0) destroyLockConnection = true;
             throw new Error('Another Notes synchronization is still being processed');
         }
         lockAcquired = true;
@@ -153,25 +197,54 @@ async function syncNotesWithImapOnce(user: string, pass: string): Promise<void> 
                 await pool.query('UPDATE notes SET imap_uid = ? WHERE id = ? AND owner = ?', [msg.uid, existing.id, user]);
                 (existing as any).imap_uid = msg.uid;
             } else if (!existing) {
-                // Fetch full body
-                const fullMsg = await imap.getMessageByUid(notesFolder.path, msg.uid);
-                if (fullMsg && fullMsg.source) {
-                    const parsedMail = await simpleParser(fullMsg.source);
-                    const parsed = parseEmailToNote(parsedMail.subject || '', parsedMail.html || parsedMail.text || '', parsedMail.messageId || '', fullMsg.uid);
-                    
-                    const newId = crypto.randomUUID();
-                    const saved = await saveNote({
-                        ...parsed,
-                        owner: user,
-                        id: newId
-                    });
-                    
-                    // Mark it as synced with IMAP immediately so we don't push it back
-                    await pool.query(
-                        'UPDATE notes SET imap_sync_token = ? WHERE id = ? AND owner = ?',
-                        [(saved as any).sync_token, newId, user],
-                    );
+                // Fetch one byte beyond the accepted ceiling so a server that
+                // omits RFC822.SIZE still cannot feed an unbounded parser.
+                const fullMsg = await imap.getMessageByUid(
+                    notesFolder.path,
+                    msg.uid,
+                    NOTE_IMAP_MESSAGE_MAX_BYTES + 1,
+                );
+                if (!fullMsg || !fullMsg.source) continue;
+                const sourceBytes = Buffer.isBuffer(fullMsg.source)
+                    ? fullMsg.source.length
+                    : Buffer.byteLength(String(fullMsg.source), 'utf8');
+                const reportedBytes = Number(fullMsg.size);
+                if (
+                    fullMsg.sourceComplete === false
+                    || sourceBytes > NOTE_IMAP_MESSAGE_MAX_BYTES
+                    || (Number.isFinite(reportedBytes) && reportedBytes > NOTE_IMAP_MESSAGE_MAX_BYTES)
+                ) {
+                    console.warn(`Skipped Notes IMAP UID ${msg.uid}: message exceeds the 16 MiB import limit`);
+                    continue;
                 }
+                let parsed: ReturnType<typeof parseEmailToNote>;
+                try {
+                    const parsedMail = await simpleParser(fullMsg.source, {
+                        skipHtmlToText: true,
+                        skipTextToHtml: true,
+                    });
+                    parsed = parseEmailToNote(
+                        parsedMail.subject || '',
+                        parsedMail.html || parsedMail.text || '',
+                        parsedMail.messageId || '',
+                        fullMsg.uid,
+                    );
+                    validateNoteFields(parsed);
+                } catch {
+                    console.warn(`Skipped Notes IMAP UID ${msg.uid}: invalid note fields or MIME data`);
+                    continue;
+                }
+                const newId = crypto.randomUUID();
+                const saved = await saveNote({
+                    ...parsed,
+                    owner: user,
+                    id: newId
+                });
+                // Mark it as synced with IMAP immediately so we don't push it back
+                await pool.query(
+                    'UPDATE notes SET imap_sync_token = ? WHERE id = ? AND owner = ?',
+                    [(saved as any).sync_token, newId, user],
+                );
             }
         }
         
@@ -192,9 +265,12 @@ async function syncNotesWithImapOnce(user: string, pass: string): Promise<void> 
                 // We don't hardDelete yet to keep EAS sync happy. 
             } else if (!(note as any).is_deleted && (!(note as any).imap_uid || isDirty)) {
                 // We need to push to IMAP
-                const msgId = `<${note.id}-${(note as any).sync_token}@openmailstack.local>`;
-                const dateStr = new Date(note.created_at || Date.now()).toUTCString();
-                const emailContent = `Date: ${dateStr}\r\nFrom: ${user}\r\nTo: ${user}\r\nSubject: ${note.title || 'Untitled'}\r\nMessage-ID: ${msgId}\r\nMIME-Version: 1.0\r\nX-Uniform-Type-Identifier: com.apple.mail-note\r\nContent-Type: text/html; charset="utf-8"\r\n\r\n${note.content || ''}`;
+                const msgId = deterministicNoteMessageId(user, note.id, Number((note as any).sync_token));
+                const emailContent = await buildNoteMime(note, user, msgId);
+                if (emailContent.length > NOTE_IMAP_MESSAGE_MAX_BYTES) {
+                    console.error(`Failed to export Notes revision ${note.id}: MIME exceeds the 16 MiB limit`);
+                    continue;
+                }
                 const [reservation]: any = await pool.query(
                     'UPDATE notes SET imap_msgid = ? WHERE id = ? AND owner = ? AND sync_token = ? AND is_deleted = 0',
                     [msgId, note.id, user, (note as any).sync_token],
@@ -221,9 +297,22 @@ async function syncNotesWithImapOnce(user: string, pass: string): Promise<void> 
         try { await imap.logout(); } catch(e) {}
         if (lockConnection) {
             if (lockAcquired) {
-                await lockConnection.query('SELECT RELEASE_LOCK(?)', [lockName]).catch(() => undefined);
+                try {
+                    const [releaseRows]: any = await lockConnection.query(
+                        'SELECT RELEASE_LOCK(?) AS released',
+                        [lockName],
+                    );
+                    if (Number(releaseRows[0]?.released) !== 1) {
+                        destroyLockConnection = true;
+                        console.error('Failed to release Notes synchronization lock cleanly');
+                    }
+                } catch (error) {
+                    destroyLockConnection = true;
+                    console.error('Failed to release Notes synchronization lock', error);
+                }
             }
-            lockConnection.release();
+            if (destroyLockConnection) lockConnection.destroy();
+            else lockConnection.release();
         }
     }
 }

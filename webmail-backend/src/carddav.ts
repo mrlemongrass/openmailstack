@@ -8,17 +8,19 @@ import {
     contactSyncTokenVersion,
     contactTombstoneDavUids,
     contactVCard,
-    deleteContactByDavUid,
+    deleteContactByDavUidOnConnection,
     ensureContactsSchema,
     getContactByDavUid,
     getContactHref,
     getContactHrefForDavUid,
+    getContactMutationMetadataOnConnection,
     listContactTombstonesSince,
     listContacts,
     listContactsUpdatedSince,
     listRecentContactTombstones,
     normalizeDavUid,
-    saveContactFromVCard,
+    saveContactFromVCardOnConnection,
+    withContactMutation,
     xmlEscape
 } from './contact-utils';
 
@@ -81,6 +83,38 @@ function normalizeReportSyncToken(token: string | null): string | null {
     const trimmed = token.trim();
     const lastSlash = trimmed.lastIndexOf('/');
     return lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+}
+
+function isWellFormedContactSyncToken(token: string): boolean {
+    const normalized = token.startsWith('contacts-') ? token.slice('contacts-'.length) : token;
+    return /^\d+-[1-9]\d*-\d+$/.test(normalized);
+}
+
+function requestEntityTags(value: string | string[] | undefined): string[] | null {
+    if (value === undefined) return null;
+    return (Array.isArray(value) ? value.join(',') : value)
+        .split(',')
+        .map(tag => tag.trim())
+        .filter(Boolean);
+}
+
+function weakEntityTag(tag: string): string {
+    return tag.replace(/^W\//i, '');
+}
+
+function carddavPreconditionsPass(req: Request, currentEtag: string | null): boolean {
+    const ifMatch = requestEntityTags(req.headers['if-match']);
+    if (ifMatch) {
+        if (!currentEtag || !ifMatch.some(tag => tag === '*' || (!/^W\//i.test(tag) && tag === currentEtag))) {
+            return false;
+        }
+    }
+
+    const ifNoneMatch = requestEntityTags(req.headers['if-none-match']);
+    if (ifNoneMatch && currentEtag && ifNoneMatch.some(tag => tag === '*' || weakEntityTag(tag) === weakEntityTag(currentEtag))) {
+        return false;
+    }
+    return true;
 }
 
 function responseForAddressBook(user: string, syncToken: string, includeChildren: string): string {
@@ -288,6 +322,19 @@ async function handleReport(req: Request, res: Response, user: string) {
     const isSyncCollection = isSyncCollectionReport(rawBody);
     const requestedSyncToken = normalizeReportSyncToken(syncTokenFromReportBody(rawBody));
     const syncToken = await addressBookSyncToken(user);
+    if (isSyncCollection && requestedSyncToken) {
+        const requestedVersion = contactSyncTokenVersion(requestedSyncToken);
+        const currentVersion = contactSyncTokenVersion(syncToken);
+        if (!isWellFormedContactSyncToken(requestedSyncToken)
+            || requestedVersion < 1
+            || requestedVersion > currentVersion) {
+            res.set('Content-Type', 'application/xml; charset=utf-8');
+            return res.status(403).send(
+                '<?xml version="1.0" encoding="utf-8" ?>'
+                + '<D:error xmlns:D="DAV:"><D:valid-sync-token/></D:error>',
+            );
+        }
+    }
     const requestedHrefs = await parseRequestedHrefs(req);
     const requestedUids = new Set(requestedHrefs.map(hrefToDavUid).filter(Boolean) as string[]);
     let contacts: any[] = [];
@@ -358,7 +405,17 @@ async function handlePut(req: Request, res: Response, user: string) {
         return res.status(400).send();
     }
 
-    const result = await saveContactFromVCard(user, davUid, vcard);
+    const mutation = await withContactMutation(user, async connection => {
+        const current = await getContactMutationMetadataOnConnection(connection, user, davUid);
+        if (!carddavPreconditionsPass(req, current ? contactEtag(current) : null)) {
+            return { preconditionFailed: true as const };
+        }
+        const result = await saveContactFromVCardOnConnection(connection, user, davUid, vcard);
+        if (!result) throw new Error('CardDAV contact changed during its locked PUT');
+        return { preconditionFailed: false as const, result };
+    });
+    if (mutation.preconditionFailed) return res.status(412).send();
+    const { result } = mutation;
     emitContactsUpdated(user, { davUid });
     res.set('ETag', contactEtag(result.contact));
     res.set('Location', getContactHref(user, result.contact));
@@ -371,9 +428,20 @@ async function handleDelete(req: Request, res: Response, user: string) {
         return res.status(400).send();
     }
 
-    const deleted = await deleteContactByDavUid(user, normalizeDavUid(match[2]));
-    if (deleted) emitContactsUpdated(user, { davUid: normalizeDavUid(match[2]), deleted: true });
-    return res.status(deleted ? 204 : 404).send();
+    const davUid = normalizeDavUid(match[2]);
+    const mutation = await withContactMutation(user, async connection => {
+        const current = await getContactMutationMetadataOnConnection(connection, user, davUid);
+        if (!carddavPreconditionsPass(req, current ? contactEtag(current) : null)) {
+            return { preconditionFailed: true as const, deleted: false };
+        }
+        if (!current) return { preconditionFailed: false as const, deleted: false };
+        const deleted = await deleteContactByDavUidOnConnection(connection, user, davUid, current.sync_token);
+        if (!deleted) throw new Error('CardDAV contact changed during its locked DELETE');
+        return { preconditionFailed: false as const, deleted: true };
+    });
+    if (mutation.preconditionFailed) return res.status(412).send();
+    if (mutation.deleted) emitContactsUpdated(user, { davUid, deleted: true });
+    return res.status(mutation.deleted ? 204 : 404).send();
 }
 
 async function handleProppatch(req: Request, res: Response, user: string) {

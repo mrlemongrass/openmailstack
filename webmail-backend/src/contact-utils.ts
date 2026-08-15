@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
+import type { PoolConnection } from 'mysql2/promise';
 import { pool } from './db';
+import { syncContactBirthdayEvent, type BirthdayContactIdentity } from './birthday-calendar';
 
 export interface ContactRow {
     id: number;
@@ -31,6 +33,52 @@ export interface ContactRow {
     website_url?: string;
 }
 
+export interface ContactMutationMetadata {
+    id: number;
+    dav_uid: string;
+    sync_token: number;
+    name: string;
+    email: string;
+    birthday: string | null;
+}
+
+export interface SavedContactMutation {
+    contact: ContactMutationMetadata;
+    created: boolean;
+}
+
+export class InvalidContactBirthdayError extends Error {
+    constructor() {
+        super('Invalid birthday; expected YYYY-MM-DD or a yearless --MM-DD date');
+        this.name = 'InvalidContactBirthdayError';
+    }
+}
+
+export class AmbiguousVCardUidError extends Error {
+    constructor() {
+        super('The vCard UID does not identify exactly one existing contact');
+        this.name = 'AmbiguousVCardUidError';
+    }
+}
+
+function birthdayIdentityFromContact(contact: ContactMutationMetadata): BirthdayContactIdentity {
+    return {
+        contactId: contact.id,
+        davUid: contact.dav_uid,
+        name: contact.name,
+        email: contact.email,
+    };
+}
+
+export const EAS_CONTACT_SOURCE_COLUMNS = [
+    'dav_uid', 'vcard_data', 'name', 'email', 'phone', 'emails_json', 'phones_json',
+    'addresses_json', 'job_title', 'organization', 'notes', 'photo_url', 'prefix', 'first_name', 'middle_name',
+    'last_name', 'suffix', 'nickname', 'department', 'birthday', 'website_url',
+] as const;
+
+export const easContactSourceBytesExpression = (): string =>
+    EAS_CONTACT_SOURCE_COLUMNS.map(column => `COALESCE(OCTET_LENGTH(${column}), 0)`).join(' + ');
+
 export interface ContactLabelRow {
     id: number;
     username: string;
@@ -53,6 +101,7 @@ export interface ParsedVCardContact {
     phone: string;
     emails?: string[];
     phones?: string[];
+    phoneItems?: ParsedVCardPhone[];
     organization?: string;
     title?: string;
     note?: string;
@@ -62,6 +111,16 @@ export interface ParsedVCardContact {
     middleName?: string;
     prefix?: string;
     suffix?: string;
+    nickname?: string;
+    department?: string;
+    birthday?: string;
+    websiteUrl?: string;
+}
+
+export interface ParsedVCardPhone {
+    value: string;
+    types: string[];
+    label: string;
 }
 
 export function createContactUid(): string {
@@ -224,6 +283,104 @@ export async function ensureContactsSchema(): Promise<void> {
     return schemaPromise;
 }
 
+export type ContactMutationConnection = PoolConnection;
+
+export interface ContactMutationLockLease {
+    readonly lockName: string;
+}
+
+function contactMutationLockName(user: string): string {
+    return createHash('sha256').update(`openmailstack:contacts:${user.trim().toLowerCase()}`).digest('hex');
+}
+
+/**
+ * Acquire the per-user contact lock on an existing dedicated connection.
+ * Composite PIM transactions must acquire their PIM lock first, then this lock,
+ * before BEGIN; they must release this lock before the PIM lock after COMMIT or ROLLBACK.
+ */
+export async function acquireContactMutationLock(
+    connection: ContactMutationConnection,
+    user: string,
+): Promise<ContactMutationLockLease> {
+    const lockName = contactMutationLockName(user);
+    const [rows]: any = await connection.query(
+        'SELECT GET_LOCK(?, ?) AS acquired',
+        [lockName, 10],
+    );
+    if (Number(rows[0]?.acquired) !== 1) {
+        throw new Error('Timed out waiting for the contact mutation lock');
+    }
+    return { lockName };
+}
+
+export async function releaseContactMutationLock(
+    connection: ContactMutationConnection,
+    lease: ContactMutationLockLease,
+): Promise<void> {
+    const [rows]: any = await connection.query(
+        'SELECT RELEASE_LOCK(?) AS released',
+        [lease.lockName],
+    );
+    if (Number(rows[0]?.released) !== 1) {
+        throw new Error('The contact mutation lock was not released');
+    }
+}
+
+export async function withContactMutation<T>(
+    user: string,
+    mutate: (connection: ContactMutationConnection) => Promise<T>,
+): Promise<T> {
+    await ensureContactsSchema();
+    const connection = await pool.getConnection();
+    let lockLease: ContactMutationLockLease | null = null;
+    let transactionStarted = false;
+    let committed = false;
+    let connectionDestroyed = false;
+    let operationError: unknown = null;
+
+    try {
+        lockLease = await acquireContactMutationLock(connection, user);
+        await connection.beginTransaction();
+        transactionStarted = true;
+        const result = await mutate(connection);
+        await connection.commit();
+        transactionStarted = false;
+        committed = true;
+        return result;
+    } catch (error) {
+        operationError = error;
+        if (!lockLease) {
+            connection.destroy();
+            connectionDestroyed = true;
+        } else if (transactionStarted) {
+            try {
+                await connection.rollback();
+            } catch {
+                console.error('[Contacts] Failed to roll back a contact mutation; destroying its connection');
+                connection.destroy();
+                connectionDestroyed = true;
+            }
+        } else {
+            connection.destroy();
+            connectionDestroyed = true;
+        }
+        throw error;
+    } finally {
+        try {
+            if (lockLease && !connectionDestroyed) {
+                await releaseContactMutationLock(connection, lockLease);
+            }
+        } catch (releaseError) {
+            console.error('[Contacts] Failed to release a contact mutation lock; destroying its connection');
+            connection.destroy();
+            connectionDestroyed = true;
+            if (!committed && !operationError) throw releaseError;
+        } finally {
+            if (!connectionDestroyed) connection.release();
+        }
+    }
+}
+
 export function xmlEscape(value: string): string {
     return value
         .replace(/&/g, '&amp;')
@@ -303,13 +460,37 @@ function firstVCardValue(lines: string[], propertyName: string): string {
     return vcardUnescape(line.slice(separatorIndex + 1).trim());
 }
 
+function firstVCardRawValue(lines: string[], propertyName: string): string {
+    const upperName = propertyName.toUpperCase();
+    const line = lines.find(candidate => vcardPropertyName(candidate) === upperName);
+    if (!line) return '';
+    return line.slice(line.indexOf(':') + 1).trim();
+}
+
+function splitEscapedVCardComponents(value: string, count: number): string[] {
+    const parts: string[] = [];
+    let start = 0;
+    for (let index = 0; index < value.length; index += 1) {
+        if (value[index] !== ';') continue;
+        let slashes = 0;
+        for (let prior = index - 1; prior >= 0 && value[prior] === '\\'; prior -= 1) slashes += 1;
+        if (slashes % 2 === 0) {
+            parts.push(vcardUnescape(value.slice(start, index).trim()));
+            start = index + 1;
+        }
+    }
+    parts.push(vcardUnescape(value.slice(start).trim()));
+    while (parts.length < count) parts.push('');
+    return parts.slice(0, count);
+}
+
 function vCardAddress(lines: string[]): string {
     const vals: string[] = [];
     for (const line of lines) {
         const propUpper = line.split(':')[0].split(';')[0].toUpperCase();
         if (propUpper !== 'ADR') continue;
-        const val = firstVCardValue([line], 'ADR');
-        const parts = val.split(';').filter(Boolean);
+        const raw = firstVCardRawValue([line], 'ADR');
+        const parts = splitEscapedVCardComponents(raw, 7).filter(Boolean);
         if (parts.length > 0) vals.push(parts.join(', '));
     }
     return vals.join(' | ') || '';
@@ -332,12 +513,98 @@ function allVCardValues(lines: string[], propertyName: string): string[] {
     return results;
 }
 
+export function normalizeContactBirthday(value: unknown): string | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'string') throw new InvalidContactBirthdayError();
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    const fullDate = trimmed.match(/^(\d{4})-?(\d{2})-?(\d{2})$/);
+    const yearlessDate = trimmed.match(/^(?:--)?(\d{2})-?(\d{2})$/);
+    if (!fullDate && !yearlessDate) throw new InvalidContactBirthdayError();
+
+    const year = fullDate ? Number(fullDate[1]) : 2000;
+    const month = Number(fullDate ? fullDate[2] : yearlessDate![1]);
+    const day = Number(fullDate ? fullDate[3] : yearlessDate![2]);
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if ((fullDate && year < 1) || month < 1 || month > 12 || day < 1 || day > days[month - 1]) {
+        throw new InvalidContactBirthdayError();
+    }
+    return fullDate
+        ? `${fullDate[1]}-${fullDate[2]}-${fullDate[3]}`
+        : `${yearlessDate![1]}-${yearlessDate![2]}`;
+}
+
+export function extractVCardBirthday(vcard: string): string | null {
+    const birthdayValues = allVCardValues(unfoldVCard(vcard), 'BDAY');
+    if (birthdayValues.length === 0) return null;
+    if (birthdayValues.length > 1) throw new InvalidContactBirthdayError();
+    return normalizeContactBirthday(birthdayValues[0]);
+}
+
+export function extractVCardUid(vcard: string): string | null {
+    const uidValues = allVCardValues(unfoldVCard(vcard), 'UID')
+        .map(value => value.trim())
+        .filter(Boolean);
+    if (uidValues.length === 0) return null;
+    if (uidValues.length > 1) throw new AmbiguousVCardUidError();
+    return uidValues[0];
+}
+
+function canonicalizeVCardBirthday(vcard: string, birthday: string | null): string {
+    const lines = unfoldVCard(vcard).filter(line => vcardPropertyName(line) !== 'BDAY');
+    if (birthday) {
+        const endIndex = lines.findIndex(line => line.toUpperCase() === 'END:VCARD');
+        const vcardBirthday = /^\d{2}-\d{2}$/.test(birthday) ? `--${birthday}` : birthday;
+        lines.splice(endIndex >= 0 ? endIndex : lines.length, 0, `BDAY:${vcardBirthday}`);
+    }
+    return `${lines.join('\r\n')}\r\n`;
+}
+
+function vCardPhoneItems(lines: string[]): ParsedVCardPhone[] {
+    const items: ParsedVCardPhone[] = [];
+    for (const candidate of lines) {
+        const separatorIndex = candidate.indexOf(':');
+        if (separatorIndex < 0) continue;
+        const rawName = candidate.slice(0, separatorIndex);
+        const baseName = rawName.split(';')[0].toUpperCase();
+        const dotIndex = baseName.indexOf('.');
+        if ((dotIndex >= 0 ? baseName.slice(dotIndex + 1) : baseName) !== 'TEL') continue;
+
+        const types = new Set<string>();
+        for (const parameter of rawName.split(';').slice(1)) {
+            const [name, value] = parameter.split('=', 2);
+            const rawTypes = value === undefined ? name : name.toUpperCase() === 'TYPE' ? value : '';
+            for (const type of rawTypes.split(',')) {
+                const normalized = type.trim().toUpperCase();
+                if (normalized) types.add(normalized);
+            }
+        }
+        const value = vcardUnescape(candidate.slice(separatorIndex + 1).trim());
+        if (!value) continue;
+        const has = (type: string) => types.has(type);
+        const label = has('WORK') && has('FAX') ? 'Business Fax'
+            : has('HOME') && has('FAX') ? 'Home Fax'
+                : has('CELL') ? 'Mobile'
+                    : has('WORK') ? 'Work'
+                        : has('HOME') ? 'Home'
+                            : has('VOICE') ? 'Voice'
+                                : has('CAR') ? 'Car'
+                                    : has('PAGER') ? 'Pager'
+                                        : has('FAX') ? 'Fax'
+                                            : 'Other';
+        items.push({ value, types: [...types], label });
+    }
+    return items;
+}
+
 export function parseVCard(vcard: string): ParsedVCardContact {
     const lines = unfoldVCard(vcard);
     const fn = firstVCardValue(lines, 'FN');
-    const nRaw = firstVCardValue(lines, 'N');
+    const nRaw = firstVCardRawValue(lines, 'N');
     // Parse structured N: LastName;FirstName;MiddleName;Prefix;Suffix
-    const nParts = nRaw.split(';').map(s => vcardUnescape(s.trim()));
+    const nParts = splitEscapedVCardComponents(nRaw, 5);
     const lastName = nParts[0] || '';
     const firstName = nParts[1] || '';
     const middleName = nParts[2] || '';
@@ -347,10 +614,16 @@ export function parseVCard(vcard: string): ParsedVCardContact {
 
     // Extract all emails and phones (iOS uses item1.EMAIL, item2.EMAIL, etc.)
     const emails = allVCardValues(lines, 'EMAIL');
-    const phones = allVCardValues(lines, 'TEL');
+    const phoneItems = vCardPhoneItems(lines);
+    const phones = phoneItems.map(item => item.value);
     const primaryEmail = emails[0] || '';
     const primaryPhone = phones[0] || '';
 
+    const organizationParts = splitEscapedVCardComponents(firstVCardRawValue(lines, 'ORG'), 2);
+    let birthday: string | undefined;
+    try {
+        birthday = extractVCardBirthday(vcard) || undefined;
+    } catch {}
     return {
         name: fn || fallbackName,
         email: primaryEmail,
@@ -362,10 +635,15 @@ export function parseVCard(vcard: string): ParsedVCardContact {
         suffix: suffix || undefined,
         emails: emails.length > 1 ? emails : [],
         phones: phones.length > 1 ? phones : [],
-        organization: firstVCardValue(lines, 'ORG'),
+        phoneItems,
+        organization: organizationParts[0] || '',
+        department: organizationParts[1]?.slice(0, 255) || undefined,
         title: firstVCardValue(lines, 'TITLE'),
         note: firstVCardValue(lines, 'NOTE'),
-        address: vCardAddress(lines)
+        address: vCardAddress(lines),
+        nickname: firstVCardValue(lines, 'NICKNAME').slice(0, 128) || undefined,
+        birthday,
+        websiteUrl: firstVCardValue(lines, 'URL').slice(0, 500) || undefined,
     };
 }
 
@@ -379,11 +657,11 @@ export function normalizeDavUid(raw: string): string {
     return cleaned || `contact-${Date.now()}`;
 }
 
-export function getContactDavUid(contact: ContactRow): string {
+export function getContactDavUid(contact: Pick<ContactRow, 'id' | 'dav_uid'>): string {
     return contact.dav_uid || `contact-${contact.id}`;
 }
 
-export function getContactHref(user: string, contact: ContactRow): string {
+export function getContactHref(user: string, contact: Pick<ContactRow, 'id' | 'dav_uid'>): string {
     return getContactHrefForDavUid(user, getContactDavUid(contact));
 }
 
@@ -408,7 +686,7 @@ export function normalizeVCardData(vcard: string, davUid: string, fallback: Pars
         if (fallback.email) lines.push(`EMAIL;TYPE=INTERNET:${vcardEscape(fallback.email)}`);
         if (fallback.phone) lines.push(`TEL;TYPE=CELL:${vcardEscape(fallback.phone)}`);
         lines.push('END:VCARD');
-    } else if (!lines.some(line => line.toUpperCase().startsWith('UID:') || line.toUpperCase().startsWith('UID;'))) {
+    } else if (!lines.some(line => vcardPropertyName(line) === 'UID')) {
         const versionIndex = lines.findIndex(line => line.toUpperCase().startsWith('VERSION:'));
         lines.splice(versionIndex >= 0 ? versionIndex + 1 : 1, 0, `UID:${vcardEscape(davUid)}`);
     }
@@ -419,11 +697,16 @@ export function normalizeVCardData(vcard: string, davUid: string, fallback: Pars
 export function patchVCardData(vcard: string, davUid: string, updates: any): string {
     const trimmed = (vcard || '').trim();
     let lines = trimmed && /^BEGIN:VCARD/i.test(trimmed) ? unfoldVCard(trimmed) : ['BEGIN:VCARD', 'VERSION:3.0', 'END:VCARD'];
-    
-    if (!lines.some(line => line.toUpperCase().startsWith('UID:') || line.toUpperCase().startsWith('UID;'))) {
+
+    if (!lines.some(line => vcardPropertyName(line) === 'UID')) {
         const versionIndex = lines.findIndex(line => line.toUpperCase().startsWith('VERSION:'));
         lines.splice(versionIndex >= 0 ? versionIndex + 1 : 1, 0, `UID:${vcardEscape(davUid)}`);
     }
+
+    const birthdayWasUpdated = Object.prototype.hasOwnProperty.call(updates, 'birthday');
+    const normalizedBirthday = birthdayWasUpdated
+        ? normalizeContactBirthday(updates.birthday)
+        : null;
 
     const firstName = updates.first_name || '';
     const lastName = updates.last_name || '';
@@ -433,7 +716,7 @@ export function patchVCardData(vcard: string, davUid: string, updates: any): str
 
     let newLines: string[] = [];
     let existingN = ['', '', '', '', ''];
-    const nLine = lines.find(l => l.toUpperCase().startsWith('N:') || l.toUpperCase().startsWith('N;'));
+    const nLine = lines.find(line => vcardPropertyName(line) === 'N');
     if (nLine) {
         const val = nLine.slice(nLine.indexOf(':') + 1);
         const parts = val.split(/(?<!\\);/).map(vcardUnescape);
@@ -447,12 +730,13 @@ export function patchVCardData(vcard: string, davUid: string, updates: any): str
     if (suffix) existingN[4] = suffix;
 
     for (const line of lines) {
-        if (line.toUpperCase().startsWith('BEGIN:') || line.toUpperCase().startsWith('END:') || line.toUpperCase().startsWith('VERSION:') || line.toUpperCase().startsWith('UID:')) {
+        if (line.toUpperCase().startsWith('BEGIN:') || line.toUpperCase().startsWith('END:') || line.toUpperCase().startsWith('VERSION:') || vcardPropertyName(line) === 'UID') {
             newLines.push(line);
             continue;
         }
-        const propUpper = line.split(':')[0].split(';')[0].toUpperCase();
-        if (['FN', 'N', 'EMAIL', 'TEL', 'ORG', 'TITLE', 'NOTE'].includes(propUpper)) {
+        const propUpper = vcardPropertyName(line);
+        if (['FN', 'N', 'EMAIL', 'TEL', 'ORG', 'TITLE', 'NOTE'].includes(propUpper)
+            || (birthdayWasUpdated && propUpper === 'BDAY')) {
             continue; // We will insert these manually at the end
         }
         newLines.push(line);
@@ -474,30 +758,32 @@ export function patchVCardData(vcard: string, davUid: string, updates: any): str
         if (phone.value) newLines.splice(insertAt + 2, 0, `TEL;TYPE=${phone.type || 'CELL'}:${vcardEscape(phone.value)}`);
     }
 
-    if (updates.organization) newLines.splice(insertAt + 2, 0, `ORG:${vcardEscape(updates.organization)}`);
+    if (updates.organization || updates.department) {
+        const organization = vcardEscape(updates.organization || '');
+        const department = updates.department ? `;${vcardEscape(updates.department)}` : '';
+        newLines.splice(insertAt + 2, 0, `ORG:${organization}${department}`);
+    }
     if (updates.job_title) newLines.splice(insertAt + 2, 0, `TITLE:${vcardEscape(updates.job_title)}`);
     if (updates.notes) newLines.splice(insertAt + 2, 0, `NOTE:${vcardEscape(updates.notes)}`);
+    if (normalizedBirthday) {
+        const vcardBirthday = /^\d{2}-\d{2}$/.test(normalizedBirthday)
+            ? `--${normalizedBirthday}`
+            : normalizedBirthday;
+        newLines.splice(insertAt + 2, 0, `BDAY:${vcardBirthday}`);
+    }
     if (updates.photo_url && /^data:image\//.test(updates.photo_url)) newLines.splice(insertAt + 2, 0, `PHOTO;ENCODING=BASE64;TYPE=JPEG:${(updates.photo_url as string).replace(/^data:image\/[^;]+;base64,/, '')}`);
 
     if (endIndex < 0) newLines.push('END:VCARD');
     return stampVCardRevision(`${newLines.join('\r\n')}\r\n`);
 }
 
-export function contactEtag(contact: ContactRow): string {
+export function contactEtag(contact: Pick<ContactRow, 'id' | 'dav_uid' | 'sync_token'>): string {
     const hash = createHash('sha1');
     hash.update(String(contact.id));
     hash.update('\0');
     hash.update(getContactDavUid(contact));
     hash.update('\0');
-    hash.update(contact.name || '');
-    hash.update('\0');
-    hash.update(contact.email || '');
-    hash.update('\0');
-    hash.update(contact.phone || '');
-    hash.update('\0');
-    hash.update(contact.vcard_data || '');
-    hash.update('\0');
-    hash.update(contact.updated_at instanceof Date ? contact.updated_at.toISOString() : String(contact.updated_at || ''));
+    hash.update(String(contact.sync_token || 0));
     return `"${hash.digest('hex')}"`;
 }
 
@@ -506,6 +792,18 @@ export async function listContacts(user: string): Promise<ContactRow[]> {
     const [rows]: any = await pool.query(
         'SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL ORDER BY is_favorite DESC, name ASC, email ASC, id ASC',
         [user]
+    );
+    return rows;
+}
+
+/** @internal Call from an existing contact mutation when a transaction-consistent snapshot is required. */
+export async function listContactsOnConnection(
+    connection: ContactMutationConnection,
+    user: string,
+): Promise<ContactRow[]> {
+    const [rows]: any = await connection.query(
+        'SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL ORDER BY is_favorite DESC, name ASC, email ASC, id ASC',
+        [user],
     );
     return rows;
 }
@@ -576,9 +874,12 @@ export function contactSyncTokenVersion(token: string | null | undefined): numbe
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-export async function nextContactSyncToken(user: string): Promise<number> {
-    await ensureContactsSchema();
-    const [rows]: any = await pool.query(
+/** @internal Call only from inside withContactMutation. */
+export async function nextContactSyncTokenOnConnection(
+    connection: ContactMutationConnection,
+    user: string,
+): Promise<number> {
+    const [rows]: any = await connection.query(
         `SELECT GREATEST(
                     COALESCE((SELECT MAX(sync_token) FROM contacts WHERE username = ?), 0),
                     COALESCE((SELECT MAX(sync_token) FROM contact_tombstones WHERE username = ?), 0)
@@ -597,8 +898,74 @@ export async function getContactByDavUid(user: string, davUid: string): Promise<
     return rows.length > 0 ? rows[0] : null;
 }
 
-async function upsertContactTombstone(user: string, davUid: string, syncToken: number): Promise<void> {
-    await pool.query(
+/** @internal Call only from inside withContactMutation. */
+export async function getContactByDavUidOnConnection(
+    connection: ContactMutationConnection,
+    user: string,
+    davUid: string,
+): Promise<ContactRow | null> {
+    const [rows]: any = await connection.query(
+        'SELECT * FROM contacts WHERE username = ? AND dav_uid = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1',
+        [user, davUid],
+    );
+    return rows.length > 0 ? rows[0] : null;
+}
+
+/** Load the exact identity/version fields needed by a locked contact mutation. */
+export async function getContactMutationMetadataOnConnection(
+    connection: ContactMutationConnection,
+    user: string,
+    davUid: string,
+): Promise<ContactMutationMetadata | null> {
+    const [rows]: any = await connection.query(
+        `SELECT id, dav_uid, sync_token, name, email, birthday
+         FROM contacts
+         WHERE username = ? AND dav_uid = ? AND deleted_at IS NULL
+         ORDER BY id ASC LIMIT 1`,
+        [user, normalizeDavUid(davUid)],
+    );
+    if (rows.length === 0) return null;
+    return {
+        id: Number(rows[0].id),
+        dav_uid: normalizeDavUid(rows[0].dav_uid || davUid),
+        sync_token: Number(rows[0].sync_token || 0),
+        name: String(rows[0].name || ''),
+        email: String(rows[0].email || ''),
+        birthday: rows[0].birthday ? String(rows[0].birthday) : null,
+    };
+}
+
+/** Load only the columns covered by the bounded EAS snapshot on its locked connection. */
+export async function getEasContactByDavUidOnConnection(
+    connection: ContactMutationConnection,
+    user: string,
+    davUid: string,
+    expectedSyncToken: number,
+    expectedSourceBytes: number,
+): Promise<ContactRow | null> {
+    if (!Number.isSafeInteger(expectedSyncToken) || expectedSyncToken < 1
+        || !Number.isSafeInteger(expectedSourceBytes) || expectedSourceBytes < 0) {
+        return null;
+    }
+    const sourceBytes = easContactSourceBytesExpression();
+    const [rows]: any = await connection.query(
+        `SELECT id, username, sync_token, ${EAS_CONTACT_SOURCE_COLUMNS.join(', ')}
+         FROM contacts
+         WHERE username = ? AND dav_uid = ? AND deleted_at IS NULL
+           AND sync_token = ? AND (${sourceBytes}) = ?
+         ORDER BY id ASC LIMIT 1`,
+        [user, davUid, expectedSyncToken, expectedSourceBytes],
+    );
+    return rows.length > 0 ? rows[0] : null;
+}
+
+async function upsertContactTombstone(
+    connection: ContactMutationConnection,
+    user: string,
+    davUid: string,
+    syncToken: number,
+): Promise<void> {
+    await connection.query(
         `INSERT INTO contact_tombstones (username, dav_uid, deleted_at, sync_token)
          VALUES (?, ?, NOW(), ?)
          ON DUPLICATE KEY UPDATE deleted_at = NOW(), sync_token = VALUES(sync_token)`,
@@ -606,40 +973,123 @@ async function upsertContactTombstone(user: string, davUid: string, syncToken: n
     );
 }
 
-export async function recordContactTombstone(user: string, davUid: string): Promise<number> {
-    await ensureContactsSchema();
-    const syncToken = await nextContactSyncToken(user);
-    await upsertContactTombstone(user, davUid, syncToken);
+/** @internal Call only from inside withContactMutation. */
+export async function recordContactTombstoneOnConnection(
+    connection: ContactMutationConnection,
+    user: string,
+    davUid: string,
+): Promise<number> {
+    const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+    await upsertContactTombstone(connection, user, davUid, syncToken);
     return syncToken;
 }
 
-async function clearContactTombstone(user: string, davUid: string): Promise<void> {
-    await pool.query('DELETE FROM contact_tombstones WHERE username = ? AND dav_uid = ?', [user, normalizeDavUid(davUid)]);
+export async function recordContactTombstone(user: string, davUid: string): Promise<number> {
+    return withContactMutation(user, connection => recordContactTombstoneOnConnection(connection, user, davUid));
 }
 
-export async function saveContactFromVCard(user: string, davUid: string, vcard: string): Promise<{ contact: ContactRow; created: boolean }> {
-    await ensureContactsSchema();
-    const normalizedDavUid = normalizeDavUid(davUid);
-    const parsed = parseVCard(vcard);
-    const normalized = stampVCardRevision(normalizeVCardData(vcard, normalizedDavUid, parsed));
-    const [existingRows]: any = await pool.query(
-        'SELECT * FROM contacts WHERE username = ? AND dav_uid = ? ORDER BY deleted_at IS NULL DESC, id ASC LIMIT 1',
-        [user, normalizedDavUid]
+async function clearContactTombstone(
+    connection: ContactMutationConnection,
+    user: string,
+    davUid: string,
+): Promise<void> {
+    await connection.query(
+        'DELETE FROM contact_tombstones WHERE username = ? AND dav_uid = ?',
+        [user, normalizeDavUid(davUid)],
     );
-    const existing = existingRows.length > 0 ? existingRows[0] : null;
-    const syncToken = await nextContactSyncToken(user);
+}
+
+function escapeContactUidLikePattern(value: string): string {
+    return value.replace(/[!%_]/g, character => `!${character}`);
+}
+
+/** Resolve only an exact immutable UID stored inside a vCard; never infer identity from mutable fields. */
+export async function findContactDavUidByVCardUidOnConnection(
+    connection: ContactMutationConnection,
+    user: string,
+    vcardUid: string,
+): Promise<string | null> {
+    const exactUid = vcardUid.trim();
+    if (!exactUid) return null;
+    const escapedUid = vcardEscape(exactUid);
+    const [rows]: any = await connection.query(
+        `SELECT id, dav_uid, vcard_data
+         FROM contacts
+         WHERE username = ?
+           AND (vcard_data LIKE ? ESCAPE '!' OR vcard_data LIKE ? ESCAPE '!')
+         ORDER BY id ASC LIMIT 3
+         FOR UPDATE`,
+        [
+            user,
+            `%${escapeContactUidLikePattern(exactUid)}%`,
+            `%${escapeContactUidLikePattern(escapedUid)}%`,
+        ],
+    );
+
+    const matches: any[] = [];
+    for (const row of rows) {
+        const storedUid = extractVCardUid(String(row.vcard_data || ''));
+        if (storedUid === exactUid) matches.push(row);
+    }
+    if (matches.length > 1 || rows.length >= 3) throw new AmbiguousVCardUidError();
+    return matches.length === 1 ? normalizeDavUid(matches[0].dav_uid || `contact-${matches[0].id}`) : null;
+}
+
+/** @internal Call only from inside withContactMutation. */
+export async function saveContactFromVCardOnConnection(
+    connection: ContactMutationConnection,
+    user: string,
+    davUid: string,
+    vcard: string,
+    expectedSyncToken?: number | null,
+): Promise<SavedContactMutation | null> {
+    const normalizedDavUid = normalizeDavUid(davUid);
+    const birthday = extractVCardBirthday(vcard);
+    const canonicalVCard = canonicalizeVCardBirthday(vcard, birthday);
+    const parsed = parseVCard(canonicalVCard);
+    const normalized = stampVCardRevision(normalizeVCardData(canonicalVCard, normalizedDavUid, parsed));
     const emailsJson = parsed.emails && parsed.emails.length > 1
         ? JSON.stringify(parsed.emails.map(value => ({ value, label: 'Other' })))
         : null;
-    const phonesJson = parsed.phones && parsed.phones.length > 1
-        ? JSON.stringify(parsed.phones.map(value => ({ value, label: 'Other' })))
+    const phoneItems = parsed.phoneItems || [];
+    const phonesJson = phoneItems.length > 1 || phoneItems.some(item => item.types.length > 0)
+        ? JSON.stringify(phoneItems.map(item => ({
+            value: item.value,
+            label: item.label,
+            ...(item.types.length > 0 ? { type: item.types.join(',') } : {}),
+        })))
         : null;
     const addressesJson = parsed.address
         ? JSON.stringify([{ value: parsed.address, label: 'Other' }])
         : null;
 
+    const [existingRows]: any = await connection.query(
+        `SELECT id, dav_uid, sync_token, name, email, birthday, deleted_at IS NULL AS is_active
+         FROM contacts
+         WHERE username = ? AND dav_uid = ?
+         ORDER BY deleted_at IS NULL DESC, id ASC LIMIT 1`,
+        [user, normalizedDavUid],
+    );
+    const existing: ContactMutationMetadata | null = existingRows.length > 0 ? {
+        id: Number(existingRows[0].id),
+        dav_uid: normalizeDavUid(existingRows[0].dav_uid || normalizedDavUid),
+        sync_token: Number(existingRows[0].sync_token || 0),
+        name: String(existingRows[0].name || ''),
+        email: String(existingRows[0].email || ''),
+        birthday: existingRows[0].birthday ? String(existingRows[0].birthday) : null,
+    } : null;
+    const existingIsActive = Boolean(existing) && Number(existingRows[0].is_active ?? 1) === 1;
+    if (expectedSyncToken !== undefined) {
+        if (expectedSyncToken === null
+            ? existingIsActive
+            : !existingIsActive || !existing || Number(existing.sync_token) !== expectedSyncToken) {
+            return null;
+        }
+    }
+    const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+
     if (existing) {
-        await pool.query(
+        const [updateResult]: any = await connection.query(
             `UPDATE contacts
              SET name = ?,
                  email = ?,
@@ -656,9 +1106,17 @@ export async function saveContactFromVCard(user: string, davUid: string, vcard: 
                  middle_name = ?,
                  prefix = ?,
                  suffix = ?,
+                 nickname = ?,
+                 department = ?,
+                 birthday = ?,
+                 website_url = ?,
                  deleted_at = NULL,
                  sync_token = ?
-             WHERE id = ? AND username = ?`,
+             WHERE id = ? AND username = ?${expectedSyncToken === undefined
+                ? ''
+                : expectedSyncToken === null
+                    ? ' AND deleted_at IS NOT NULL'
+                    : ' AND sync_token = ? AND deleted_at IS NULL'}`,
             [
                 parsed.name || '',
                 parsed.email || '',
@@ -675,22 +1133,42 @@ export async function saveContactFromVCard(user: string, davUid: string, vcard: 
                 parsed.middleName || null,
                 parsed.prefix || null,
                 parsed.suffix || null,
+                parsed.nickname || null,
+                parsed.department || null,
+                parsed.birthday || null,
+                parsed.websiteUrl || null,
                 syncToken,
                 existing.id,
-                user
-            ]
+                user,
+                ...(typeof expectedSyncToken === 'number' ? [expectedSyncToken] : []),
+            ],
         );
-        await clearContactTombstone(user, normalizedDavUid);
-        const updated = await getContactByDavUid(user, normalizedDavUid);
-        return { contact: updated!, created: false };
+        if (expectedSyncToken !== undefined && !updateResult.affectedRows) return null;
+        await clearContactTombstone(connection, user, normalizedDavUid);
+        const contact: ContactMutationMetadata = {
+            id: existing.id,
+            dav_uid: normalizedDavUid,
+            sync_token: syncToken,
+            name: parsed.name || '',
+            email: parsed.email || '',
+            birthday: parsed.birthday || null,
+        };
+        await syncContactBirthdayEvent(
+            connection,
+            user,
+            birthdayIdentityFromContact(contact),
+            contact.birthday,
+            [birthdayIdentityFromContact(existing), birthdayIdentityFromContact(contact)],
+        );
+        return { contact, created: !existingIsActive };
     }
 
-    const [result]: any = await pool.query(
+    const [result]: any = await connection.query(
         `INSERT INTO contacts
          (username, name, email, phone, vcard_data, dav_uid, sync_token,
           emails_json, phones_json, addresses_json, job_title, organization, notes,
-          first_name, last_name, middle_name, prefix, suffix)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          first_name, last_name, middle_name, prefix, suffix, nickname, department, birthday, website_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             user,
             parsed.name || '',
@@ -709,94 +1187,171 @@ export async function saveContactFromVCard(user: string, davUid: string, vcard: 
             parsed.lastName || null,
             parsed.middleName || null,
             parsed.prefix || null,
-            parsed.suffix || null
-        ]
+            parsed.suffix || null,
+            parsed.nickname || null,
+            parsed.department || null,
+            parsed.birthday || null,
+            parsed.websiteUrl || null,
+        ],
     );
-    const [rows]: any = await pool.query('SELECT * FROM contacts WHERE id = ?', [result.insertId]);
-    return { contact: rows[0], created: true };
+    const contact: ContactMutationMetadata = {
+        id: Number(result.insertId),
+        dav_uid: normalizedDavUid,
+        sync_token: syncToken,
+        name: parsed.name || '',
+        email: parsed.email || '',
+        birthday: parsed.birthday || null,
+    };
+    await syncContactBirthdayEvent(
+        connection,
+        user,
+        birthdayIdentityFromContact(contact),
+        contact.birthday,
+    );
+    return { contact, created: true };
 }
 
-export async function deleteContactByDavUid(user: string, davUid: string): Promise<boolean> {
+export async function saveContactFromVCard(user: string, davUid: string, vcard: string): Promise<SavedContactMutation>;
+export async function saveContactFromVCard(user: string, davUid: string, vcard: string, expectedSyncToken: number | null): Promise<SavedContactMutation | null>;
+export async function saveContactFromVCard(
+    user: string,
+    davUid: string,
+    vcard: string,
+    expectedSyncToken?: number | null,
+): Promise<SavedContactMutation | null> {
     await ensureContactsSchema();
+    return withContactMutation(
+        user,
+        connection => saveContactFromVCardOnConnection(connection, user, davUid, vcard, expectedSyncToken),
+    );
+}
+
+/** @internal Call only from inside withContactMutation. */
+export async function deleteContactByDavUidOnConnection(
+    connection: ContactMutationConnection,
+    user: string,
+    davUid: string,
+    expectedSyncToken?: number,
+): Promise<boolean> {
     const normalizedDavUid = normalizeDavUid(davUid);
-    const [rows]: any = await pool.query(
-        'SELECT id FROM contacts WHERE username = ? AND dav_uid = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1',
-        [user, normalizedDavUid]
+    const [rows]: any = await connection.query(
+        `SELECT id, dav_uid, sync_token, name, email, birthday
+         FROM contacts
+         WHERE username = ? AND dav_uid = ? AND deleted_at IS NULL
+         ORDER BY id ASC LIMIT 1`,
+        [user, normalizedDavUid],
     );
     if (rows.length === 0) return false;
+    const contact: ContactMutationMetadata = {
+        id: Number(rows[0].id),
+        dav_uid: normalizeDavUid(rows[0].dav_uid || normalizedDavUid),
+        sync_token: Number(rows[0].sync_token || 0),
+        name: String(rows[0].name || ''),
+        email: String(rows[0].email || ''),
+        birthday: rows[0].birthday ? String(rows[0].birthday) : null,
+    };
+    if (expectedSyncToken !== undefined && contact.sync_token !== expectedSyncToken) return false;
 
-    const syncToken = await nextContactSyncToken(user);
-    const [result]: any = await pool.query(
-        'UPDATE contacts SET deleted_at = NOW(), sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NULL',
-        [syncToken, rows[0].id, user]
+    const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+    const [result]: any = await connection.query(
+        `UPDATE contacts SET deleted_at = NOW(), sync_token = ?
+         WHERE id = ? AND username = ? AND deleted_at IS NULL${expectedSyncToken === undefined ? '' : ' AND sync_token = ?'}`,
+        [syncToken, contact.id, user, ...(expectedSyncToken === undefined ? [] : [expectedSyncToken])],
     );
     if (result.affectedRows > 0) {
-        await upsertContactTombstone(user, normalizedDavUid, syncToken);
+        await upsertContactTombstone(connection, user, normalizedDavUid, syncToken);
+        const identity = birthdayIdentityFromContact(contact);
+        await syncContactBirthdayEvent(connection, user, identity, null, [identity]);
     }
     return result.affectedRows > 0;
+}
+
+export async function deleteContactByDavUid(user: string, davUid: string, expectedSyncToken?: number): Promise<boolean> {
+    await ensureContactsSchema();
+    return withContactMutation(
+        user,
+        connection => deleteContactByDavUidOnConnection(connection, user, davUid, expectedSyncToken),
+    );
 }
 
 export async function softDeleteContactById(user: string, id: string | number): Promise<boolean> {
     await ensureContactsSchema();
-    const [rows]: any = await pool.query(
-        'SELECT id, dav_uid FROM contacts WHERE id = ? AND username = ? AND deleted_at IS NULL LIMIT 1',
-        [id, user]
-    );
-    if (rows.length === 0) return false;
+    return withContactMutation(user, async connection => {
+        const [rows]: any = await connection.query(
+            'SELECT id, dav_uid FROM contacts WHERE id = ? AND username = ? AND deleted_at IS NULL LIMIT 1',
+            [id, user],
+        );
+        if (rows.length === 0) return false;
 
-    const davUid = rows[0].dav_uid || `contact-${rows[0].id}`;
-    const syncToken = await nextContactSyncToken(user);
-    const [result]: any = await pool.query(
-        'UPDATE contacts SET dav_uid = ?, deleted_at = NOW(), sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NULL',
-        [davUid, syncToken, rows[0].id, user]
-    );
-    if (result.affectedRows > 0) {
-        await upsertContactTombstone(user, davUid, syncToken);
-    }
-    return result.affectedRows > 0;
+        const davUid = rows[0].dav_uid || `contact-${rows[0].id}`;
+        const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+        const [result]: any = await connection.query(
+            'UPDATE contacts SET dav_uid = ?, deleted_at = NOW(), sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NULL',
+            [davUid, syncToken, rows[0].id, user],
+        );
+        if (result.affectedRows > 0) {
+            await upsertContactTombstone(connection, user, davUid, syncToken);
+        }
+        return result.affectedRows > 0;
+    });
 }
 
 export async function softDeleteContactsByIds(user: string, ids: Array<string | number>): Promise<number> {
     await ensureContactsSchema();
     if (ids.length === 0) return 0;
-    const placeholders = ids.map(() => '?').join(',');
-    const [rows]: any = await pool.query(
-        `SELECT id, dav_uid FROM contacts WHERE id IN (${placeholders}) AND username = ? AND deleted_at IS NULL`,
-        [...ids, user]
-    );
-    if (rows.length === 0) return 0;
+    return withContactMutation(user, async connection => {
+        const placeholders = ids.map(() => '?').join(',');
+        const [rows]: any = await connection.query(
+            `SELECT id, dav_uid FROM contacts WHERE id IN (${placeholders}) AND username = ? AND deleted_at IS NULL`,
+            [...ids, user],
+        );
+        if (rows.length === 0) return 0;
 
-    const syncToken = await nextContactSyncToken(user);
-    const activeIds = rows.map((row: any) => row.id);
-    const activePlaceholders = activeIds.map(() => '?').join(',');
-    const [result]: any = await pool.query(
-        `UPDATE contacts SET deleted_at = NOW(), sync_token = ? WHERE id IN (${activePlaceholders}) AND username = ? AND deleted_at IS NULL`,
-        [syncToken, ...activeIds, user]
-    );
-    for (const row of rows) {
-        await upsertContactTombstone(user, row.dav_uid || `contact-${row.id}`, syncToken);
-    }
-    return Number(result.affectedRows || 0);
+        const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+        const activeIds = rows.map((row: any) => row.id);
+        const activePlaceholders = activeIds.map(() => '?').join(',');
+        const [result]: any = await connection.query(
+            `UPDATE contacts SET deleted_at = NOW(), sync_token = ? WHERE id IN (${activePlaceholders}) AND username = ? AND deleted_at IS NULL`,
+            [syncToken, ...activeIds, user],
+        );
+        for (const row of rows) {
+            await upsertContactTombstone(connection, user, row.dav_uid || `contact-${row.id}`, syncToken);
+        }
+        return Number(result.affectedRows || 0);
+    });
 }
 
 export async function restoreContactById(user: string, id: string | number): Promise<boolean> {
     await ensureContactsSchema();
-    const [rows]: any = await pool.query(
-        'SELECT id, dav_uid FROM contacts WHERE id = ? AND username = ? AND deleted_at IS NOT NULL LIMIT 1',
-        [id, user]
-    );
-    if (rows.length === 0) return false;
+    return withContactMutation(user, async connection => {
+        const [rows]: any = await connection.query(
+            'SELECT id, dav_uid FROM contacts WHERE id = ? AND username = ? AND deleted_at IS NOT NULL LIMIT 1',
+            [id, user],
+        );
+        if (rows.length === 0) return false;
 
-    const davUid = rows[0].dav_uid || `contact-${rows[0].id}`;
-    const syncToken = await nextContactSyncToken(user);
-    const [result]: any = await pool.query(
-        'UPDATE contacts SET dav_uid = ?, deleted_at = NULL, sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NOT NULL',
-        [davUid, syncToken, rows[0].id, user]
-    );
-    if (result.affectedRows > 0) {
-        await clearContactTombstone(user, davUid);
-    }
-    return result.affectedRows > 0;
+        const davUid = rows[0].dav_uid || `contact-${rows[0].id}`;
+        const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+        const [result]: any = await connection.query(
+            'UPDATE contacts SET dav_uid = ?, deleted_at = NULL, sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NOT NULL',
+            [davUid, syncToken, rows[0].id, user],
+        );
+        if (result.affectedRows > 0) {
+            await clearContactTombstone(connection, user, davUid);
+        }
+        return result.affectedRows > 0;
+    });
+}
+
+export async function purgeExpiredContacts(user: string): Promise<number> {
+    await ensureContactsSchema();
+    return withContactMutation(user, async connection => {
+        const [result]: any = await connection.query(
+            'DELETE FROM contacts WHERE username = ? AND deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL 30 DAY',
+            [user],
+        );
+        return Number(result.affectedRows || 0);
+    });
 }
 
 export async function addressBookSyncToken(user: string): Promise<string> {

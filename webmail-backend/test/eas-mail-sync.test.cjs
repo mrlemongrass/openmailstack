@@ -7,14 +7,47 @@ const {
   computeMailSyncDelta,
   effectiveMailSyncWindow,
   normalizeMailSyncOptions,
+  resolveActiveSyncWindowSize,
   truncateUtf8Body,
   activeSyncMailApplicationData,
   mailSyncReplayResponse,
   mailSyncRequestHash,
   mailSyncScopeHash,
+  MailSyncStateError,
+  MAX_MAIL_SYNC_COMMANDS_BYTES,
+  MAX_MAIL_SYNC_RESPONSE_BYTES,
+  MAX_MAIL_SYNC_ROW_BYTES,
+  MAX_MAIL_SYNC_USER_BYTES,
+  assertMailSyncRowBound,
+  parseMailSyncKnownItems,
   saveMailSyncState,
+  validateMailClientCommands,
   validateActiveSyncDeviceId,
 } = require('../src/eas-mail-sync.js');
+const { activeSyncMailCollectionId, activeSyncMailMessageServerId } = require('../src/eas-protocol.js');
+
+test('mail client commands require exact canonical bounded shapes', () => {
+  const collectionId = activeSyncMailCollectionId('INBOX');
+  const serverId = activeSyncMailMessageServerId(collectionId, 42);
+  const valid = [
+    { tag: 'Fetch', page: 0, children: [{ tag: 'ServerId', page: 0, content: serverId }] },
+    { tag: 'Change', page: 0, children: [
+      { tag: 'ServerId', page: 0, content: serverId },
+      { tag: 'ApplicationData', page: 0, children: [{ tag: 'Read', page: 2, content: '1' }] },
+    ] },
+  ];
+  assert.deepEqual(validateMailClientCommands(valid, collectionId), { ok: true });
+  assert.deepEqual(validateMailClientCommands([{ tag: 'Delete', page: 0, children: [
+    { tag: 'ServerId', page: 0, content: `${serverId.slice(0, serverId.lastIndexOf('-') + 1)}042` },
+  ] }], collectionId), { ok: false });
+  assert.deepEqual(validateMailClientCommands([{ tag: 'Fetch', page: 0, children: [
+    { tag: 'ServerId', page: 0, content: Buffer.from(serverId) },
+  ] }], collectionId), { ok: false });
+  assert.deepEqual(validateMailClientCommands([{ tag: 'Change', page: 0, children: [
+    { tag: 'ServerId', page: 0, content: serverId },
+    { tag: 'ApplicationData', page: 0, children: [{ tag: 'Read', page: 2, content: '2' }] },
+  ] }], collectionId), { ok: false });
+});
 
 test('web move from Inbox emits Delete and destination folder emits Add', () => {
   const inbox = computeMailSyncDelta({
@@ -282,6 +315,22 @@ test('FilterType, WindowSize, and body preferences are normalized to EAS limits'
   });
 
   assert.throws(() => normalizeMailSyncOptions({ filterType: '6' }), /FilterType/);
+  assert.equal(normalizeMailSyncOptions({}).windowSize, 100);
+  assert.equal(normalizeMailSyncOptions({}, {
+    filterType: 3,
+    windowSize: 37,
+    bodyType: 1,
+    truncationSize: 500,
+  }).windowSize, 37);
+  assert.equal(normalizeMailSyncOptions({ windowSize: '0' }).windowSize, 512);
+  assert.equal(normalizeMailSyncOptions({ windowSize: '513' }).windowSize, 512);
+  assert.throws(() => normalizeMailSyncOptions({ windowSize: '' }), /WindowSize/);
+});
+
+test('omitted non-prime WindowSize preserves the collection state across classes', () => {
+  assert.equal(resolveActiveSyncWindowSize('oms-pim-current', undefined, 37), 37);
+  assert.equal(resolveActiveSyncWindowSize('oms-pim-current', '19', 37), 19);
+  assert.equal(resolveActiveSyncWindowSize('0', undefined, 37), 100);
 });
 
 test('iOS MIME Fetch without TruncationSize does not reuse the list preview limit', async () => {
@@ -312,7 +361,7 @@ test('iOS MIME Fetch without TruncationSize does not reuse the list preview limi
   const body = nodes.find(node => node.tag === 'Body');
   const bodyChild = tag => body.children.find(node => node.tag === tag)?.content;
 
-  assert.equal(fetchOptions.truncationSize, 10 * 1024 * 1024);
+  assert.equal(fetchOptions.truncationSize, 7 * 1024 * 1024);
   assert.equal(bodyChild('Type'), '4');
   assert.match(bodyChild('Data'), new RegExp(messageContent));
   assert.equal(bodyChild('Truncated'), undefined);
@@ -320,7 +369,7 @@ test('iOS MIME Fetch without TruncationSize does not reuse the list preview limi
 });
 
 test('aggregate source budget reduces large pages and leaves pending work available', () => {
-  const largeBody = { windowSize: 512, truncationSize: 10 * 1024 * 1024 };
+  const largeBody = { windowSize: 512, truncationSize: 7 * 1024 * 1024 };
   assert.equal(effectiveMailSyncWindow(largeBody), 1);
   assert.equal(effectiveMailSyncWindow(largeBody, 1), 0);
 
@@ -424,14 +473,44 @@ test('duplicate Sync requests replay the exact persisted WBXML response', () => 
   );
 });
 
+test('malformed persisted mail state fails visibly instead of resetting known items', () => {
+  assert.throws(() => parseMailSyncKnownItems('{bad-json'), MailSyncStateError);
+  assert.throws(() => parseMailSyncKnownItems('[]'), MailSyncStateError);
+  assert.throws(() => parseMailSyncKnownItems('{"42":2}'), MailSyncStateError);
+  assert.throws(() => parseMailSyncKnownItems('{"042":1}'), MailSyncStateError);
+});
+
+test('mail replay/state byte budgets remain packet-safe', () => {
+  assert.equal(MAX_MAIL_SYNC_RESPONSE_BYTES, 8 * 1024 * 1024);
+  assert.equal(MAX_MAIL_SYNC_COMMANDS_BYTES, 256 * 1024);
+  assert.equal(MAX_MAIL_SYNC_ROW_BYTES, 13 * 1024 * 1024);
+  assert.equal(MAX_MAIL_SYNC_USER_BYTES, 64 * 1024 * 1024);
+  assert.doesNotThrow(() => assertMailSyncRowBound('x'.repeat(4 * 1024 * 1024), '[]', Buffer.alloc(8 * 1024 * 1024)));
+  assert.throws(() => assertMailSyncRowBound('x'.repeat(5 * 1024 * 1024), '[]', Buffer.alloc(8 * 1024 * 1024 + 1)), MailSyncStateError);
+});
+
 test('mail sync state persistence binds every schema value exactly once', async () => {
   const { pool } = require('../src/db.js');
   const originalQuery = pool.query;
+  const originalGetConnection = pool.getConnection;
   let insertCall;
   pool.query = async (sql, params) => {
     if (String(sql).includes('INSERT INTO eas_mail_sync_states')) insertCall = { sql: String(sql), params };
     return [[], []];
   };
+  pool.getConnection = async () => ({
+    query: async (sql, params) => {
+      if (String(sql).includes('GET_LOCK')) return [[{ acquired: 1 }], []];
+      if (String(sql).includes('RELEASE_LOCK')) return [[{ released: 1 }], []];
+      if (String(sql).includes('COUNT(*)')) return [[{ count: 0 }], []];
+      if (String(sql).includes('INSERT INTO eas_mail_sync_states')) insertCall = { sql: String(sql), params };
+      return [[], []];
+    },
+    beginTransaction: async () => {},
+    commit: async () => {},
+    rollback: async () => {},
+    release: () => {},
+  });
 
   try {
     await saveMailSyncState({
@@ -439,8 +518,8 @@ test('mail sync state persistence binds every schema value exactly once', async 
       username: 'user@example.test',
       deviceId: 'device-1',
       collectionId: 'SU5CT1g=',
-      currentSyncKey: 'oms-mail-current',
-      previousSyncKey: 'oms-mail-previous',
+      currentSyncKey: `oms-mail-${'a'.repeat(48)}`,
+      previousSyncKey: `oms-mail-${'b'.repeat(48)}`,
       uidValidity: '10',
       highestModseq: '20',
       minimumUid: 30,
@@ -457,6 +536,7 @@ test('mail sync state persistence binds every schema value exactly once', async 
     });
   } finally {
     pool.query = originalQuery;
+    pool.getConnection = originalGetConnection;
   }
 
   assert.ok(insertCall);

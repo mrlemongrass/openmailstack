@@ -1,5 +1,7 @@
 import { pool } from './db';
 import { slugifyCalendarName } from './calendar-format';
+import type { PoolConnection } from 'mysql2/promise';
+import * as crypto from 'crypto';
 
 export { expandRecurringEvent, extractIcalEventUid, formatActiveSyncDate, getCalendarFolderSyncKey, parseIcalEvent, slugifyCalendarName } from './calendar-format';
 
@@ -16,6 +18,44 @@ export interface CalendarRow {
     subscribed_url?: string;
 }
 
+export type CalendarMutationConnection = Pick<PoolConnection, 'query'>;
+
+const RESERVED_MANAGED_CALENDAR_SLUGS = new Set(['birthdays']);
+
+export function isReservedManagedCalendarSlug(value: string): boolean {
+    return RESERVED_MANAGED_CALENDAR_SLUGS.has(slugifyCalendarName(value));
+}
+
+/**
+ * Allocate the one collection revision shared by every event/tombstone changed
+ * in the caller's transaction. Callers must roll the transaction back when no
+ * durable calendar resource changed.
+ */
+export async function allocateCalendarCollectionRevisionOnConnection(
+    connection: CalendarMutationConnection,
+    calendarId: string | number,
+): Promise<number> {
+    const [rows]: any = await connection.query(
+        'SELECT sync_token FROM calendars WHERE id = ? LIMIT 1 FOR UPDATE',
+        [calendarId],
+    );
+    if (rows.length !== 1) throw new Error('Calendar not found while allocating collection revision');
+
+    const currentRevision = Number(rows[0].sync_token || 0);
+    if (!Number.isSafeInteger(currentRevision) || currentRevision < 0 || currentRevision >= Number.MAX_SAFE_INTEGER) {
+        throw new Error('Calendar collection revision is invalid');
+    }
+    const nextRevision = currentRevision + 1;
+    const [result]: any = await connection.query(
+        'UPDATE calendars SET sync_token = ? WHERE id = ? AND sync_token = ?',
+        [nextRevision, calendarId, currentRevision],
+    );
+    if (Number(result.affectedRows || 0) !== 1) {
+        throw new Error('Calendar collection revision allocation failed');
+    }
+    return nextRevision;
+}
+
 let schemaPromise: Promise<void> | null = null;
 
 export async function ensureCalendarSchema(): Promise<void> {
@@ -25,6 +65,24 @@ export async function ensureCalendarSchema(): Promise<void> {
             if (slugColumn.length === 0) {
                 await pool.query('ALTER TABLE calendars ADD COLUMN dav_slug VARCHAR(255) NULL AFTER name');
             }
+
+            const [duplicateCalendarSlugs]: any = await pool.query(
+                `SELECT user_id, dav_slug, COUNT(*) AS duplicate_count
+                 FROM calendars
+                 WHERE dav_slug IS NOT NULL AND dav_slug != ''
+                 GROUP BY user_id, dav_slug
+                 HAVING duplicate_count > 1
+                 LIMIT 1`
+            );
+            if (duplicateCalendarSlugs.length > 0) {
+                const duplicate = duplicateCalendarSlugs[0];
+                throw new Error(
+                    `Calendar schema migration blocked: user "${String(duplicate.user_id)}" has DAV slug `
+                    + `"${String(duplicate.dav_slug)}" in ${duplicate.duplicate_count} rows; the required unique `
+                    + '(user_id, dav_slug) key cannot be created. Resolve duplicate calendar rows before startup.',
+                );
+            }
+            await pool.query("UPDATE calendars SET dav_slug = NULL WHERE dav_slug = ''");
 
             const [componentsColumn]: any = await pool.query("SHOW COLUMNS FROM calendars LIKE 'components'");
             if (componentsColumn.length === 0) {
@@ -36,9 +94,74 @@ export async function ensureCalendarSchema(): Promise<void> {
                 await pool.query('ALTER TABLE calendars ADD COLUMN subscribed_url TEXT NULL AFTER components');
             }
 
-            const [slugIndex]: any = await pool.query("SHOW INDEX FROM calendars WHERE Key_name = 'idx_calendars_user_dav_slug'");
-            if (slugIndex.length === 0) {
-                await pool.query('ALTER TABLE calendars ADD KEY idx_calendars_user_dav_slug (user_id, dav_slug)');
+            const [calendarIndexes]: any = await pool.query('SHOW INDEX FROM calendars');
+            const uniqueCalendarIndexes = new Map<string, string[]>();
+            for (const index of calendarIndexes) {
+                if (index.Non_unique !== 0) continue;
+                const columns = uniqueCalendarIndexes.get(index.Key_name) || [];
+                columns[index.Seq_in_index - 1] = index.Column_name;
+                uniqueCalendarIndexes.set(index.Key_name, columns);
+            }
+            const hasUniqueCalendarSlug = Array.from(uniqueCalendarIndexes.values()).some(columns => (
+                columns.length === 2 && columns[0] === 'user_id' && columns[1] === 'dav_slug'
+            ));
+            if (!hasUniqueCalendarSlug) {
+                await pool.query(
+                    'ALTER TABLE calendars ADD UNIQUE KEY uniq_calendars_user_dav_slug (user_id, dav_slug)'
+                );
+            }
+            await backfillMissingCalendarSlugs();
+
+            const [eventUidColumns]: any = await pool.query("SHOW FULL COLUMNS FROM events LIKE 'uid'");
+            if (eventUidColumns.length !== 1) throw new Error('Calendar event UID column is missing');
+            if (String(eventUidColumns[0].Collation || '').toLowerCase() !== 'utf8mb4_bin') {
+                const nullability = eventUidColumns[0].Null === 'YES' ? 'NULL' : 'NOT NULL';
+                await pool.query(
+                    `ALTER TABLE events MODIFY COLUMN uid VARCHAR(255)
+                     CHARACTER SET utf8mb4 COLLATE utf8mb4_bin ${nullability}`
+                );
+            }
+
+            const [eventResourceNameColumns]: any = await pool.query(
+                "SHOW FULL COLUMNS FROM events LIKE 'resource_name'"
+            );
+            const eventResourceNameNeedsNormalization = eventResourceNameColumns.length === 0
+                || String(eventResourceNameColumns[0].Collation || '').toLowerCase() !== 'utf8mb4_bin'
+                || String(eventResourceNameColumns[0].Null || '').toUpperCase() !== 'NO';
+            if (eventResourceNameColumns.length === 0) {
+                await pool.query(
+                    `ALTER TABLE events ADD COLUMN resource_name VARCHAR(255)
+                     CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL AFTER uid`
+                );
+            }
+            // Existing producers historically used the logical iCalendar UID
+            // as the DAV href. Keep that identity while allowing CalDAV clients
+            // to choose an independent opaque resource name for new writes.
+            await pool.query(
+                `UPDATE events AS event_rows SET event_rows.resource_name = event_rows.uid
+                 WHERE event_rows.resource_name IS NULL OR event_rows.resource_name = ''`
+            );
+            const [duplicateEventResourceNames]: any = await pool.query(
+                `SELECT calendar_id, resource_name, COUNT(*) AS duplicate_count
+                 FROM events
+                 WHERE resource_name IS NOT NULL AND resource_name != ''
+                 GROUP BY calendar_id, resource_name
+                 HAVING duplicate_count > 1
+                 LIMIT 1`
+            );
+            if (duplicateEventResourceNames.length > 0) {
+                const duplicate = duplicateEventResourceNames[0];
+                throw new Error(
+                    `Calendar schema migration blocked: calendar ${duplicate.calendar_id} contains DAV resource `
+                    + `name "${String(duplicate.resource_name)}" in ${duplicate.duplicate_count} rows. Resolve `
+                    + 'duplicate calendar resources before startup.',
+                );
+            }
+            if (eventResourceNameNeedsNormalization) {
+                await pool.query(
+                    `ALTER TABLE events MODIFY COLUMN resource_name VARCHAR(255)
+                     CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL`
+                );
             }
 
             const [eventIndexes]: any = await pool.query('SHOW INDEX FROM events');
@@ -52,6 +175,18 @@ export async function ensureCalendarSchema(): Promise<void> {
             const hasCalendarUidKey = Array.from(uniqueEventIndexes.values()).some(columns => (
                 columns.length === 2 && columns[0] === 'calendar_id' && columns[1] === 'uid'
             ));
+            const hasCalendarResourceNameKey = Array.from(uniqueEventIndexes.values()).some(columns => (
+                columns.length === 2 && columns[0] === 'calendar_id' && columns[1] === 'resource_name'
+            ));
+            const eventIndexColumns = new Map<string, string[]>();
+            for (const index of eventIndexes) {
+                const columns = eventIndexColumns.get(index.Key_name) || [];
+                columns[index.Seq_in_index - 1] = index.Column_name;
+                eventIndexColumns.set(index.Key_name, columns);
+            }
+            const hasCalendarSyncIndex = Array.from(eventIndexColumns.values()).some(columns => (
+                columns.length >= 2 && columns[0] === 'calendar_id' && columns[1] === 'sync_token'
+            ));
 
             if (!hasCalendarUidKey) {
                 const [duplicates]: any = await pool.query(
@@ -64,8 +199,29 @@ export async function ensureCalendarSchema(): Promise<void> {
                 if (duplicates.length === 0) {
                     await pool.query('ALTER TABLE events ADD UNIQUE KEY uniq_events_calendar_uid (calendar_id, uid)');
                 } else {
-                    console.warn('Skipping uniq_events_calendar_uid creation until duplicate event UIDs are cleaned up');
+                    const duplicate = duplicates[0];
+                    throw new Error(
+                        `Calendar schema migration blocked: calendar ${duplicate.calendar_id} contains UID `
+                        + `"${String(duplicate.uid)}" in ${duplicate.duplicate_count} rows; the required unique `
+                        + '(calendar_id, uid) key cannot be created. Resolve duplicate event rows before startup.',
+                    );
                 }
+            }
+            if (!hasCalendarResourceNameKey) {
+                await pool.query(
+                    'ALTER TABLE events ADD UNIQUE KEY uniq_events_calendar_resource_name (calendar_id, resource_name)'
+                );
+            }
+
+            const [eventSyncTokenColumn]: any = await pool.query("SHOW COLUMNS FROM events LIKE 'sync_token'");
+            const addedEventSyncToken = eventSyncTokenColumn.length === 0;
+            if (addedEventSyncToken) {
+                await pool.query(
+                    'ALTER TABLE events ADD COLUMN sync_token BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER ical_data'
+                );
+            }
+            if (!hasCalendarSyncIndex) {
+                await pool.query('ALTER TABLE events ADD KEY idx_events_calendar_sync (calendar_id, sync_token)');
             }
 
             await pool.query(`
@@ -83,14 +239,140 @@ export async function ensureCalendarSchema(): Promise<void> {
                 CREATE TABLE IF NOT EXISTS calendar_tombstones (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     calendar_id INT NOT NULL,
-                    uid VARCHAR(255) NOT NULL,
+                    uid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                    resource_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                    sync_token BIGINT UNSIGNED NOT NULL DEFAULT 1,
                     deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uniq_calendar_tombstone_resource_name (calendar_id, resource_name),
                     KEY idx_tombstones_calendar (calendar_id),
+                    KEY idx_tombstones_calendar_sync (calendar_id, sync_token),
                     KEY idx_tombstones_deleted (deleted_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
 
-            await backfillMissingCalendarSlugs();
+            const [tombstoneSyncTokenColumn]: any = await pool.query(
+                "SHOW COLUMNS FROM calendar_tombstones LIKE 'sync_token'"
+            );
+            const addedTombstoneSyncToken = tombstoneSyncTokenColumn.length === 0;
+            if (addedTombstoneSyncToken) {
+                await pool.query(
+                    'ALTER TABLE calendar_tombstones ADD COLUMN sync_token BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER uid'
+                );
+            }
+            const [tombstoneUidColumns]: any = await pool.query(
+                "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'uid'"
+            );
+            if (tombstoneUidColumns.length !== 1) throw new Error('Calendar tombstone UID column is missing');
+            if (String(tombstoneUidColumns[0].Collation || '').toLowerCase() !== 'utf8mb4_bin') {
+                const nullability = tombstoneUidColumns[0].Null === 'YES' ? 'NULL' : 'NOT NULL';
+                await pool.query(
+                    `ALTER TABLE calendar_tombstones MODIFY COLUMN uid VARCHAR(255)
+                     CHARACTER SET utf8mb4 COLLATE utf8mb4_bin ${nullability}`
+                );
+            }
+            const [tombstoneResourceNameColumns]: any = await pool.query(
+                "SHOW FULL COLUMNS FROM calendar_tombstones LIKE 'resource_name'"
+            );
+            const tombstoneResourceNameNeedsNormalization = tombstoneResourceNameColumns.length === 0
+                || String(tombstoneResourceNameColumns[0].Collation || '').toLowerCase() !== 'utf8mb4_bin'
+                || String(tombstoneResourceNameColumns[0].Null || '').toUpperCase() !== 'NO';
+            if (tombstoneResourceNameColumns.length === 0) {
+                await pool.query(
+                    `ALTER TABLE calendar_tombstones ADD COLUMN resource_name VARCHAR(255)
+                     CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL AFTER uid`
+                );
+            }
+            await pool.query(
+                `UPDATE calendar_tombstones SET resource_name = uid
+                 WHERE resource_name IS NULL OR resource_name = ''`
+            );
+            const [duplicateTombstoneResourceNames]: any = await pool.query(
+                `SELECT calendar_id, resource_name, COUNT(*) AS duplicate_count
+                 FROM calendar_tombstones
+                 WHERE resource_name IS NOT NULL AND resource_name != ''
+                 GROUP BY calendar_id, resource_name
+                 HAVING duplicate_count > 1
+                 LIMIT 1`
+            );
+            if (duplicateTombstoneResourceNames.length > 0) {
+                const duplicate = duplicateTombstoneResourceNames[0];
+                throw new Error(
+                    `Calendar schema migration blocked: calendar ${duplicate.calendar_id} contains DAV tombstone `
+                    + `resource name "${String(duplicate.resource_name)}" in ${duplicate.duplicate_count} rows. `
+                    + 'Resolve duplicate tombstones before startup.',
+                );
+            }
+            if (tombstoneResourceNameNeedsNormalization) {
+                await pool.query(
+                    `ALTER TABLE calendar_tombstones MODIFY COLUMN resource_name VARCHAR(255)
+                     CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL`
+                );
+            }
+            if (addedEventSyncToken || addedTombstoneSyncToken) {
+                // One-time compatibility bridge: clients holding a pre-revision
+                // token must receive every still-live resource and tombstone.
+                await pool.query(
+                    `UPDATE events
+                     INNER JOIN calendars ON calendars.id = events.calendar_id
+                     SET events.sync_token = GREATEST(events.sync_token, calendars.sync_token)`
+                );
+                await pool.query(
+                    `UPDATE calendar_tombstones
+                     INNER JOIN calendars ON calendars.id = calendar_tombstones.calendar_id
+                     SET calendar_tombstones.sync_token = GREATEST(calendar_tombstones.sync_token, calendars.sync_token)`
+                );
+            }
+
+            // A live row supersedes every historical delete marker for its UID.
+            await pool.query(
+                `DELETE calendar_tombstones FROM calendar_tombstones
+                 INNER JOIN events
+                   ON events.calendar_id = calendar_tombstones.calendar_id
+                  AND BINARY COALESCE(NULLIF(events.resource_name, ''), events.uid)
+                      = BINARY COALESCE(NULLIF(calendar_tombstones.resource_name, ''), calendar_tombstones.uid)`
+            );
+
+            const [tombstoneIndexes]: any = await pool.query('SHOW INDEX FROM calendar_tombstones');
+            const tombstoneIndexColumns = new Map<string, string[]>();
+            const uniqueTombstoneIndexColumns = new Map<string, string[]>();
+            for (const index of tombstoneIndexes) {
+                const columns = tombstoneIndexColumns.get(index.Key_name) || [];
+                columns[index.Seq_in_index - 1] = index.Column_name;
+                tombstoneIndexColumns.set(index.Key_name, columns);
+                if (index.Non_unique === 0) {
+                    const uniqueColumns = uniqueTombstoneIndexColumns.get(index.Key_name) || [];
+                    uniqueColumns[index.Seq_in_index - 1] = index.Column_name;
+                    uniqueTombstoneIndexColumns.set(index.Key_name, uniqueColumns);
+                }
+            }
+            const hasUniqueTombstoneResourceName = Array.from(uniqueTombstoneIndexColumns.values()).some(columns => (
+                columns.length === 2 && columns[0] === 'calendar_id' && columns[1] === 'resource_name'
+            ));
+            if (!hasUniqueTombstoneResourceName) {
+                await pool.query(
+                    'ALTER TABLE calendar_tombstones ADD UNIQUE KEY uniq_calendar_tombstone_resource_name (calendar_id, resource_name)'
+                );
+            }
+            // Tombstones track the DAV href that disappeared. A historical
+            // unique logical-UID key incorrectly prevents deleting a resource
+            // re-created under a new href, so retire it after the href key is
+            // established. Never merge or delete duplicate migration rows.
+            for (const [indexName, columns] of uniqueTombstoneIndexColumns.entries()) {
+                if (columns.length === 2 && columns[0] === 'calendar_id' && columns[1] === 'uid') {
+                    if (!/^[A-Za-z0-9_$]+$/.test(indexName)) {
+                        throw new Error('Calendar tombstone UID index has an unsafe identifier');
+                    }
+                    await pool.query(`ALTER TABLE calendar_tombstones DROP INDEX \`${indexName}\``);
+                }
+            }
+            const hasTombstoneSyncIndex = Array.from(tombstoneIndexColumns.values()).some(columns => (
+                columns.length >= 2 && columns[0] === 'calendar_id' && columns[1] === 'sync_token'
+            ));
+            if (!hasTombstoneSyncIndex) {
+                await pool.query(
+                    'ALTER TABLE calendar_tombstones ADD KEY idx_tombstones_calendar_sync (calendar_id, sync_token)'
+                );
+            }
         })();
     }
 
@@ -99,39 +381,52 @@ export async function ensureCalendarSchema(): Promise<void> {
 
 async function backfillMissingCalendarSlugs(): Promise<void> {
     const [rows]: any = await pool.query('SELECT id, user_id, name, dav_slug FROM calendars ORDER BY user_id ASC, id ASC');
-    const usedByUser = new Map<string, Set<string>>();
-
-    for (const row of rows) {
-        if (!usedByUser.has(row.user_id)) {
-            usedByUser.set(row.user_id, new Set());
-        }
-        if (row.dav_slug) {
-            usedByUser.get(row.user_id)?.add(row.dav_slug);
-        }
-    }
-
     for (const row of rows) {
         if (row.dav_slug) continue;
 
-        const used = usedByUser.get(row.user_id) || new Set<string>();
         const base = slugifyCalendarName(row.name);
         let slug = base;
         let suffix = 2;
-        while (used.has(slug)) {
-            slug = `${base}-${suffix++}`;
+        if (isReservedManagedCalendarSlug(slug)) slug = `${base}-${suffix++}`;
+        while (true) {
+            const [collisions]: any = await pool.query(
+                'SELECT id FROM calendars WHERE user_id = ? AND dav_slug = ? AND id <> ? LIMIT 1',
+                [row.user_id, slug, row.id],
+            );
+            if (collisions.length > 0) {
+                slug = `${base}-${suffix++}`;
+                continue;
+            }
+            try {
+                const [result]: any = await pool.query(
+                    'UPDATE calendars SET dav_slug = ? WHERE id = ? AND dav_slug IS NULL',
+                    [slug, row.id],
+                );
+                if (Number(result.affectedRows || 0) === 1) row.dav_slug = slug;
+                break;
+            } catch (error) {
+                if (!isDuplicateEntry(error)) throw error;
+                slug = `${base}-${suffix++}`;
+            }
         }
-
-        await pool.query('UPDATE calendars SET dav_slug = ? WHERE id = ?', [slug, row.id]);
-        used.add(slug);
-        usedByUser.set(row.user_id, used);
     }
 }
 
 async function uniqueCalendarSlug(user: string, preferred: string, excludeCalendarId?: number): Promise<string> {
     await ensureCalendarSchema();
+    return uniqueCalendarSlugOnConnection(pool, user, preferred, excludeCalendarId);
+}
+
+async function uniqueCalendarSlugOnConnection(
+    connection: CalendarMutationConnection,
+    user: string,
+    preferred: string,
+    excludeCalendarId?: number,
+): Promise<string> {
     const base = slugifyCalendarName(preferred);
     let slug = base;
     let suffix = 2;
+    if (isReservedManagedCalendarSlug(slug)) slug = `${base}-${suffix++}`;
 
     while (true) {
         const params: any[] = [user, slug];
@@ -141,13 +436,51 @@ async function uniqueCalendarSlug(user: string, preferred: string, excludeCalend
             params.push(excludeCalendarId);
         }
 
-        const [rows]: any = await pool.query(
+        const [rows]: any = await connection.query(
             `SELECT id FROM calendars WHERE user_id = ? AND dav_slug = ?${excludeClause} LIMIT 1`,
             params
         );
         if (rows.length === 0) return slug;
         slug = `${base}-${suffix++}`;
     }
+}
+
+function calendarSlugLockName(user: string): string {
+    const digest = crypto.createHash('sha256').update(user.trim().toLowerCase()).digest('hex').slice(0, 40);
+    return `oms:calendar-slug:${digest}`;
+}
+
+async function withCalendarSlugLock<T>(
+    user: string,
+    operation: (connection: PoolConnection) => Promise<T>,
+): Promise<T> {
+    const connection = await pool.getConnection();
+    const lockName = calendarSlugLockName(user);
+    let acquired = false;
+    let connectionUsable = true;
+    try {
+        const [lockRows]: any = await connection.query('SELECT GET_LOCK(?, 10) AS acquired', [lockName]);
+        if (Number(lockRows[0]?.acquired || 0) !== 1) {
+            throw new Error('Timed out waiting for the calendar identity lock');
+        }
+        acquired = true;
+        return await operation(connection);
+    } finally {
+        if (acquired) {
+            try {
+                const [releaseRows]: any = await connection.query('SELECT RELEASE_LOCK(?) AS released', [lockName]);
+                if (Number(releaseRows[0]?.released || 0) !== 1) connectionUsable = false;
+            } catch {
+                connectionUsable = false;
+            }
+        }
+        if (connectionUsable) connection.release();
+        else connection.destroy();
+    }
+}
+
+function isDuplicateEntry(error: unknown): boolean {
+    return Boolean(error && typeof error === 'object' && (error as any).code === 'ER_DUP_ENTRY');
 }
 
 export async function ensureCalendarSlug(calendar: CalendarRow): Promise<string> {
@@ -161,21 +494,39 @@ export async function ensureCalendarSlug(calendar: CalendarRow): Promise<string>
 }
 
 export async function createCalendar(user: string, name: string, options: { color?: string; slug?: string; components?: string; subscribed_url?: string } = {}): Promise<CalendarRow> {
-    await ensureCalendarSchema();
     const cleanName = name.trim() || 'New Calendar';
-    const slug = await uniqueCalendarSlug(user, options.slug || cleanName);
-    const [result]: any = await pool.query(
-        'INSERT INTO calendars (user_id, name, dav_slug, color, components, subscribed_url, sync_token) VALUES (?, ?, ?, ?, ?, ?, 1)',
-        [user, cleanName, slug, options.color || '#3498db', options.components || 'VEVENT,VTODO', options.subscribed_url || null]
-    );
-    const [created]: any = await pool.query('SELECT * FROM calendars WHERE id = ?', [result.insertId]);
-    return created[0];
+    const requestedSlug = options.slug || cleanName;
+    if (isReservedManagedCalendarSlug(requestedSlug)) {
+        throw new Error('Calendar slug "birthdays" is reserved for a managed calendar');
+    }
+    await ensureCalendarSchema();
+    return withCalendarSlugLock(user, async connection => {
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+            const slug = await uniqueCalendarSlugOnConnection(connection, user, requestedSlug);
+            try {
+                const [result]: any = await connection.query(
+                    'INSERT INTO calendars (user_id, name, dav_slug, color, components, subscribed_url, sync_token) VALUES (?, ?, ?, ?, ?, ?, 1)',
+                    [user, cleanName, slug, options.color || '#3498db', options.components || 'VEVENT,VTODO', options.subscribed_url || null]
+                );
+                const [created]: any = await connection.query('SELECT * FROM calendars WHERE id = ?', [result.insertId]);
+                if (created.length !== 1) throw new Error('Created calendar could not be reloaded');
+                return created[0];
+            } catch (error) {
+                if (!isDuplicateEntry(error) || attempt === 7) throw error;
+            }
+        }
+        throw new Error('Calendar identity allocation failed');
+    });
 }
 
 export async function ensureDefaultCalendar(user: string): Promise<CalendarRow> {
     await ensureCalendarSchema();
     const [existing]: any = await pool.query(
-        'SELECT * FROM calendars WHERE user_id = ? ORDER BY id ASC LIMIT 1',
+        `SELECT * FROM calendars
+         WHERE user_id = ?
+           AND LOWER(TRIM(COALESCE(dav_slug, ''))) <> 'birthdays'
+           AND (subscribed_url IS NULL OR TRIM(subscribed_url) = '')
+         ORDER BY id ASC LIMIT 1`,
         [user]
     );
     if (existing.length > 0) {
@@ -188,15 +539,37 @@ export async function ensureDefaultCalendar(user: string): Promise<CalendarRow> 
 
 export async function getCalendarByToken(user: string, token: string): Promise<CalendarRow | null> {
     await ensureCalendarSchema();
-    const decodedToken = decodeURIComponent(token);
+    let decodedToken: string;
+    try {
+        decodedToken = decodeURIComponent(token);
+    } catch {
+        return null;
+    }
     if (/^\d+$/.test(decodedToken)) {
-        const [rows]: any = await pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ? LIMIT 1', [decodedToken, user]);
+        const [rows]: any = await pool.query(
+            `SELECT c.*,
+                    CASE WHEN c.user_id = ? THEN 'owner' ELSE cs.permission END AS access_role
+             FROM calendars c
+             LEFT JOIN calendar_shares cs
+               ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+             WHERE c.id = ? AND (c.user_id = ? OR cs.shared_with_user_id = ?)
+             LIMIT 1`,
+            [user, user, decodedToken, user, user],
+        );
         if (rows.length > 0) return rows[0];
     }
 
     const [rows]: any = await pool.query(
-        'SELECT * FROM calendars WHERE user_id = ? AND (dav_slug = ? OR name = ?) ORDER BY id ASC LIMIT 1',
-        [user, slugifyCalendarName(decodedToken), decodedToken]
+        `SELECT c.*,
+                CASE WHEN c.user_id = ? THEN 'owner' ELSE cs.permission END AS access_role
+         FROM calendars c
+         LEFT JOIN calendar_shares cs
+           ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+         WHERE (c.user_id = ? OR cs.shared_with_user_id = ?)
+           AND (c.dav_slug = ? OR c.name = ?)
+         ORDER BY (c.user_id = ?) DESC, c.id ASC
+         LIMIT 1`,
+        [user, user, user, user, slugifyCalendarName(decodedToken), decodedToken, user]
     );
     return rows.length > 0 ? rows[0] : null;
 }
@@ -235,5 +608,5 @@ export async function getVisibleCalendars(user: string): Promise<CalendarRow[]> 
 }
 
 export function getCalendarHref(user: string, calendar: CalendarRow): string {
-    return `/caldav/calendars/${user}/${calendar.id}/`;
+    return `/caldav/calendars/${encodeURIComponent(user)}/${calendar.id}/`;
 }

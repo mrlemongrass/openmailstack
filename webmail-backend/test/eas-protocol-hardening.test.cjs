@@ -8,12 +8,62 @@ const { WbxmlWriter } = require('../src/wbxml/writer.js');
 const {
   ACTIVE_SYNC_ADVERTISED_COMMANDS,
   ACTIVE_SYNC_UNSUPPORTED_COMMANDS,
+  activeSyncMailCollectionId,
+  activeSyncMailMessageServerId,
+  activeSyncMailMessageUid,
+  activeSyncMailParentId,
   activeSyncDeleteCommand,
   activeSyncRequestLogSummary,
   classifyActiveSyncCollection,
+  isActiveSyncAuthenticationFailure,
+  parseActiveSyncFolderSyncRequest,
+  resolveActiveSyncMailFolderPath,
   staticActiveSyncServiceFolders,
   unsupportedSyncCollectionResponse,
 } = require('../src/eas-protocol.js');
+
+test('FolderSync request parsing is strict and bounded', () => {
+  const valid = { tag: 'FolderSync', page: 7, children: [{ tag: 'SyncKey', page: 7, content: '0' }] };
+  assert.deepEqual(parseActiveSyncFolderSyncRequest(valid), { ok: true, syncKey: '0' });
+  for (const malformed of [
+    null,
+    { ...valid, page: 0 },
+    { ...valid, tag: 'Sync' },
+    { ...valid, children: [] },
+    { ...valid, children: [...valid.children, ...valid.children] },
+    { ...valid, children: [{ ...valid.children[0], page: 0 }] },
+    { ...valid, children: [{ ...valid.children[0], content: Buffer.from('0') }] },
+    { ...valid, children: [{ ...valid.children[0], content: `key-${'x'.repeat(100)}` }] },
+    { ...valid, children: [{ ...valid.children[0], content: 'bad\0key' }] },
+  ]) assert.deepEqual(parseActiveSyncFolderSyncRequest(malformed), { ok: false });
+});
+
+test('opaque mail folder and item ids are bounded, stable, delimiter-aware, and resolvable', () => {
+  const longPath = `Projects/${'nested'.repeat(40)}/Receipts`;
+  const collectionId = activeSyncMailCollectionId(longPath);
+  assert.match(collectionId, /^m-[0-9a-f]{62}$/);
+  assert.equal(Buffer.byteLength(collectionId), 64);
+  assert.equal(collectionId, activeSyncMailCollectionId(longPath));
+  assert.equal(resolveActiveSyncMailFolderPath(collectionId, [{ path: longPath, delimiter: '/' }]), longPath);
+  assert.equal(activeSyncMailParentId({ path: longPath, delimiter: '/' }), activeSyncMailCollectionId(longPath.slice(0, longPath.lastIndexOf('/'))));
+  assert.equal(activeSyncMailParentId({ path: 'Top.Level.Child', delimiter: '.' }), activeSyncMailCollectionId('Top.Level'));
+
+  const serverId = activeSyncMailMessageServerId(collectionId, Number.MAX_SAFE_INTEGER);
+  assert.ok(Buffer.byteLength(serverId) <= 64);
+  assert.equal(activeSyncMailMessageUid(collectionId, serverId), Number.MAX_SAFE_INTEGER);
+  assert.equal(activeSyncMailMessageUid(collectionId, `${serverId}0`), null);
+  assert.equal(activeSyncMailMessageUid(collectionId, serverId.replace(/-([1-9])/, '-0$1')), null);
+
+  const legacy = Buffer.from('INBOX').toString('base64');
+  assert.equal(resolveActiveSyncMailFolderPath(legacy, [{ path: 'INBOX', delimiter: '/' }]), 'INBOX');
+  assert.equal(resolveActiveSyncMailFolderPath(Buffer.from('x'.repeat(40)).toString('base64'), [{ path: 'x'.repeat(40) }]), null);
+});
+
+test('only explicit IMAP authentication errors are treated as credential failures', () => {
+  assert.equal(isActiveSyncAuthenticationFailure({ authenticationFailed: true }), true);
+  assert.equal(isActiveSyncAuthenticationFailure(new Error('connection refused')), false);
+  assert.equal(isActiveSyncAuthenticationFailure({ authenticationFailed: false }), false);
+});
 
 test('ActiveSync OPTIONS advertises only commands with reachable implementations', () => {
   assert.deepEqual(ACTIVE_SYNC_ADVERTISED_COMMANDS, [
@@ -64,7 +114,8 @@ test('ActiveSync route wires bounded parsing, post-auth logs, explicit unsupport
   assert.match(source.slice(routeStart), /target\.status === '9'[\s\S]*globalFailureStatus = '9'/);
   assert.doesNotMatch(source.slice(routeStart), /itemOperationsFetchError\([^\n]*'12'/);
   assert.doesNotMatch(source.slice(routeStart), /itemOperationsFetchError\([^\n]*'9'/);
-  assert.match(source.slice(routeStart), /res\.status\(400\)\.send\(\);\s*\}\);\s*server\.listen/s);
+  assert.match(source.slice(routeStart), /res\.status\(400\)\.send\(\);\s*\}\);\s*async function startServer/s);
+  assert.match(source.slice(routeStart), /await ensureCalendarSchema\(\)[\s\S]*server\.listen/);
   assert.doesNotMatch(source.slice(routeStart), /Decoded Request|JSON\.stringify\(decoded/);
 });
 

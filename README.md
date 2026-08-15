@@ -105,7 +105,21 @@ rtk bash functions/protocol_guarded_deploy.sh webmail
 rtk bash functions/protocol_guarded_deploy.sh dovecot
 ```
 
-The generated credential remains root-only under `/etc/openmailstack`; it is
+Hosts provisioned before the dedicated identity marker was introduced must use
+the explicit migration command once:
+
+```bash
+rtk bash functions/provision_protocol_canary.sh --rotate-legacy
+```
+
+That mode only accepts the exact active `OMS Protocol Canary` mailbox with an
+empty legacy marker, exact active self-alias, matching root-only credential,
+and a credential password that verifies against the stored mailbox hash. It
+preserves the mailbox row and maildir, rotates the password, and installs the
+new attestation. Normal provisioning never migrates a legacy mailbox.
+
+The generated credential and identity remain root-only under
+`/etc/openmailstack`; they are
 never printed or stored in the repository. The gate uses the same disposable
 message to prove public IMAPS 993 body retrieval and ActiveSync full-MIME sync,
 then removes its mail, web session, and synthetic device state. Once

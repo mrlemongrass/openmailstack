@@ -23,6 +23,8 @@ const db = require('../src/db.js');
 db.pool.query = async (sql, params = []) => {
   const compact = String(sql).replace(/\s+/g, ' ').trim();
 
+  if (compact.startsWith('SELECT GET_LOCK')) return [[{ acquired: 1 }], []];
+  if (compact.startsWith('SELECT RELEASE_LOCK')) return [[{ released: 1 }], []];
   if (compact.startsWith('SHOW COLUMNS FROM contacts')) {
     return [contactColumns.map(Field => ({ Field })), []];
   }
@@ -32,15 +34,19 @@ db.pool.query = async (sql, params = []) => {
   if (compact.includes('AS next_sync_token')) {
     return [[{ next_sync_token: inserts.length + 1 }], []];
   }
+  if (compact.startsWith('SELECT id, dav_uid, vcard_data FROM contacts WHERE username = ?')) {
+    return [[], []];
+  }
   if (compact.includes('ORDER BY deleted_at IS NULL DESC, id ASC LIMIT 1')) {
     return [carddavContact ? [carddavContact] : [], []];
   }
   if (compact.includes('dav_uid = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1')) {
     return [carddavContact ? [carddavContact] : [], []];
   }
-  if (compact.startsWith('SELECT id FROM calendars')) {
+  if (compact === "SELECT id FROM calendars WHERE user_id = ? AND dav_slug = 'birthdays' LIMIT 1 FOR UPDATE") {
     return [[{ id: 9 }], []];
   }
+  if (compact.startsWith('SELECT uid, resource_name, ical_data FROM events')) return [[], []];
   if (compact === 'SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL') {
     return [duplicateRows, []];
   }
@@ -72,6 +78,14 @@ db.pool.query = async (sql, params = []) => {
 
   throw new Error(`Unexpected contact identity query: ${compact}`);
 };
+db.pool.getConnection = async () => ({
+  query: (sql, params) => db.pool.query(sql, params),
+  beginTransaction: async () => {},
+  commit: async () => {},
+  rollback: async () => {},
+  release: () => {},
+  destroy: () => {},
+});
 
 const authPath = require.resolve('../src/auth.js');
 const auth = require(authPath);
@@ -237,13 +251,13 @@ test('vCard imports persist a generated UID when absent and preserve one when su
   assert.equal(response.json.imported, 2);
   assert.equal(inserts.length, 2);
 
-  const generatedVcard = inserts[0].params[9];
-  const generatedDavUid = inserts[0].params[15];
+  const generatedVcard = inserts[0].params[4];
+  const generatedDavUid = inserts[0].params[5];
   assert.match(generatedDavUid, uuidPattern);
   assert.match(generatedVcard, new RegExp(`^UID:${generatedDavUid}$`, 'm'));
 
-  const preservedVcard = inserts[1].params[9];
-  const preservedDavUid = inserts[1].params[15];
+  const preservedVcard = inserts[1].params[4];
+  const preservedDavUid = inserts[1].params[5];
   assert.match(preservedDavUid, uuidPattern);
   assert.notEqual(preservedDavUid, suppliedUid);
   assert.match(preservedVcard, new RegExp(`^UID:${suppliedUid}$`, 'm'));

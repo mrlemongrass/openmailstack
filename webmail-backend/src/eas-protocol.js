@@ -3,9 +3,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ACTIVE_SYNC_UNSUPPORTED_COMMANDS = exports.ACTIVE_SYNC_ADVERTISED_COMMANDS = exports.ACTIVE_SYNC_MAX_REQUEST_BYTES = void 0;
 exports.activeSyncRequestLogSummary = activeSyncRequestLogSummary;
 exports.staticActiveSyncServiceFolders = staticActiveSyncServiceFolders;
+exports.activeSyncMailCollectionId = activeSyncMailCollectionId;
+exports.activeSyncMailParentId = activeSyncMailParentId;
+exports.resolveActiveSyncMailFolderPath = resolveActiveSyncMailFolderPath;
+exports.activeSyncMailMessageServerId = activeSyncMailMessageServerId;
+exports.activeSyncMailMessageUid = activeSyncMailMessageUid;
+exports.parseActiveSyncFolderSyncRequest = parseActiveSyncFolderSyncRequest;
+exports.isActiveSyncAuthenticationFailure = isActiveSyncAuthenticationFailure;
 exports.classifyActiveSyncCollection = classifyActiveSyncCollection;
 exports.unsupportedSyncCollectionResponse = unsupportedSyncCollectionResponse;
 exports.activeSyncDeleteCommand = activeSyncDeleteCommand;
+const crypto_1 = require("crypto");
 exports.ACTIVE_SYNC_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 exports.ACTIVE_SYNC_ADVERTISED_COMMANDS = [
     'Sync',
@@ -85,14 +93,71 @@ const decodeMailCollectionId = (collectionId) => {
         return null;
     return folderPath;
 };
+function activeSyncMailCollectionId(folderPath) {
+    return `m-${(0, crypto_1.createHash)('sha256').update(folderPath).digest('hex').slice(0, 62)}`;
+}
+function activeSyncMailParentId(folder) {
+    const delimiter = folder.delimiter || '';
+    if (!delimiter)
+        return '0';
+    const separator = folder.path.lastIndexOf(delimiter);
+    if (separator <= 0)
+        return '0';
+    return activeSyncMailCollectionId(folder.path.slice(0, separator));
+}
+function resolveActiveSyncMailFolderPath(collectionId, folders) {
+    const opaque = folders.find(folder => activeSyncMailCollectionId(folder.path) === collectionId);
+    if (opaque)
+        return opaque.path;
+    const legacyPath = decodeMailCollectionId(collectionId);
+    if (!legacyPath || Buffer.byteLength(collectionId, 'utf8') > 40)
+        return null;
+    return folders.some(folder => folder.path === legacyPath) ? legacyPath : null;
+}
+function activeSyncMailMessageServerId(collectionId, uid) {
+    if (!Number.isSafeInteger(uid) || uid < 1)
+        throw new Error('Invalid mail UID');
+    const collectionHash = (0, crypto_1.createHash)('sha256').update(collectionId).digest('hex').slice(0, 40);
+    return `i-${collectionHash}-${uid}`;
+}
+function activeSyncMailMessageUid(collectionId, serverId) {
+    const prefix = `i-${(0, crypto_1.createHash)('sha256').update(collectionId).digest('hex').slice(0, 40)}-`;
+    if (!serverId.startsWith(prefix))
+        return null;
+    const value = serverId.slice(prefix.length);
+    if (!/^[1-9][0-9]{0,15}$/.test(value))
+        return null;
+    const uid = Number(value);
+    return Number.isSafeInteger(uid) ? uid : null;
+}
+function parseActiveSyncFolderSyncRequest(decoded) {
+    if (decoded?.tag !== 'FolderSync' || decoded?.page !== 7
+        || decoded.content !== undefined && decoded.content !== null
+        || !Array.isArray(decoded.children) || decoded.children.length !== 1)
+        return { ok: false };
+    const syncKey = decoded.children[0];
+    if (syncKey?.tag !== 'SyncKey' || syncKey?.page !== 7
+        || syncKey.content === undefined || syncKey.content === null
+        || typeof syncKey.content !== 'string'
+        || syncKey.children?.length
+        || Buffer.byteLength(syncKey.content, 'utf8') < 1
+        || Buffer.byteLength(syncKey.content, 'utf8') > 96
+        || /[\u0000-\u001f\u007f]/.test(syncKey.content))
+        return { ok: false };
+    return { ok: true, syncKey: syncKey.content };
+}
+function isActiveSyncAuthenticationFailure(error) {
+    return Boolean(error && typeof error === 'object'
+        && error.authenticationFailed === true);
+}
 function classifyActiveSyncCollection(collectionId) {
-    if (collectionId === 'contacts' || collectionId === 'mock-contacts')
+    if (collectionId === 'contacts')
         return { kind: 'contacts' };
-    if (collectionId === 'mock-calendar')
-        return { kind: 'calendar', calendarId: null };
     const calendarMatch = collectionId.match(/^cal-([1-9][0-9]*)$/);
     if (calendarMatch)
         return { kind: 'calendar', calendarId: calendarMatch[1] };
+    if (/^m-[0-9a-f]{62}$/.test(collectionId))
+        return { kind: 'mail', folderPath: null };
     const folderPath = decodeMailCollectionId(collectionId);
     return folderPath ? { kind: 'mail', folderPath } : { kind: 'unsupported' };
 }

@@ -52,6 +52,8 @@ class WbxmlWriter {
         this.pushBytes(buf[buf.length - 1]);
     }
     writeStringInline(str) {
+        if (str.includes('\0'))
+            throw new Error('WBXML inline strings cannot contain NUL');
         this.pushBytes(0x03); // STR_I
         const strBuffer = Buffer.from(str, 'utf8');
         this.pushBuffer(strBuffer);
@@ -88,8 +90,11 @@ class WbxmlWriter {
                 if (Buffer.isBuffer(node.content)) {
                     this.writeOpaque(node.content);
                 }
+                else if (typeof node.content === 'string') {
+                    this.writeStringInline(node.content);
+                }
                 else {
-                    this.writeStringInline(node.content.toString());
+                    throw new Error('WBXML node content must be a string or Buffer');
                 }
             }
             if (node.children) {

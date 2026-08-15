@@ -2488,10 +2488,12 @@ exports.apiRouter.post('/contacts', requireAuth, async (req, res) => {
             email: cleanEmail,
             phone: cleanPhone,
         });
-        const syncToken = await (0, contact_utils_1.nextContactSyncToken)(user);
-        await db_1.pool.query(`INSERT INTO contacts (username, name, email, phone, vcard_data, dav_uid, sync_token)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone), sync_token = VALUES(sync_token)`, [user, cleanName, cleanEmail, cleanPhone, vcard, davUid, syncToken]);
+        await (0, contact_utils_1.withContactMutation)(user, async (connection) => {
+            const syncToken = await (0, contact_utils_1.nextContactSyncTokenOnConnection)(connection, user);
+            await connection.query(`INSERT INTO contacts (username, name, email, phone, vcard_data, dav_uid, sync_token)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE name = VALUES(name), phone = VALUES(phone), sync_token = VALUES(sync_token)`, [user, cleanName, cleanEmail, cleanPhone, vcard, davUid, syncToken]);
+        });
         res.json({ success: true });
     }
     catch (err) {
@@ -3463,6 +3465,10 @@ exports.apiRouter.post('/notes', requireAuth, async (req, res) => {
         res.json({ success: true, note });
     }
     catch (err) {
+        if (err instanceof notes_utils_1.NoteValidationError) {
+            res.status(err.statusCode).json((0, notes_utils_1.noteValidationErrorBody)(err));
+            return;
+        }
         console.error('Notes POST error:', err);
         res.status(500).json({ success: false, error: err.message });
     }
@@ -3510,6 +3516,10 @@ exports.apiRouter.put('/notes/:id', requireAuth, async (req, res) => {
     catch (err) {
         if (err instanceof notes_utils_1.NoteConflictError) {
             res.status(409).json({ success: false, error: err.message });
+            return;
+        }
+        if (err instanceof notes_utils_1.NoteValidationError) {
+            res.status(err.statusCode).json((0, notes_utils_1.noteValidationErrorBody)(err));
             return;
         }
         res.status(500).json({ success: false, error: err.message });

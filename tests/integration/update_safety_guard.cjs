@@ -179,7 +179,9 @@ test('guarded webmail rollback validates the snapshot and remains reversible', (
     guardedDeploy.indexOf('complete_success()'),
     guardedDeploy.indexOf('on_signal()'),
   );
-  assert.match(completion, /trap '' HUP INT TERM\s+DEPLOY_COMPLETE=1\s+print_success/);
+  assert.match(completion, /trap '' HUP INT TERM/);
+  assert.match(completion, /clear_current_pending_run\s+\\\s+\|\| fail "Deployment passed but the verified protocol run journal could not be cleared"/);
+  assert.match(completion, /clear_current_pending_run[\s\S]+DEPLOY_COMPLETE=1\s+print_success/);
   const signalHandler = guardedDeploy.slice(
     guardedDeploy.indexOf('on_signal()'),
     guardedDeploy.indexOf("trap 'on_signal HUP' HUP"),

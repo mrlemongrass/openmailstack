@@ -3,6 +3,7 @@ import { type AvailabilitySlot } from './availability';
 import { type SchedulerEventInput, type SchedulerBookingAnswerInput, type SchedulerBookingQuestion, type SchedulerAttendeeInput, type SchedulerOneOffWindow } from './phase1';
 import { type SchedulerAvailabilityExclusion } from './phase2';
 import { type SchedulerCommunicationConsents } from './workflows';
+export declare function schedulerStoredCalendarResource(ical: string, expectedUid: string): string;
 export interface SchedulerEntitlement {
     username: string;
     tenantKey: string;
@@ -136,6 +137,8 @@ export declare class SchedulerStore {
     private readonly workflows;
     private readonly contactPreferences;
     constructor(pool: Pool);
+    private upsertCalendarEventOnConnection;
+    private deleteCalendarEventOnConnection;
     listAdminMailboxes(): Promise<Array<Record<string, unknown>>>;
     setEntitlement(username: string, actor: string, input: {
         enabled: boolean;
@@ -212,6 +215,7 @@ export declare class SchedulerStore {
     private busyIntervals;
     private remainingCapacityByStart;
     private assertCalendarOwnership;
+    private assertWritableCalendarOwnership;
     private bookingByIdempotency;
     private releaseHold;
     private enqueue;

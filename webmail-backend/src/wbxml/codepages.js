@@ -89,19 +89,17 @@ exports.CODEPAGES = {
         0x30: 'OtherAddressState',
         0x31: 'OtherAddressStreet',
         0x32: 'PagerNumber',
-        0x33: 'Picture',
-        0x34: 'RadioPhoneNumber',
-        0x35: 'Spouse',
-        0x36: 'Suffix',
-        0x37: 'Title',
-        0x38: 'WebPage',
-        0x39: 'YomiCompanyName',
-        0x3A: 'YomiFirstName',
-        0x3B: 'YomiLastName',
-        0x3C: 'CompressedRTF',
-        0x3D: 'Picture',
-        0x3E: 'Alias',
-        0x3F: 'WeightedRank'
+        0x33: 'RadioPhoneNumber',
+        0x34: 'Spouse',
+        0x35: 'Suffix',
+        0x36: 'Title',
+        0x37: 'WebPage',
+        0x38: 'YomiCompanyName',
+        0x39: 'YomiFirstName',
+        0x3A: 'YomiLastName',
+        0x3C: 'Picture',
+        0x3D: 'Alias',
+        0x3E: 'WeightedRank'
     },
     2: {
         0x05: 'Attachment',
@@ -256,11 +254,16 @@ exports.CODEPAGES = {
         0x18: 'Version'
     },
     12: {
-        0x05: 'Subject',
-        0x06: 'MessageClass',
-        0x07: 'LastModifiedDate',
-        0x08: 'Categories',
-        0x09: 'Category'
+        0x05: 'CustomerId',
+        0x06: 'GovernmentId',
+        0x07: 'IMAddress',
+        0x08: 'IMAddress2',
+        0x09: 'IMAddress3',
+        0x0A: 'ManagerName',
+        0x0B: 'CompanyMainPhone',
+        0x0C: 'AccountName',
+        0x0D: 'NickName',
+        0x0E: 'MMS'
     },
     13: {
         0x05: 'Ping',

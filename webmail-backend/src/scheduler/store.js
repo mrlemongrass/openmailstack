@@ -4,14 +4,30 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SchedulerStore = void 0;
+exports.schedulerStoredCalendarResource = schedulerStoredCalendarResource;
 const crypto_1 = __importDefault(require("crypto"));
 const availability_1 = require("./availability");
 const slot_holds_1 = require("./slot-holds");
 const phase1_1 = require("./phase1");
 const calendar_utils_1 = require("../calendar-utils");
+const calendar_ical_validation_1 = require("../calendar-ical-validation");
 const config_1 = require("../config");
 const phase2_1 = require("./phase2");
 const workflows_1 = require("./workflows");
+function schedulerStoredCalendarResource(ical, expectedUid) {
+    const validated = (0, calendar_ical_validation_1.validateICalendarDocument)(ical, { mode: 'import' });
+    if (validated.resources.length !== 1
+        || validated.resources[0].componentType !== 'VEVENT'
+        || validated.resources[0].uid !== expectedUid) {
+        throw new Error('Scheduler calendar resource identity is invalid');
+    }
+    return validated.resources[0].icalData;
+}
+function isWritableSchedulerCalendar(calendar, username) {
+    return String(calendar?.user_id || '').trim().toLowerCase() === username.trim().toLowerCase()
+        && String(calendar?.dav_slug || '').trim().toLowerCase() !== 'birthdays'
+        && String(calendar?.subscribed_url || '').trim() === '';
+}
 const mysqlDate = (date) => date.toISOString().slice(0, 23).replace('T', ' ');
 const utcDate = (value) => new Date(`${String(value).replace(' ', 'T')}Z`);
 const booleanValue = (value) => Number(value) === 1;
@@ -216,6 +232,51 @@ class SchedulerStore {
         this.holds = new slot_holds_1.SchedulerSlotHoldRepository(pool);
         this.workflows = new workflows_1.SchedulerWorkflowRepository(pool);
         this.contactPreferences = new workflows_1.SchedulerContactPreferenceRepository(pool, new workflows_1.SchedulerSecretBox(config_1.schedulerConfig.secretKeys));
+    }
+    async upsertCalendarEventOnConnection(connection, calendarId, ownerUsername, uid, ical) {
+        const storedIcal = schedulerStoredCalendarResource(ical, uid);
+        const [calendarRows] = await connection.query(`SELECT id, user_id, dav_slug, subscribed_url
+             FROM calendars WHERE id = ? LIMIT 1 FOR UPDATE`, [calendarId]);
+        if (calendarRows.length !== 1 || !isWritableSchedulerCalendar(calendarRows[0], ownerUsername)) {
+            throw new Error('Calendar is not a writable Scheduler destination');
+        }
+        const [eventRows] = await connection.query('SELECT ical_data, resource_name FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1 FOR UPDATE', [calendarId, uid]);
+        const existing = eventRows[0];
+        const resourceName = String(existing?.resource_name || uid);
+        const [tombstoneResult] = await connection.query(`DELETE FROM calendar_tombstones
+             WHERE calendar_id = ?
+             AND BINARY COALESCE(NULLIF(resource_name, ''), uid) = BINARY ?`, [calendarId, resourceName]);
+        if (existing && String(existing.ical_data || '') === storedIcal && !Number(tombstoneResult.affectedRows || 0)) {
+            return false;
+        }
+        const revision = await (0, calendar_utils_1.allocateCalendarCollectionRevisionOnConnection)(connection, calendarId);
+        if (existing) {
+            await connection.query('UPDATE events SET ical_data = ?, sync_token = ? WHERE calendar_id = ? AND uid = ?', [storedIcal, revision, calendarId, uid]);
+        }
+        else {
+            await connection.query(`INSERT INTO events (calendar_id, uid, resource_name, ical_data, sync_token)
+                 VALUES (?, ?, ?, ?, ?)`, [calendarId, uid, uid, storedIcal, revision]);
+        }
+        return true;
+    }
+    async deleteCalendarEventOnConnection(connection, calendarId, uid) {
+        const [calendarRows] = await connection.query('SELECT id FROM calendars WHERE id = ? LIMIT 1 FOR UPDATE', [calendarId]);
+        if (calendarRows.length !== 1)
+            throw new Error('Calendar not found');
+        const [eventRows] = await connection.query('SELECT uid, resource_name FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1 FOR UPDATE', [calendarId, uid]);
+        if (eventRows.length === 0)
+            return false;
+        const resourceName = String(eventRows[0].resource_name || eventRows[0].uid);
+        const revision = await (0, calendar_utils_1.allocateCalendarCollectionRevisionOnConnection)(connection, calendarId);
+        const [deleteResult] = await connection.query('DELETE FROM events WHERE calendar_id = ? AND uid = ?', [calendarId, uid]);
+        if (!Number(deleteResult.affectedRows || 0))
+            throw new Error('Calendar event disappeared during locked delete');
+        await connection.query(`INSERT INTO calendar_tombstones (calendar_id, uid, resource_name, sync_token, deleted_at)
+             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+             ON DUPLICATE KEY UPDATE
+                uid = VALUES(uid), resource_name = VALUES(resource_name),
+                sync_token = VALUES(sync_token), deleted_at = CURRENT_TIMESTAMP`, [calendarId, uid, resourceName, revision]);
+        return true;
     }
     async listAdminMailboxes() {
         const [rows] = await this.pool.query(`SELECT m.username, m.name, m.local_part, m.domain, m.active,
@@ -428,7 +489,7 @@ class SchedulerStore {
         const defaultCalendarId = input.defaultCalendarId === undefined ? entitlement.defaultCalendarId : input.defaultCalendarId;
         const notificationFrom = String(input.notificationFrom || entitlement.notificationFrom || username).trim().toLowerCase();
         if (defaultCalendarId !== null)
-            await this.assertCalendarOwnership(username, Number(defaultCalendarId));
+            await this.assertWritableCalendarOwnership(username, Number(defaultCalendarId));
         const identities = await this.listNotificationIdentities(username);
         if (!identities.some((identity) => identity.address === notificationFrom))
             throw new Error('Scheduler sender must be your mailbox or an active alias');
@@ -458,8 +519,9 @@ class SchedulerStore {
         const normalized = (0, phase1_1.normalizeSchedulerEventInput)(input);
         const defaultSchedule = input.availabilityScheduleId === undefined && !eventId ? await this.getDefaultAvailability(username) : null;
         const availabilityScheduleId = defaultSchedule?.id || normalized.availabilityScheduleId;
-        if (normalized.destinationCalendarId !== null)
-            await this.assertCalendarOwnership(username, normalized.destinationCalendarId);
+        if (normalized.destinationCalendarId !== null) {
+            await this.assertWritableCalendarOwnership(username, normalized.destinationCalendarId);
+        }
         for (const calendarId of normalized.conflictCalendarIds)
             await this.assertCalendarOwnership(username, calendarId);
         if (availabilityScheduleId !== null)
@@ -957,7 +1019,7 @@ class SchedulerStore {
         const cancelToken = (0, phase1_1.createSchedulerToken)();
         const rescheduleToken = (0, phase1_1.createSchedulerToken)();
         const calendar = publicEvent.event.destinationCalendarId
-            ? await this.assertCalendarOwnership(publicEvent.entitlement.username, publicEvent.event.destinationCalendarId)
+            ? await this.assertWritableCalendarOwnership(publicEvent.entitlement.username, publicEvent.event.destinationCalendarId)
             : await (0, calendar_utils_1.ensureDefaultCalendar)(publicEvent.entitlement.username);
         const calendarUid = `scheduler-${bookingId}@openmailstack`;
         const eventSnapshot = JSON.stringify(publicEvent.event);
@@ -1039,9 +1101,7 @@ class SchedulerStore {
                 hold.token, calendar.id, calendarUid, idempotencyKey, bookingStatus === 'confirmed' ? mysqlDate(new Date()) : null]);
             await this.contactPreferences.recordConsents(connection, publicEvent.entitlement.tenantKey, bookerEmail, communicationConsents);
             if (ical) {
-                await connection.query(`INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?)
-                     ON DUPLICATE KEY UPDATE ical_data = VALUES(ical_data)`, [calendar.id, calendarUid, ical]);
-                await connection.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar.id]);
+                await this.upsertCalendarEventOnConnection(connection, calendar.id, publicEvent.entitlement.username, calendarUid, ical);
             }
             await this.workflows.captureForBooking(connection, {
                 tenantKey: publicEvent.entitlement.tenantKey,
@@ -1106,10 +1166,30 @@ class SchedulerStore {
         }
         const lockName = `oms-series-${(0, phase1_1.schedulerTokenHash)(`${publicEvent.entitlement.tenantKey}:${baseIdempotencyKey}`).slice(0, 48)}`;
         const lockConnection = await this.pool.getConnection();
+        let lockAcquired = false;
+        let connectionUsable = true;
+        let operationCompleted = false;
+        let operationError = null;
         try {
-            const [lockRows] = await lockConnection.query('SELECT GET_LOCK(?, 10) AS acquired', [lockName]);
-            if (Number(lockRows[0]?.acquired) !== 1)
+            let lockRows;
+            try {
+                [lockRows] = await lockConnection.query('SELECT GET_LOCK(?, 10) AS acquired', [lockName]);
+            }
+            catch (error) {
+                connectionUsable = false;
+                throw error;
+            }
+            const lockResult = lockRows?.[0]?.acquired;
+            if (lockResult === 1 || lockResult === '1') {
+                lockAcquired = true;
+            }
+            else if (lockResult === 0 || lockResult === '0') {
                 throw new Error('Another recurring booking request is still being processed');
+            }
+            else {
+                connectionUsable = false;
+                throw new Error('Recurring booking lock acquisition was indeterminate');
+            }
             const [firstRows] = await this.pool.query(`SELECT event_type_id,booker_email,CAST(slot_start AS CHAR) AS slot_start_utc,series_id,series_count
                  FROM scheduler_bookings WHERE tenant_key=? AND idempotency_key=? LIMIT 1`, [publicEvent.entitlement.tenantKey, `${baseIdempotencyKey}:series:1`]);
             if (firstRows.length) {
@@ -1126,6 +1206,7 @@ class SchedulerStore {
                     const bookings = seriesRows.map((row) => ({
                         id: row.id, status: row.status, start: utcDate(row.slot_start_utc), end: utcDate(row.slot_end_utc), idempotentReplay: true,
                     }));
+                    operationCompleted = true;
                     return { ...bookings[0], seriesId: first.series_id, recurrenceCount: count, bookings, idempotentReplay: true };
                 }
                 for (const row of seriesRows.reverse())
@@ -1160,6 +1241,7 @@ class SchedulerStore {
                     }));
                 }
                 await this.queueExistingBookingNotifications(created);
+                operationCompleted = true;
                 return { ...created[0], seriesId, recurrenceCount: count, bookings: created };
             }
             catch (error) {
@@ -1181,9 +1263,32 @@ class SchedulerStore {
                 throw error;
             }
         }
+        catch (error) {
+            operationError = error;
+            throw error;
+        }
         finally {
-            await lockConnection.query('SELECT RELEASE_LOCK(?)', [lockName]).catch(() => undefined);
-            lockConnection.release();
+            if (lockAcquired && connectionUsable) {
+                try {
+                    const [releaseRows] = await lockConnection.query('SELECT RELEASE_LOCK(?) AS released', [lockName]);
+                    if (releaseRows?.[0]?.released !== 1 && releaseRows?.[0]?.released !== '1') {
+                        throw new Error('Recurring booking lock release failed');
+                    }
+                }
+                catch (releaseError) {
+                    connectionUsable = false;
+                    if (operationCompleted) {
+                        console.error('[Scheduler] Recurring booking lock release failed after booking completion; destroying connection');
+                    }
+                    else if (!operationError) {
+                        throw releaseError;
+                    }
+                }
+            }
+            if (connectionUsable)
+                lockConnection.release();
+            else
+                lockConnection.destroy();
         }
     }
     async joinWaitlist(handle, slug, input) {
@@ -1465,8 +1570,7 @@ class SchedulerStore {
                 return;
             }
             if (booking.calendar_id && booking.calendar_event_uid) {
-                await connection.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [booking.calendar_id, booking.calendar_event_uid]);
-                await connection.query('UPDATE calendars SET sync_token=sync_token+1 WHERE id=?', [booking.calendar_id]);
+                await this.deleteCalendarEventOnConnection(connection, booking.calendar_id, booking.calendar_event_uid);
             }
             await connection.query(`UPDATE scheduler_slot_inventory SET confirmed_seats=GREATEST(confirmed_seats-?,0)
                  WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [Number(booking.seats || 1), booking.tenant_key, booking.event_type_id, booking.host_username, booking.slot_start]);
@@ -1616,9 +1720,7 @@ class SchedulerStore {
                          cancel_token_hash=?, reschedule_token_hash=?, action_tokens_expires_at=?
                      WHERE id=?`, [(0, phase1_1.schedulerTokenHash)(nextCancelToken), (0, phase1_1.schedulerTokenHash)(nextRescheduleToken),
                     mysqlDate(new Date(end.getTime() + 30 * 24 * 60 * 60 * 1000)), booking.id]);
-                await connection.query(`INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?)
-                     ON DUPLICATE KEY UPDATE ical_data=VALUES(ical_data)`, [booking.calendar_id, booking.calendar_event_uid, ical]);
-                await connection.query('UPDATE calendars SET sync_token=sync_token+1 WHERE id=?', [booking.calendar_id]);
+                await this.upsertCalendarEventOnConnection(connection, booking.calendar_id, booking.host_username, booking.calendar_event_uid, ical);
                 await this.workflows.activateCapturedForBooking(connection, {
                     tenantKey: booking.tenant_key,
                     bookingId: booking.id,
@@ -1777,8 +1879,7 @@ class SchedulerStore {
                 timeZone: booking.booker_time_zone,
                 manageUrl: `${config_1.schedulerConfig.publicBaseUrl}/scheduler/action/reschedule/${encodeURIComponent(token)}`,
             });
-            await connection.query('UPDATE events SET ical_data=? WHERE calendar_id=? AND uid=?', [ical, booking.calendar_id, booking.calendar_event_uid]);
-            await connection.query('UPDATE calendars SET sync_token=sync_token+1 WHERE id=?', [booking.calendar_id]);
+            await this.upsertCalendarEventOnConnection(connection, booking.calendar_id, booking.host_username, booking.calendar_event_uid, ical);
             await connection.query("UPDATE scheduler_slot_holds SET status='confirmed' WHERE hold_token=?", [hold.token]);
             await connection.query(`UPDATE scheduler_slot_inventory SET held_seats=GREATEST(held_seats-?,0), confirmed_seats=confirmed_seats+?
                  WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [hold.seats, hold.seats, hold.tenantKey, hold.eventTypeKey, hold.hostUsername, mysqlDate(hold.slotStart)]);
@@ -1852,9 +1953,7 @@ class SchedulerStore {
                 await connection.query("UPDATE scheduler_slot_holds SET status='released' WHERE hold_token=? AND status='confirmed'", [current.slot_hold_token]);
             }
             if (wasConfirmed && current.calendar_id && current.calendar_event_uid) {
-                await connection.query('INSERT INTO calendar_tombstones (calendar_id, uid) VALUES (?, ?)', [current.calendar_id, current.calendar_event_uid]);
-                await connection.query('DELETE FROM events WHERE calendar_id = ? AND uid = ?', [current.calendar_id, current.calendar_event_uid]);
-                await connection.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [current.calendar_id]);
+                await this.deleteCalendarEventOnConnection(connection, current.calendar_id, current.calendar_event_uid);
             }
             await connection.query(`UPDATE scheduler_slot_inventory SET confirmed_seats = GREATEST(confirmed_seats - ?, 0)
                  WHERE tenant_key=? AND event_type_key=? AND host_username=? AND slot_start=?`, [Number(current.seats || 1), current.tenant_key, current.event_type_id, current.host_username, current.slot_start_utc]);
@@ -2021,6 +2120,13 @@ class SchedulerStore {
         if (!rows.length)
             throw new Error('Calendar not found');
         return rows[0];
+    }
+    async assertWritableCalendarOwnership(username, calendarId) {
+        const calendar = await this.assertCalendarOwnership(username, calendarId);
+        if (!isWritableSchedulerCalendar(calendar, username)) {
+            throw new Error('Calendar is not a writable Scheduler destination');
+        }
+        return calendar;
     }
     async bookingByIdempotency(tenantKey, key) {
         const [rows] = await this.pool.query(`SELECT id, event_type_id, booker_email, status,

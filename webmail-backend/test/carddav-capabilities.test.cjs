@@ -70,6 +70,9 @@ db.pool.query = async (sql) => {
   if (compact.startsWith('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL ORDER BY')) {
     return [[contact], []];
   }
+  if (compact.startsWith('SELECT * FROM contacts WHERE username = ? AND deleted_at IS NULL AND sync_token > ?')) {
+    return [[], []];
+  }
   if (compact.startsWith('SELECT contact_tombstones.*')) return [[], []];
   throw new Error(`Unexpected CardDAV test query: ${compact}`);
 };
@@ -231,4 +234,38 @@ test('macOS home discovery advertises owner and implemented address book reports
     /<D:supported-report><D:report><D:sync-collection\/><\/D:report><\/D:supported-report>/,
   );
   assert.doesNotMatch(xml, /<D:privilege><D:write\/><\/D:privilege>/);
+});
+
+test('CardDAV sync-collection rejects malformed and future contact tokens', async (t) => {
+  const app = express();
+  app.use(express.raw({ type: () => true }));
+  app.use('/carddav', carddavRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const address = server.address();
+  const encodedUser = encodeURIComponent(user);
+  const endpoint = `http://127.0.0.1:${address.port}/carddav/addressbooks/${encodedUser}/personal/`;
+  for (const invalidToken of ['not-a-contact-token', '1-2-1']) {
+    const body = [
+      '<?xml version="1.0" encoding="utf-8" ?>',
+      '<D:sync-collection xmlns:D="DAV:">',
+      `<D:sync-token>${invalidToken}</D:sync-token>`,
+      '<D:sync-level>1</D:sync-level>',
+      '<D:prop><D:getetag/></D:prop>',
+      '</D:sync-collection>',
+    ].join('');
+    const response = await fetch(endpoint, {
+      method: 'REPORT',
+      headers: {
+        Authorization: auth,
+        'Content-Type': 'application/xml; charset=utf-8',
+      },
+      body,
+    });
+
+    assert.equal(response.status, 403, invalidToken);
+    assert.match(await response.text(), /<D:valid-sync-token\s*\/>/);
+  }
 });

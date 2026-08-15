@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type { WbxmlNode } from './wbxml/parser';
 
 export const ACTIVE_SYNC_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
@@ -45,8 +46,10 @@ export interface ActiveSyncStaticFolder {
 export type ActiveSyncCollection =
     | { kind: 'contacts' }
     | { kind: 'calendar'; calendarId: string | null }
-    | { kind: 'mail'; folderPath: string }
+    | { kind: 'mail'; folderPath: string | null }
     | { kind: 'unsupported' };
+
+export type ActiveSyncMailFolder = { path: string; delimiter?: string | null };
 
 const boundedToken = (value: unknown, fallback: string): string => {
     const token = String(value || '');
@@ -111,11 +114,70 @@ const decodeMailCollectionId = (collectionId: string): string | null => {
     return folderPath;
 };
 
+export function activeSyncMailCollectionId(folderPath: string): string {
+    return `m-${createHash('sha256').update(folderPath).digest('hex').slice(0, 62)}`;
+}
+
+export function activeSyncMailParentId(folder: ActiveSyncMailFolder): string {
+    const delimiter = folder.delimiter || '';
+    if (!delimiter) return '0';
+    const separator = folder.path.lastIndexOf(delimiter);
+    if (separator <= 0) return '0';
+    return activeSyncMailCollectionId(folder.path.slice(0, separator));
+}
+
+export function resolveActiveSyncMailFolderPath(
+    collectionId: string,
+    folders: ActiveSyncMailFolder[],
+): string | null {
+    const opaque = folders.find(folder => activeSyncMailCollectionId(folder.path) === collectionId);
+    if (opaque) return opaque.path;
+    const legacyPath = decodeMailCollectionId(collectionId);
+    if (!legacyPath || Buffer.byteLength(collectionId, 'utf8') > 40) return null;
+    return folders.some(folder => folder.path === legacyPath) ? legacyPath : null;
+}
+
+export function activeSyncMailMessageServerId(collectionId: string, uid: number): string {
+    if (!Number.isSafeInteger(uid) || uid < 1) throw new Error('Invalid mail UID');
+    const collectionHash = createHash('sha256').update(collectionId).digest('hex').slice(0, 40);
+    return `i-${collectionHash}-${uid}`;
+}
+
+export function activeSyncMailMessageUid(collectionId: string, serverId: string): number | null {
+    const prefix = `i-${createHash('sha256').update(collectionId).digest('hex').slice(0, 40)}-`;
+    if (!serverId.startsWith(prefix)) return null;
+    const value = serverId.slice(prefix.length);
+    if (!/^[1-9][0-9]{0,15}$/.test(value)) return null;
+    const uid = Number(value);
+    return Number.isSafeInteger(uid) ? uid : null;
+}
+
+export function parseActiveSyncFolderSyncRequest(decoded: any):
+    { ok: true; syncKey: string } | { ok: false } {
+    if (decoded?.tag !== 'FolderSync' || decoded?.page !== 7
+        || decoded.content !== undefined && decoded.content !== null
+        || !Array.isArray(decoded.children) || decoded.children.length !== 1) return { ok: false };
+    const syncKey = decoded.children[0];
+    if (syncKey?.tag !== 'SyncKey' || syncKey?.page !== 7
+        || syncKey.content === undefined || syncKey.content === null
+        || typeof syncKey.content !== 'string'
+        || syncKey.children?.length
+        || Buffer.byteLength(syncKey.content, 'utf8') < 1
+        || Buffer.byteLength(syncKey.content, 'utf8') > 96
+        || /[\u0000-\u001f\u007f]/.test(syncKey.content)) return { ok: false };
+    return { ok: true, syncKey: syncKey.content };
+}
+
+export function isActiveSyncAuthenticationFailure(error: unknown): boolean {
+    return Boolean(error && typeof error === 'object'
+        && (error as { authenticationFailed?: unknown }).authenticationFailed === true);
+}
+
 export function classifyActiveSyncCollection(collectionId: string): ActiveSyncCollection {
-    if (collectionId === 'contacts' || collectionId === 'mock-contacts') return { kind: 'contacts' };
-    if (collectionId === 'mock-calendar') return { kind: 'calendar', calendarId: null };
+    if (collectionId === 'contacts') return { kind: 'contacts' };
     const calendarMatch = collectionId.match(/^cal-([1-9][0-9]*)$/);
     if (calendarMatch) return { kind: 'calendar', calendarId: calendarMatch[1] };
+    if (/^m-[0-9a-f]{62}$/.test(collectionId)) return { kind: 'mail', folderPath: null };
     const folderPath = decodeMailCollectionId(collectionId);
     return folderPath ? { kind: 'mail', folderPath } : { kind: 'unsupported' };
 }

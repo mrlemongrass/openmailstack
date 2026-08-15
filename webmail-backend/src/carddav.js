@@ -61,6 +61,34 @@ function normalizeReportSyncToken(token) {
     const lastSlash = trimmed.lastIndexOf('/');
     return lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
 }
+function isWellFormedContactSyncToken(token) {
+    const normalized = token.startsWith('contacts-') ? token.slice('contacts-'.length) : token;
+    return /^\d+-[1-9]\d*-\d+$/.test(normalized);
+}
+function requestEntityTags(value) {
+    if (value === undefined)
+        return null;
+    return (Array.isArray(value) ? value.join(',') : value)
+        .split(',')
+        .map(tag => tag.trim())
+        .filter(Boolean);
+}
+function weakEntityTag(tag) {
+    return tag.replace(/^W\//i, '');
+}
+function carddavPreconditionsPass(req, currentEtag) {
+    const ifMatch = requestEntityTags(req.headers['if-match']);
+    if (ifMatch) {
+        if (!currentEtag || !ifMatch.some(tag => tag === '*' || (!/^W\//i.test(tag) && tag === currentEtag))) {
+            return false;
+        }
+    }
+    const ifNoneMatch = requestEntityTags(req.headers['if-none-match']);
+    if (ifNoneMatch && currentEtag && ifNoneMatch.some(tag => tag === '*' || weakEntityTag(tag) === weakEntityTag(currentEtag))) {
+        return false;
+    }
+    return true;
+}
 function responseForAddressBook(user, syncToken, includeChildren) {
     return `
   <D:response>
@@ -260,6 +288,17 @@ async function handleReport(req, res, user) {
     const isSyncCollection = (0, dav_report_1.isSyncCollectionReport)(rawBody);
     const requestedSyncToken = normalizeReportSyncToken((0, dav_report_1.syncTokenFromReportBody)(rawBody));
     const syncToken = await (0, contact_utils_1.addressBookSyncToken)(user);
+    if (isSyncCollection && requestedSyncToken) {
+        const requestedVersion = (0, contact_utils_1.contactSyncTokenVersion)(requestedSyncToken);
+        const currentVersion = (0, contact_utils_1.contactSyncTokenVersion)(syncToken);
+        if (!isWellFormedContactSyncToken(requestedSyncToken)
+            || requestedVersion < 1
+            || requestedVersion > currentVersion) {
+            res.set('Content-Type', 'application/xml; charset=utf-8');
+            return res.status(403).send('<?xml version="1.0" encoding="utf-8" ?>'
+                + '<D:error xmlns:D="DAV:"><D:valid-sync-token/></D:error>');
+        }
+    }
     const requestedHrefs = await parseRequestedHrefs(req);
     const requestedUids = new Set(requestedHrefs.map(hrefToDavUid).filter(Boolean));
     let contacts = [];
@@ -325,7 +364,19 @@ async function handlePut(req, res, user) {
     if (!vcard.trim()) {
         return res.status(400).send();
     }
-    const result = await (0, contact_utils_1.saveContactFromVCard)(user, davUid, vcard);
+    const mutation = await (0, contact_utils_1.withContactMutation)(user, async (connection) => {
+        const current = await (0, contact_utils_1.getContactMutationMetadataOnConnection)(connection, user, davUid);
+        if (!carddavPreconditionsPass(req, current ? (0, contact_utils_1.contactEtag)(current) : null)) {
+            return { preconditionFailed: true };
+        }
+        const result = await (0, contact_utils_1.saveContactFromVCardOnConnection)(connection, user, davUid, vcard);
+        if (!result)
+            throw new Error('CardDAV contact changed during its locked PUT');
+        return { preconditionFailed: false, result };
+    });
+    if (mutation.preconditionFailed)
+        return res.status(412).send();
+    const { result } = mutation;
     emitContactsUpdated(user, { davUid });
     res.set('ETag', (0, contact_utils_1.contactEtag)(result.contact));
     res.set('Location', (0, contact_utils_1.getContactHref)(user, result.contact));
@@ -336,10 +387,24 @@ async function handleDelete(req, res, user) {
     if (!match || !isAddressBookSlug(match[1])) {
         return res.status(400).send();
     }
-    const deleted = await (0, contact_utils_1.deleteContactByDavUid)(user, (0, contact_utils_1.normalizeDavUid)(match[2]));
-    if (deleted)
-        emitContactsUpdated(user, { davUid: (0, contact_utils_1.normalizeDavUid)(match[2]), deleted: true });
-    return res.status(deleted ? 204 : 404).send();
+    const davUid = (0, contact_utils_1.normalizeDavUid)(match[2]);
+    const mutation = await (0, contact_utils_1.withContactMutation)(user, async (connection) => {
+        const current = await (0, contact_utils_1.getContactMutationMetadataOnConnection)(connection, user, davUid);
+        if (!carddavPreconditionsPass(req, current ? (0, contact_utils_1.contactEtag)(current) : null)) {
+            return { preconditionFailed: true, deleted: false };
+        }
+        if (!current)
+            return { preconditionFailed: false, deleted: false };
+        const deleted = await (0, contact_utils_1.deleteContactByDavUidOnConnection)(connection, user, davUid, current.sync_token);
+        if (!deleted)
+            throw new Error('CardDAV contact changed during its locked DELETE');
+        return { preconditionFailed: false, deleted: true };
+    });
+    if (mutation.preconditionFailed)
+        return res.status(412).send();
+    if (mutation.deleted)
+        emitContactsUpdated(user, { davUid, deleted: true });
+    return res.status(mutation.deleted ? 204 : 404).send();
 }
 async function handleProppatch(req, res, user) {
     const syncToken = await (0, contact_utils_1.addressBookSyncToken)(user);

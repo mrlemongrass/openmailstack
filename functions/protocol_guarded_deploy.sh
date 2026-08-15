@@ -3,14 +3,24 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
+readonly CANONICAL_SCRIPT_DIR="${SCRIPT_DIR}"
+readonly CANONICAL_REPO_DIR="${REPO_DIR}"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib_protocol_guard.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib_protocol_pending_runs.sh"
 ACTION="${1:-}"
 RESTORE_SOURCE="${2:-}"
+INHERITED_PROTOCOL_GATE_RUN_ID="${OMS_PROTOCOL_GATE_RUN_ID:-}"
+readonly INHERITED_PROTOCOL_GATE_RUN_ID
 TARGET=""
 CONFIG_PATH="${REPO_DIR}/config.conf"
-GATE_SCRIPT="${REPO_DIR}/tests/integration/protocol_release_gate.sh"
-POST_GATE_SCRIPT="${OMS_PROTOCOL_POST_GATE_SCRIPT:-${GATE_SCRIPT}}"
+readonly CANONICAL_CONFIG_PATH="${CONFIG_PATH}"
+readonly CANONICAL_GATE_SCRIPT="${REPO_DIR}/tests/integration/protocol_release_gate.sh"
+GATE_SCRIPT="${CANONICAL_GATE_SCRIPT}"
+POST_GATE_SCRIPT="${GATE_SCRIPT}"
+CANARY_IDENTITY_FILE="${OMS_PROTOCOL_GATE_IDENTITY_FILE:-/etc/openmailstack/protocol-canary.identity}"
+readonly CANONICAL_CANARY_IDENTITY_FILE="${CANARY_IDENTITY_FILE}"
 REQUIRED_FILE="${OMS_PROTOCOL_GATE_REQUIRED_FILE:-/etc/openmailstack/protocol-gate.required}"
 BACKUP_ROOT="${OMS_PROTOCOL_ROLLBACK_ROOT:-/var/backups/openmailstack}"
 BACKEND_DIR="/opt/openmailstack-backend"
@@ -28,12 +38,17 @@ DOVECOT_DIR="/etc/dovecot"
 DOVECOT_DROPIN_DIR="/etc/systemd/system/dovecot.service.d"
 LOCK_ROOT="/run/openmailstack"
 LOCK_FILE="${LOCK_ROOT}/protocol-release.lock"
+PENDING_RUN_PARENT="/var/lib/openmailstack"
+PENDING_RUN_DIR="${PENDING_RUN_PARENT}/protocol-gate-pending"
+readonly CANONICAL_PENDING_RUN_PARENT="${PENDING_RUN_PARENT}"
+readonly CANONICAL_PENDING_RUN_DIR="${PENDING_RUN_DIR}"
 TARGET_SCRIPT=""
 ROLLBACK_READY=0
 DEPLOY_COMPLETE=0
 ROLLBACK_RUNNING=0
 REQUESTED_SNAPSHOT=""
 RELEASE_VERSION=""
+PENDING_RUN_ACTIVE=0
 
 fail() {
     echo "Error: $1" >&2
@@ -45,6 +60,39 @@ fail_with_status() {
     shift
     echo "Error: $*" >&2
     exit "${status}"
+}
+
+validate_guarded_gate_configuration() {
+    local fixture_variable
+
+    [[ "${GATE_SCRIPT}" == "${CANONICAL_GATE_SCRIPT}"
+        && "${POST_GATE_SCRIPT}" == "${CANONICAL_GATE_SCRIPT}" ]] \
+        || fail "OpenMailStack config cannot reassign the canonical protocol gate scripts"
+    [[ -z "${OMS_PROTOCOL_POST_GATE_SCRIPT:-}" ]] \
+        || fail "OMS_PROTOCOL_POST_GATE_SCRIPT is fixture-only and cannot override a guarded deployment"
+    for fixture_variable in \
+        OMS_PROTOCOL_GATE_FIXTURE_MODE \
+        OMS_PROTOCOL_GATE_SMOKE_SCRIPT \
+        OMS_PROTOCOL_GATE_MAIL_SMOKE_SCRIPT \
+        OMS_PROTOCOL_GATE_CONTACTS_SMOKE_SCRIPT \
+        OMS_PROTOCOL_GATE_CALENDAR_SMOKE_SCRIPT \
+        OMS_PROTOCOL_GATE_MYSQL_BIN \
+        OMS_PROTOCOL_GATE_PIM_MARKER \
+        OMS_PROTOCOL_GATE_PROFILE \
+        OMS_SMOKE_POSTQUEUE_BIN \
+        OMS_SMOKE_POSTCAT_BIN \
+        OMS_SMOKE_POSTSUPER_BIN \
+        OMS_SMOKE_MAIL_CLEANUP_QUIET_MS \
+        OMS_SMOKE_MAIL_CLEANUP_DEADLINE_MS \
+        OMS_SMOKE_MAIL_CLEANUP_POLL_MS \
+        OMS_PROTOCOL_GATE_CLEANUP_QUIET_MS \
+        OMS_PROTOCOL_GATE_CLEANUP_DEADLINE_MS \
+        OMS_PROTOCOL_GATE_CLEANUP_POLL_MS \
+        OMS_SMOKE_CLEANUP_ONLY \
+        OMS_SMOKE_NETWORK_TIMEOUT_MS; do
+        [[ -z "${!fixture_variable:-}" ]] \
+            || fail "${fixture_variable} is fixture-only and cannot alter a guarded deployment"
+    done
 }
 
 retire_legacy_upgrade_bridge() {
@@ -76,9 +124,25 @@ fi
 [[ -f "${CONFIG_PATH}" ]] || fail "OpenMailStack config file not found: ${CONFIG_PATH}"
 [[ -f "${REQUIRED_FILE}" ]] || fail "Protocol gate is not provisioned; run functions/provision_protocol_canary.sh first"
 [[ -f "${GATE_SCRIPT}" ]] || fail "Protocol release gate not found: ${GATE_SCRIPT}"
+validate_guarded_gate_configuration
 
 # shellcheck source=/dev/null
 source "${CONFIG_PATH}"
+
+validate_guarded_gate_configuration
+SCRIPT_DIR="${CANONICAL_SCRIPT_DIR}"
+REPO_DIR="${CANONICAL_REPO_DIR}"
+CONFIG_PATH="${CANONICAL_CONFIG_PATH}"
+GATE_SCRIPT="${CANONICAL_GATE_SCRIPT}"
+POST_GATE_SCRIPT="${CANONICAL_GATE_SCRIPT}"
+OMS_PROTOCOL_GATE_RUN_ID="${INHERITED_PROTOCOL_GATE_RUN_ID}"
+export OMS_PROTOCOL_GATE_RUN_ID
+CANARY_IDENTITY_FILE="${CANONICAL_CANARY_IDENTITY_FILE}"
+OMS_PROTOCOL_GATE_IDENTITY_FILE="${CANARY_IDENTITY_FILE}"
+export OMS_PROTOCOL_GATE_IDENTITY_FILE
+PENDING_RUN_PARENT="${CANONICAL_PENDING_RUN_PARENT}"
+PENDING_RUN_DIR="${CANONICAL_PENDING_RUN_DIR}"
+[[ -f "${GATE_SCRIPT}" ]] || fail "Protocol release gate not found: ${GATE_SCRIPT}"
 
 FRONTEND_DIR="${OPENMAILSTACK_WEB_ROOT:-/var/www/openmailstack}"
 DOVECOT_MASTER_SECRET_FILE="${OMS_DOVECOT_MASTER_SECRET_FILE:-/etc/openmailstack/dovecot-master.secret}"
@@ -113,6 +177,38 @@ chown root:root "${LOCK_FILE}"
 chmod 0600 "${LOCK_FILE}"
 protocol_acquire_lock "${PROTOCOL_LOCK_FD}" \
     || fail "Another guarded deploy or rollback is already running"
+
+if [[ ! -e "${PENDING_RUN_PARENT}" && ! -L "${PENDING_RUN_PARENT}" ]]; then
+    install -d -o root -g root -m 0755 "${PENDING_RUN_PARENT}" \
+        || fail "Could not create the protocol pending-run state directory"
+fi
+protocol_secure_directory_metadata "${PENDING_RUN_PARENT}" "protocol pending-run state parent" 0 \
+    || fail "Protocol pending-run state parent is unsafe"
+PENDING_RUN_DIR=$(protocol_pending_prepare_directory "${PENDING_RUN_DIR}" "${PENDING_RUN_PARENT}" 0) \
+    || fail "Protocol pending-run journal is unsafe"
+
+cleanup_pending_protocol_run() {
+    local pending_run_id="$1"
+
+    echo "Cleaning pending protocol canary run ${pending_run_id} before starting a new guarded run..."
+    OMS_PROTOCOL_GATE_RUN_ID="${pending_run_id}" \
+        bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --cleanup-suite-only
+}
+
+protocol_pending_sweep_runs "${PENDING_RUN_DIR}" cleanup_pending_protocol_run 0 \
+    || fail "At least one pending protocol canary run could not be cleaned and proved"
+
+if [[ -n "${INHERITED_PROTOCOL_GATE_RUN_ID}" ]]; then
+    OMS_PROTOCOL_GATE_RUN_ID="${INHERITED_PROTOCOL_GATE_RUN_ID}"
+else
+    OMS_PROTOCOL_GATE_RUN_ID=$(openssl rand -hex 12)
+fi
+[[ "${OMS_PROTOCOL_GATE_RUN_ID}" =~ ^[0-9a-f]{24}$ ]] \
+    || fail "OMS_PROTOCOL_GATE_RUN_ID must contain exactly 24 lowercase hexadecimal characters"
+export OMS_PROTOCOL_GATE_RUN_ID
+protocol_pending_persist_run "${PENDING_RUN_DIR}" "${OMS_PROTOCOL_GATE_RUN_ID}" 0 \
+    || fail "Could not persist the current protocol canary run before probes"
+PENDING_RUN_ACTIVE=1
 if [[ "${TARGET}" == "webmail" ]]; then
     retire_legacy_upgrade_bridge \
         || fail "The historical passwordless upgrade bridge could not be retired safely"
@@ -314,13 +410,16 @@ validate_deployed_legacy_admin() {
 validate_requested_webmail() {
     validate_webmail_runtime || return 1
     validate_legacy_admin_against_snapshot "${REQUESTED_SNAPSHOT}" || return 1
-    bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" || return 1
+    bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile auto || return 1
 }
 
 validate_recovered_webmail() {
     validate_webmail_runtime || return 1
     validate_legacy_admin_against_snapshot "${ROLLBACK_DIR}" || return 1
-    bash "${GATE_SCRIPT}" "${CONFIG_PATH}" || return 1
+    echo "Removing and proving zero residue from the attempted suite canary..."
+    bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --cleanup-suite-only || return 1
+    echo "Running legacy-compatible public IMAPS and ActiveSync recovery validation..."
+    bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --profile mail || return 1
 }
 
 deploy_target() {
@@ -339,16 +438,19 @@ validate_deployed_target() {
     if [[ "${TARGET}" == "webmail" ]]; then
         validate_webmail_runtime || return 1
         validate_deployed_legacy_admin || return 1
+        echo "Running post-deploy public IMAPS and ActiveSync suite gate..."
+        bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile suite || return 1
+    else
+        echo "Running post-deploy public IMAPS and ActiveSync mail gate..."
+        bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile auto || return 1
     fi
-    echo "Running post-deploy public IMAPS and ActiveSync gate..."
-    bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" || return 1
 }
 
 validate_recovered_target() {
     if [[ "${TARGET}" == "webmail" ]]; then
         validate_recovered_webmail || return 1
     else
-        bash "${GATE_SCRIPT}" "${CONFIG_PATH}" || return 1
+        bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --profile auto || return 1
     fi
 }
 
@@ -377,13 +479,15 @@ restore_requested_webmail_snapshot() {
             fail "The current deployment could not be snapshotted; no rollback was attempted"
             ;;
         20)
-            fail_with_status 20 "Requested webmail snapshot failed validation; the pre-restore deployment was recovered"
+            clear_current_pending_run \
+                || fail_with_status 31 "Recovery passed but the verified protocol run journal could not be cleared"
+            fail_with_status 20 "Requested webmail snapshot failed validation; pre-restore application files and runtime were recovered; compatible forward database schema or repairs may remain"
             ;;
         30)
-            fail_with_status 30 "Requested snapshot failed and the pre-restore deployment could not be recovered"
+            fail_with_status 30 "Requested snapshot failed and the pre-restore application files or runtime could not be recovered"
             ;;
         31)
-            fail_with_status 31 "Pre-restore deployment was recovered but readiness or the protocol gate is failing"
+            fail_with_status 31 "Pre-restore application files and runtime were recovered but readiness or the protocol gate is failing; compatible forward database schema or repairs may remain"
             ;;
         *)
             fail "Guarded webmail rollback failed with unexpected status ${restore_status}"
@@ -399,7 +503,7 @@ restore_snapshot() {
         return 1
     fi
     ROLLBACK_RUNNING=1
-    echo "Guarded ${TARGET} deployment failed; restoring ${ROLLBACK_DIR}." >&2
+    echo "Guarded ${TARGET} deployment failed; restoring snapshotted application/configuration runtime files from ${ROLLBACK_DIR}." >&2
     if [[ "${TARGET}" == "webmail" ]]; then
         if restore_webmail; then
             restore_status=0
@@ -417,9 +521,17 @@ restore_snapshot() {
     return "${restore_status}"
 }
 
+clear_current_pending_run() {
+    if [[ "${PENDING_RUN_ACTIVE}" != "1" ]]; then
+        return 0
+    fi
+    protocol_pending_clear_run "${PENDING_RUN_DIR}" "${OMS_PROTOCOL_GATE_RUN_ID}" 0 || return 1
+    PENDING_RUN_ACTIVE=0
+}
+
 print_success() {
     if [[ "${ACTION}" == "restore-webmail" ]]; then
-        echo "Guarded webmail rollback passed. Pre-restore snapshot retained at ${ROLLBACK_DIR}."
+        echo "Guarded webmail application-file/runtime rollback passed; compatible forward database schema or repairs were retained. Pre-restore snapshot retained at ${ROLLBACK_DIR}."
     else
         echo "Guarded ${TARGET} deployment passed. Rollback snapshot retained at ${ROLLBACK_DIR}."
     fi
@@ -427,11 +539,14 @@ print_success() {
 
 complete_success() {
     trap '' HUP INT TERM
+    clear_current_pending_run \
+        || fail "Deployment passed but the verified protocol run journal could not be cleared"
     DEPLOY_COMPLETE=1
     print_success
 }
 
 on_signal() {
+    trap '' HUP INT TERM
     local signal="$1"
     local recovery_status
     set +e
@@ -448,19 +563,23 @@ on_signal() {
     set -e
     case "${recovery_status}" in
         0)
+            if [[ "${ROLLBACK_READY}" == "1" ]]; then
+                clear_current_pending_run \
+                    || fail_with_status 31 "Recovery passed but the verified protocol run journal could not be cleared"
+            fi
             ;;
         1)
             fail_with_status 30 "Guarded ${TARGET} deployment interrupted by ${signal}; rollback also failed"
             ;;
         2)
-            fail_with_status 31 "Guarded ${TARGET} deployment interrupted by ${signal}; rollback completed but remains unhealthy"
+            fail_with_status 31 "Guarded ${TARGET} deployment interrupted by ${signal}; application files and runtime were restored but remain unhealthy; compatible forward database schema or repairs may remain"
             ;;
         *)
             fail_with_status 30 "Guarded ${TARGET} deployment interrupted by ${signal}; recovery returned unexpected status ${recovery_status}"
             ;;
     esac
     if [[ "${ROLLBACK_READY}" == "1" && "${DEPLOY_COMPLETE}" != "1" ]]; then
-        fail_with_status 20 "Guarded ${TARGET} deployment interrupted by ${signal}; the prior release was restored"
+        fail_with_status 20 "Guarded ${TARGET} deployment interrupted by ${signal}; prior application files and runtime were restored; compatible forward database schema or repairs may remain"
     fi
     fail "Guarded ${TARGET} deployment interrupted by ${signal} before mutation"
 }
@@ -474,7 +593,7 @@ if [[ "${ACTION}" == "restore-webmail" ]]; then
 fi
 
 echo "Running pre-deploy public IMAPS and ActiveSync gate..."
-bash "${GATE_SCRIPT}" "${CONFIG_PATH}" \
+bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --profile auto \
     || fail "Pre-deploy protocol gate failed; no deployment was attempted"
 echo "Running guarded deployment with local readiness and post-deploy protocol validation..."
 set +e
@@ -495,13 +614,15 @@ case "${deploy_status}" in
         fail "The current deployment could not be snapshotted; no deployment was attempted"
         ;;
     20)
-        fail_with_status 20 "Deployment or post-deploy validation failed; the prior release was restored"
+        clear_current_pending_run \
+            || fail_with_status 31 "Recovery passed but the verified protocol run journal could not be cleared"
+        fail_with_status 20 "Deployment or post-deploy validation failed; prior application files and runtime were restored; compatible forward database schema or repairs may remain"
         ;;
     30)
         fail_with_status 30 "Deployment or validation failed and rollback could not be completed"
         ;;
     31)
-        fail_with_status 31 "Rollback completed but readiness or the protocol gate is still failing"
+        fail_with_status 31 "Application files and runtime were restored but readiness or the protocol gate is still failing; compatible forward database schema or repairs may remain"
         ;;
     *)
         fail "Guarded deployment failed with unexpected status ${deploy_status}"

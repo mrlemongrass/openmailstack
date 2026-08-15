@@ -216,6 +216,38 @@ export function calendarEventDraftForEdit(
 
 const pad = (value: number): string => String(value).padStart(2, '0');
 
+function escapeIcalText(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\r\n|\r|\n/g, '\\n')
+    .replace(/,/g, '\\,')
+    .replace(/;/g, '\\;');
+}
+
+function serializeIcalAttendee(value: string): string {
+  const email = value.trim();
+  const containsControlCharacter = Array.from(email)
+    .some(character => character.charCodeAt(0) <= 0x1f || character.charCodeAt(0) === 0x7f);
+  if (email.length === 0 || email.length > 254 || containsControlCharacter) {
+    throw new Error('Invalid attendee email address');
+  }
+  const separator = email.lastIndexOf('@');
+  if (separator <= 0 || separator === email.length - 1) {
+    throw new Error('Invalid attendee email address');
+  }
+  const localPart = email.slice(0, separator);
+  const domain = email.slice(separator + 1);
+  if (localPart.length > 64
+    || localPart.startsWith('.')
+    || localPart.endsWith('.')
+    || localPart.includes('..')
+    || !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(localPart)
+    || !/^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(domain)) {
+    throw new Error('Invalid attendee email address');
+  }
+  return `ATTENDEE:mailto:${encodeURIComponent(localPart)}@${domain}`;
+}
+
 function compactWallDate(date: Date, includeTime: boolean): string {
   const parts = localWallParts(date);
   const dateValue = `${parts.year}${pad(parts.month)}${pad(parts.day)}`;
@@ -288,11 +320,45 @@ function directIcalProperties(componentBlock: string[]): string[] {
   return properties;
 }
 
+function formatUtcIcalTimestamp(date: Date): string {
+  return date.toISOString().replaceAll('-', '').replaceAll(':', '').replace(/\.\d{3}Z$/, 'Z');
+}
+
+function withDirectIcalProperty(componentBlock: string[], name: string, value: string): string[] {
+  const output = [componentBlock[0]];
+  let nestedDepth = 0;
+  let inserted = false;
+  for (const line of componentBlock.slice(1, -1)) {
+    const normalized = line.trim().toUpperCase();
+    if (normalized.startsWith('BEGIN:')) {
+      nestedDepth += 1;
+      output.push(line);
+      continue;
+    }
+    if (normalized.startsWith('END:')) {
+      nestedDepth = Math.max(0, nestedDepth - 1);
+      output.push(line);
+      continue;
+    }
+    const propertyName = line.split(':')[0].split(';')[0].toUpperCase();
+    if (nestedDepth === 0 && propertyName === name) continue;
+    output.push(line);
+    if (nestedDepth === 0 && propertyName === 'UID' && !inserted) {
+      output.push(value);
+      inserted = true;
+    }
+  }
+  if (!inserted) output.splice(1, 0, value);
+  output.push(componentBlock[componentBlock.length - 1]);
+  return output;
+}
+
 export function buildCalendarEventIcal(
   draft: Partial<CalendarEvent>,
   displayTimeZone: string,
   existingUid?: string | null,
-  createUid: () => string = () => crypto.randomUUID()
+  createUid: () => string = () => crypto.randomUUID(),
+  now: () => Date = () => new Date(),
 ): string {
   const start = draft.start || new Date();
   const end = draft.end || new Date(start.getTime() + 3_600_000);
@@ -312,20 +378,24 @@ export function buildCalendarEventIcal(
   const preservedExdates = masterBlock
     ? directIcalProperties(masterBlock).filter(line => line.split(':')[0].split(';')[0].toUpperCase() === 'EXDATE')
     : [];
+  const dtstamp = `DTSTAMP:${formatUtcIcalTimestamp(now())}`;
   const preservedExceptions = eventBlocks.filter(block => directIcalProperties(block)
-    .some(line => line.split(':')[0].split(';')[0].toUpperCase() === 'RECURRENCE-ID'));
+    .some(line => line.split(':')[0].split(';')[0].toUpperCase() === 'RECURRENCE-ID'))
+    .map(block => withDirectIcalProperty(block, 'DTSTAMP', dtstamp));
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
+    'PRODID:-//OpenMailStack//WebCalendar//EN',
     ...timeZoneBlocks.flat(),
     'BEGIN:VEVENT',
     `UID:${eventUidForSave(existingUid, createUid)}`,
+    dtstamp,
     formatIcalDateProperty('DTSTART', start, serializedTimeKind, serializedTimeZone, preserveSourceTimeZone),
     formatIcalDateProperty('DTEND', end, serializedTimeKind, serializedTimeZone, preserveSourceTimeZone),
-    `SUMMARY:${draft.title || ''}`,
+    `SUMMARY:${escapeIcalText(draft.title || '')}`,
   ];
-  if (draft.location) lines.push(`LOCATION:${draft.location}`);
-  if (draft.description) lines.push(`DESCRIPTION:${draft.description}`);
+  if (draft.location) lines.push(`LOCATION:${escapeIcalText(draft.location)}`);
+  if (draft.description) lines.push(`DESCRIPTION:${escapeIcalText(draft.description)}`);
   if (draft.recurrence && draft.recurrence !== 'none') {
     const recurrence = /(?:^|;)FREQ=/i.test(draft.recurrence)
       ? draft.recurrence
@@ -333,14 +403,14 @@ export function buildCalendarEventIcal(
     lines.push(`RRULE:${recurrence}`);
   }
   lines.push(...preservedExdates);
-  draft.guests?.forEach(guest => lines.push(`ATTENDEE:mailto:${guest}`));
+  draft.guests?.forEach(guest => lines.push(serializeIcalAttendee(guest)));
   const reminderMinutes = draft.notifications?.[0]?.time;
   if (reminderMinutes !== undefined && reminderMinutes >= 0) {
     lines.push(
       'BEGIN:VALARM',
       'ACTION:DISPLAY',
       `TRIGGER:-PT${Math.floor(reminderMinutes)}M`,
-      `DESCRIPTION:${draft.title || ''}`,
+      `DESCRIPTION:${escapeIcalText(draft.title || '')}`,
       'END:VALARM',
     );
   }

@@ -5,6 +5,7 @@ process.env.OMS_DB_PASSWORD = process.env.OMS_DB_PASSWORD || 'test-only';
 
 test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: process.env.OMS_SCHEDULER_PHASE1_DB_TEST !== '1' }, async () => {
     const { pool } = require('../src/db.js');
+    const { ensureCalendarSchema } = require('../src/calendar-utils.js');
     const { SchedulerStore } = require('../src/scheduler/store.js');
     const { SchedulerPhase2Store } = require('../src/scheduler/phase2-store.js');
     const {
@@ -38,6 +39,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     await pool.query(`CREATE TABLE IF NOT EXISTS calendar_tombstones (
         id INT AUTO_INCREMENT PRIMARY KEY, calendar_id INT, uid VARCHAR(255), deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB`);
+    await ensureCalendarSchema();
 
     const username = 'phase1@housevo.us';
     await pool.query("INSERT INTO mailbox VALUES (?, 'Phase One', 'phase1', 'housevo.us', 1)", [username]);

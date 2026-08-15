@@ -46,6 +46,23 @@ test('parseIcalEvent unfolds and unescapes event fields', () => {
   assert.equal(parsed.timeZone, 'UTC');
 });
 
+test('calendar categories split only on unescaped commas across multiple properties', () => {
+  const parsed = parseIcalEvent('category-list', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:category-list',
+    'SUMMARY:Category list',
+    'DTSTART:20260704T190000Z',
+    'DTEND:20260704T200000Z',
+    'CATEGORIES:Work,VIP\\,Special',
+    'CATEGORIES:Path\\\\,Personal',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+
+  assert.deepEqual(parsed.categories, ['Work', 'VIP,Special', 'Path\\', 'Personal']);
+});
+
 test('parseIcalEvent preserves floating wall time without treating it as UTC', () => {
   const parsed = parseIcalEvent('floating', [
     'BEGIN:VCALENDAR',

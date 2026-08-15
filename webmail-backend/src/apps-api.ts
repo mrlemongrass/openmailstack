@@ -1,19 +1,47 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { pool } from './db';
 import { requireSession } from './auth';
-import { createCalendar, getVisibleCalendars, expandRecurringEvent, extractIcalEventUid, parseIcalEvent } from './calendar-utils';
 import {
+    allocateCalendarCollectionRevisionOnConnection,
+    createCalendar,
+    getVisibleCalendars,
+    isReservedManagedCalendarSlug,
+    expandRecurringEvent,
+    parseIcalEvent,
+    type CalendarMutationConnection,
+} from './calendar-utils';
+import { normalizeCalendarSharePermission } from './eas-calendar';
+import {
+    isManagedBirthdayCalendar,
+    syncContactBirthdayEvent,
+    type BirthdayContactIdentity,
+} from './birthday-calendar';
+import { validateCalendarSubscriptionUrl } from './calendar-subscription-http';
+import {
+    ICalendarValidationError,
+    MAX_ICAL_DOCUMENT_BYTES,
+    validateICalendarDocument,
+    type ValidatedICalendarDocument,
+    type ValidatedICalendarResource,
+} from './calendar-ical-validation';
+import {
+    AmbiguousVCardUidError,
     contactIdentityRank,
     createContactUid,
+    extractVCardBirthday,
+    extractVCardUid,
+    findContactDavUidByVCardUidOnConnection,
     getContactDavUid,
-    nextContactSyncToken,
+    InvalidContactBirthdayError,
+    nextContactSyncTokenOnConnection,
+    normalizeContactBirthday,
     normalizeVCardData,
     parseVCard,
     patchVCardData,
-    recordContactTombstone,
-    restoreContactById,
-    softDeleteContactById,
-    softDeleteContactsByIds
+    purgeExpiredContacts,
+    recordContactTombstoneOnConnection,
+    saveContactFromVCardOnConnection,
+    withContactMutation,
 } from './contact-utils';
 
 export const appsApiRouter = Router();
@@ -28,69 +56,421 @@ const authenticateApp = (req: Request, res: Response, next: NextFunction) => {
 
 appsApiRouter.use(authenticateApp);
 
-async function purgeExpiredTrash(): Promise<void> {
-    await pool.query("DELETE FROM contacts WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL 30 DAY");
-}
-
-async function syncBirthdayEvent(user: string, contactName: string, contactEmail: string, birthday: string | null): Promise<void> {
-    // Find or create Birthdays calendar
-    const [calRows]: any = await pool.query(
-        "SELECT id FROM calendars WHERE user_id = ? AND (dav_slug = 'birthdays' OR name = 'Birthdays') LIMIT 1",
-        [user]
-    );
-    let calendarId: number;
-    if (calRows.length === 0) {
-        const cal = await createCalendar(user, 'Birthdays', { slug: 'birthdays', color: '#e91e63', components: 'VEVENT' });
-        calendarId = cal.id;
-    } else {
-        calendarId = calRows[0].id;
-    }
-
-    // Build event UID from contact identity
-    const uid = `birthday-${Buffer.from(contactEmail || contactName).toString('hex').slice(0, 32)}@openmailstack`;
-
-    if (!birthday) {
-        // Remove birthday if cleared
-        await pool.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [calendarId, uid]);
-        return;
-    }
-
-    // Parse birthday (expects YYYY-MM-DD or MM-DD)
-    const parts = birthday.split('-');
-    let month: string, day: string;
-    if (parts.length >= 3) { month = parts[1]; day = parts[2]; }
-    else if (parts.length === 2) { month = parts[0]; day = parts[1]; }
-    else return;
-
-    const dtstart = `1970${month.padStart(2, '0')}${day.padStart(2, '0')}`;
-    const summary = `${contactName || contactEmail}'s Birthday`;
-
-    const ical = [
-        'BEGIN:VCALENDAR',
-        'VERSION:2.0',
-        'PRODID:-//OpenMailStack//Birthdays//EN',
-        'BEGIN:VEVENT',
-        `UID:${uid}`,
-        `DTSTART;VALUE=DATE:${dtstart}`,
-        `DTEND;VALUE=DATE:${dtstart}`,
-        'RRULE:FREQ=YEARLY',
-        `SUMMARY:${summary}`,
-        'TRANSP:TRANSPARENT',
-        'END:VEVENT',
-        'END:VCALENDAR',
-    ].join('\r\n');
-
-    await pool.query(
-        'INSERT INTO events (calendar_id, uid, ical_data, sync_token) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE ical_data=?, sync_token=sync_token+1',
-        [calendarId, uid, ical, ical]
-    );
-}
-
 function emitContactsUpdated(user: string, details: Record<string, any> = {}) {
     try {
         const { io } = require('./index');
         io.to(user).emit('contacts_updated', details);
     } catch {}
+}
+
+function emitCalendarUpdated(user: string, calendarId: string | number) {
+    try {
+        const { io } = require('./index');
+        io.to(user).emit('calendar_updated', { calendarId });
+    } catch {}
+}
+
+async function userCanWriteCalendarOnConnection(
+    connection: CalendarMutationConnection,
+    user: string,
+    calendarId: string | number,
+    ownerOnly = false,
+): Promise<boolean> {
+    const [rows]: any = await connection.query(
+        ownerOnly
+            ? `SELECT id, dav_slug, subscribed_url FROM calendars
+               WHERE id = ? AND user_id = ?
+               FOR UPDATE`
+            : `SELECT c.id, c.dav_slug, c.subscribed_url
+               FROM calendars c
+               LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+               WHERE c.id = ? AND (c.user_id = ? OR cs.permission = 'write')
+               FOR UPDATE`,
+        ownerOnly ? [calendarId, user] : [user, calendarId, user],
+    );
+    return rows.length === 1
+        && !isManagedBirthdayCalendar(rows[0])
+        && !String(rows[0].subscribed_url || '').trim();
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+    const candidate = error as { code?: unknown; errno?: unknown } | null;
+    return candidate?.code === 'ER_DUP_ENTRY' || Number(candidate?.errno) === 1062;
+}
+
+function normalizedCalendarSubscriptionUrl(value: unknown): string | null {
+    if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) return null;
+    return validateCalendarSubscriptionUrl(value).toString();
+}
+
+const MAX_WEB_CALENDAR_RESOURCES = 1_000;
+
+function validatedWebCalendarEvent(input: string): ValidatedICalendarResource {
+    const validated = validateICalendarDocument(input, {
+        maxResourceComponents: MAX_WEB_CALENDAR_RESOURCES,
+    });
+    if (validated.resources.length !== 1 || validated.resources[0].componentType !== 'VEVENT') {
+        throw new ICalendarValidationError('Calendar event data must contain exactly one VEVENT resource');
+    }
+    return validated.resources[0];
+}
+
+interface CalendarComponentBlock {
+    type: string;
+    icalData: string;
+}
+
+/**
+ * The shared validator has already proved component nesting at this point.
+ * This small structural walk only separates its canonical top-level blocks so
+ * export can combine stored resources without regex-truncating recurrence
+ * exceptions or their VTIMEZONE definitions.
+ */
+function validatedTopLevelCalendarBlocks(icalData: string): CalendarComponentBlock[] {
+    const lines = icalData.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
+    const blocks: CalendarComponentBlock[] = [];
+    let depth = 0;
+    let currentType = '';
+    let currentLines: string[] = [];
+    for (const line of lines) {
+        const separator = line.indexOf(':');
+        const marker = separator > 0 ? line.slice(0, separator).toUpperCase() : '';
+        const componentType = separator > 0 ? line.slice(separator + 1).toUpperCase() : '';
+        if (depth === 0) {
+            if (marker === 'BEGIN' && componentType !== 'VCALENDAR') {
+                depth = 1;
+                currentType = componentType;
+                currentLines = [line];
+            }
+            continue;
+        }
+        currentLines.push(line);
+        if (marker === 'BEGIN') depth += 1;
+        else if (marker === 'END') {
+            depth -= 1;
+            if (depth === 0) {
+                blocks.push({ type: currentType, icalData: currentLines.join('\r\n') });
+                currentType = '';
+                currentLines = [];
+            }
+        }
+    }
+    return blocks;
+}
+
+interface ParsedOccurrenceExclusion {
+    date: string;
+    localDateTime: string | null;
+    instant: Date | null;
+}
+
+function validCalendarDateTimeParts(parts: number[]): boolean {
+    const [year, month, day, hour = 0, minute = 0, second = 0] = parts;
+    const value = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    return value.getUTCFullYear() === year
+        && value.getUTCMonth() + 1 === month
+        && value.getUTCDate() === day
+        && value.getUTCHours() === hour
+        && value.getUTCMinutes() === minute
+        && value.getUTCSeconds() === second;
+}
+
+function parseOccurrenceExclusion(value: string): ParsedOccurrenceExclusion {
+    const input = value.trim();
+    if (!input || Buffer.byteLength(input, 'utf8') > 64) {
+        throw new ICalendarValidationError('Invalid recurring occurrence date');
+    }
+    const dateOnly = input.match(/^(\d{4})-?(\d{2})-?(\d{2})$/);
+    if (dateOnly) {
+        const parts = dateOnly.slice(1).map(Number);
+        if (!validCalendarDateTimeParts(parts)) throw new ICalendarValidationError('Invalid recurring occurrence date');
+        return { date: dateOnly.slice(1).join(''), localDateTime: null, instant: null };
+    }
+
+    const dateTime = input.match(
+        /^(\d{4})-?(\d{2})-?(\d{2})T(\d{2}):?(\d{2}):?(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:?\d{2})?$/,
+    );
+    if (!dateTime) throw new ICalendarValidationError('Invalid recurring occurrence date');
+    const parts = dateTime.slice(1, 7).map(Number);
+    if (!validCalendarDateTimeParts(parts)) throw new ICalendarValidationError('Invalid recurring occurrence date');
+    const date = dateTime.slice(1, 4).join('');
+    const localDateTime = `${date}T${dateTime.slice(4, 7).join('')}`;
+    if (!dateTime[7]) return { date, localDateTime, instant: null };
+
+    const zone = /^[+-]\d{4}$/.test(dateTime[7])
+        ? `${dateTime[7].slice(0, 3)}:${dateTime[7].slice(3)}`
+        : dateTime[7];
+    const iso = `${dateTime[1]}-${dateTime[2]}-${dateTime[3]}T${dateTime[4]}:${dateTime[5]}:${dateTime[6]}${zone}`;
+    const instant = new Date(iso);
+    if (!Number.isFinite(instant.getTime())) throw new ICalendarValidationError('Invalid recurring occurrence date');
+    return { date, localDateTime, instant };
+}
+
+function compactUtcDateTime(value: Date): string {
+    return value.toISOString().slice(0, 19).replaceAll('-', '').replaceAll(':', '') + 'Z';
+}
+
+function compactDateTimeInZone(value: Date, timeZone: string): string {
+    let parts: Intl.DateTimeFormatPart[];
+    try {
+        parts = new Intl.DateTimeFormat('en-US', {
+            timeZone,
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hourCycle: 'h23',
+        }).formatToParts(value);
+    } catch {
+        throw new ICalendarValidationError('Invalid recurring occurrence time zone');
+    }
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(candidate => candidate.type === type)?.value || '';
+    const formatted = `${part('year')}${part('month')}${part('day')}T${part('hour')}${part('minute')}${part('second')}`;
+    if (!/^\d{8}T\d{6}$/.test(formatted)) throw new ICalendarValidationError('Invalid recurring occurrence time zone');
+    return formatted;
+}
+
+function unfoldedCalendarLines(source: string): string[] {
+    const lines: string[] = [];
+    for (const line of source.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n')) {
+        if (/^[ \t]/.test(line)) lines[lines.length - 1] += line.slice(1);
+        else lines.push(line);
+    }
+    return lines;
+}
+
+function calendarProperty(line: string): { name: string; header: string; value: string } {
+    const separator = line.indexOf(':');
+    if (separator < 1) throw new ICalendarValidationError('Invalid iCalendar property');
+    const header = line.slice(0, separator);
+    return { name: header.split(';', 1)[0].toUpperCase(), header, value: line.slice(separator + 1) };
+}
+
+function calendarParameterIdentity(header: string): string {
+    return header.split(';').slice(1).map(parameter => parameter.toUpperCase()).sort().join(';');
+}
+
+function addRecurringOccurrenceExclusion(source: string, exclude: string): string {
+    const resource = validatedWebCalendarEvent(source);
+    const lines = unfoldedCalendarLines(resource.icalData);
+    const stack: string[] = [];
+    const masters: Array<{ end: number; direct: number[] }> = [];
+    let current: { direct: number[] } | null = null;
+    for (let index = 0; index < lines.length; index += 1) {
+        const boundary = lines[index].match(/^(BEGIN|END):([A-Z0-9-]+)$/i);
+        if (boundary?.[1].toUpperCase() === 'BEGIN') {
+            if (stack.length === 1 && boundary[2].toUpperCase() === 'VEVENT') current = { direct: [] };
+            stack.push(boundary[2].toUpperCase());
+            continue;
+        }
+        if (boundary?.[1].toUpperCase() === 'END') {
+            if (current && stack.length === 2 && stack[1] === 'VEVENT') {
+                const recurringInstance = current.direct.some(lineIndex => calendarProperty(lines[lineIndex]).name === 'RECURRENCE-ID');
+                if (!recurringInstance) masters.push({ end: index, direct: current.direct });
+                current = null;
+            }
+            stack.pop();
+            continue;
+        }
+        if (current && stack.length === 2 && lines[index]) current.direct.push(index);
+    }
+    if (masters.length !== 1) throw new ICalendarValidationError('Recurring event master is missing');
+    const master = masters[0];
+    if (!master.direct.some(index => calendarProperty(lines[index]).name === 'RRULE')) {
+        throw new ICalendarValidationError('Event is not recurring');
+    }
+    const dtstartIndex = master.direct.find(index => calendarProperty(lines[index]).name === 'DTSTART');
+    if (dtstartIndex === undefined) throw new ICalendarValidationError('Recurring event DTSTART is missing');
+    const dtstart = calendarProperty(lines[dtstartIndex]);
+    const parameters = dtstart.header.slice('DTSTART'.length);
+    const occurrence = parseOccurrenceExclusion(exclude);
+    const dateValue = /(?:^|;)VALUE=DATE(?:;|$)/i.test(parameters) || /^\d{8}$/.test(dtstart.value);
+    if (!dateValue && !occurrence.localDateTime) {
+        throw new ICalendarValidationError('Timed recurring occurrences require a date and time');
+    }
+    let exclusionValue: string;
+    if (dateValue) {
+        exclusionValue = occurrence.date;
+    } else if (dtstart.value.endsWith('Z')) {
+        exclusionValue = occurrence.instant
+            ? compactUtcDateTime(occurrence.instant)
+            : `${occurrence.localDateTime}Z`;
+    } else {
+        const timeZone = parameters.match(/(?:^|;)TZID=(?:"([^"]+)"|([^;]+))/i)?.slice(1).find(Boolean);
+        exclusionValue = timeZone && occurrence.instant
+            ? compactDateTimeInZone(occurrence.instant, timeZone)
+            : occurrence.localDateTime || `${occurrence.date}T000000`;
+    }
+
+    const parameterIdentity = calendarParameterIdentity(`EXDATE${parameters}`);
+    const alreadyExcluded = master.direct.some(index => {
+        const property = calendarProperty(lines[index]);
+        return property.name === 'EXDATE'
+            && calendarParameterIdentity(property.header) === parameterIdentity
+            && property.value.split(',').includes(exclusionValue);
+    });
+    if (alreadyExcluded) return resource.icalData;
+
+    lines.splice(master.end, 0, `EXDATE${parameters}:${exclusionValue}`);
+    const rebuilt = validatedWebCalendarEvent(lines.join('\r\n'));
+    if (rebuilt.uid !== resource.uid) throw new ICalendarValidationError('Recurring event identity changed');
+    return rebuilt.icalData;
+}
+
+interface LegacyCalendarParts {
+    calendarProperties: string[];
+    components: Array<{ type: string; lines: string[] }>;
+}
+
+function legacyCalendarBoundary(line: string): { marker: 'BEGIN' | 'END'; type: string } | null {
+    const separator = line.indexOf(':');
+    if (separator < 1) return null;
+    const marker = line.slice(0, separator).toUpperCase();
+    if (marker !== 'BEGIN' && marker !== 'END') return null;
+    const type = line.slice(separator + 1).toUpperCase();
+    return type ? { marker, type } as { marker: 'BEGIN' | 'END'; type: string } : null;
+}
+
+function legacyCalendarPropertyName(line: string): string {
+    const separator = line.indexOf(':');
+    return separator > 0 ? line.slice(0, separator).split(';', 1)[0].toUpperCase() : '';
+}
+
+function structurallyParseLegacyCalendar(source: string): LegacyCalendarParts {
+    if (Buffer.byteLength(source, 'utf8') > MAX_ICAL_DOCUMENT_BYTES) {
+        throw new ICalendarValidationError('Legacy calendar resource is too large');
+    }
+    const physicalLines = source.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
+    const lines: string[] = [];
+    for (const line of physicalLines) {
+        if (line.startsWith(' ') || line.startsWith('\t')) {
+            if (lines.length === 0) throw new ICalendarValidationError('Invalid legacy iCalendar folding');
+            lines[lines.length - 1] += line.slice(1);
+        } else {
+            lines.push(line);
+        }
+    }
+
+    const calendarProperties: string[] = [];
+    const components: LegacyCalendarParts['components'] = [];
+    const stack: string[] = [];
+    let current: LegacyCalendarParts['components'][number] | null = null;
+    let rootSeen = false;
+    let rootClosed = false;
+    for (const line of lines) {
+        const boundary = legacyCalendarBoundary(line);
+        if (boundary?.marker === 'BEGIN') {
+            if (stack.length === 0) {
+                if (rootSeen || rootClosed || boundary.type !== 'VCALENDAR') {
+                    throw new ICalendarValidationError('Invalid legacy iCalendar root');
+                }
+                rootSeen = true;
+            } else if (stack.length === 1) {
+                current = { type: boundary.type, lines: [line] };
+            } else {
+                current?.lines.push(line);
+            }
+            stack.push(boundary.type);
+            continue;
+        }
+        if (boundary?.marker === 'END') {
+            if (stack.length === 0 || stack[stack.length - 1] !== boundary.type) {
+                throw new ICalendarValidationError('Mismatched legacy iCalendar component');
+            }
+            if (stack.length >= 2) current?.lines.push(line);
+            stack.pop();
+            if (stack.length === 1 && current) {
+                components.push(current);
+                current = null;
+            } else if (stack.length === 0) {
+                if (boundary.type !== 'VCALENDAR') {
+                    throw new ICalendarValidationError('Invalid legacy iCalendar root closure');
+                }
+                rootClosed = true;
+            }
+            continue;
+        }
+        if (stack.length === 0) {
+            if (line.trim()) throw new ICalendarValidationError('Data outside legacy VCALENDAR is not allowed');
+        } else if (stack.length === 1) {
+            if (line) calendarProperties.push(line);
+        } else if (line) {
+            current?.lines.push(line);
+        }
+    }
+    if (!rootSeen || !rootClosed || stack.length !== 0 || current) {
+        throw new ICalendarValidationError('Truncated legacy iCalendar resource');
+    }
+    return { calendarProperties, components };
+}
+
+function legacyExportDtstamp(updatedAt: unknown): string {
+    let timestamp: Date;
+    if (updatedAt instanceof Date) timestamp = updatedAt;
+    else {
+        const value = String(updatedAt || '').trim();
+        const mysqlUtc = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+            ? `${value.replace(' ', 'T')}Z`
+            : value;
+        timestamp = new Date(mysqlUtc);
+    }
+    if (!Number.isFinite(timestamp.getTime())) return '19700101T000000Z';
+    return timestamp.toISOString().replaceAll('-', '').replaceAll(':', '').replace(/\.\d{3}Z$/, 'Z');
+}
+
+function addMissingLegacyDtstamp(component: LegacyCalendarParts['components'][number], dtstamp: string): string[] {
+    if (component.type !== 'VEVENT') return component.lines;
+    let depth = 0;
+    let directDtstamps = 0;
+    let uidIndex = -1;
+    for (let index = 1; index < component.lines.length - 1; index += 1) {
+        const line = component.lines[index];
+        const boundary = legacyCalendarBoundary(line);
+        if (boundary?.marker === 'BEGIN') {
+            depth += 1;
+            continue;
+        }
+        if (boundary?.marker === 'END') {
+            depth = Math.max(0, depth - 1);
+            continue;
+        }
+        if (depth !== 0) continue;
+        const propertyName = legacyCalendarPropertyName(line);
+        if (propertyName === 'DTSTAMP') directDtstamps += 1;
+        if (propertyName === 'UID' && uidIndex < 0) uidIndex = index;
+    }
+    if (directDtstamps !== 0) return component.lines;
+    const normalized = [...component.lines];
+    normalized.splice(uidIndex >= 0 ? uidIndex + 1 : 1, 0, `DTSTAMP:${dtstamp}`);
+    return normalized;
+}
+
+function validateStoredCalendarForExport(icalData: string, updatedAt: unknown): ValidatedICalendarDocument {
+    const validationOptions = {
+        allowMultipleResourceUids: true,
+        maxResourceComponents: MAX_WEB_CALENDAR_RESOURCES,
+    } as const;
+    try {
+        return validateICalendarDocument(icalData, validationOptions);
+    } catch {
+        const parsed = structurallyParseLegacyCalendar(icalData);
+        const calendarProperties = parsed.calendarProperties
+            .filter(line => legacyCalendarPropertyName(line) !== 'METHOD');
+        if (!calendarProperties.some(line => legacyCalendarPropertyName(line) === 'VERSION')) {
+            calendarProperties.unshift('VERSION:2.0');
+        }
+        if (!calendarProperties.some(line => legacyCalendarPropertyName(line) === 'PRODID')) {
+            const versionIndex = calendarProperties
+                .findIndex(line => legacyCalendarPropertyName(line) === 'VERSION');
+            calendarProperties.splice(versionIndex + 1, 0, 'PRODID:-//OpenMailStack//Legacy Export//EN');
+        }
+        const dtstamp = legacyExportDtstamp(updatedAt);
+        const normalized = [
+            'BEGIN:VCALENDAR',
+            ...calendarProperties,
+            ...parsed.components.flatMap(component => addMissingLegacyDtstamp(component, dtstamp)),
+            'END:VCALENDAR',
+        ].join('\r\n');
+        return validateICalendarDocument(normalized, validationOptions);
+    }
 }
 
 // ==========================================
@@ -117,7 +497,7 @@ appsApiRouter.get('/contacts', async (req: Request, res: Response) => {
                email ASC,
                id ASC`;
     try {
-        await purgeExpiredTrash();
+        await purgeExpiredContacts(user);
         const whereParts = ['username = ?', 'deleted_at IS NULL'];
         const whereParams: any[] = [user];
         if (query) {
@@ -179,62 +559,118 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
     const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url } = req.body;
     try {
         const davUid = createContactUid();
-        const prefix = req.body.prefix || '';
-        const firstName = req.body.first_name || '';
-        const middleName = req.body.middle_name || '';
-        const lastName = req.body.last_name || '';
-        const suffix = req.body.suffix || '';
-        const nickname = req.body.nickname || '';
-        const department = req.body.department || '';
-        const birthday = req.body.birthday || '';
-        const websiteUrl = req.body.website_url || '';
-        const fullName = name || [prefix, firstName, middleName, lastName, suffix].filter(Boolean).join(' ') || email;
-        const newVcardData = typeof vcard_data === 'string' && vcard_data.trim()
-            ? normalizeVCardData(vcard_data, davUid, { name: fullName, email: email || '', phone: phone || '' })
-            : patchVCardData('', davUid, {
-                name: fullName, first_name: firstName, last_name: lastName, middle_name: middleName,
-                prefix, suffix, email, phone, emails_json, phones_json, job_title, organization, notes
-            });
-        const syncToken = await nextContactSyncToken(user);
-
-        const [result]: any = await pool.query(
-            `INSERT INTO contacts
-            (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, sync_token, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                user,
-                fullName || '',
-                email || '',
-                phone || '',
-                newVcardData,
+        const suppliedVCard = typeof vcard_data === 'string' && vcard_data.trim() ? vcard_data : '';
+        const suppliedContact = suppliedVCard ? parseVCard(suppliedVCard) : null;
+        const prefix = req.body.prefix ?? suppliedContact?.prefix ?? '';
+        const firstName = req.body.first_name ?? suppliedContact?.firstName ?? '';
+        const middleName = req.body.middle_name ?? suppliedContact?.middleName ?? '';
+        const lastName = req.body.last_name ?? suppliedContact?.lastName ?? '';
+        const suffix = req.body.suffix ?? suppliedContact?.suffix ?? '';
+        const nickname = req.body.nickname ?? suppliedContact?.nickname ?? '';
+        const department = req.body.department ?? suppliedContact?.department ?? '';
+        const websiteUrl = req.body.website_url ?? suppliedContact?.websiteUrl ?? '';
+        const resolvedEmail = email ?? suppliedContact?.email ?? '';
+        const resolvedPhone = phone ?? suppliedContact?.phone ?? '';
+        const resolvedJobTitle = job_title ?? suppliedContact?.title ?? '';
+        const resolvedOrganization = organization ?? suppliedContact?.organization ?? '';
+        const resolvedNotes = notes ?? suppliedContact?.note ?? '';
+        const parsedEmailsJson = suppliedContact?.emails?.length
+            ? suppliedContact.emails.map(value => ({ value, label: 'Other' }))
+            : null;
+        const parsedPhonesJson = suppliedContact?.phoneItems?.length
+            ? suppliedContact.phoneItems.map(item => ({
+                value: item.value,
+                label: item.label,
+                ...(item.types.length > 0 ? { type: item.types.join(',') } : {}),
+            }))
+            : null;
+        const parsedAddressesJson = suppliedContact?.address
+            ? [{ value: suppliedContact.address, label: 'Other' }]
+            : null;
+        const resolvedEmailsJson = emails_json !== undefined ? emails_json : parsedEmailsJson;
+        const resolvedPhonesJson = phones_json !== undefined ? phones_json : parsedPhonesJson;
+        const resolvedAddressesJson = addresses_json !== undefined ? addresses_json : parsedAddressesJson;
+        const birthday = Object.prototype.hasOwnProperty.call(req.body, 'birthday')
+            ? normalizeContactBirthday(req.body.birthday)
+            : suppliedVCard
+                ? extractVCardBirthday(suppliedVCard)
+                : null;
+        const fullName = name
+            || suppliedContact?.name
+            || [prefix, firstName, middleName, lastName, suffix].filter(Boolean).join(' ')
+            || resolvedEmail
+            || '';
+        const vcardBase = suppliedVCard
+            ? normalizeVCardData(suppliedVCard, davUid, {
+                name: fullName,
+                email: resolvedEmail,
+                phone: resolvedPhone,
+            })
+            : '';
+        const newVcardData = patchVCardData(vcardBase, davUid, {
+            name: fullName,
+            first_name: firstName || suppliedContact?.firstName,
+            last_name: lastName || suppliedContact?.lastName,
+            middle_name: middleName || suppliedContact?.middleName,
+            prefix: prefix || suppliedContact?.prefix,
+            suffix: suffix || suppliedContact?.suffix,
+            email: resolvedEmail,
+            phone: resolvedPhone,
+            emails_json: resolvedEmailsJson,
+            phones_json: resolvedPhonesJson,
+            job_title: resolvedJobTitle,
+            organization: resolvedOrganization,
+            department,
+            notes: resolvedNotes,
+            birthday,
+        });
+        const result: any = await withContactMutation(user, async connection => {
+            const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+            const [insertResult]: any = await connection.query(
+                `INSERT INTO contacts
+                (username, name, email, phone, vcard_data, dav_uid, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, sync_token, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    user,
+                    fullName || '',
+                    resolvedEmail,
+                    resolvedPhone,
+                    newVcardData,
+                    davUid,
+                    resolvedEmailsJson ? JSON.stringify(resolvedEmailsJson) : null,
+                    resolvedPhonesJson ? JSON.stringify(resolvedPhonesJson) : null,
+                    resolvedAddressesJson ? JSON.stringify(resolvedAddressesJson) : null,
+                    resolvedJobTitle || null,
+                    resolvedOrganization || null,
+                    resolvedNotes || null,
+                    labels_json ? JSON.stringify(labels_json) : null,
+                    photo_url || null,
+                    syncToken,
+                    prefix || null,
+                    firstName || null,
+                    middleName || null,
+                    lastName || null,
+                    suffix || null,
+                    nickname || null,
+                    department || null,
+                    birthday,
+                    websiteUrl || null,
+                ],
+            );
+            await syncContactBirthdayEvent(connection, user, {
+                contactId: insertResult.insertId,
                 davUid,
-                emails_json ? JSON.stringify(emails_json) : null,
-                phones_json ? JSON.stringify(phones_json) : null,
-                addresses_json ? JSON.stringify(addresses_json) : null,
-                job_title || null,
-                organization || null,
-                notes || null,
-                labels_json ? JSON.stringify(labels_json) : null,
-                photo_url || null,
-                syncToken,
-                prefix || null,
-                firstName || null,
-                middleName || null,
-                lastName || null,
-                suffix || null,
-                nickname || null,
-                department || null,
-                birthday || null,
-                websiteUrl || null
-            ]
-        );
-        if (birthday !== undefined) {
-            const savedName = fullName || email || '';
-            await syncBirthdayEvent(user, savedName, email || '', birthday || null);
-        }
+                name: fullName || resolvedEmail,
+                email: resolvedEmail,
+            }, birthday);
+            return insertResult;
+        });
         emitContactsUpdated(user, { contactId: result.insertId });
         res.json({ success: true, id: result.insertId });
     } catch (e: any) {
+        if (e instanceof InvalidContactBirthdayError) {
+            return res.status(400).json({ success: false, error: e.message });
+        }
         res.status(500).json({ success: false, error: e.message });
     }
 });
@@ -243,61 +679,118 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url } = req.body;
     try {
-        const [existing]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL', [req.params.id as string, user]);
-        if (existing.length === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
+        const requestedBirthday: string | null | undefined = Object.prototype.hasOwnProperty.call(req.body, 'birthday')
+            ? normalizeContactBirthday(birthday)
+            : typeof vcard_data === 'string'
+                ? extractVCardBirthday(vcard_data)
+                : undefined;
+        const saved = await withContactMutation(user, async connection => {
+            const [existing]: any = await connection.query(
+                'SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL',
+                [req.params.id as string, user],
+            );
+            if (existing.length === 0) return null;
 
-        const existingContact = existing[0];
-        const fullName = name || [prefix, first_name, middle_name, last_name, suffix].filter(Boolean).join(' ') || email;
-
-        let newVcardData = vcard_data;
-        if (typeof vcard_data !== 'string') {
-            newVcardData = patchVCardData(existingContact.vcard_data || '', existingContact.dav_uid || `contact-${existingContact.id}`, {
-                name: fullName, first_name, last_name, middle_name, prefix, suffix, email, phone, emails_json, phones_json, job_title, organization, notes
+            const existingContact = existing[0];
+            const previousBirthdayIdentity: BirthdayContactIdentity = {
+                contactId: existingContact.id,
+                davUid: existingContact.dav_uid,
+                name: existingContact.name,
+                email: existingContact.email,
+            };
+            const davUid = existingContact.dav_uid || `contact-${existingContact.id}`;
+            const savedBirthday = requestedBirthday === undefined
+                ? normalizeContactBirthday(existingContact.birthday)
+                : requestedBirthday;
+            const baseVCard = typeof vcard_data === 'string'
+                ? normalizeVCardData(vcard_data, davUid, {
+                    name: name || existingContact.name || '',
+                    email: email || existingContact.email || '',
+                    phone: phone || existingContact.phone || '',
+                })
+                : normalizeVCardData(existingContact.vcard_data || '', davUid, {
+                    name: existingContact.name || '',
+                    email: existingContact.email || '',
+                    phone: existingContact.phone || '',
+                });
+            const baseContact = parseVCard(baseVCard);
+            const fullName = name
+                || [prefix, first_name, middle_name, last_name, suffix].filter(Boolean).join(' ')
+                || email
+                || baseContact.name
+                || '';
+            const newVcardData = patchVCardData(baseVCard, davUid, {
+                name: fullName,
+                first_name: first_name || baseContact.firstName,
+                last_name: last_name || baseContact.lastName,
+                middle_name: middle_name || baseContact.middleName,
+                prefix: prefix || baseContact.prefix,
+                suffix: suffix || baseContact.suffix,
+                email: email || baseContact.email,
+                phone: phone || baseContact.phone,
+                emails_json,
+                phones_json,
+                job_title: job_title || baseContact.title,
+                organization: organization || baseContact.organization,
+                notes: notes || baseContact.note,
+                birthday: savedBirthday,
             });
-        }
 
-        const syncToken = await nextContactSyncToken(user);
-        const queryParams: any[] = [
-            fullName || '',
-            email || '',
-            phone || '',
-            newVcardData || '',
-            emails_json ? JSON.stringify(emails_json) : null,
-            phones_json ? JSON.stringify(phones_json) : null,
-            addresses_json ? JSON.stringify(addresses_json) : null,
-            job_title || null,
-            organization || null,
-            notes || null,
-            labels_json ? JSON.stringify(labels_json) : null,
-            first_name || null,
-            last_name || null,
-            middle_name || null,
-            prefix || null,
-            suffix || null,
-            nickname || null,
-            department || null,
-            birthday || null,
-            website_url || null,
-            syncToken,
-        ];
+            const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+            const queryParams: any[] = [
+                fullName || '',
+                email || '',
+                phone || '',
+                newVcardData || '',
+                emails_json ? JSON.stringify(emails_json) : null,
+                phones_json ? JSON.stringify(phones_json) : null,
+                addresses_json ? JSON.stringify(addresses_json) : null,
+                job_title || null,
+                organization || null,
+                notes || null,
+                labels_json ? JSON.stringify(labels_json) : null,
+                first_name || null,
+                last_name || null,
+                middle_name || null,
+                prefix || null,
+                suffix || null,
+                nickname || null,
+                department || null,
+                savedBirthday,
+                website_url || null,
+                syncToken,
+            ];
 
-        let updateSql = `UPDATE contacts SET name=?, email=?, phone=?, vcard_data=?, emails_json=?, phones_json=?, addresses_json=?, job_title=?, organization=?, notes=?, labels_json=?, first_name=?, last_name=?, middle_name=?, prefix=?, suffix=?, nickname=?, department=?, birthday=?, website_url=?, sync_token=?`;
-        if (photo_url !== undefined) {
-            updateSql += `, photo_url=?`;
-            queryParams.push(photo_url || null);
-        }
-
-        updateSql += ` WHERE id=? AND username=?`;
-        queryParams.push(req.params.id as string, user);
-
-        await pool.query(updateSql, queryParams);
-        const savedName = fullName || existingContact.email || '';
-        const savedEmail = email || existingContact.email || '';
-        const savedBirthday = birthday !== undefined ? (birthday || null) : existingContact.birthday || null;
-        await syncBirthdayEvent(user, savedName, savedEmail, savedBirthday);
+            let updateSql = `UPDATE contacts SET name=?, email=?, phone=?, vcard_data=?, emails_json=?, phones_json=?, addresses_json=?, job_title=?, organization=?, notes=?, labels_json=?, first_name=?, last_name=?, middle_name=?, prefix=?, suffix=?, nickname=?, department=?, birthday=?, website_url=?, sync_token=?`;
+            if (photo_url !== undefined) {
+                updateSql += `, photo_url=?`;
+                queryParams.push(photo_url || null);
+            }
+            updateSql += ` WHERE id=? AND username=?`;
+            queryParams.push(req.params.id as string, user);
+            await connection.query(updateSql, queryParams);
+            const currentBirthdayIdentity: BirthdayContactIdentity = {
+                contactId: existingContact.id,
+                davUid: existingContact.dav_uid || `contact-${existingContact.id}`,
+                name: fullName || existingContact.email || '',
+                email: email || existingContact.email || '',
+            };
+            await syncContactBirthdayEvent(
+                connection,
+                user,
+                currentBirthdayIdentity,
+                savedBirthday,
+                [previousBirthdayIdentity, currentBirthdayIdentity],
+            );
+            return true;
+        });
+        if (!saved) return res.status(404).json({ success: false, error: 'Contact not found' });
         emitContactsUpdated(user, { contactId: req.params.id });
         res.json({ success: true });
     } catch (e: any) {
+        if (e instanceof InvalidContactBirthdayError) {
+            return res.status(400).json({ success: false, error: e.message });
+        }
         res.status(500).json({ success: false, error: e.message });
     }
 });
@@ -305,15 +798,22 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
 appsApiRouter.put('/contacts/:id/favorite', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        const syncToken = await nextContactSyncToken(user);
-        const [result]: any = await pool.query(
-            'UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1), sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NULL',
-            [syncToken, req.params.id, user]
-        );
-        if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
-        const [rows]: any = await pool.query('SELECT is_favorite FROM contacts WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+        const favorite = await withContactMutation(user, async connection => {
+            const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+            const [result]: any = await connection.query(
+                'UPDATE contacts SET is_favorite = IF(is_favorite, 0, 1), sync_token = ? WHERE id = ? AND username = ? AND deleted_at IS NULL',
+                [syncToken, req.params.id, user],
+            );
+            if (result.affectedRows === 0) return null;
+            const [rows]: any = await connection.query(
+                'SELECT is_favorite FROM contacts WHERE id = ? AND username = ? AND deleted_at IS NULL',
+                [req.params.id, user],
+            );
+            return rows[0]?.is_favorite === 1;
+        });
+        if (favorite === null) return res.status(404).json({ success: false, error: 'Contact not found' });
         emitContactsUpdated(user, { contactId: req.params.id });
-        res.json({ success: true, is_favorite: rows[0]?.is_favorite === 1 });
+        res.json({ success: true, is_favorite: favorite });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
     }
@@ -324,7 +824,34 @@ appsApiRouter.post('/contacts/bulk-delete', async (req: Request, res: Response) 
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, error: 'ids array required' });
     try {
-        const deleted = await softDeleteContactsByIds(user, ids);
+        const deleted = await withContactMutation(user, async connection => {
+            const placeholders = ids.map(() => '?').join(',');
+            const [rows]: any = await connection.query(
+                `SELECT id, name, email, dav_uid, birthday FROM contacts
+                 WHERE id IN (${placeholders}) AND username = ? AND deleted_at IS NULL`,
+                [...ids, user],
+            );
+            if (rows.length === 0) return 0;
+            const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+            const activeIds = rows.map((row: any) => row.id);
+            const activePlaceholders = activeIds.map(() => '?').join(',');
+            const [result]: any = await connection.query(
+                `UPDATE contacts SET deleted_at = NOW(), sync_token = ?
+                 WHERE id IN (${activePlaceholders}) AND username = ? AND deleted_at IS NULL`,
+                [syncToken, ...activeIds, user],
+            );
+            for (const contact of rows) {
+                const identity: BirthdayContactIdentity = {
+                    contactId: contact.id,
+                    davUid: contact.dav_uid || `contact-${contact.id}`,
+                    name: contact.name,
+                    email: contact.email,
+                };
+                await recordContactTombstoneOnConnection(connection, user, identity.davUid!);
+                await syncContactBirthdayEvent(connection, user, identity, null, [identity]);
+            }
+            return Number(result.affectedRows || 0);
+        });
         if (deleted > 0) emitContactsUpdated(user, { deleted: true });
         res.json({ success: true, deleted });
     } catch (e: any) {
@@ -335,7 +862,32 @@ appsApiRouter.post('/contacts/bulk-delete', async (req: Request, res: Response) 
 appsApiRouter.delete('/contacts/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        const deleted = await softDeleteContactById(user, req.params.id as string);
+        const deleted = await withContactMutation(user, async connection => {
+            const [rows]: any = await connection.query(
+                `SELECT id, name, email, dav_uid, birthday FROM contacts
+                 WHERE id = ? AND username = ? AND deleted_at IS NULL LIMIT 1`,
+                [req.params.id as string, user],
+            );
+            if (rows.length === 0) return false;
+            const contact = rows[0];
+            const davUid = contact.dav_uid || `contact-${contact.id}`;
+            const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+            const [result]: any = await connection.query(
+                `UPDATE contacts SET dav_uid = ?, deleted_at = NOW(), sync_token = ?
+                 WHERE id = ? AND username = ? AND deleted_at IS NULL`,
+                [davUid, syncToken, contact.id, user],
+            );
+            if (result.affectedRows === 0) return false;
+            await recordContactTombstoneOnConnection(connection, user, davUid);
+            const identity: BirthdayContactIdentity = {
+                contactId: contact.id,
+                davUid,
+                name: contact.name,
+                email: contact.email,
+            };
+            await syncContactBirthdayEvent(connection, user, identity, null, [identity]);
+            return true;
+        });
         if (!deleted) return res.status(404).json({ success: false, error: 'Contact not found' });
         emitContactsUpdated(user, { contactId: req.params.id, deleted: true });
         res.json({ success: true });
@@ -347,7 +899,7 @@ appsApiRouter.delete('/contacts/:id', async (req: Request, res: Response) => {
 appsApiRouter.get('/contacts/trash', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        await purgeExpiredTrash();
+        await purgeExpiredContacts(user);
         const [rows]: any = await pool.query(
             `SELECT id, name, email, phone, deleted_at
              FROM contacts WHERE username = ? AND deleted_at IS NOT NULL
@@ -363,7 +915,41 @@ appsApiRouter.get('/contacts/trash', async (req: Request, res: Response) => {
 appsApiRouter.post('/contacts/:id/restore', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        const restored = await restoreContactById(user, req.params.id as string);
+        const restored = await withContactMutation(user, async connection => {
+            const [rows]: any = await connection.query(
+                `SELECT id, name, email, dav_uid, birthday FROM contacts
+                 WHERE id = ? AND username = ? AND deleted_at IS NOT NULL LIMIT 1`,
+                [req.params.id as string, user],
+            );
+            if (rows.length === 0) return false;
+            const contact = rows[0];
+            const davUid = contact.dav_uid || `contact-${contact.id}`;
+            const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+            const [result]: any = await connection.query(
+                `UPDATE contacts SET dav_uid = ?, deleted_at = NULL, sync_token = ?
+                 WHERE id = ? AND username = ? AND deleted_at IS NOT NULL`,
+                [davUid, syncToken, contact.id, user],
+            );
+            if (result.affectedRows === 0) return false;
+            await connection.query(
+                'DELETE FROM contact_tombstones WHERE username = ? AND dav_uid = ?',
+                [user, davUid],
+            );
+            const identity: BirthdayContactIdentity = {
+                contactId: contact.id,
+                davUid,
+                name: contact.name,
+                email: contact.email,
+            };
+            await syncContactBirthdayEvent(
+                connection,
+                user,
+                identity,
+                contact.birthday || null,
+                [identity],
+            );
+            return true;
+        });
         if (!restored) return res.status(404).json({ success: false, error: 'Contact not found in trash' });
         emitContactsUpdated(user, { contactId: req.params.id, restored: true });
         res.json({ success: true });
@@ -375,23 +961,37 @@ appsApiRouter.post('/contacts/:id/restore', async (req: Request, res: Response) 
 appsApiRouter.delete('/contacts/:id/permanent', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        const [contactToDelete]: any = await pool.query(
-            'SELECT id, name, email, dav_uid FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
-            [req.params.id as string, user]
-        );
-        if (contactToDelete.length > 0) {
-            await syncBirthdayEvent(user, contactToDelete[0].name, contactToDelete[0].email, null);
-            await recordContactTombstone(user, contactToDelete[0].dav_uid || `contact-${contactToDelete[0].id}`);
-        }
-        await pool.query(
-            'DELETE FROM contact_group_members WHERE contact_id = ?',
-            [req.params.id as string]
-        );
-        const [delResult]: any = await pool.query(
-            'DELETE FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
-            [req.params.id as string, user]
-        );
-        if (delResult.affectedRows === 0) return res.status(404).json({ success: false, error: 'Contact not found in trash' });
+        const deletedContact = await withContactMutation(user, async connection => {
+            const [contactToDelete]: any = await connection.query(
+                'SELECT id, name, email, dav_uid FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
+                [req.params.id as string, user],
+            );
+            if (contactToDelete.length === 0) return null;
+            const contact = contactToDelete[0];
+            await recordContactTombstoneOnConnection(
+                connection,
+                user,
+                contact.dav_uid || `contact-${contact.id}`,
+            );
+            await connection.query(
+                'DELETE FROM contact_group_members WHERE contact_id = ?',
+                [req.params.id as string],
+            );
+            const [delResult]: any = await connection.query(
+                'DELETE FROM contacts WHERE id=? AND username=? AND deleted_at IS NOT NULL',
+                [req.params.id as string, user],
+            );
+            if (delResult.affectedRows === 0) throw new Error('Contact disappeared during permanent deletion');
+            const identity: BirthdayContactIdentity = {
+                contactId: contact.id,
+                davUid: contact.dav_uid || `contact-${contact.id}`,
+                name: contact.name,
+                email: contact.email,
+            };
+            await syncContactBirthdayEvent(connection, user, identity, null, [identity]);
+            return contact;
+        });
+        if (!deletedContact) return res.status(404).json({ success: false, error: 'Contact not found in trash' });
         emitContactsUpdated(user, { contactId: req.params.id, deleted: true });
         res.json({ success: true });
     } catch (e: any) {
@@ -622,71 +1222,64 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
                         organization,
                         notes,
                     });
-                    const syncToken = await nextContactSyncToken(user);
-                    const [result]: any = await pool.query(
-                        `INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, vcard_data, dav_uid, sync_token)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                         ON DUPLICATE KEY UPDATE
-                           name = VALUES(name),
-                           phone = VALUES(phone),
-                           job_title = VALUES(job_title),
-                           organization = VALUES(organization),
-                           notes = VALUES(notes),
-                           deleted_at = NULL,
-                           sync_token = VALUES(sync_token)`,
-                        [user, name, email, phone, jobTitle, organization, notes, vcard, davUid, syncToken]
-                    );
+                    const result: any = await withContactMutation(user, async connection => {
+                        const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+                        const [insertResult]: any = await connection.query(
+                            `INSERT INTO contacts (username, name, email, phone, job_title, organization, notes, vcard_data, dav_uid, sync_token)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             ON DUPLICATE KEY UPDATE
+                               name = VALUES(name),
+                               phone = VALUES(phone),
+                               job_title = VALUES(job_title),
+                               organization = VALUES(organization),
+                               notes = VALUES(notes),
+                               deleted_at = NULL,
+                               sync_token = VALUES(sync_token)`,
+                            [user, name, email, phone, jobTitle, organization, notes, vcard, davUid, syncToken],
+                        );
+                        return insertResult;
+                    });
                     if (result.affectedRows > 0) imported++; else skippedDuplicate++;
-                } catch { skippedDuplicate++; }
+                } catch (error) {
+                    if (!isDuplicateKeyError(error)) throw error;
+                    skippedDuplicate++;
+                }
             }
         } else {
             // vCard import
             const vcards = data.split(/(?=BEGIN:VCARD)/i);
             for (const vcard of vcards) {
                 if (!vcard.trim().toUpperCase().startsWith('BEGIN:VCARD')) continue;
+                const vcardUid = extractVCardUid(vcard);
+                extractVCardBirthday(vcard);
                 const parsed = parseVCard(vcard);
                 if (!parsed.name && !parsed.email) { skippedNoFields++; continue; }
-                const emailsJson = (parsed.emails && parsed.emails.length > 0) ? JSON.stringify(parsed.emails.map((e: string) => ({ value: e, label: 'Other' }))) : null;
-                const phonesJson = (parsed.phones && parsed.phones.length > 0) ? JSON.stringify(parsed.phones.map((p: string) => ({ value: p, label: 'Other' }))) : null;
                 try {
-                    const davUid = createContactUid();
-                    const normalizedVcard = normalizeVCardData(vcard, davUid, parsed);
-                    const syncToken = await nextContactSyncToken(user);
-                    const [result]: any = await pool.query(
-                        `INSERT INTO contacts
-                         (username, name, email, phone, job_title, organization, notes,
-                          emails_json, phones_json, vcard_data,
-                          prefix, first_name, middle_name, last_name, suffix, dav_uid, sync_token)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                         ON DUPLICATE KEY UPDATE
-                           name = VALUES(name),
-                           phone = VALUES(phone),
-                           job_title = VALUES(job_title),
-                           organization = VALUES(organization),
-                           notes = VALUES(notes),
-                           emails_json = VALUES(emails_json),
-                           phones_json = VALUES(phones_json),
-                           vcard_data = VALUES(vcard_data),
-                           prefix = VALUES(prefix),
-                           first_name = VALUES(first_name),
-                           middle_name = VALUES(middle_name),
-                           last_name = VALUES(last_name),
-                           suffix = VALUES(suffix),
-                           deleted_at = NULL,
-                           sync_token = VALUES(sync_token)`,
-                        [user, parsed.name || '', parsed.email || '', parsed.phone || '',
-                         parsed.title || '', parsed.organization || '', parsed.note || '',
-                         emailsJson, phonesJson, normalizedVcard,
-                         parsed.prefix || null, parsed.firstName || null, parsed.middleName || null,
-                         parsed.lastName || null, parsed.suffix || null, davUid, syncToken]
-                    );
-                    if (result.affectedRows > 0) imported++; else skippedDuplicate++;
-                } catch { skippedDuplicate++; }
+                    await withContactMutation(user, async connection => {
+                        const existingDavUid = vcardUid
+                            ? await findContactDavUidByVCardUidOnConnection(connection, user, vcardUid)
+                            : null;
+                        const davUid = existingDavUid || createContactUid();
+                        const saved = await saveContactFromVCardOnConnection(connection, user, davUid, vcard);
+                        if (!saved) throw new Error('The imported contact changed during its locked mutation');
+                        return saved;
+                    });
+                    imported++;
+                } catch (error) {
+                    if (!isDuplicateKeyError(error)) throw error;
+                    skippedDuplicate++;
+                }
             }
         }
         if (imported > 0) emitContactsUpdated(user, { imported });
         res.json({ success: true, imported, skippedDuplicate, skippedNoFields, total: imported + skippedDuplicate + skippedNoFields });
     } catch (e: any) {
+        if (e instanceof InvalidContactBirthdayError) {
+            return res.status(400).json({ success: false, error: e.message });
+        }
+        if (e instanceof AmbiguousVCardUidError) {
+            return res.status(409).json({ success: false, error: e.message });
+        }
         res.status(500).json({ success: false, error: e.message });
     }
 });
@@ -760,71 +1353,116 @@ appsApiRouter.get('/contacts-merge-preview', async (req: Request, res: Response)
 appsApiRouter.post('/contacts-merge', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const { primaryId, duplicateIds } = req.body;
-    
-    if (!primaryId || !duplicateIds || !Array.isArray(duplicateIds) || duplicateIds.length === 0) {
+    const normalizedPrimaryId = Number(primaryId);
+    const normalizedDuplicateIds = Array.isArray(duplicateIds)
+        ? Array.from(new Set(duplicateIds
+            .map((id: unknown) => Number(id))
+            .filter((id: number) => Number.isSafeInteger(id) && id > 0 && id !== normalizedPrimaryId)))
+        : [];
+
+    if (!Number.isSafeInteger(normalizedPrimaryId) || normalizedPrimaryId <= 0 || normalizedDuplicateIds.length === 0) {
         return res.status(400).json({ success: false, error: 'Invalid input' });
     }
 
     try {
-        const [primaryRows]: any = await pool.query('SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL', [primaryId, user]);
-        if (primaryRows.length === 0) return res.status(404).json({ success: false, error: 'Primary contact not found' });
-        const primary = primaryRows[0];
-        
-        const [dupRows]: any = await pool.query('SELECT * FROM contacts WHERE id IN (?) AND username=? AND deleted_at IS NULL', [duplicateIds, user]);
-        if (dupRows.length === 0) return res.json({ success: true });
-        
-        let emails = primary.emails_json ? (typeof primary.emails_json === 'string' ? JSON.parse(primary.emails_json) : primary.emails_json) : [];
-        let phones = primary.phones_json ? (typeof primary.phones_json === 'string' ? JSON.parse(primary.phones_json) : primary.phones_json) : [];
-        let addresses = primary.addresses_json ? (typeof primary.addresses_json === 'string' ? JSON.parse(primary.addresses_json) : primary.addresses_json) : [];
-        let labels = primary.labels_json ? (typeof primary.labels_json === 'string' ? JSON.parse(primary.labels_json) : primary.labels_json) : [];
-        
-        let { name, email, phone, job_title, organization, notes } = primary;
-        
-        let photo_url = primary.photo_url;
+        const outcome = await withContactMutation(user, async connection => {
+            const [primaryRows]: any = await connection.query(
+                'SELECT * FROM contacts WHERE id=? AND username=? AND deleted_at IS NULL',
+                [normalizedPrimaryId, user],
+            );
+            if (primaryRows.length === 0) return 'not-found';
+            const primary = primaryRows[0];
 
-        for (const dup of dupRows) {
-            name = name || dup.name;
-            email = email || dup.email;
-            phone = phone || dup.phone;
-            job_title = job_title || dup.job_title;
-            organization = organization || dup.organization;
-            photo_url = photo_url || dup.photo_url;
-            notes = [notes, dup.notes].filter(Boolean).join('\n\n');
-            
-            const dEmails = dup.emails_json ? (typeof dup.emails_json === 'string' ? JSON.parse(dup.emails_json) : dup.emails_json) : [];
-            const dPhones = dup.phones_json ? (typeof dup.phones_json === 'string' ? JSON.parse(dup.phones_json) : dup.phones_json) : [];
-            const dAddresses = dup.addresses_json ? (typeof dup.addresses_json === 'string' ? JSON.parse(dup.addresses_json) : dup.addresses_json) : [];
-            const dLabels = dup.labels_json ? (typeof dup.labels_json === 'string' ? JSON.parse(dup.labels_json) : dup.labels_json) : [];
-            
-            emails = [...emails, ...dEmails];
-            phones = [...phones, ...dPhones];
-            addresses = [...addresses, ...dAddresses];
-            labels = [...labels, ...dLabels];
-        }
-        
-        const uniqueByValue = (arr: any[]) => Array.from(new Map(arr.map(item => [item.value, item])).values());
-        emails = uniqueByValue(emails);
-        phones = uniqueByValue(phones);
-        addresses = uniqueByValue(addresses);
-        labels = Array.from(new Set(labels));
-        
-        const newVcardData = patchVCardData(primary.vcard_data || '', primary.dav_uid || `contact-${primary.id}`, {
-            name, email, phone, emails_json: emails, phones_json: phones, job_title, organization, notes
+            const [dupRows]: any = await connection.query(
+                'SELECT * FROM contacts WHERE id IN (?) AND username=? AND deleted_at IS NULL',
+                [normalizedDuplicateIds, user],
+            );
+            if (dupRows.length === 0) return 'unchanged';
+
+            let emails = primary.emails_json ? (typeof primary.emails_json === 'string' ? JSON.parse(primary.emails_json) : primary.emails_json) : [];
+            let phones = primary.phones_json ? (typeof primary.phones_json === 'string' ? JSON.parse(primary.phones_json) : primary.phones_json) : [];
+            let addresses = primary.addresses_json ? (typeof primary.addresses_json === 'string' ? JSON.parse(primary.addresses_json) : primary.addresses_json) : [];
+            let labels = primary.labels_json ? (typeof primary.labels_json === 'string' ? JSON.parse(primary.labels_json) : primary.labels_json) : [];
+            let { name, email, phone, job_title, organization, notes } = primary;
+            let photo_url = primary.photo_url;
+
+            for (const dup of dupRows) {
+                name = name || dup.name;
+                email = email || dup.email;
+                phone = phone || dup.phone;
+                job_title = job_title || dup.job_title;
+                organization = organization || dup.organization;
+                photo_url = photo_url || dup.photo_url;
+                notes = [notes, dup.notes].filter(Boolean).join('\n\n');
+
+                const dEmails = dup.emails_json ? (typeof dup.emails_json === 'string' ? JSON.parse(dup.emails_json) : dup.emails_json) : [];
+                const dPhones = dup.phones_json ? (typeof dup.phones_json === 'string' ? JSON.parse(dup.phones_json) : dup.phones_json) : [];
+                const dAddresses = dup.addresses_json ? (typeof dup.addresses_json === 'string' ? JSON.parse(dup.addresses_json) : dup.addresses_json) : [];
+                const dLabels = dup.labels_json ? (typeof dup.labels_json === 'string' ? JSON.parse(dup.labels_json) : dup.labels_json) : [];
+                emails = [...emails, ...dEmails];
+                phones = [...phones, ...dPhones];
+                addresses = [...addresses, ...dAddresses];
+                labels = [...labels, ...dLabels];
+            }
+
+            const uniqueByValue = (arr: any[]) => Array.from(new Map(arr.map(item => [item.value, item])).values());
+            emails = uniqueByValue(emails);
+            phones = uniqueByValue(phones);
+            addresses = uniqueByValue(addresses);
+            labels = Array.from(new Set(labels));
+            const newVcardData = patchVCardData(primary.vcard_data || '', primary.dav_uid || `contact-${primary.id}`, {
+                name, email, phone, emails_json: emails, phones_json: phones, job_title, organization, notes,
+            });
+            const syncToken = await nextContactSyncTokenOnConnection(connection, user);
+            await connection.query(
+                `UPDATE contacts SET name=?, email=?, phone=?, job_title=?, organization=?, notes=?, emails_json=?, phones_json=?, addresses_json=?, labels_json=?, vcard_data=?, photo_url=?, sync_token=? WHERE id=? AND username=?`,
+                [name, email, phone, job_title, organization, notes, JSON.stringify(emails), JSON.stringify(phones), JSON.stringify(addresses), JSON.stringify(labels), newVcardData, photo_url || null, syncToken, normalizedPrimaryId, user],
+            );
+            for (const dup of dupRows) {
+                await recordContactTombstoneOnConnection(connection, user, dup.dav_uid || `contact-${dup.id}`);
+            }
+            await connection.query(
+                'DELETE FROM contacts WHERE id IN (?) AND username=?',
+                [dupRows.map((duplicate: any) => duplicate.id), user],
+            );
+            const previousPrimaryIdentity: BirthdayContactIdentity = {
+                contactId: primary.id,
+                davUid: primary.dav_uid || `contact-${primary.id}`,
+                name: primary.name,
+                email: primary.email,
+            };
+            const currentPrimaryIdentity: BirthdayContactIdentity = {
+                ...previousPrimaryIdentity,
+                name,
+                email,
+            };
+            await syncContactBirthdayEvent(
+                connection,
+                user,
+                currentPrimaryIdentity,
+                primary.birthday || null,
+                [previousPrimaryIdentity, currentPrimaryIdentity],
+            );
+            for (const duplicate of dupRows) {
+                const duplicateIdentity: BirthdayContactIdentity = {
+                    contactId: duplicate.id,
+                    davUid: duplicate.dav_uid || `contact-${duplicate.id}`,
+                    name: duplicate.name,
+                    email: duplicate.email,
+                };
+                await syncContactBirthdayEvent(
+                    connection,
+                    user,
+                    duplicateIdentity,
+                    null,
+                    [duplicateIdentity],
+                );
+            }
+            return 'merged';
         });
-        const syncToken = await nextContactSyncToken(user);
-
-        await pool.query(
-            `UPDATE contacts SET name=?, email=?, phone=?, job_title=?, organization=?, notes=?, emails_json=?, phones_json=?, addresses_json=?, labels_json=?, vcard_data=?, photo_url=?, sync_token=? WHERE id=? AND username=?`,
-            [name, email, phone, job_title, organization, notes, JSON.stringify(emails), JSON.stringify(phones), JSON.stringify(addresses), JSON.stringify(labels), newVcardData, photo_url || null, syncToken, primaryId, user]
-        );
-
-        for (const dup of dupRows) {
-            await recordContactTombstone(user, dup.dav_uid || `contact-${dup.id}`);
-        }
-        
-        await pool.query('DELETE FROM contacts WHERE id IN (?) AND username=?', [dupRows.map((d: any) => d.id), user]);
-        
-        emitContactsUpdated(user, { contactId: primaryId, merged: true });
+        if (outcome === 'not-found') return res.status(404).json({ success: false, error: 'Primary contact not found' });
+        if (outcome === 'unchanged') return res.json({ success: true });
+        emitContactsUpdated(user, { contactId: normalizedPrimaryId, merged: true });
         res.json({ success: true });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -1052,7 +1690,14 @@ appsApiRouter.delete('/tasks/:id', async (req: Request, res: Response) => {
 // ==========================================
 // NOTES API
 // ==========================================
-import { listNotesWithReminders, saveNote, deleteNote } from './notes-utils';
+import {
+    deleteNote,
+    listNotesWithReminders,
+    noteValidationErrorBody,
+    NoteConflictError,
+    NoteValidationError,
+    saveNote,
+} from './notes-utils';
 import { syncNotesWithImap } from './notes-imap-sync';
 
 appsApiRouter.get('/notes', async (req: Request, res: Response) => {
@@ -1082,6 +1727,9 @@ appsApiRouter.post('/notes', async (req: Request, res: Response) => {
         syncNotesWithImap(user, pass).catch(e => console.error(e));
         res.json({ success: true, note: saved });
     } catch (e: any) {
+        if (e instanceof NoteValidationError) {
+            return res.status(e.statusCode).json(noteValidationErrorBody(e));
+        }
         console.error("POST notes error", e);
         res.status(500).json({ success: false, error: e.message });
     }
@@ -1090,7 +1738,10 @@ appsApiRouter.post('/notes', async (req: Request, res: Response) => {
 appsApiRouter.put('/notes/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const pass = (req as any).user?.password;
-    const { title, content, color, is_pinned, is_locked, folder, labels_json } = req.body;
+    const { title, content, color, is_pinned, is_locked, folder, labels_json, expected_sync_token } = req.body;
+    if (expected_sync_token === undefined) {
+        return res.status(428).json({ success: false, error: 'The current note revision is required.' });
+    }
     try {
         const saved = await saveNote({
             id: req.params.id as string,
@@ -1101,11 +1752,18 @@ appsApiRouter.put('/notes/:id', async (req: Request, res: Response) => {
             is_pinned: is_pinned ? 1 : 0,
             is_locked: is_locked ? 1 : 0,
             folder,
-            labels_json
+            labels_json,
+            expected_sync_token,
         });
         syncNotesWithImap(user, pass).catch(e => console.error(e));
         res.json({ success: true, note: saved });
     } catch (e: any) {
+        if (e instanceof NoteConflictError) {
+            return res.status(409).json({ success: false, error: e.message });
+        }
+        if (e instanceof NoteValidationError) {
+            return res.status(e.statusCode).json(noteValidationErrorBody(e));
+        }
         console.error("PUT notes error", e);
         res.status(500).json({ success: false, error: e.message });
     }
@@ -1372,8 +2030,18 @@ appsApiRouter.get('/calendars', async (req: Request, res: Response) => {
 appsApiRouter.post('/calendars', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const { name, color, subscribed_url } = req.body;
+    const requestedName = typeof name === 'string' && name.trim() ? name.trim() : 'New Calendar';
+    if (isReservedManagedCalendarSlug(requestedName)) {
+        return res.status(409).json({ success: false, error: 'The Birthdays calendar is managed from Contacts' });
+    }
+    let subscribedUrl: string | null;
     try {
-        const calendar = await createCalendar(user, name || 'New Calendar', { color, subscribed_url });
+        subscribedUrl = normalizedCalendarSubscriptionUrl(subscribed_url);
+    } catch {
+        return res.status(400).json({ success: false, error: 'Calendar subscription URL must be a credential-free HTTPS URL' });
+    }
+    try {
+        const calendar = await createCalendar(user, requestedName, { color, subscribed_url: subscribedUrl || undefined });
         res.json({ success: true, id: calendar.id });
     } catch (e: any) {
         res.status(500).json({ success: false, error: e.message });
@@ -1384,7 +2052,15 @@ appsApiRouter.put('/calendars/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     const color = typeof req.body.color === 'string' ? req.body.color.trim() : '';
-    const subscribed_url = typeof req.body.subscribed_url === 'string' ? req.body.subscribed_url.trim() : null;
+    const subscriptionWasProvided = Object.prototype.hasOwnProperty.call(req.body, 'subscribed_url');
+    let requestedSubscribedUrl: string | null | undefined;
+    if (subscriptionWasProvided) {
+        try {
+            requestedSubscribedUrl = normalizedCalendarSubscriptionUrl(req.body.subscribed_url);
+        } catch {
+            return res.status(400).json({ success: false, error: 'Calendar subscription URL must be a credential-free HTTPS URL' });
+        }
+    }
 
     if (!name) {
         return res.status(400).json({ success: false, error: 'Calendar name is required' });
@@ -1394,19 +2070,127 @@ appsApiRouter.put('/calendars/:id', async (req: Request, res: Response) => {
         return res.status(400).json({ success: false, error: 'Calendar color must be a #RRGGBB value' });
     }
 
+    const connection = await pool.getConnection();
     try {
-        const [result]: any = await pool.query(
-            'UPDATE calendars SET name = ?, color = ?, subscribed_url = ?, sync_token = sync_token + 1 WHERE id = ? AND user_id = ?',
-            [name, color, subscribed_url, req.params.id as string, user]
+        await connection.beginTransaction();
+        const [calendarRows]: any = await connection.query(
+            `SELECT id, dav_slug, subscribed_url
+             FROM calendars
+             WHERE id = ? AND user_id = ?
+             LIMIT 1 FOR UPDATE`,
+            [req.params.id as string, user],
         );
-
-        if (result.affectedRows === 0) {
+        if (calendarRows.length === 0) {
+            await connection.rollback();
             return res.status(404).json({ success: false, error: 'Calendar not found' });
         }
+        if (isManagedBirthdayCalendar(calendarRows[0])) {
+            await connection.rollback();
+            return res.status(409).json({ success: false, error: 'The Birthdays calendar is managed from Contacts' });
+        }
 
+        const previousSubscribedUrl = String(calendarRows[0].subscribed_url || '').trim() || null;
+        const subscribedUrl = subscriptionWasProvided ? requestedSubscribedUrl! : previousSubscribedUrl;
+        const firstSubscription = previousSubscribedUrl === null && subscribedUrl !== null;
+        if (firstSubscription) {
+            const [eventRows]: any = await connection.query(
+                'SELECT uid FROM events WHERE calendar_id = ? LIMIT 1 FOR UPDATE',
+                [req.params.id as string],
+            );
+            if (eventRows.length > 0) {
+                await connection.rollback();
+                return res.status(409).json({
+                    success: false,
+                    error: 'Only an empty calendar can be converted to a subscription',
+                });
+            }
+        }
+        if (previousSubscribedUrl !== null
+            && subscribedUrl !== null
+            && previousSubscribedUrl !== subscribedUrl) {
+            const [unmanagedRows]: any = await connection.query(
+                `SELECT uid FROM events
+                 WHERE calendar_id = ? AND subscription_managed = 0
+                 LIMIT 1 FOR UPDATE`,
+                [req.params.id as string],
+            );
+            if (unmanagedRows.length > 0) {
+                await connection.rollback();
+                return res.status(409).json({
+                    success: false,
+                    error: 'This subscribed calendar contains legacy local events and cannot change feeds safely',
+                });
+            }
+        }
+
+        let removedRevision: number | null = null;
+        if (previousSubscribedUrl !== null && subscribedUrl === null) {
+            const [managedRows]: any = await connection.query(
+                `SELECT uid, resource_name FROM events
+                 WHERE calendar_id = ? AND subscription_managed = 1
+                 LIMIT ${MAX_WEB_CALENDAR_RESOURCES + 1} FOR UPDATE`,
+                [req.params.id as string],
+            );
+            if (managedRows.length > MAX_WEB_CALENDAR_RESOURCES) {
+                throw new Error('Subscribed calendar contains too many managed resources to unsubscribe safely');
+            }
+            if (managedRows.length > 0) {
+                removedRevision = await allocateCalendarCollectionRevisionOnConnection(
+                    connection,
+                    req.params.id as string,
+                );
+                for (const row of managedRows) {
+                    const uid = String(row.uid);
+                    const resourceName = String(row.resource_name || row.uid);
+                    await connection.query(
+                        `DELETE FROM events
+                         WHERE calendar_id = ? AND uid = ? AND subscription_managed = 1`,
+                        [req.params.id as string, uid],
+                    );
+                    await connection.query(
+                        `INSERT INTO calendar_tombstones
+                         (calendar_id, uid, resource_name, sync_token, deleted_at)
+                         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                         ON DUPLICATE KEY UPDATE
+                            uid = VALUES(uid), resource_name = VALUES(resource_name),
+                            sync_token = VALUES(sync_token), deleted_at = CURRENT_TIMESTAMP`,
+                        [req.params.id as string, uid, resourceName, removedRevision],
+                    );
+                }
+            }
+        }
+
+        const urlChanged = previousSubscribedUrl !== subscribedUrl;
+        const [result]: any = await connection.query(
+            `UPDATE calendars
+             SET name = ?, color = ?, subscribed_url = ?,
+                 last_fetched_at = IF(? = 1, NULL, last_fetched_at),
+                 last_fetch_error = IF(? = 1, NULL, last_fetch_error),
+                 sync_token = sync_token + ?
+             WHERE id = ? AND user_id = ?`,
+            [
+                name,
+                color,
+                subscribedUrl,
+                urlChanged ? 1 : 0,
+                urlChanged ? 1 : 0,
+                removedRevision === null ? 1 : 0,
+                req.params.id as string,
+                user,
+            ],
+        );
+
+        if (Number(result.affectedRows || 0) !== 1) {
+            throw new Error('Calendar settings update failed after locking the calendar');
+        }
+
+        await connection.commit();
         res.json({ success: true });
     } catch (e: any) {
+        await connection.rollback();
         res.status(500).json({ success: false, error: e.message });
+    } finally {
+        connection.release();
     }
 });
 
@@ -1426,22 +2210,36 @@ appsApiRouter.get('/calendars/:id/export', async (req: Request, res: Response) =
         const [calRows]: any = await pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [req.params.id as string, user]);
         if (calRows.length === 0) return res.status(404).json({ success: false, error: 'Calendar not found' });
         
-        const [events]: any = await pool.query('SELECT ical_data FROM events WHERE calendar_id = ?', [req.params.id as string]);
-        
-        let icsData = [
-            "BEGIN:VCALENDAR",
-            "VERSION:2.0",
-            "PRODID:-//OpenMailStack//WebCalendar//EN"
-        ];
-        
+        const [events]: any = await pool.query(
+            'SELECT ical_data, updated_at FROM events WHERE calendar_id = ? ORDER BY uid ASC',
+            [req.params.id as string],
+        );
+        const supportingComponents = new Set<string>();
+        const resourceComponents: string[] = [];
         for (const ev of events) {
-            if (!ev.ical_data) continue;
-            // Extract everything between BEGIN:VEVENT and END:VEVENT
-            const match = ev.ical_data.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/i);
-            if (match) icsData.push(match[0]);
+            if (typeof ev.ical_data !== 'string' || !ev.ical_data) {
+                throw new Error('Calendar contains an invalid empty event resource');
+            }
+            const validated = validateStoredCalendarForExport(ev.ical_data, ev.updated_at);
+            if (validated.resources.some(resource => resource.componentType !== 'VEVENT')) {
+                throw new Error('Calendar export contains an unsupported non-VEVENT resource');
+            }
+            for (const resource of validated.resources) {
+                for (const block of validatedTopLevelCalendarBlocks(resource.icalData)) {
+                    if (block.type === 'VTIMEZONE') supportingComponents.add(block.icalData);
+                    else if (block.type === 'VEVENT') resourceComponents.push(block.icalData);
+                }
+            }
         }
-        
-        icsData.push("END:VCALENDAR");
+
+        const icsData = [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            'PRODID:-//OpenMailStack//WebCalendar//EN',
+            ...supportingComponents,
+            ...resourceComponents,
+            'END:VCALENDAR',
+        ];
         
         res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="calendar-${req.params.id}.ics"`);
@@ -1454,43 +2252,96 @@ appsApiRouter.get('/calendars/:id/export', async (req: Request, res: Response) =
 appsApiRouter.post('/calendars/:id/import', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const { ics_data } = req.body;
+    if (typeof ics_data !== 'string') {
+        return res.status(400).json({ success: false, error: 'Missing iCalendar data' });
+    }
+    let events: ValidatedICalendarResource[];
     try {
-        const [calRows]: any = await pool.query('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [req.params.id as string, user]);
-        if (calRows.length === 0) return res.status(404).json({ success: false, error: 'Calendar not found' });
-        
-        const events = ics_data.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/gi) || [];
+        const validated = validateICalendarDocument(ics_data, {
+            mode: 'import',
+            allowMultipleResourceUids: true,
+            maxResourceComponents: MAX_WEB_CALENDAR_RESOURCES,
+        });
+        if (validated.resources.some(resource => resource.componentType !== 'VEVENT')) {
+            return res.status(400).json({
+                success: false,
+                error: 'Calendar import supports VEVENT resources only',
+            });
+        }
+        events = validated.resources;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Invalid iCalendar data';
+        return res.status(400).json({ success: false, error: message });
+    }
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        if (!(await userCanWriteCalendarOnConnection(connection, user, req.params.id as string, true))) {
+            await connection.rollback();
+            return res.status(403).json({ success: false, error: 'Unauthorized calendar' });
+        }
         let imported = 0;
+        let revision: number | null = null;
         
-        for (const ev of events) {
-            const uidMatch = ev.match(/UID:(.+)/i);
-            const uid = uidMatch ? uidMatch[1].trim() : `imported-${Math.random().toString(36).substring(2)}@openmailstack`;
-            
-            const icalLine = [
-                "BEGIN:VCALENDAR",
-                "VERSION:2.0",
-                "PRODID:-//OpenMailStack//WebCalendar//EN",
-                ev,
-                "END:VCALENDAR"
-            ].join('\r\n');
-            
-            await pool.query(
-                `INSERT INTO events (calendar_id, uid, ical_data, sync_token) VALUES (?, ?, ?, 1)
-                 ON DUPLICATE KEY UPDATE ical_data=?, sync_token=sync_token+1`,
-                [req.params.id as string, uid, icalLine, icalLine]
+        for (const event of events) {
+            const uid = event.uid;
+            const icalLine = event.icalData;
+
+            const [existingRows]: any = await connection.query(
+                `SELECT uid, resource_name, ical_data, sync_token FROM events
+                 WHERE calendar_id = ? AND uid = ? LIMIT 1 FOR UPDATE`,
+                [req.params.id as string, uid],
             );
+            const existing = existingRows[0];
+            const resourceName = String(existing?.resource_name || uid);
+            const [tombstoneResult]: any = await connection.query(
+                `DELETE FROM calendar_tombstones
+                 WHERE calendar_id = ?
+                 AND BINARY COALESCE(NULLIF(resource_name, ''), uid) = BINARY ?`,
+                [req.params.id as string, resourceName],
+            );
+            const changed = !existing
+                || String(existing.ical_data || '') !== icalLine
+                || Number(tombstoneResult.affectedRows || 0) > 0;
+            if (changed) {
+                revision ??= await allocateCalendarCollectionRevisionOnConnection(connection, req.params.id as string);
+                if (existing) {
+                    await connection.query(
+                        'UPDATE events SET ical_data = ?, sync_token = ? WHERE calendar_id = ? AND uid = ?',
+                        [icalLine, revision, req.params.id as string, uid],
+                    );
+                } else {
+                    await connection.query(
+                        `INSERT INTO events
+                         (calendar_id, uid, resource_name, ical_data, sync_token)
+                         VALUES (?, ?, ?, ?, ?)`,
+                        [req.params.id as string, uid, uid, icalLine, revision],
+                    );
+                }
+            }
             imported++;
         }
-        
+
+        if (revision === null) await connection.rollback();
+        else {
+            await connection.commit();
+            emitCalendarUpdated(user, req.params.id as string);
+        }
         res.json({ success: true, count: imported });
     } catch (e: any) {
+        await connection.rollback();
         res.status(500).json({ success: false, error: e.message });
+    } finally {
+        connection.release();
     }
 });
 
 appsApiRouter.post('/calendars/:id/shares', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { email, permission = 'read' } = req.body;
+    const { email } = req.body;
+    const permission = normalizeCalendarSharePermission(req.body?.permission === undefined ? 'read' : req.body.permission);
     if (!email) return res.status(400).json({ success: false, error: 'email required' });
+    if (!permission) return res.status(400).json({ success: false, error: 'permission must be read or write' });
     try {
         const [calRows]: any = await pool.query('SELECT id FROM calendars WHERE id = ? AND user_id = ?', [req.params.id as string, user]);
         if (calRows.length === 0) return res.status(403).json({ success: false, error: 'Not authorized' });
@@ -1530,6 +2381,10 @@ appsApiRouter.delete('/calendars/:id', async (req: Request, res: Response) => {
             return res.status(404).json({ success: false, error: 'Calendar not found' });
         }
 
+        if (isManagedBirthdayCalendar(calendar)) {
+            return res.status(409).json({ success: false, error: 'The Birthdays calendar is managed from Contacts' });
+        }
+
         if (visibleCalendars.length <= 1) {
             return res.status(409).json({ success: false, error: 'You must keep at least one calendar' });
         }
@@ -1540,6 +2395,8 @@ appsApiRouter.delete('/calendars/:id', async (req: Request, res: Response) => {
             const [eventRows]: any = await connection.query('SELECT COUNT(*) AS event_count FROM events WHERE calendar_id = ?', [calendarId]);
             const deletedEvents = Number(eventRows[0]?.event_count || 0);
             await connection.query('DELETE FROM events WHERE calendar_id = ?', [calendarId]);
+            await connection.query('DELETE FROM calendar_tombstones WHERE calendar_id = ?', [calendarId]);
+            await connection.query('DELETE FROM calendar_shares WHERE calendar_id = ?', [calendarId]);
             const [result]: any = await connection.query('DELETE FROM calendars WHERE id = ? AND user_id = ?', [calendarId, user]);
 
             if (result.affectedRows === 0) {
@@ -1562,13 +2419,24 @@ appsApiRouter.delete('/calendars/:id', async (req: Request, res: Response) => {
 
 appsApiRouter.post('/events', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { data: ical_data, calendar_id } = req.body;
-    if (!ical_data) return res.status(400).json({ success: false, error: 'Missing data (iCalendar string)' });
+    const { data: submittedIcalData, calendar_id } = req.body;
+    if (typeof submittedIcalData !== 'string' || !submittedIcalData) {
+        return res.status(400).json({ success: false, error: 'Missing data (iCalendar string)' });
+    }
+    let validatedEvent: ValidatedICalendarResource;
+    try {
+        validatedEvent = validatedWebCalendarEvent(submittedIcalData);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Invalid iCalendar data';
+        return res.status(400).json({ success: false, error: message });
+    }
 
-    // The UID is an opaque event identity. Preserve it exactly so an edit
-    // addresses the same (calendar_id, uid) row instead of creating a copy.
-    const uid = extractIcalEventUid(ical_data) || `event-${Date.now()}@openmailstack`;
+    // The shared validator groups a recurring master and its RECURRENCE-ID
+    // exceptions under the exact same opaque UID.
+    const uid = validatedEvent.uid;
+    const ical_data = validatedEvent.icalData;
 
+    let connection: any = null;
     try {
         // resolve calendar: use provided calendar_id, or the user's first personal calendar
         let calId = calendar_id;
@@ -1578,74 +2446,133 @@ appsApiRouter.post('/events', async (req: Request, res: Response) => {
             calId = userCals[0].id;
         }
 
-        // verify calendar ownership or write share
-        const [cals]: any = await pool.query(`
-            SELECT c.id
-            FROM calendars c
-            LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
-            WHERE c.id = ? AND (c.user_id = ? OR cs.permission = 'write')
-        `, [user, calId, user]);
-        if (cals.length === 0) return res.status(403).json({success: false, error: 'Unauthorized calendar'});
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        if (!(await userCanWriteCalendarOnConnection(connection, user, calId))) {
+            await connection.rollback();
+            return res.status(403).json({success: false, error: 'Unauthorized calendar'});
+        }
 
-        await pool.query(
-            'INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE ical_data=?',
-            [calId, uid, ical_data, ical_data]
+        const [existingRows]: any = await connection.query(
+            `SELECT uid, resource_name, ical_data, sync_token FROM events
+             WHERE calendar_id = ? AND uid = ? LIMIT 1 FOR UPDATE`,
+            [calId, uid],
         );
-        await pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calId]);
-        try {
-            const { io } = require('./index');
-            io.to(user).emit('calendar_updated', { calendarId: calId });
-        } catch(e) {}
+        const existing = existingRows[0];
+        const resourceName = String(existing?.resource_name || uid);
+        const [tombstoneResult]: any = await connection.query(
+            `DELETE FROM calendar_tombstones
+             WHERE calendar_id = ?
+             AND BINARY COALESCE(NULLIF(resource_name, ''), uid) = BINARY ?`,
+            [calId, resourceName],
+        );
+        const changed = !existing
+            || String(existing.ical_data || '') !== String(ical_data)
+            || Number(tombstoneResult.affectedRows || 0) > 0;
+        if (!changed) {
+            await connection.rollback();
+            return res.json({ success: true });
+        }
+
+        const revision = await allocateCalendarCollectionRevisionOnConnection(connection, calId);
+        if (existing) {
+            await connection.query(
+                'UPDATE events SET ical_data = ?, sync_token = ? WHERE calendar_id = ? AND uid = ?',
+                [ical_data, revision, calId, uid],
+            );
+        } else {
+            await connection.query(
+                `INSERT INTO events
+                 (calendar_id, uid, resource_name, ical_data, sync_token)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [calId, uid, uid, ical_data, revision],
+            );
+        }
+        await connection.commit();
+        emitCalendarUpdated(user, calId);
 
         res.json({ success: true });
     } catch (e: any) {
+        if (connection) await connection.rollback();
         res.status(500).json({ success: false, error: e.message });
+    } finally {
+        connection?.release();
     }
 });
 
 appsApiRouter.delete('/events/:calendar_id/:uid', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { calendar_id, uid } = req.params;
+    const calendar_id = String(req.params.calendar_id);
+    const uid = String(req.params.uid);
+    const connection = await pool.getConnection();
     try {
-        const [cals]: any = await pool.query(`
-            SELECT c.id 
-            FROM calendars c 
-            LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
-            WHERE c.id = ? AND (c.user_id = ? OR cs.permission = 'write')
-        `, [user, calendar_id, user]);
-        if (cals.length === 0) return res.status(403).json({success: false, error: 'Unauthorized calendar'});
-
-        const excludeDate = req.query.exclude as string | undefined;
-        if (excludeDate) {
-            const [events]: any = await pool.query(
-                'SELECT uid, ical_data FROM events WHERE calendar_id=? AND uid=?',
-                [calendar_id, uid]
-            );
-            if (events.length === 0) return res.status(404).json({ success: false, error: 'Event not found' });
-            let icalData: string = events[0].ical_data || '';
-            const excludeDateClean = excludeDate.replace(/[-:]/g, '').split('.')[0];
-            if (icalData.includes('EXDATE:')) {
-                icalData = icalData.replace(/(EXDATE:.*)/, `$1,${excludeDateClean}Z`);
-            } else {
-                icalData = icalData.replace(/(END:VEVENT)/, `EXDATE:${excludeDateClean}Z\r\n$1`);
-            }
-            await pool.query('UPDATE events SET ical_data = ? WHERE calendar_id=? AND uid=?', [icalData, calendar_id, uid]);
-        } else {
-            await pool.query(
-                'INSERT INTO calendar_tombstones (calendar_id, uid) VALUES (?, ?)',
-                [calendar_id, uid]
-            );
-            await pool.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [calendar_id, uid]);
+        await connection.beginTransaction();
+        if (!(await userCanWriteCalendarOnConnection(connection, user, calendar_id))) {
+            await connection.rollback();
+            return res.status(403).json({success: false, error: 'Unauthorized calendar'});
         }
-        await pool.query('UPDATE calendars SET sync_token = sync_token + 1 WHERE id = ?', [calendar_id]);
-        try {
-            const { io } = require('./index');
-            io.to(user).emit('calendar_updated', { calendarId: calendar_id });
-        } catch(e) {}
+
+        const excludeWasProvided = Object.prototype.hasOwnProperty.call(req.query, 'exclude');
+        const excludeDate = typeof req.query.exclude === 'string' ? req.query.exclude : undefined;
+        if (excludeWasProvided && !excludeDate?.trim()) {
+            await connection.rollback();
+            return res.status(400).json({ success: false, error: 'Invalid recurring occurrence date' });
+        }
+        const [events]: any = await connection.query(
+            `SELECT uid, resource_name, ical_data, sync_token
+             FROM events WHERE calendar_id=? AND uid=? LIMIT 1 FOR UPDATE`,
+            [calendar_id, uid],
+        );
+        if (events.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ success: false, error: 'Event not found' });
+        }
+        if (excludeDate) {
+            let icalData: string;
+            try {
+                icalData = addRecurringOccurrenceExclusion(String(events[0].ical_data || ''), excludeDate);
+            } catch (error) {
+                if (!(error instanceof ICalendarValidationError)) throw error;
+                await connection.rollback();
+                return res.status(400).json({ success: false, error: error.message });
+            }
+            const resourceName = String(events[0].resource_name || events[0].uid);
+            const [tombstoneResult]: any = await connection.query(
+                `DELETE FROM calendar_tombstones
+                 WHERE calendar_id = ? AND BINARY resource_name = BINARY ?`,
+                [calendar_id, resourceName],
+            );
+            if (icalData === String(events[0].ical_data || '') && !Number(tombstoneResult.affectedRows || 0)) {
+                await connection.rollback();
+                return res.json({ success: true });
+            }
+            const revision = await allocateCalendarCollectionRevisionOnConnection(connection, calendar_id);
+            await connection.query(
+                'UPDATE events SET ical_data = ?, sync_token = ? WHERE calendar_id = ? AND uid = ?',
+                [icalData, revision, calendar_id, uid],
+            );
+        } else {
+            const revision = await allocateCalendarCollectionRevisionOnConnection(connection, calendar_id);
+            await connection.query('DELETE FROM events WHERE calendar_id=? AND uid=?', [calendar_id, uid]);
+            await connection.query(
+                `INSERT INTO calendar_tombstones
+                 (calendar_id, uid, resource_name, sync_token, deleted_at)
+                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                 ON DUPLICATE KEY UPDATE
+                    uid = VALUES(uid), resource_name = VALUES(resource_name),
+                    sync_token = VALUES(sync_token), deleted_at = CURRENT_TIMESTAMP`,
+                [calendar_id, uid, String(events[0].resource_name || events[0].uid), revision],
+            );
+        }
+        await connection.commit();
+        emitCalendarUpdated(user, calendar_id);
 
         res.json({ success: true });
     } catch (e: any) {
+        await connection.rollback();
         res.status(500).json({ success: false, error: e.message });
+    } finally {
+        connection.release();
     }
 });
 

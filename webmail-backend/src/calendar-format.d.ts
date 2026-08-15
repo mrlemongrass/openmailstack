@@ -18,7 +18,25 @@ export interface ParsedIcalEvent {
     excludedOccurrenceIds?: Set<string>;
     recurrenceExceptions?: ParsedRecurrenceException[];
     attendees?: string;
+    activeSyncAttendees?: Array<{
+        email: string;
+        name?: string;
+        status?: string;
+        type?: string;
+    }>;
+    organizerEmail?: string;
+    organizerName?: string;
+    categories?: string[];
     busyStatus?: string;
+    activeSyncBusyStatus?: string;
+    sensitivity?: string;
+    meetingStatus?: string;
+    responseRequested?: boolean;
+    disallowNewTimeProposal?: boolean;
+    activeSyncCalendarType?: string;
+    activeSyncIsLeapMonth?: string;
+    activeSyncRecurrenceDayOfWeekOmitted?: boolean;
+    recurrenceExceptionOverflow?: boolean;
     notifications?: Array<{
         id: number;
         type: string;

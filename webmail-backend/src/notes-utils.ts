@@ -1,6 +1,117 @@
 import { pool } from './db';
 import * as crypto from 'crypto';
 
+// Product/API limits are measured in UTF-8 bytes so MariaDB and IMAP behavior
+// stays consistent for ASCII and multi-byte text.
+export const NOTE_TITLE_MAX_BYTES = 4 * 1024;
+export const NOTE_CONTENT_MAX_BYTES = 4 * 1024 * 1024;
+export const NOTE_LABELS_MAX_BYTES = 32 * 1024;
+export const NOTE_LABELS_MAX_COUNT = 100;
+
+export class NoteValidationError extends Error {
+    readonly statusCode: 400 | 413;
+    readonly code: 'NOTE_FIELD_INVALID' | 'NOTE_FIELD_TOO_LARGE';
+    readonly field: 'title' | 'content' | 'labels_json';
+    readonly limitBytes?: number;
+
+    constructor(
+        field: 'title' | 'content' | 'labels_json',
+        message: string,
+        statusCode: 400 | 413 = 400,
+        limitBytes?: number,
+    ) {
+        super(message);
+        this.name = 'NoteValidationError';
+        this.statusCode = statusCode;
+        this.code = statusCode === 413 ? 'NOTE_FIELD_TOO_LARGE' : 'NOTE_FIELD_INVALID';
+        this.field = field;
+        this.limitBytes = limitBytes;
+    }
+}
+
+export function noteValidationErrorBody(error: NoteValidationError): {
+    success: false;
+    error: string;
+    code: NoteValidationError['code'];
+    field: NoteValidationError['field'];
+    limit_bytes?: number;
+} {
+    return {
+        success: false,
+        error: error.message,
+        code: error.code,
+        field: error.field,
+        ...(error.limitBytes === undefined ? {} : { limit_bytes: error.limitBytes }),
+    };
+}
+
+function validatedNoteText(
+    value: unknown,
+    field: 'title' | 'content',
+    fallback: string,
+    maxBytes: number,
+): string {
+    if (value === undefined) return fallback;
+    if (typeof value !== 'string') {
+        throw new NoteValidationError(field, `${field} must be a string`);
+    }
+    if (Buffer.byteLength(value, 'utf8') > maxBytes) {
+        throw new NoteValidationError(
+            field,
+            `${field} exceeds the ${maxBytes}-byte UTF-8 limit`,
+            413,
+            maxBytes,
+        );
+    }
+    return value;
+}
+
+function validatedNoteLabels(value: unknown): string {
+    if (value === undefined) return '[]';
+    if (typeof value !== 'string') {
+        throw new NoteValidationError('labels_json', 'labels_json must be a JSON string');
+    }
+    if (Buffer.byteLength(value, 'utf8') > NOTE_LABELS_MAX_BYTES) {
+        throw new NoteValidationError(
+            'labels_json',
+            `labels_json exceeds the ${NOTE_LABELS_MAX_BYTES}-byte UTF-8 limit`,
+            413,
+            NOTE_LABELS_MAX_BYTES,
+        );
+    }
+    let labels: unknown;
+    try {
+        labels = JSON.parse(value);
+    } catch {
+        throw new NoteValidationError('labels_json', 'labels_json must contain a JSON array');
+    }
+    if (!Array.isArray(labels)) {
+        throw new NoteValidationError('labels_json', 'labels_json must contain a JSON array');
+    }
+    if (labels.length > NOTE_LABELS_MAX_COUNT) {
+        throw new NoteValidationError(
+            'labels_json',
+            `labels_json cannot contain more than ${NOTE_LABELS_MAX_COUNT} label IDs`,
+        );
+    }
+    if (!labels.every(label => typeof label === 'string' || Number.isSafeInteger(label))) {
+        throw new NoteValidationError('labels_json', 'labels_json must contain only string or integer label IDs');
+    }
+    return value;
+}
+
+export function validateNoteFields(input: {
+    title?: unknown;
+    content?: unknown;
+    labels_json?: unknown;
+}): Pick<NoteRow, 'title' | 'content' | 'labels_json'> {
+    return {
+        title: validatedNoteText(input.title, 'title', '', NOTE_TITLE_MAX_BYTES),
+        content: validatedNoteText(input.content, 'content', '', NOTE_CONTENT_MAX_BYTES),
+        labels_json: validatedNoteLabels(input.labels_json),
+    };
+}
+
 export interface NoteRow {
     id: string;
     owner: string;
@@ -45,41 +156,138 @@ function noteContentMatches(
         && note.labels_json === expected.labels_json;
 }
 
+let notesSchemaPromise: Promise<void> | null = null;
+
+const compatibleNoteColumnTypes: Record<string, RegExp> = {
+    id: /^varchar\(255\)$/,
+    owner: /^varchar\(255\)$/,
+    title: /^(?:text|mediumtext|longtext)$/,
+    content: /^(?:mediumtext|longtext)$/,
+    color: /^varchar\(50\)$/,
+    is_pinned: /^tinyint(?:\(\d+\))?(?: unsigned)?$/,
+    is_locked: /^tinyint(?:\(\d+\))?(?: unsigned)?$/,
+    folder: /^varchar\(100\)$/,
+    labels_json: /^(?:text|mediumtext|longtext)$/,
+    sync_token: /^bigint(?:\(\d+\))?(?: unsigned)?$/,
+    imap_sync_token: /^bigint(?:\(\d+\))?(?: unsigned)?$/,
+    imap_uid: /^int(?:\(\d+\))?(?: unsigned)?$/,
+    imap_msgid: /^varchar\(255\)$/,
+    is_deleted: /^tinyint(?:\(\d+\))?(?: unsigned)?$/,
+    created_at: /^timestamp(?:\(\d+\))?$/,
+    updated_at: /^timestamp(?:\(\d+\))?$/,
+};
+
 export async function ensureNotesSchema(): Promise<void> {
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS notes (
-            id VARCHAR(255) PRIMARY KEY,
-            owner VARCHAR(255) NOT NULL,
-            title TEXT,
-            content TEXT,
-            color VARCHAR(50),
-            is_pinned TINYINT(1) DEFAULT 0,
-            is_locked TINYINT(1) DEFAULT 0,
-            folder VARCHAR(100) DEFAULT 'notes',
-            labels_json TEXT,
-            sync_token BIGINT NOT NULL DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            INDEX (owner)
-        )
-    `);
-    
-    // Attempt to add new columns to existing table
-    try {
-        await pool.query("ALTER TABLE notes ADD COLUMN is_pinned TINYINT(1) DEFAULT 0");
-        await pool.query("ALTER TABLE notes ADD COLUMN is_locked TINYINT(1) DEFAULT 0");
-        await pool.query("ALTER TABLE notes ADD COLUMN folder VARCHAR(100) DEFAULT 'notes'");
-        await pool.query("ALTER TABLE notes ADD COLUMN labels_json TEXT");
-    } catch (e) { }
-    try {
-        await pool.query("ALTER TABLE notes ADD COLUMN sync_token BIGINT NOT NULL DEFAULT 1");
-    } catch (e) { }
-    try {
-        await pool.query("ALTER TABLE notes ADD COLUMN imap_sync_token BIGINT NOT NULL DEFAULT 0");
-    } catch (e) { }
-    try {
-        await pool.query("ALTER TABLE notes ADD COLUMN is_deleted TINYINT(1) DEFAULT 0");
-    } catch (e) { }
+    if (!notesSchemaPromise) {
+        notesSchemaPromise = (async () => {
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS notes (
+                    id VARCHAR(255) PRIMARY KEY,
+                    owner VARCHAR(255) NOT NULL,
+                    title TEXT,
+                    content MEDIUMTEXT,
+                    color VARCHAR(50),
+                    is_pinned TINYINT(1) NOT NULL DEFAULT 0,
+                    is_locked TINYINT(1) NOT NULL DEFAULT 0,
+                    folder VARCHAR(100) NOT NULL DEFAULT 'notes',
+                    labels_json TEXT,
+                    sync_token BIGINT NOT NULL DEFAULT 1,
+                    imap_sync_token BIGINT NOT NULL DEFAULT 0,
+                    imap_uid INT DEFAULT NULL,
+                    imap_msgid VARCHAR(255) DEFAULT NULL,
+                    is_deleted TINYINT(1) NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX (owner)
+                )
+            `);
+
+            const [columns]: any = await pool.query('SHOW COLUMNS FROM notes');
+            const columnNames = new Set((columns as any[]).map(column => String(column.Field)));
+            const extensionColumns: Array<[string, string]> = [
+                ['is_pinned', 'TINYINT(1) NOT NULL DEFAULT 0'],
+                ['is_locked', 'TINYINT(1) NOT NULL DEFAULT 0'],
+                ['folder', "VARCHAR(100) NOT NULL DEFAULT 'notes'"],
+                ['labels_json', 'TEXT'],
+                ['sync_token', 'BIGINT NOT NULL DEFAULT 1'],
+                ['imap_sync_token', 'BIGINT NOT NULL DEFAULT 0'],
+                ['imap_uid', 'INT DEFAULT NULL'],
+                ['imap_msgid', 'VARCHAR(255) DEFAULT NULL'],
+                ['is_deleted', 'TINYINT(1) NOT NULL DEFAULT 0'],
+            ];
+            for (const [name, definition] of extensionColumns) {
+                if (!columnNames.has(name)) {
+                    await pool.query(`ALTER TABLE notes ADD COLUMN ${name} ${definition}`);
+                }
+            }
+
+            const contentColumn = (columns as any[]).find(column => String(column.Field) === 'content');
+            if (String(contentColumn?.Type || '').toLowerCase() === 'text') {
+                await pool.query('ALTER TABLE notes MODIFY COLUMN content MEDIUMTEXT NULL');
+            }
+
+            let [verifiedColumns]: any = await pool.query('SHOW COLUMNS FROM notes');
+            let verifiedNames = new Set((verifiedColumns as any[]).map(column => String(column.Field)));
+            const requiredColumns = [
+                'id', 'owner', 'title', 'content', 'color', 'is_pinned', 'is_locked', 'folder',
+                'labels_json', 'sync_token', 'imap_sync_token', 'imap_uid', 'imap_msgid',
+                'is_deleted', 'created_at', 'updated_at',
+            ];
+            const missingColumns = requiredColumns.filter(column => !verifiedNames.has(column));
+            if (missingColumns.length > 0) {
+                throw new Error(`Notes schema is missing required columns: ${missingColumns.join(', ')}`);
+            }
+            let verifiedByName = new Map(
+                (verifiedColumns as any[]).map(column => [String(column.Field), column]),
+            );
+
+            const revisionInvariants = [
+                { name: 'is_pinned', definition: 'TINYINT(1) NOT NULL DEFAULT 0', fallback: '0', expectedDefault: '0' },
+                { name: 'is_locked', definition: 'TINYINT(1) NOT NULL DEFAULT 0', fallback: '0', expectedDefault: '0' },
+                { name: 'folder', definition: "VARCHAR(100) NOT NULL DEFAULT 'notes'", fallback: "'notes'", expectedDefault: 'notes' },
+                { name: 'sync_token', definition: 'BIGINT NOT NULL DEFAULT 1', fallback: '1', expectedDefault: '1' },
+                { name: 'imap_sync_token', definition: 'BIGINT NOT NULL DEFAULT 0', fallback: '0', expectedDefault: '0' },
+                { name: 'is_deleted', definition: 'TINYINT(1) NOT NULL DEFAULT 0', fallback: '0', expectedDefault: '0' },
+            ];
+            let invariantsMigrated = false;
+            for (const invariant of revisionInvariants) {
+                const column: any = verifiedByName.get(invariant.name);
+                const defaultValue = String(column?.Default ?? '').replace(/^'(.*)'$/, '$1');
+                if (String(column?.Null || '').toUpperCase() === 'NO'
+                    && defaultValue === invariant.expectedDefault) continue;
+                await pool.query(
+                    `UPDATE notes SET ${invariant.name} = ${invariant.fallback} WHERE ${invariant.name} IS NULL`,
+                );
+                await pool.query(`ALTER TABLE notes MODIFY COLUMN ${invariant.name} ${invariant.definition}`);
+                invariantsMigrated = true;
+            }
+            if (invariantsMigrated) {
+                [verifiedColumns] = await pool.query('SHOW COLUMNS FROM notes');
+                verifiedNames = new Set((verifiedColumns as any[]).map((column: any) => String(column.Field)));
+                verifiedByName = new Map(
+                    (verifiedColumns as any[]).map((column: any) => [String(column.Field), column]),
+                );
+            }
+            for (const [name, acceptedType] of Object.entries(compatibleNoteColumnTypes)) {
+                const actualType = String(verifiedByName.get(name)?.Type || '').trim().toLowerCase();
+                if (!acceptedType.test(actualType)) {
+                    throw new Error(`Notes schema column ${name} has incompatible type ${actualType || '(missing)'}`);
+                }
+            }
+            for (const invariant of revisionInvariants) {
+                const column: any = verifiedByName.get(invariant.name);
+                const defaultValue = String(column?.Default ?? '').replace(/^'(.*)'$/, '$1');
+                if (String(column?.Null || '').toUpperCase() !== 'NO'
+                    || defaultValue !== invariant.expectedDefault) {
+                    throw new Error(`Notes schema column ${invariant.name} does not enforce its revision invariant`);
+                }
+            }
+        })().catch(error => {
+            notesSchemaPromise = null;
+            throw error;
+        });
+    }
+    return notesSchemaPromise;
 }
 
 export async function listNotes(owner: string, includeDeleted = false): Promise<NoteRow[]> {
@@ -105,13 +313,11 @@ export async function saveNote(note: Partial<NoteRow> & {
     expected_sync_token?: number;
 }): Promise<NoteRow> {
     const id = note.id || crypto.randomUUID();
-    const title = note.title || '';
-    const content = note.content || '';
+    const { title, content, labels_json } = validateNoteFields(note);
     const color = note.color || '#ffffff';
     const is_pinned = note.is_pinned ? 1 : 0;
     const is_locked = note.is_locked ? 1 : 0;
     const folder = note.folder || 'notes';
-    const labels_json = note.labels_json || '[]';
     const expectedContent = { title, content, color, is_pinned, is_locked, folder, labels_json };
     
     // Check if exists

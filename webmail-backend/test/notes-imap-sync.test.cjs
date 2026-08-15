@@ -1,12 +1,16 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const test = require('node:test');
+const { simpleParser } = require('mailparser');
+
+process.env.OMS_DB_PASSWORD ||= 'notes-imap-sync-test';
 
 const sourceDir = path.join(__dirname, '..', 'src');
 const syncModulePath = require.resolve(path.join(sourceDir, 'notes-imap-sync.js'));
 const imapModulePath = require.resolve(path.join(sourceDir, 'imap.js'));
 const dbModulePath = require.resolve(path.join(sourceDir, 'db.js'));
 const notesUtilsModulePath = require.resolve(path.join(sourceDir, 'notes-utils.js'));
+const { validateNoteFields } = require(notesUtilsModulePath);
 
 function installSyncHarness(t, {
   deleteDuringFirstAppend = false,
@@ -23,6 +27,10 @@ function installSyncHarness(t, {
   imapOnlyNoteCount = 0,
   loadSecondRuntime = false,
   blockPrimaryOwnerSnapshot = false,
+  noteOverrides = {},
+  acquireFailureAfterLock = false,
+  releaseFailure = false,
+  customImapSources = [],
 } = {}) {
   const originalCacheEntries = new Map(
     [syncModulePath, imapModulePath, dbModulePath, notesUtilsModulePath]
@@ -46,6 +54,7 @@ function installSyncHarness(t, {
     is_deleted: 0,
     created_at: '2026-08-15T00:00:00.000Z',
     updated_at: '2026-08-15T00:00:00.000Z',
+    ...noteOverrides,
   }];
   const mailbox = [];
   let nextUid = 1;
@@ -55,6 +64,9 @@ function installSyncHarness(t, {
   let appendFailuresRemaining = appendAfterAcceptFailures;
   let conditionalDeleteEditInjected = false;
   let deleteRestoreInjected = false;
+  let acquireFailureRemaining = acquireFailureAfterLock ? 1 : 0;
+  let releaseFailureRemaining = releaseFailure ? 1 : 0;
+  const connectionStats = { released: 0, destroyed: 0 };
   let releaseConcurrentSnapshot;
   const concurrentSnapshot = new Promise((resolve) => {
     releaseConcurrentSnapshot = resolve;
@@ -68,7 +80,21 @@ function installSyncHarness(t, {
     releasePrimarySnapshot = resolve;
   });
 
-  if (linkedNoteCount > 0) {
+  if (customImapSources.length > 0) {
+    notes.splice(0, notes.length);
+    customImapSources.forEach((source, index) => {
+      const raw = Buffer.isBuffer(source) ? source : Buffer.from(String(source));
+      const messageId = raw.toString('utf8', 0, Math.min(raw.length, 64 * 1024))
+        .match(/^Message-ID:\s*(.+)$/mi)?.[1]?.trim() || `<custom-note-${index + 1}@example.test>`;
+      mailbox.push({
+        uid: index + 1,
+        flags: [],
+        envelope: { messageId },
+        source: raw,
+      });
+    });
+    nextUid = customImapSources.length + 1;
+  } else if (linkedNoteCount > 0) {
     notes.splice(0, notes.length);
     for (let index = 1; index <= linkedNoteCount; index += 1) {
       const messageId = `<note-${index}-1@openmailstack.local>`;
@@ -179,18 +205,28 @@ function installSyncHarness(t, {
       return captureSnapshot(mailbox);
     }
 
-    async getMessageByUid(_folder, uid) {
+    async getMessageByUid(_folder, uid, maxSourceBytes) {
       const message = mailbox.find((candidate) => candidate.uid === uid);
-      return message ? { ...message } : null;
+      if (!message) return null;
+      const size = message.source.length;
+      const bounded = Number.isFinite(maxSourceBytes) && maxSourceBytes > 0;
+      const source = bounded ? message.source.subarray(0, maxSourceBytes) : message.source;
+      return {
+        ...message,
+        source,
+        size,
+        sourceComplete: !bounded || source.length >= size,
+      };
     }
 
     async appendMessage(_folder, content) {
-      const messageId = content.match(/^Message-ID:\s*(.+)$/mi)?.[1]?.trim() || '';
+      const rawContent = Buffer.isBuffer(content) ? content.toString('utf8') : String(content);
+      const messageId = rawContent.match(/^Message-ID:\s*(.+)$/mi)?.[1]?.trim() || '';
       mailbox.push({
         uid: nextUid++,
         flags: [],
         envelope: { messageId },
-        source: Buffer.from(content),
+        source: Buffer.from(rawContent),
       });
       appendCount += 1;
       if (deleteDuringFirstAppend && appendCount === 1) {
@@ -258,15 +294,29 @@ function installSyncHarness(t, {
           if (statement.startsWith('SELECT GET_LOCK')) {
             await acquireLock(params[0]);
             ownedLocks.add(params[0]);
+            if (acquireFailureRemaining > 0) {
+              acquireFailureRemaining -= 1;
+              throw new Error('simulated ambiguous GET_LOCK result');
+            }
             return [[{ acquired: 1 }], []];
           }
           if (statement.startsWith('SELECT RELEASE_LOCK')) {
+            if (releaseFailureRemaining > 0) {
+              releaseFailureRemaining -= 1;
+              throw new Error('simulated RELEASE_LOCK transport failure');
+            }
             if (ownedLocks.delete(params[0])) releaseLock(params[0]);
             return [[{ released: 1 }], []];
           }
           return pool.query(sql, params);
         },
         release() {
+          connectionStats.released += 1;
+          for (const lockName of ownedLocks) releaseLock(lockName);
+          ownedLocks.clear();
+        },
+        destroy() {
+          connectionStats.destroyed += 1;
           for (const lockName of ownedLocks) releaseLock(lockName);
           ownedLocks.clear();
         },
@@ -348,17 +398,19 @@ function installSyncHarness(t, {
   };
 
   const notesUtils = {
+    validateNoteFields,
     async listNotes(requestedOwner) {
       return notes
         .filter((note) => note.owner === requestedOwner)
         .map((note) => ({ ...note }));
     },
     async saveNote(note) {
-      if (!importThenEdit && imapOnlyNoteCount === 0 && appendAfterAcceptFailures === 0) {
+      if (!importThenEdit && imapOnlyNoteCount === 0 && appendAfterAcceptFailures === 0 && customImapSources.length === 0) {
         throw new Error('This scenario must not import a note.');
       }
       const imported = {
         ...note,
+        ...validateNoteFields(note),
         sync_token: 1,
         imap_sync_token: 0,
         is_deleted: 0,
@@ -440,6 +492,7 @@ function installSyncHarness(t, {
     secondSyncNotesWithImap: secondRuntime,
     primarySnapshotStarted,
     releasePrimarySnapshot,
+    connectionStats,
   };
 }
 
@@ -449,6 +502,14 @@ function captureExpectedSyncErrors(t) {
   console.error = (...args) => errors.push(args.map(String).join(' '));
   t.after(() => { console.error = originalError; });
   return errors;
+}
+
+function captureExpectedSyncWarnings(t) {
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(' '));
+  t.after(() => { console.warn = originalWarn; });
+  return warnings;
 }
 
 test('concurrent sync requests export one IMAP message for one note revision', async (t) => {
@@ -473,6 +534,133 @@ test('independent Notes runtimes share a database owner lock before exporting', 
 
   assert.equal(harness.mailbox.length, 1);
   assert.equal(harness.notes[0].imap_sync_token, 1);
+});
+
+test('an ambiguous Notes lock acquisition destroys rather than pools the connection', async (t) => {
+  const errors = captureExpectedSyncErrors(t);
+  const harness = installSyncHarness(t, { acquireFailureAfterLock: true });
+
+  await harness.syncNotesWithImap(harness.owner, 'unused');
+
+  assert.equal(harness.connectionStats.destroyed, 1);
+  assert.equal(harness.connectionStats.released, 0);
+  assert.ok(errors.some((error) => error.includes('simulated ambiguous GET_LOCK result')));
+
+  await harness.syncNotesWithImap(harness.owner, 'unused');
+  assert.equal(harness.mailbox.length, 1, 'destroying the ambiguous lease must release the server lock');
+});
+
+test('a Notes lock release failure destroys rather than pools the connection', async (t) => {
+  const errors = captureExpectedSyncErrors(t);
+  const harness = installSyncHarness(t, { releaseFailure: true });
+
+  await harness.syncNotesWithImap(harness.owner, 'unused');
+
+  assert.equal(harness.connectionStats.destroyed, 1);
+  assert.equal(harness.connectionStats.released, 0);
+  assert.equal(harness.mailbox.length, 1);
+  assert.ok(errors.some((error) => error.includes('Failed to release Notes synchronization lock')));
+});
+
+test('Notes export safely round-trips long Unicode headers and one deterministic OMS Message-ID', async (t) => {
+  const title = '計画🚀'.repeat(300);
+  const content = '<p>Résumé — 东京 — 🚀</p>';
+  const harness = installSyncHarness(t, { noteOverrides: { title, content } });
+
+  await harness.syncNotesWithImap(harness.owner, 'unused');
+
+  assert.equal(harness.mailbox.length, 1);
+  const raw = harness.mailbox[0].source.toString('utf8');
+  const messageIdHeaders = raw.match(/^Message-ID:/gmi) || [];
+  assert.equal(messageIdHeaders.length, 1);
+  assert.match(harness.notes[0].imap_msgid, /^<oms-note-[0-9a-f]{48}@openmailstack\.local>$/);
+  assert.equal(harness.mailbox[0].envelope.messageId, harness.notes[0].imap_msgid);
+  const parsed = await simpleParser(harness.mailbox[0].source);
+  assert.equal(parsed.subject, title);
+  assert.match(String(parsed.html), /Résumé — 东京 — 🚀/);
+});
+
+test('Notes export cannot turn title CRLF into injected headers or body', async (t) => {
+  const harness = installSyncHarness(t, {
+    noteOverrides: {
+      title: 'Quarterly\r\nBcc: injected@example.test\r\n\r\nINJECTED-BODY',
+      content: '<p>Only the real note body</p>',
+    },
+  });
+
+  await harness.syncNotesWithImap(harness.owner, 'unused');
+
+  const raw = harness.mailbox[0].source.toString('utf8');
+  assert.doesNotMatch(raw, /^Bcc:\s*injected@example\.test$/mi);
+  assert.equal((raw.match(/^Message-ID:/gmi) || []).length, 1);
+  const parsed = await simpleParser(harness.mailbox[0].source);
+  assert.equal(parsed.subject, 'Quarterly Bcc: injected@example.test INJECTED-BODY');
+  assert.doesNotMatch(String(parsed.html), /INJECTED-BODY/);
+  assert.match(String(parsed.html), /Only the real note body/);
+});
+
+test('an oversized IMAP note is skipped observably without blocking a valid following import', async (t) => {
+  const warnings = captureExpectedSyncWarnings(t);
+  const maxMessageBytes = 16 * 1024 * 1024;
+  const oversizedHeaders = Buffer.from([
+    'From: notes-race@example.test',
+    'To: notes-race@example.test',
+    'Subject: Oversized import',
+    'Message-ID: <oversized-note@example.test>',
+    'Content-Type: text/plain; charset="utf-8"',
+    '',
+  ].join('\r\n'));
+  const oversized = Buffer.concat([
+    oversizedHeaders,
+    Buffer.alloc((maxMessageBytes + 1) - oversizedHeaders.length, 0x61),
+  ]);
+  const valid = [
+    'From: notes-race@example.test',
+    'To: notes-race@example.test',
+    'Subject: Valid following note',
+    'Message-ID: <valid-following-note@example.test>',
+    'Content-Type: text/html; charset="utf-8"',
+    '',
+    '<p>Imported after oversized note</p>',
+  ].join('\r\n');
+  const harness = installSyncHarness(t, { customImapSources: [oversized, valid] });
+
+  await harness.syncNotesWithImap(harness.owner, 'unused');
+
+  assert.equal(harness.notes.length, 1);
+  assert.equal(harness.notes[0].title, 'Valid following note');
+  assert.equal(harness.notes[0].imap_sync_token, 1);
+  assert.ok(warnings.some((warning) => warning.includes('IMAP UID 1') && warning.includes('16 MiB')));
+});
+
+test('an IMAP note with a decoded over-limit field is skipped before SQL and later notes continue', async (t) => {
+  const warnings = captureExpectedSyncWarnings(t);
+  const overLimitTitle = 'x'.repeat((4 * 1024) + 1);
+  const overLimit = [
+    'From: notes-race@example.test',
+    'To: notes-race@example.test',
+    `Subject: ${overLimitTitle}`,
+    'Message-ID: <over-limit-title@example.test>',
+    'Content-Type: text/plain; charset="utf-8"',
+    '',
+    'This note must not be inserted.',
+  ].join('\r\n');
+  const valid = [
+    'From: notes-race@example.test',
+    'To: notes-race@example.test',
+    'Subject: Valid after invalid field',
+    'Message-ID: <valid-after-invalid@example.test>',
+    'Content-Type: text/plain; charset="utf-8"',
+    '',
+    'This note should be inserted.',
+  ].join('\r\n');
+  const harness = installSyncHarness(t, { customImapSources: [overLimit, valid] });
+
+  await harness.syncNotesWithImap(harness.owner, 'unused');
+
+  assert.equal(harness.notes.length, 1);
+  assert.equal(harness.notes[0].title, 'Valid after invalid field');
+  assert.ok(warnings.some((warning) => warning.includes('IMAP UID 1') && warning.includes('invalid note fields')));
 });
 
 test('a blocked owner sync does not block a different owner', async (t) => {

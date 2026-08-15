@@ -94,6 +94,7 @@ rtk bash functions/provision_protocol_canary.sh
 rtk bash tests/integration/protocol_release_gate.sh
 rtk bash functions/protocol_guarded_deploy.sh webmail
 rtk bash functions/protocol_guarded_deploy.sh dovecot
+rtk bash functions/protocol_guarded_deploy.sh restore-webmail /var/backups/openmailstack/protocol-guarded-webmail-YYYYMMDDTHHMMSSZ
 
 # Focused optional diagnostics:
 OMS_SMOKE_USER=<mailbox> OMS_SMOKE_PASSWORD=<password> OMS_SMOKE_IMAP_HOST=127.0.0.1 OMS_SMOKE_IMAP_PORT=143 rtk bash tests/integration/mail_sync_smoke.sh

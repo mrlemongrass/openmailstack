@@ -1750,3 +1750,32 @@ Future entry template:
   artifacts, staging, readiness, Nginx, and zero-restart checks pass. Rollback:
   `/var/backups/openmailstack/protocol-guarded-webmail-20260815T085248Z/`.
   No real Notes data was used; physical macOS confirmation remains.
+
+## 2026-08-15 — Truthful Updates And Paired Web Release Recovery
+
+- Disabled browser/root automatic upgrades and replaced fabricated remote
+  update status with strict deployed-`VERSION` reporting plus a manual policy
+  in both Admin surfaces. Missing or malformed installed version returns an
+  error instead of suggesting an update.
+- Permanently retired the passwordless web-to-root bridge. Installer/Admin
+  paths remove it before fallible setup, while the compatibility upgrade script
+  exits without changing files, packages, repositories, or services.
+- Made guarded webmail release one globally locked, reversible transaction for
+  both the modern app and full legacy Admin Portal. Restore validates snapshot
+  identity/content, captures the current pair first, and uses explicit
+  `20`/`30`/`31` recovery states for failure and interruption.
+- Added path/ownership/symlink/lock/version/state-machine regressions, including
+  malicious nested parents, dangling lock symlinks, concurrent locks, partial
+  apply, failed recovery, HUP/INT/TERM, invalid versions, and paired content.
+- A first live attempt exposed a real systemd-active/listener-not-ready race.
+  Recovery restored the old pair and a subsequent public gate passed. Added a
+  proxy-disabled bounded readiness retry shared by deploy and recovery, with
+  success/exhaustion behavior tests; both review axes then passed again.
+- Commits `a808b8d` and `8e8e864` deployed successfully. Backend passes
+  289/292 with three gated skips; frontend 99/99; lint, build, integration,
+  ShellCheck, PHP lint, and diff checks pass. Public IMAPS/ActiveSync passed
+  around deployment and both legs of a live previous-pair/new-pair restore.
+  Current rollback:
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260815T103128Z/`.
+  Verified new-pair restore point:
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260815T103335Z/`.

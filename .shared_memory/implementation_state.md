@@ -1,5 +1,37 @@
 # Implementation State
 
+## 2026-08-15 Paired Web Release And Manual Update Boundary
+
+**Status: Deployed, rollback-round-trip validated, and independently
+reviewed.** Commits `a808b8d` and `8e8e864` remove automatic/browser-triggered
+upgrade claims and retire the passwordless web-to-root bridge. Modern and
+legacy Admin update surfaces read only a validated deployed `VERSION`, return
+an error for missing/invalid state, and describe the operator-controlled manual
+policy. `upgrade.sh` remains as a no-mutation failure entry point.
+
+`functions/protocol_guarded_deploy.sh webmail` now holds one global lock while
+it snapshots, deploys, validates, or recovers the legacy Admin Portal and
+modern web application as one pair. Snapshots include the full legacy root and
+modern runtime/configuration; normal deploy changes only bounded legacy
+public/`VERSION` files before the existing modern deploy. The guarded restore
+path snapshots the current pair before applying a requested pair and recovers
+the current pair if requested validation fails. HUP, INT, and TERM use the same
+truthful `20`/`30`/`31` recovery contract.
+
+The first live deployment exposed a startup race: systemd reported active about
+two seconds before the backend listener accepted connections, so immediate
+deploy and recovered-state probes conservatively failed. The shared runtime
+validator now uses a proxy-disabled, per-request-bounded 30-attempt loop for the
+expected local `401`; behavior tests cover success and exhaustion. The next
+guarded deployment passed public IMAPS and ActiveSync before and after. A live
+old-pair/new-pair restore round trip also passed both directions. Current
+rollback is
+`/var/backups/openmailstack/protocol-guarded-webmail-20260815T103128Z/`; the
+verified new-pair restore point is
+`/var/backups/openmailstack/protocol-guarded-webmail-20260815T103335Z/`.
+Backend 289/292 with three gated skips, frontend 99/99, integration, lint,
+build, ShellCheck, PHP lint, and both independent review axes pass.
+
 ## 2026-08-15 Notes IMAP Idempotency And Deletion-Race Hardening
 
 **Status: Deployed and deterministic-regression validated; physical macOS
@@ -205,12 +237,12 @@ or exposed credentials and optional-smoke `SKIP` results fail closed.
 
 `functions/10_webmail.sh` and `functions/04_dovecot.sh` refuse direct execution
 when protection is enabled. `functions/protocol_guarded_deploy.sh` runs the
-real public gate before and after either target, retains a root-only snapshot,
-and restores it automatically after deployment or post-gate failure. Repeated
-standalone gates, guarded webmail, and guarded Dovecot passed live. A forced
-webmail post-gate failure restored the prior backend/frontend/config/service
-snapshot exactly, after which the real public gate passed. Final canary mail,
-web sessions, and ActiveSync state were empty.
+real public gate before and after either target and retains a root-only
+snapshot. For `webmail`, one lock and recovery callback now covers the modern
+backend/frontend/runtime configuration and full legacy Admin Portal as one
+pair. Repeated standalone gates, guarded webmail/Dovecot, a forced failed
+deployment recovery, and a paired live restore round trip passed. Final canary
+mail, web sessions, and ActiveSync state were empty.
 
 ## 2026-07-31 iOS Exchange MIME Body Retrieval
 
@@ -424,7 +456,7 @@ PHP admin portal:
 - `admin_portal_src/public/api.php` validates CSRF on POST, uses PDO prepared statements for most DB work, supports admin and self-service user roles, domain verification tokens, DNS/DKIM display, mailbox/domain/alias/admin/API key management, spam policies, quarantine actions, system health, and upgrade triggering.
 - `admin_portal_src/public/js/app.js` sends `X-CSRF-Token` through `apiCall()` and has an `escapeHTML()` helper applied across many rendered values.
 - `admin_portal_src/public/api_v1.php` is separate from the session API. It validates `Authorization: Bearer sk_...`, checks hashes from `api_keys`, and supports domain/mailbox CRUD for external automation.
-- `functions/09_admin_portal.sh` deploys the portal, preserves existing deployed `config.php`, hardens deployed file ownership to `root:${WEB_GROUP}`, injects Nginx `/SOGo/admin` routes, creates portal tables, installs the sudo upgrade bridge, and copies the quarantine filter.
+- `functions/09_admin_portal.sh` retires the historical sudo upgrade bridge before fallible setup, deploys the portal, preserves existing deployed `config.php`, hardens deployed file ownership to `root:${WEB_GROUP}`, injects Nginx `/SOGo/admin` routes, creates portal tables, installs the validated package `VERSION`, and copies the quarantine filter.
 
 Node backend:
 

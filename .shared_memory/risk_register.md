@@ -2,7 +2,7 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-08-07
+Last updated: 2026-08-15
 
 ## Resolved Risks
 
@@ -25,6 +25,10 @@ Last updated: 2026-08-07
 - ✅ Modern Node Admin global-access boundary: React/Node Admin is now superadmin-only until explicit domain-admin scoping is implemented. Active non-superadmin `admin` rows no longer get modern Admin API access.
 - ✅ Modern Admin superadmin controls: React/Node Admin now exposes explicit superadmin grant/removal actions, and the backend prevents self-superadmin removal and last-superadmin removal.
 - ✅ Modern webmail Nginx injection rollback: `functions/10_webmail.sh` validates a generated candidate config and restores the previous site file when `nginx -t` fails.
+- ✅ Unsafe/fabricated update path: both Admin surfaces now report only a
+  validated deployed `VERSION` and manual policy; browser/root automatic update
+  entry points fail closed; the passwordless upgrade bridge is retired; and one
+  guarded lock/snapshot/recovery transaction owns both web applications.
 - ✅ Admin protocol health breadth: Admin System Health now checks ActiveSync, IMAP, SMTP submission, CalDAV, and CardDAV readiness rather than only daemon status plus ActiveSync.
 - ✅ SMTP submission false degraded row: Live Postfix submission returned a valid greeting after roughly 5s, but the Admin health probe timed out at 4s. The probe now waits 8s and the dashboard refreshes every 15s.
 - ✅ ActiveSync SendMail MIME extraction: iOS was observed sending ActiveSync `SendMail` with a UUID-like value in decoded `Mime` and the real RFC822 bytes in another payload node. The backend now scans for MIME-like payloads, derives an SMTP envelope from the raw MIME, and avoids logging raw send content.
@@ -131,6 +135,12 @@ Operational/release risks:
 - Use journal event `scheduler.slot_generation_failed` for future public availability incidents. Its `privateAccess` field records only token presence; do not add capability tokens, SQL text, booking answers, or calendar payloads to Scheduler error logs.
 - Legacy calendar tables and additive Scheduler tables can use different `utf8mb4` collations. Treat event UIDs as opaque, case-sensitive identifiers and use binary or explicitly compatible comparisons for cross-table UID joins; keep the mixed-collation disposable database regression when changing Scheduler conflict detection.
 - `functions/10_webmail.sh` now renders `/etc/openmailstack/webmail-backend.env`, installs `openmailstack.service`, deploys the React app, and injects Nginx proxy routes with candidate validation/rollback. It has still not been exercised on a clean VM in this cycle; validate on a clean VM before release.
+- A successful `systemctl restart` and active unit state do not prove the Node
+  listener is ready. Guarded webmail validation must retain the proxy-disabled,
+  per-attempt-bounded retry for local `/api/auth/me == 401` on normal deploy,
+  requested restore, and recovered state. An immediate one-shot probe produced
+  a real false failure on 2026-08-15 about two seconds before the listener came
+  up.
 - On the live server, Nginx already had root, `/api`, `/caldav`, and ActiveSync routes before migration. Do not blindly run the `functions/10_webmail.sh` Nginx injection against an already-migrated live config without checking for duplicate locations first.
 - The backend's global raw body parser must not consume `/api/` or `multipart/form-data` requests; otherwise webmail send/draft uploads fail with Busboy `Unexpected end of form`.
 - `webmail-backend/src/managesieve.ts` remains a small raw TCP client, but its

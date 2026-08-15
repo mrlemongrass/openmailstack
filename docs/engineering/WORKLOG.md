@@ -8593,3 +8593,74 @@ Starting git state: clean at `5ac8b1e2`, two commits ahead of `origin/main`
 - No production Notes row or mailbox message was created, edited, merged, or
   deleted. The code defect is closed, but physical macOS confirmation remains
   a release gate for the exact client symptom.
+
+## 2026-08-15 — Cycle 2: Update Truthfulness And Paired Release Recovery
+
+Agent/tool: Codex with bounded implementation, live guarded recovery proof,
+code-learning-loop, and independent Spec/Standards reviewers
+
+Branch: `main`
+
+### Goal and acceptance criteria
+
+- [x] Browser and compatibility update surfaces report only a validated
+  installed package version and a manual-update policy.
+- [x] Browser-triggered and legacy root upgrade entry points fail closed with no
+  shell, sudo, package, repository, file, or service mutation.
+- [x] The historical passwordless web-to-root bridge is permanently retired.
+- [x] One lock/snapshot/state machine deploys or restores the modern app and
+  legacy Admin Portal as one versioned pair.
+- [x] Path traversal, symlink, writable-parent, lock collision, malformed
+  version, partial apply, interruption, recovery, and unhealthy-recovery cases
+  are regression-covered.
+- [x] Local backend/Admin/UI readiness plus authenticated public IMAPS and
+  ActiveSync validation gates every success and recovered state.
+- [x] A live previous-pair/new-pair rollback round trip passes.
+
+### Implementation
+
+- Both Admin update APIs now read their deployed `VERSION`, reject
+  missing/unreadable/malformed state with `503`, and expose no fabricated
+  latest version or automatic-install action. Both UIs explain the bounded
+  manual policy.
+- `upgrade.sh` is a no-mutation compatibility failure. Installer and Admin
+  deployment paths remove the old sudoers helper before other setup work.
+- `protocol_guarded_deploy.sh webmail` now owns one composite transaction:
+  full legacy Admin root plus modern backend/frontend/runtime snapshot, bounded
+  legacy public/`VERSION` deployment, modern deployment, paired validation,
+  and paired recovery. `restore-webmail` is itself reversible.
+- Root/lock/snapshot paths are canonical, non-symlinked, root-owned,
+  non-writable by group/other, and direct-child constrained where appropriate.
+  A global nonblocking lock covers the complete paired transaction.
+- HUP, INT, and TERM share the validated `20`/`30`/`31` recovery contract.
+  Success ignores those signals before committing/output so it cannot be
+  misreported as an unchanged failure.
+- Repository `VERSION` is validated before mutation, and both deployed copies
+  must match. Guarded mode verifies existing tools/users instead of installing
+  packages or creating accounts.
+
+### Verification and live lesson
+
+- Backend: 292 total, 289 passed, three documented environment-gated skips,
+  zero failures. Frontend: 99/99. ESLint, TypeScript/Vite production build,
+  repository integration, shell syntax, scoped ShellCheck, PHP lint, and diff
+  checks pass. Independent Spec and Standards/security reviews report no
+  remaining findings.
+- The first live attempt correctly rolled back the paired release when the
+  immediate local probe raced the backend listener. The same immediate probe
+  made recovered health conservatively return `31`; seconds later the restored
+  service returned `401` and the standalone public protocol gate passed.
+- The durable correction is a proxy-disabled, per-attempt-bounded 30-attempt
+  readiness loop shared by deploy, requested-restore, and recovered validation.
+  Behavior tests prove third-attempt success and exact exhaustion.
+- Commits `a808b8d` and `8e8e864` then passed guarded deployment. The retained
+  previous-pair snapshot is
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260815T103128Z/`.
+  Both deployed `VERSION` files match the repository; backend/UI/Admin return
+  `401`/`200`/`200`; both services are active with `NRestarts=0`; the old bridge
+  is absent.
+- A controlled restore to the previous pair passed and captured the new pair at
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260815T103335Z/`.
+  Restoring that snapshot returned the host to the new pair and passed the same
+  authenticated public IMAPS/ActiveSync gate. No mailbox or user data outside
+  the dedicated canary was changed.

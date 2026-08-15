@@ -1,5 +1,41 @@
 # Implementation State
 
+## 2026-08-15 Notes IMAP Idempotency And Deletion-Race Hardening
+
+**Status: Deployed and deterministic-regression validated; physical macOS
+confirmation remains.** Commit `bfbe1d7` serializes each owner's Notes sync
+through both a process-local promise tail and a dedicated-connection MySQL
+named lock, so web requests, the standalone runner, and multiple backend
+processes cannot export the same revision concurrently. Notes reconciliation
+uses a complete mailbox identity snapshot instead of the newest 25 messages,
+removes duplicate OMS-owned Message-IDs deterministically, fetches bodies only
+for imports, and records the exact SQL revision that IMAP acknowledged.
+
+Missing-IMAP deletion now wins only when owner, SQL revision, IMAP revision,
+linked UID, and live state still match atomically. A newer web edit therefore
+survives and reminder/attachment cleanup runs only after the conditional soft
+delete succeeds. Old-message delete failures stop before replacement append;
+accepted-but-uncertain appends reconcile by deterministic Message-ID; current
+identical saves are no-ops; and restore-during-delete cannot acknowledge the
+newer revision.
+
+The approved fake SQL/IMAP seam covers independent runtime instances,
+different-owner concurrency, concurrent create, edit/delete/import races,
+duplicate Message-IDs, delete failure, uncertain append, and linked plus
+IMAP-only mailboxes beyond 25 messages. Focused tests pass 21/21; the complete
+backend suite passes 287/290 with three documented environment-gated skips;
+frontend 98/98 and every integration guard pass; independent Spec and Standards
+reviews have no findings. A clean temporary TypeScript compilation proves the
+checked-in runtime JavaScript is current.
+
+The guarded release passed public IMAPS and the ActiveSync full-MIME,
+Junk/Trash, and no-change sequence before and after deployment. Repository/live
+Notes artifacts match, local and public readiness return the expected 401,
+staging passes, and the backend is active with zero restarts. Rollback is
+`/var/backups/openmailstack/protocol-guarded-webmail-20260815T085248Z/`.
+No real Notes row or mailbox message was used. A physical macOS edit/delete
+retry is still required before closing the originating client-observation gate.
+
 ## 2026-08-06 Contact CardDAV Identity Hardening
 
 **Status: Deployed and locally/release-gate validated; physical confirmation

@@ -1725,3 +1725,28 @@ Future entry template:
   smoke pass. Rollback is
   `/var/backups/openmailstack/protocol-guarded-webmail-20260807T224814Z/`.
   No real contact was merged or edited during the release.
+
+## 2026-08-15 — Notes IMAP Idempotency And Race Hardening
+
+- Used the explicitly approved fake SQL/IMAP regression seam to reproduce
+  concurrent double append, delete/reconcile resurrection, false deletion past
+  the newest 25 messages, stale import acknowledgement, duplicate OMS
+  Message-IDs, failed replacement deletion, and accepted-but-uncertain append.
+- Added complete Notes mailbox identity enumeration, deterministic OMS
+  Message-ID convergence, exact revision acknowledgements, and no-op handling
+  for unchanged saves.
+- Serialized each owner across requests and backend processes with a dedicated
+  MySQL named lock while retaining independent progress for different owners.
+- Missing-IMAP deletion now conditionally matches owner, SQL/IMAP revisions,
+  UID, and live state before soft deletion or dependent cleanup. Delete and
+  export acknowledgements cannot mark a concurrently restored or edited
+  revision as synchronized.
+- Added 12 deterministic Notes synchronization regressions plus an exact
+  generated-runtime parity check. Focused tests pass 21/21; backend passes
+  287/290 with three documented skips; frontend 98/98 and integration pass;
+  independent Spec and Standards reviews report no findings.
+- Deployed commit `bfbe1d7` through the mandatory guarded path. Public IMAPS
+  and ActiveSync passed before and after installation; repository/live Notes
+  artifacts, staging, readiness, Nginx, and zero-restart checks pass. Rollback:
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260815T085248Z/`.
+  No real Notes data was used; physical macOS confirmation remains.

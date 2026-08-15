@@ -8517,3 +8517,79 @@ Starting git state: clean
   journal is empty; and complete staging smoke passes.
 - The guarded probes cleaned their disposable state. No real contact row was
   merged, edited, re-keyed, or deleted during deployment.
+
+## 2026-08-15 — Cycle 1: Notes IMAP Duplicate And Race Hardening
+
+Agent/tool: Codex with graph query, diagnosis loop, approved fake SQL/IMAP TDD,
+official-suite research, and independent Spec/Standards reviewers
+
+Branch: `main`
+
+Starting git state: clean at `5ac8b1e2`, two commits ahead of `origin/main`
+
+### Goal and acceptance criteria
+
+- [x] Reproduce the reported duplicate through the approved non-production
+  SQL/IMAP seam.
+- [x] One owner/revision cannot be appended twice by overlapping requests,
+  standalone runners, or independent backend runtimes.
+- [x] A newer edit cannot be deleted or falsely acknowledged from a stale IMAP
+  snapshot, and dependent cleanup runs only when the conditional delete wins.
+- [x] A complete mailbox, including notes older than 25 messages, is reconciled
+  without false deletion and imports every IMAP-only note.
+- [x] Delete failure, uncertain append, duplicate Message-ID, import/edit,
+  export/delete, and restore/delete races converge without duplication or data
+  loss in the deterministic seam.
+- [x] Generated JavaScript used by production exactly matches a clean
+  TypeScript build.
+- [x] Focused, complete, independent review, integration, guarded deployment,
+  artifact, readiness, and staging gates pass without real Notes data.
+- [ ] Repeat the originating edit/delete lifecycle in physical macOS Notes.
+
+### Implementation
+
+- `ImapService.getMessageIdentities()` enumerates every UID/envelope/flag in the
+  Notes mailbox while fetching full bodies only for actual imports.
+- `syncNotesWithImap()` keeps a process-local owner queue and holds a
+  dedicated-connection MySQL named lock across the complete owner sync, which
+  serializes multiple services/runners without blocking a different owner.
+- OMS-owned duplicate Message-IDs converge on the newest UID. Deterministic
+  revision Message-IDs let an accepted-but-uncertain append reconcile on the
+  next pass instead of creating another SQL or IMAP note.
+- Import/export/delete paths store only the exact revision they observed.
+  Failed old-message deletion stops before replacement append; unchanged saves
+  do not create another revision.
+- Missing-IMAP deletion atomically matches owner, `sync_token`,
+  `imap_sync_token`, `imap_uid`, and live state. Reminder/attachment cleanup and
+  deletion events happen only after that conditional update wins.
+- `generated-runtime-parity.test.cjs` compiles to an isolated temporary
+  directory and byte-compares the production Notes runtime files.
+
+### Red-to-green and verification proof
+
+- Initial deterministic reproduction: concurrent export produced two IMAP
+  copies; delete/reconcile re-imported a copy; a 30-note mailbox falsely marked
+  the oldest five deleted.
+- Focused final: 21/21 pass, including independent runtime instances,
+  different-owner progress, edit versus missing-IMAP delete, restore during
+  delete acknowledgement, 30 linked notes, 30 IMAP-only imports, duplicate
+  Message-ID convergence, failed delete, and uncertain accepted append.
+- Complete backend: 290 total, 287 passed, three documented environment-gated
+  skips, zero failures.
+- Repository integration: all guards pass, including 98/98 frontend tests.
+- `git diff --check` passes. Independent Spec and Standards/Fowler second-pass
+  reviews report no findings.
+
+### Guarded deployment and residual risk
+
+- Commit `bfbe1d7` passed the public IMAPS and ActiveSync full-MIME,
+  Junk/Trash, and efficient no-change gate before and after deployment.
+- Rollback snapshot:
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260815T085248Z/`.
+- Repository and deployed `imap.js`, `notes-imap-sync.js`, and `notes-utils.js`
+  match byte-for-byte. Local/public auth return the expected `401`; Nginx and
+  complete staging smoke pass; `openmailstack.service` is active with
+  `NRestarts=0`.
+- No production Notes row or mailbox message was created, edited, merged, or
+  deleted. The code defect is closed, but physical macOS confirmation remains
+  a release gate for the exact client symptom.

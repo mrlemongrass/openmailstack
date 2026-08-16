@@ -19,6 +19,41 @@ fail() {
   exit 1
 }
 
+vcard_has_internet_email() {
+  local vcard_file=$1
+  local expected_email=$2
+  node - "${vcard_file}" "${expected_email}" <<'NODE'
+const fs = require('fs');
+const lines = fs.readFileSync(process.argv[2], 'utf8')
+  .replace(/\r\n[ \t]/g, '')
+  .replace(/\n[ \t]/g, '')
+  .replace(/\r/g, '\n')
+  .split('\n');
+const expected = process.argv[3];
+for (const line of lines) {
+  const separator = line.indexOf(':');
+  if (separator < 0) continue;
+  const header = line.slice(0, separator).split(';');
+  const property = (header.shift() || '').split('.').pop()?.toUpperCase();
+  if (property !== 'EMAIL') continue;
+  const types = new Set();
+  for (const parameter of header) {
+    const equals = parameter.indexOf('=');
+    if (equals < 0) {
+      types.add(parameter.trim().toUpperCase());
+      continue;
+    }
+    if (parameter.slice(0, equals).trim().toUpperCase() !== 'TYPE') continue;
+    for (const value of parameter.slice(equals + 1).split(',')) {
+      if (value.trim()) types.add(value.trim().toUpperCase());
+    }
+  }
+  if (types.has('INTERNET') && line.slice(separator + 1) === expected) process.exit(0);
+}
+process.exit(1);
+NODE
+}
+
 DEVICE_ID=${OMS_SMOKE_DEVICE_ID:-OMSCT$(openssl rand -hex 10)}
 [[ "${DEVICE_ID}" =~ ^[A-Za-z0-9]{1,32}$ ]] \
   || fail "OMS_SMOKE_DEVICE_ID must contain 1-32 ASCII letters or digits"
@@ -469,7 +504,7 @@ get_status=$(curl_safe -sS \
 [[ "${get_status}" == "200" ]] || fail "CardDAV GET after ActiveSync Add returned HTTP ${get_status}"
 grep -Fq "FN:${eas_name}" "${tmpdir}/after-add.vcf" \
   || fail "CardDAV did not expose the ActiveSync-created contact"
-grep -Fq "EMAIL;TYPE=INTERNET:${eas_email}" "${tmpdir}/after-add.vcf" \
+vcard_has_internet_email "${tmpdir}/after-add.vcf" "${eas_email}" \
   || fail "CardDAV did not expose the ActiveSync-created contact email"
 grep -Fq "BDAY:${eas_birthday}" "${tmpdir}/after-add.vcf" \
   || fail "CardDAV did not expose the bounded ActiveSync Birthday"
@@ -531,7 +566,7 @@ get_status=$(curl_safe -sS \
 [[ "${get_status}" == "200" ]] || fail "CardDAV GET after ActiveSync Change returned HTTP ${get_status}"
 grep -Fq "FN:${eas_changed_name}" "${tmpdir}/after-change.vcf" \
   || fail "CardDAV did not expose the ActiveSync contact Change"
-grep -Fq "EMAIL;TYPE=INTERNET:${eas_changed_email}" "${tmpdir}/after-change.vcf" \
+vcard_has_internet_email "${tmpdir}/after-change.vcf" "${eas_changed_email}" \
   || fail "CardDAV did not preserve the changed ActiveSync email"
 grep -Fq 'NICKNAME:AfterChange' "${tmpdir}/after-change.vcf" \
   || fail "CardDAV did not preserve the Contacts2 nickname Change"

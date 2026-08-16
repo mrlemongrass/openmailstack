@@ -184,6 +184,7 @@ test_authenticated_smoke_guards() {
     assert_contains "${eas_contacts_smoke}" 'Birthday'
     assert_contains "${eas_contacts_smoke}" 'WARN: cleanup failed:'
     assert_not_contains "${eas_contacts_smoke}" '-u "${SMOKE_USER}:${SMOKE_PASSWORD}"'
+    bash "${PROJECT_ROOT}/tests/integration/calendar_sync_smoke_test.sh"
     pass "Authenticated smoke scripts are credential-gated and present"
 }
 

@@ -2,6 +2,13 @@ import { createHash, randomBytes } from 'crypto';
 import type { PoolConnection } from 'mysql2/promise';
 import { pool } from './db';
 import { easContactSourceBytesExpression } from './contact-utils';
+import {
+    deterministicPimAddServerId,
+    pimSyncScopeHash,
+    pimWireServerId,
+} from './eas-pim-identity';
+
+export { deterministicPimAddServerId, pimSyncScopeHash, pimWireServerId };
 
 export const MAX_PIM_KNOWN_ITEMS = 50_000;
 export const MAX_PIM_KNOWN_ITEMS_BYTES = 8 * 1024 * 1024;
@@ -276,33 +283,12 @@ const parsePimCommands = (value: unknown): PimSyncCommand[] => {
 export const pimItemFingerprint = (serverId: string, version: string): string =>
     createHash('sha256').update(serverId).update('\0').update(version).digest('hex');
 
-export const pimSyncScopeHash = (username: string, deviceId: string, collectionId: string): string =>
-    createHash('sha256').update(username).update('\0').update(deviceId).update('\0').update(collectionId).digest('hex');
-
 export const pimSyncRequestHash = (requestBody: Buffer): string =>
     createHash('sha256').update(requestBody).digest('hex');
-
-export const pimWireServerId = (collectionId: string, sourceId: string): string =>
-    createHash('sha256').update(collectionId).update('\0').update(sourceId).digest('hex');
 
 export const createPimSyncKey = (): string => `oms-pim-${randomBytes(24).toString('hex')}`;
 
 const isPimSyncKey = (value: string): boolean => /^oms-pim-[0-9a-f]{48}$/.test(value);
-
-export function deterministicPimAddServerId(scopeHash: string, syncKey: string, clientId: string): string {
-    const bytes = createHash('sha256')
-        .update(scopeHash)
-        .update('\0')
-        .update(syncKey)
-        .update('\0')
-        .update(clientId)
-        .digest()
-        .subarray(0, 16);
-    bytes[6] = (bytes[6] & 0x0f) | 0x50;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = bytes.toString('hex');
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
 
 export function validatePimClientCommands(
     commands: any[],

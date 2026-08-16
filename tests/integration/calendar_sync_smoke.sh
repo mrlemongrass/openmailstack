@@ -137,37 +137,96 @@ report_calendar() {
   [[ "${status}" == "207" ]]
 }
 
+derive_eas_resource_name() {
+  local user=$1
+  local device_id=$2
+  local collection_id=$3
+  local sync_key=$4
+  local client_id=$5
+  local server_id=$6
+  node - \
+    "${user}" "${device_id}" "${collection_id}" "${sync_key}" "${client_id}" "${server_id}" <<'NODE'
+const {
+  deterministicPimAddServerId,
+  pimSyncScopeHash,
+  pimWireServerId,
+} = require('./webmail-backend/src/eas-pim-identity.js');
+const [user, deviceId, collectionId, syncKey, clientId, serverId] = process.argv.slice(2);
+const scopeHash = pimSyncScopeHash(user, deviceId, collectionId);
+const resourceName = deterministicPimAddServerId(scopeHash, syncKey, clientId);
+if (pimWireServerId(collectionId, resourceName) !== serverId) {
+  throw new Error('Calendar Add response does not identify the deterministic canary resource');
+}
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(resourceName)) {
+  throw new Error('Calendar Add produced an invalid deterministic canary resource');
+}
+process.stdout.write(resourceName);
+NODE
+}
+
 write_matching_event_urls() {
   local report_file=$1
   local marker=$2
   local output_file=$3
-  node - "${report_file}" "${marker}" "${BASE_URL}" "${SMOKE_USER}" "${cal_slug}" <<'NODE' > "${output_file}"
+  local collection_id=$4
+  local expected_resource_name=$5
+  node - \
+    "${report_file}" "${marker}" "${BASE_URL}" "${SMOKE_USER}" "${cal_slug}" \
+    "${collection_id}" "${expected_resource_name}" <<'NODE' > "${output_file}"
 const fs = require('fs');
 const xml = fs.readFileSync(process.argv[2], 'utf8');
 const marker = process.argv[3];
 const baseUrl = process.argv[4];
 const user = process.argv[5];
 const calendarSlug = process.argv[6];
+const collectionId = process.argv[7];
+const expectedResourceName = process.argv[8];
 const decodeXml = value => value
   .replace(/&amp;/g, '&')
   .replace(/&lt;/g, '<')
   .replace(/&gt;/g, '>')
   .replace(/&quot;/g, '"')
   .replace(/&#39;/g, "'");
+const collectionMatch = /^cal-([1-9][0-9]*)$/.exec(collectionId);
+if (!collectionMatch) throw new Error('Refusing an invalid FolderSync calendar identity');
+if (!/^oms-eas-calendar-[a-z0-9]{1,32}$/.test(calendarSlug)) {
+  throw new Error('Refusing an invalid disposable calendar slug');
+}
+if (!/^OMSEASMARKER[0-9a-f]{24}$/.test(marker)) {
+  throw new Error('Refusing an invalid ActiveSync event marker');
+}
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(expectedResourceName)) {
+  throw new Error('Refusing an invalid ActiveSync event resource identity');
+}
+const base = new URL(baseUrl);
+if (base.username || base.password || base.search || base.hash || base.pathname !== '/') {
+  throw new Error('Refusing an unsafe CalDAV base URL');
+}
+const userSegment = encodeURIComponent(user);
+const resourceSegment = `${encodeURIComponent(expectedResourceName)}.ics`;
+const allowedPathnames = new Set([
+  `/caldav/calendars/${userSegment}/${calendarSlug}/${resourceSegment}`,
+  `/caldav/calendars/${userSegment}/${collectionMatch[1]}/${resourceSegment}`,
+]);
+const allowedHrefs = new Set([
+  ...allowedPathnames,
+  ...[...allowedPathnames].map(pathname => `${base.origin}${pathname}`),
+]);
 const urls = [];
 for (const match of xml.matchAll(/<(?:[A-Za-z0-9_-]+:)?response\b[\s\S]*?<\/(?:[A-Za-z0-9_-]+:)?response>/gi)) {
   if (!match[0].includes(marker)) continue;
   const href = match[0].match(/<(?:[A-Za-z0-9_-]+:)?href\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z0-9_-]+:)?href>/i)?.[1];
   if (!href) throw new Error(`CalDAV response containing ${marker} omitted href`);
-  const url = new URL(decodeXml(href.trim()), baseUrl);
-  const pathname = decodeURIComponent(url.pathname);
-  if (url.origin !== new URL(baseUrl).origin
-      || !pathname.startsWith(`/caldav/calendars/${user}/${calendarSlug}/`)) {
+  const decodedHref = decodeXml(href.trim());
+  const url = new URL(decodedHref, baseUrl);
+  if (url.origin !== base.origin || url.username || url.password || url.search || url.hash
+      || !allowedPathnames.has(url.pathname) || !allowedHrefs.has(decodedHref)) {
     throw new Error(`Refusing unexpected CalDAV event href ${url.pathname}`);
   }
   urls.push(url.toString());
 }
-process.stdout.write([...new Set(urls)].join('\n'));
+if (urls.length > 1) throw new Error(`CalDAV returned ${urls.length} responses for the exact event marker`);
+process.stdout.write(urls.join('\n'));
 NODE
 }
 
@@ -475,12 +534,17 @@ process.stdout.write(`${syncKey}\t${serverId}`);
 NODE
 )
 IFS=$'\t' read -r post_add_key eas_server_id <<< "${add_values}"
+eas_resource_name=$(derive_eas_resource_name \
+  "${SMOKE_USER}" "${DEVICE_ID}" "${cal_collection_id}" "${calendar_sync_key}" \
+  "${eas_client_id}" "${eas_server_id}")
+[[ "${eas_resource_name}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
+  || fail "Calendar Add resource identity capture failed"
 eas_post_url "${eas_sync_url}" "${tmpdir}/add.wbxml" "${tmpdir}/add-retry.out" "calendar Add retry"
 cmp -s "${tmpdir}/add.out" "${tmpdir}/add-retry.out" \
   || fail "Calendar Add retry was not byte-identical"
 
 report_calendar "${tmpdir}/after-add.xml" || fail "CalDAV REPORT failed after ActiveSync Add"
-write_matching_event_urls "${tmpdir}/after-add.xml" "${eas_marker}" "${tmpdir}/after-add.urls"
+write_matching_event_urls "${tmpdir}/after-add.xml" "${eas_marker}" "${tmpdir}/after-add.urls" "${cal_collection_id}" "${eas_resource_name}"
 mapfile -t eas_event_urls < "${tmpdir}/after-add.urls"
 [[ ${#eas_event_urls[@]} -eq 1 ]] \
   || fail "ActiveSync Add created ${#eas_event_urls[@]} CalDAV events instead of exactly one"
@@ -575,7 +639,7 @@ grep -Fq 'LOCATION:Changed ActiveSync Smoke' "${tmpdir}/after-change.ics" \
 grep -Fq 'DESCRIPTION:Changed through ActiveSync calendar smoke' "${tmpdir}/after-change.ics" \
   || fail "CalDAV did not expose the changed ActiveSync event body"
 report_calendar "${tmpdir}/after-change.xml" || fail "CalDAV REPORT failed after ActiveSync Change"
-write_matching_event_urls "${tmpdir}/after-change.xml" "${eas_marker}" "${tmpdir}/after-change.urls"
+write_matching_event_urls "${tmpdir}/after-change.xml" "${eas_marker}" "${tmpdir}/after-change.urls" "${cal_collection_id}" "${eas_resource_name}"
 mapfile -t changed_event_urls < "${tmpdir}/after-change.urls"
 [[ ${#changed_event_urls[@]} -eq 1 && "${changed_event_urls[0]}" == "${eas_event_url}" ]] \
   || fail "ActiveSync Change created a duplicate CalDAV event"
@@ -623,7 +687,7 @@ deleted_get_status=$(curl_safe -sS \
 [[ "${deleted_get_status}" == "404" ]] \
   || fail "CalDAV GET after ActiveSync Delete returned HTTP ${deleted_get_status}"
 report_calendar "${tmpdir}/after-delete.xml" || fail "CalDAV REPORT failed after ActiveSync Delete"
-write_matching_event_urls "${tmpdir}/after-delete.xml" "${eas_marker}" "${tmpdir}/after-delete.urls"
+write_matching_event_urls "${tmpdir}/after-delete.xml" "${eas_marker}" "${tmpdir}/after-delete.urls" "${cal_collection_id}" "${eas_resource_name}"
 mapfile -t deleted_event_urls < "${tmpdir}/after-delete.urls"
 [[ ${#deleted_event_urls[@]} -eq 0 ]] \
   || fail "ActiveSync Delete left ${#deleted_event_urls[@]} live CalDAV events"

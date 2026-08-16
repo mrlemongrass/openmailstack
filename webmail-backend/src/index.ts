@@ -2067,8 +2067,10 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         let remainingSourceBytes = ITEM_OPERATIONS_MAX_AGGREGATE_SOURCE_BYTES;
         let globalFailureStatus: string | null = null;
         const imap = new ImapService(requestCredentials.user, requestCredentials.pass);
+        let mailFolders: Awaited<ReturnType<ImapService['getFolders']>>;
         try {
             await imap.connect();
+            mailFolders = await imap.getFolders();
         } catch {
             try { await imap.logout(); } catch {}
             return sendItemOperations('3');
@@ -2086,7 +2088,12 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     continue;
                 }
                 const { collectionId, serverId } = fetchRequest;
-                const target = itemOperationsMailboxTarget(fetchRequest.store, collectionId, serverId);
+                const target = itemOperationsMailboxTarget(
+                    fetchRequest.store,
+                    collectionId,
+                    serverId,
+                    mailFolders,
+                );
                 if (target.ok === false) {
                     if (target.status === '9') {
                         globalFailureStatus = '9';

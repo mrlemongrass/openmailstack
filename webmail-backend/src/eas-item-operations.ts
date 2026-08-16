@@ -1,5 +1,10 @@
 import { simpleParser } from 'mailparser';
-import { classifyActiveSyncCollection } from './eas-protocol';
+import {
+    activeSyncMailMessageUid,
+    classifyActiveSyncCollection,
+    resolveActiveSyncMailFolderPath,
+    type ActiveSyncMailFolder,
+} from './eas-protocol';
 
 export const ITEM_OPERATIONS_MAX_SOURCE_BYTES = 16 * 1024 * 1024;
 export const ITEM_OPERATIONS_MAX_BODY_BYTES = 10 * 1024 * 1024;
@@ -7,7 +12,7 @@ export const ITEM_OPERATIONS_MAX_FETCHES = 100;
 export const ITEM_OPERATIONS_MAX_RESPONSE_BODY_BYTES = 16 * 1024 * 1024;
 export const ITEM_OPERATIONS_MAX_AGGREGATE_SOURCE_BYTES = 16 * 1024 * 1024;
 const ITEM_OPERATIONS_MAX_COLLECTION_ID_CHARS = 1024;
-const ITEM_OPERATIONS_MAX_UID_DIGITS = 10;
+const ITEM_OPERATIONS_MAX_SERVER_ID_CHARS = 53;
 
 export interface ItemOperationsMessage {
     uid: number;
@@ -171,24 +176,23 @@ export function itemOperationsMailboxTarget(
     store: string,
     collectionId: string,
     serverId: string,
+    folders: ActiveSyncMailFolder[],
 ): ItemOperationsMailboxTarget {
     if (!store) return { ok: false, status: '2' };
     if (store !== 'Mailbox') return { ok: false, status: '9' };
     if (!collectionId || !serverId) return { ok: false, status: '2' };
     if (collectionId.length > ITEM_OPERATIONS_MAX_COLLECTION_ID_CHARS
-        || serverId.length > ITEM_OPERATIONS_MAX_COLLECTION_ID_CHARS + ITEM_OPERATIONS_MAX_UID_DIGITS + 1) {
+        || serverId.length > ITEM_OPERATIONS_MAX_SERVER_ID_CHARS
+        || !Array.isArray(folders)) {
         return { ok: false, status: '2' };
     }
     const collection = classifyActiveSyncCollection(collectionId);
     if (collection.kind !== 'mail') return { ok: false, status: '2' };
-    if (!serverId.startsWith(`${collectionId}-`)) return { ok: false, status: '2' };
-    const uidText = serverId.slice(collectionId.length + 1);
-    if (uidText.length > ITEM_OPERATIONS_MAX_UID_DIGITS || !/^[1-9][0-9]*$/.test(uidText)) {
-        return { ok: false, status: '2' };
-    }
-    const uid = Number.parseInt(uidText, 10);
-    if (!Number.isSafeInteger(uid) || uid <= 0 || uid > 0xFFFFFFFF) return { ok: false, status: '2' };
-    return { ok: true, folderPath: collection.folderPath, uid };
+    const uid = activeSyncMailMessageUid(collectionId, serverId);
+    if (uid === null || uid > 0xFFFFFFFF) return { ok: false, status: '2' };
+    const folderPath = resolveActiveSyncMailFolderPath(collectionId, folders);
+    if (!folderPath) return { ok: false, status: '2' };
+    return { ok: true, folderPath, uid };
 }
 
 export function itemOperationsSourceAllowance(remainingBytes: number): number {

@@ -17,7 +17,7 @@ exports.ITEM_OPERATIONS_MAX_FETCHES = 100;
 exports.ITEM_OPERATIONS_MAX_RESPONSE_BODY_BYTES = 16 * 1024 * 1024;
 exports.ITEM_OPERATIONS_MAX_AGGREGATE_SOURCE_BYTES = 16 * 1024 * 1024;
 const ITEM_OPERATIONS_MAX_COLLECTION_ID_CHARS = 1024;
-const ITEM_OPERATIONS_MAX_UID_DIGITS = 10;
+const ITEM_OPERATIONS_MAX_SERVER_ID_CHARS = 53;
 const childrenWithTag = (node, tag) => (Array.isArray(node?.children)
     ? node.children.filter((child) => child?.tag === tag)
     : []);
@@ -131,7 +131,7 @@ function itemOperationsFetchRequest(fetchNode) {
         bodyPreferences,
     };
 }
-function itemOperationsMailboxTarget(store, collectionId, serverId) {
+function itemOperationsMailboxTarget(store, collectionId, serverId, folders) {
     if (!store)
         return { ok: false, status: '2' };
     if (store !== 'Mailbox')
@@ -139,22 +139,20 @@ function itemOperationsMailboxTarget(store, collectionId, serverId) {
     if (!collectionId || !serverId)
         return { ok: false, status: '2' };
     if (collectionId.length > ITEM_OPERATIONS_MAX_COLLECTION_ID_CHARS
-        || serverId.length > ITEM_OPERATIONS_MAX_COLLECTION_ID_CHARS + ITEM_OPERATIONS_MAX_UID_DIGITS + 1) {
+        || serverId.length > ITEM_OPERATIONS_MAX_SERVER_ID_CHARS
+        || !Array.isArray(folders)) {
         return { ok: false, status: '2' };
     }
     const collection = (0, eas_protocol_1.classifyActiveSyncCollection)(collectionId);
     if (collection.kind !== 'mail')
         return { ok: false, status: '2' };
-    if (!serverId.startsWith(`${collectionId}-`))
+    const uid = (0, eas_protocol_1.activeSyncMailMessageUid)(collectionId, serverId);
+    if (uid === null || uid > 0xFFFFFFFF)
         return { ok: false, status: '2' };
-    const uidText = serverId.slice(collectionId.length + 1);
-    if (uidText.length > ITEM_OPERATIONS_MAX_UID_DIGITS || !/^[1-9][0-9]*$/.test(uidText)) {
+    const folderPath = (0, eas_protocol_1.resolveActiveSyncMailFolderPath)(collectionId, folders);
+    if (!folderPath)
         return { ok: false, status: '2' };
-    }
-    const uid = Number.parseInt(uidText, 10);
-    if (!Number.isSafeInteger(uid) || uid <= 0 || uid > 0xFFFFFFFF)
-        return { ok: false, status: '2' };
-    return { ok: true, folderPath: collection.folderPath, uid };
+    return { ok: true, folderPath, uid };
 }
 function itemOperationsSourceAllowance(remainingBytes) {
     const remaining = Number.isFinite(remainingBytes) ? Math.max(0, Math.floor(remainingBytes)) : 0;

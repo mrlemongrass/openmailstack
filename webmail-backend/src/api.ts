@@ -66,6 +66,7 @@ import {
     getOutboundSubmission,
     OutboundIdempotencyConflictError,
     OutboundIdempotencyKeyError,
+    OutboundReleaseBridgeError,
     OutboundSubmissionUnavailableError,
     releaseScheduledCancellation,
     removeTerminalScheduledEmail,
@@ -2387,10 +2388,12 @@ const sendOutboundSubmissionStatus = (res: any, result: OutboundSubmissionStatus
 const sendOutboundError = (res: any, error: any): boolean => {
     const supported = error instanceof OutboundIdempotencyKeyError
         || error instanceof OutboundIdempotencyConflictError
+        || error instanceof OutboundReleaseBridgeError
         || error instanceof OutboundSubmissionUnavailableError
         || [
             'OUTBOUND_IDEMPOTENCY_KEY_INVALID',
             'OUTBOUND_IDEMPOTENCY_CONFLICT',
+            'OUTBOUND_RELEASE_BRIDGE',
             'OUTBOUND_SUBMISSION_UNAVAILABLE',
         ].includes(String(error?.code || ''));
     if (!supported) return false;
@@ -2593,7 +2596,6 @@ apiRouter.post('/messages/undo', requireAuth, async (req: any, res) => {
             if (!Number.isSafeInteger(id) || id < 1) {
                 return res.status(400).json({ success: false, error: 'scheduledId is invalid' });
             }
-            await ensureScheduledEmailsSchema();
             const claim = await claimScheduledCancellation(pool, id, user, cancellationWorkerId);
             if (claim.outcome === 'ready') {
                 try {
@@ -2694,6 +2696,7 @@ apiRouter.post('/messages/undo', requireAuth, async (req: any, res) => {
             }
             return res.status(404).json({ success: false, error: 'Scheduled message not found or already sent' });
         } catch (err: any) {
+            if (sendOutboundError(res, err)) return;
             console.error('Undo error:', err);
             return res.status(500).json({ success: false, error: err.message });
         }
@@ -2731,7 +2734,6 @@ apiRouter.delete('/messages/scheduled/:id', requireAuth, async (req: any, res) =
         return res.status(400).json({ success: false, error: 'Scheduled message id is invalid' });
     }
     try {
-        await ensureScheduledEmailsSchema();
         const outcome = await removeTerminalScheduledEmail(pool, id, req.user.username);
         if (outcome === 'removed') {
             return res.json({ success: true, message: 'Scheduled message removed' });
@@ -2745,6 +2747,7 @@ apiRouter.delete('/messages/scheduled/:id', requireAuth, async (req: any, res) =
         }
         return res.status(404).json({ success: false, error: 'Scheduled message not found' });
     } catch (err: any) {
+        if (sendOutboundError(res, err)) return;
         console.error('Scheduled message removal error:', err);
         return res.status(500).json({ success: false, error: err.message });
     }

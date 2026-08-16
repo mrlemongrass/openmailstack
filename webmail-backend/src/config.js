@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPublicBaseUrl = exports.normalizeMailboxUsername = exports.delegatedAuthEnabled = exports.sieveConfig = exports.smtpTransportOptions = exports.smtpConfig = exports.imapConfig = exports.dbConfig = exports.schedulerConfig = exports.serverConfig = void 0;
+exports.getPublicBaseUrl = exports.normalizeMailboxUsername = exports.delegatedAuthEnabled = exports.sieveConfig = exports.smtpTransportOptions = exports.smtpConfig = exports.imapConfig = exports.dbConfig = exports.schedulerConfig = exports.serverConfig = exports.outboundReleaseMode = void 0;
 const parseNumber = (name, fallback) => {
     const raw = process.env[name];
     if (!raw)
@@ -25,6 +25,11 @@ const required = (name) => {
     return value;
 };
 const optional = (name, fallback = '') => process.env[name] || fallback;
+const configuredOutboundReleaseMode = optional('OMS_OUTBOUND_RELEASE_MODE', 'active');
+if (configuredOutboundReleaseMode !== 'bridge' && configuredOutboundReleaseMode !== 'active') {
+    throw new Error('OMS_OUTBOUND_RELEASE_MODE must be bridge or active');
+}
+exports.outboundReleaseMode = configuredOutboundReleaseMode;
 const explicitSessionSecret = optional('OMS_SESSION_SECRET');
 const sessionSecret = explicitSessionSecret || (process.env.NODE_ENV === 'production' ? '' : required('OMS_DB_PASSWORD'));
 if (process.env.NODE_ENV === 'production' && sessionSecret.length < 32) {

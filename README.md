@@ -101,9 +101,19 @@ fail-closed public protocol gate and guarded deployment entry points:
 ```bash
 rtk bash functions/provision_protocol_canary.sh
 rtk bash tests/integration/protocol_release_gate.sh
+rtk bash functions/protocol_guarded_deploy.sh webmail-bridge
 rtk bash functions/protocol_guarded_deploy.sh webmail
 rtk bash functions/protocol_guarded_deploy.sh dovecot
 ```
+
+Webmail releases are bridge-first. `webmail-bridge` temporarily pauses every
+new web, scheduled, and ActiveSync send plus scheduled-worker and
+cancellation/removal mutations; status reads remain available. Run `webmail`
+immediately after the bridge passes. The active step requires the live mode to
+be exactly the attested bridge. The first failed bridge can automatically
+recover its freshly captured legacy runtime because the bridge accepted no
+outbound mutations. After the bridge succeeds, legacy rollback is unsafe and
+rejected; only compatible guarded bridge/active snapshots can be selected.
 
 Hosts provisioned before the dedicated identity marker was introduced must use
 the explicit migration command once:

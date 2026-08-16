@@ -16,8 +16,13 @@ echo -e "${YELLOW}Starting Modern Webmail Deployment...${NC}"
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
+INHERITED_PROTOCOL_GUARDED_DEPLOY="${OMS_PROTOCOL_GUARDED_DEPLOY:-0}"
+readonly INHERITED_PROTOCOL_GUARDED_DEPLOY
+INHERITED_GUARDED_OUTBOUND_RELEASE_MODE="${OMS_GUARDED_OUTBOUND_RELEASE_MODE:-}"
+readonly INHERITED_GUARDED_OUTBOUND_RELEASE_MODE
 # shellcheck source=/dev/null
 source "${REPO_DIR}/config.conf"
+OMS_PROTOCOL_GUARDED_DEPLOY="${INHERITED_PROTOCOL_GUARDED_DEPLOY}"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib_os.sh"
 # shellcheck source=/dev/null
@@ -56,6 +61,15 @@ SCHEDULER_ENABLED="${ENABLE_OMS_SCHEDULER:-false}"
 SCHEDULER_PUBLIC_BASE_URL="${OMS_SCHEDULER_PUBLIC_BASE_URL:-${PUBLIC_BASE_URL}}"
 SCHEDULER_HOST_ALIASES="${OMS_SCHEDULER_HOST_ALIASES:-${MAIL_HOSTNAME}}"
 SCHEDULER_SERVER_NAMES="$(openmailstack_scheduler_server_names)"
+if [[ "${OMS_PROTOCOL_GUARDED_DEPLOY:-0}" == "1" ]]; then
+    OUTBOUND_RELEASE_MODE="${INHERITED_GUARDED_OUTBOUND_RELEASE_MODE}"
+else
+    OUTBOUND_RELEASE_MODE="${OMS_OUTBOUND_RELEASE_MODE:-active}"
+fi
+if [[ "${OUTBOUND_RELEASE_MODE}" != "bridge" && "${OUTBOUND_RELEASE_MODE}" != "active" ]]; then
+    echo -e "${RED}Error: OMS_OUTBOUND_RELEASE_MODE must be bridge or active.${NC}" >&2
+    exit 1
+fi
 
 existing_env_value() {
     local key="$1"
@@ -212,6 +226,7 @@ render_backend_env() {
             write_env_line "OMS_ACCOUNT_SECURITY_KEY" "${ACCOUNT_SECURITY_KEY}"
             write_env_line "OMS_COOKIE_SECURE" "${OMS_COOKIE_SECURE:-true}"
             write_env_line "OMS_UPLOAD_LIMIT_BYTES" "${OMS_UPLOAD_LIMIT_BYTES:-26214400}"
+            write_env_line "OMS_OUTBOUND_RELEASE_MODE" "${OUTBOUND_RELEASE_MODE}"
             write_env_line "ENABLE_OMS_NOTES_COLLABORATION" "${NOTES_COLLABORATION_ENABLED}"
             write_env_line "ENABLE_OMS_SCHEDULER" "${SCHEDULER_ENABLED}"
             write_env_line "OMS_SCHEDULER_PUBLIC_BASE_URL" "${SCHEDULER_PUBLIC_BASE_URL}"
@@ -296,7 +311,15 @@ deploy_backend() {
             npm install --omit=dev
         fi
     ) || return 1
-    chown -R "${WEBMAIL_USER}:${WEBMAIL_GROUP}" "${BACKEND_DIR}"
+    chown -R root:root "${BACKEND_DIR}"
+    find "${BACKEND_DIR}" -path "${BACKEND_DIR}/uploads" -prune -o \
+        -type d -exec chmod a+rx,u+w,go-w {} + || return 1
+    find "${BACKEND_DIR}" -path "${BACKEND_DIR}/uploads" -prune -o \
+        -type f -exec chmod a+rX,u+w,go-w {} + || return 1
+    install -d -o "${WEBMAIL_USER}" -g "${WEBMAIL_GROUP}" -m 0750 "${BACKEND_DIR}/uploads"
+    chown -R "${WEBMAIL_USER}:${WEBMAIL_GROUP}" "${BACKEND_DIR}/uploads"
+    chown root:root "${BACKEND_DIR}/OUTBOUND_RELEASE_COMPATIBILITY" || return 1
+    chmod 0444 "${BACKEND_DIR}/OUTBOUND_RELEASE_COMPATIBILITY" || return 1
 
     render_backend_env
     install -m 0644 "${REPO_DIR}/packaging/systemd/openmailstack.service" "${SERVICE_FILE}"
@@ -620,6 +643,7 @@ EOF
 }
 
 require_path "${BACKEND_SRC}"
+require_path "${BACKEND_SRC}/OUTBOUND_RELEASE_COMPATIBILITY"
 require_path "${FRONTEND_SRC}"
 require_path "${REPO_DIR}/VERSION"
 require_path "${REPO_DIR}/packaging/systemd/openmailstack.service"

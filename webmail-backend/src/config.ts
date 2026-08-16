@@ -24,6 +24,14 @@ const required = (name: string): string => {
 
 const optional = (name: string, fallback = ''): string => process.env[name] || fallback;
 
+export type OutboundReleaseMode = 'bridge' | 'active';
+
+const configuredOutboundReleaseMode = optional('OMS_OUTBOUND_RELEASE_MODE', 'active');
+if (configuredOutboundReleaseMode !== 'bridge' && configuredOutboundReleaseMode !== 'active') {
+    throw new Error('OMS_OUTBOUND_RELEASE_MODE must be bridge or active');
+}
+export const outboundReleaseMode: OutboundReleaseMode = configuredOutboundReleaseMode;
+
 const explicitSessionSecret = optional('OMS_SESSION_SECRET');
 const sessionSecret = explicitSessionSecret || (
     process.env.NODE_ENV === 'production' ? '' : required('OMS_DB_PASSWORD')

@@ -8892,3 +8892,80 @@ boundaries.
   expand/contract bridge, exact approved tombstone repair, bounded live canary,
   physical Apple-client proof, clean-host recovery, and an outbox metadata
   retention/archive policy.
+
+## 2026-08-16 — Cycle 9: Rollback-Compatible Outbound Quarantine
+
+Agent/tool: Codex with delegated implementation, live read-only preflight,
+TDD, disposable MariaDB, and independent Spec/Standards review
+
+Branch: `main`
+
+### Selected task
+
+Close the operational duplicate-send blocker that made the installed legacy
+runtime an unsafe automatic rollback target after universal-outbox traffic.
+
+### Changes made
+
+- Added strict `bridge` and `active` outbound release modes. Bridge mode is a
+  total quarantine: web, scheduled, and ActiveSync-shaped submissions stop
+  before schema/persistence/auth/SMTP/IMAP; request and worker claim paths do
+  no database work; scheduled cancellation/removal mutations fail with a typed
+  `503`; owner-scoped status reads remain available.
+- Added a bridge-first guarded release state machine. Active deployment
+  requires the live mode to be exactly an attested bridge. The first failed
+  bridge transition may recover only its exact, recorded, markerless legacy
+  snapshot; later recovery requires a compatible marked snapshot and exact
+  restored mode.
+- Added a read-only first-transition database preflight that accepts only the
+  six-column legacy table or a fully expanded table containing no nonlegacy
+  durable row. Database passwords remain outside process arguments.
+- Hardened deployed and restored runtime ownership. Backend code and every
+  ancestor are root-owned and non-writable by the service while remaining
+  readable/traversable; only `uploads/` is service-owned. The root-only mode
+  file and compatibility marker are attested. Runtime symlinks must resolve
+  inside the protected tree and outside uploads, and producer failures fail
+  closed.
+- Updated operator and architecture documentation for the two-step
+  `webmail-bridge` then `webmail` sequence, paused-send behavior, and rollback
+  boundary.
+
+### Red-to-green evidence
+
+- The installed legacy worker reproduced the hazard by claiming/sending and
+  deleting a durable immediate row; its web route ignored a keyed retry and
+  direct-sent it.
+- Initial bridge tests caught scheduled-row processing, cancellation mutation,
+  active-to-active deployment, missing durable-row rollback proof, mutable
+  runtime ancestry, unreadable root-owned modules, writable parent/env
+  substitution, markerless recovery forgery, uploads-targeting symlinks, and an
+  ignored symlink-enumerator failure. Each case was made red before its bounded
+  fix and adversarial regression.
+- The stateful rollback seam reserves an immediate row in active mode, switches
+  to bridge, retries the same key, and runs the worker; the exact row/status/
+  payload/key remains byte-for-byte unchanged with zero database claim, SMTP,
+  IMAP, authorization, or acceptance side effect.
+
+### Proof / checks run
+
+- Complete backend suite: 737 total, 732 passed, 5 documented skips, 0 failed.
+- Focused bridge/outbound/generated tests: 68/68 and final recheck 33/33.
+- Disposable MariaDB 11.8.6 migration/concurrency/crash proof: 1/1; isolated
+  server stopped and exact temporary datadir removed.
+- Full repository integration: passed; final affected bridge, update-safety,
+  restore/quiescence, protocol-release, Bash syntax, ShellCheck, generated
+  parity, and diff checks passed after the last hardening change.
+- Independent Spec and Standards fixed-point re-reviews: no remaining P0-P3
+  finding.
+
+### Decision and remaining gates
+
+- No production deploy, restart, SMTP, or database row mutation occurred in
+  Cycle 9. The current live legacy outbox remains empty and read-only preflight
+  confirms a clean bridge-installation window.
+- Release remains **NO-GO** until a verified full OMS snapshot is taken, the
+  exact duplicate calendar tombstone is repaired under explicit approval, and
+  the bridge-to-active-to-bridge live canary/rollback sequence passes.
+- Authenticated HTTP/WBXML ActiveSync integration, physical iOS retry, physical
+  macOS Notes lifecycle, mixed-basis ordering, bounded outbox archival, and a
+  clean-host restore drill remain assigned to later cycles.

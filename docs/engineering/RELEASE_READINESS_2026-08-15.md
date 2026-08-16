@@ -1,4 +1,4 @@
-# OpenMailStack Eight-Cycle Release Readiness
+# OpenMailStack Release Readiness — Cycle 9 Addendum
 
 Date: 2026-08-15
 
@@ -11,14 +11,14 @@ browser can recover logical sends across tabs, reloads, network ambiguity, and
 delivery-mode changes; and the migration/crash/timezone/privacy contract passes
 on isolated MariaDB.
 
-The code result is materially stronger than the deployment result. This tree
-must not be enabled through the currently installed automatic rollback target:
-that older runtime does not understand immediate outbox rows or keyed retries,
-so rollback after accepting new traffic could itself create a duplicate-send
-path. The guarded rollout also remains blocked by an existing duplicate
-calendar tombstone that requires separate production-data approval. Physical
-iOS SendMail retry and the original macOS Notes lifecycle have not been
-repeated. “All tests green” is therefore not being misreported as “shippable.”
+The code result is materially stronger than the deployment result. Cycle 9 now
+implements a review-clean bridge-first outbound quarantine, but production is
+still running the older incompatible runtime. The bridge has not yet been
+guarded-deployed or rollback-proved against live durable state. The guarded
+rollout also remains blocked by an existing duplicate calendar tombstone that
+requires separate production-data approval. Physical iOS SendMail retry and
+the original macOS Notes lifecycle have not been repeated. “All tests green”
+is therefore not being misreported as “shippable.”
 
 ## Executive scorecard
 
@@ -32,9 +32,37 @@ repeated. “All tests green” is therefore not being misreported as “shippab
 | Browser qualification | 240/240 across Chromium/WebKit desktop/mobile with zero unexpected diagnostics | Deterministic real-browser evidence, not physical Apple-client evidence |
 | Repository integration | Complete integration suite passes | Green locally |
 | Production dependencies | Backend and frontend report 0 production vulnerabilities | Green at audit time |
-| Deployment/rollback | New tree intentionally not deployed | P1 operational blocker: old rollback target is incompatible with new traffic |
+| Deployment/rollback | Bridge/active state machine is locally green; production remains legacy | P1 live gate: snapshot, exact repair, guarded bridge/active/rollback proof still required |
 | Small-business release | No-go | Reassess after rollback bridge, data gate, and physical clients |
 | Enterprise release | No-go | Product, governance, scale, and recovery gaps remain |
+
+## Cycle 9 addendum — rollback-compatible outbound quarantine
+
+- `webmail-bridge` is a total fail-closed outbound pause: new web/scheduled
+  submissions receive `503`, ActiveSync SendMail returns
+  `MailSubmissionFailed`, workers perform no database claim/lease work, and
+  scheduled cancellation/removal cannot mutate rollback-visible rows.
+- Active deployment requires the live rollback target to be exactly the
+  attested bridge. A failed active deployment restores and re-attests that
+  exact bridge mode before recovery can be called successful.
+- The only markerless legacy recovery is the exact snapshot recorded during
+  the first bridge attempt. Environment and runtime bytes must match after
+  restore; arbitrary, active, or altered markerless states fail closed.
+- Deployed code and ancestry are root-owned and non-writable by the service,
+  while only uploads remain writable. The mode file and marker are root-only;
+  runtime symlinks must remain inside protected code and outside uploads.
+- The confirmed regression reserves a durable immediate row in active mode,
+  retries the same key under bridge, and runs the worker. The row, state,
+  payload, and key remain byte-identical with zero claim, SMTP, IMAP,
+  authorization, or acceptance side effect.
+- Final local evidence: backend 737 total / 732 pass / 5 skips / 0 fail,
+  disposable MariaDB 1/1, full repository integration green, affected guarded
+  restore/release and shell checks green, and both independent review axes
+  clean at the fixed point.
+
+This closes the code-local rollback-bridge blocker, not the live release gate.
+No production service, outbox row, calendar row, or SMTP transaction was
+changed in Cycle 9.
 
 ## Work completed across all eight cycles
 
@@ -254,12 +282,12 @@ not folded into this outbound change.
 
 ## Recommended next release sequence
 
-1. Build and deploy an expand/contract bridge that understands
-   `submission_kind`/`removed_at`, processes scheduled rows only, and rejects
-   keyed retries instead of direct-sending them. Prove it as the rollback target.
-2. Obtain approval for the exact calendar-tombstone repair and execute the
-   guarded repair/forward/rollback sequence with snapshots and zero residue.
-3. Enable the universal outbox in a bounded canary, then test network loss,
+1. Obtain approval for a verified full OMS snapshot and the exact
+   calendar-tombstone repair; abort if any precondition differs.
+2. Guarded-deploy the implemented `webmail-bridge`, prove its total quarantine,
+   then activate `webmail` only from that exact bridge and force one controlled
+   active-to-bridge rollback with an unchanged durable row/key.
+3. Exercise the universal outbox in a bounded canary, then test network loss,
    worker restart, status replay, partial delivery, and rollback.
 4. Complete physical iOS SendMail/retry and macOS Notes lifecycle evidence.
 5. Run a clean-host restore drill and design bounded outbox tombstone archival.

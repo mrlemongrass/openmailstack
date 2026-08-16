@@ -1849,3 +1849,23 @@ Future entry template:
   duplicate production calendar tombstone, physical iOS SendMail retry,
   physical macOS Notes lifecycle, clean-host recovery drill, and bounded
   outbox-metadata retention policy remain open.
+
+## 2026-08-16 — Cycle 9 Rollback-Compatible Outbound Bridge
+
+- Added strict bridge/active modes and made bridge a total outbound quarantine:
+  zero new submission persistence/delivery, zero worker DB claim/lease work,
+  and no scheduled cancellation/removal mutation; status reads remain.
+- Guarded webmail deployment is now bridge-first. Active requires an exact
+  attested bridge; first-legacy recovery is bound to one recorded snapshot;
+  later recovery validates the exact compatible mode.
+- Root-owned/non-writable runtime and ancestry, root-only environment and
+  marker, safe internal-only symlinks, read-only schema/row preflight, and
+  bridge-first operator documentation close the rollback substitution paths.
+- Proved active durable-row reservation followed by same-key bridge retry and
+  worker cycle leaves the row byte-for-byte unchanged with zero delivery side
+  effects. Backend is 732/737 with five skips and zero failures; focused,
+  disposable MariaDB, integration, restore/release, ShellCheck, and independent
+  Spec/Standards fixed-point reviews are green.
+- No live deploy or database mutation occurred. Exact approved calendar repair,
+  guarded bridge/active/rollback, physical Apple clients, EAS HTTP integration,
+  clean-host recovery, ordering, and bounded retention remain open.

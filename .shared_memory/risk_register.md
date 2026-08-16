@@ -102,12 +102,13 @@ Last updated: 2026-08-15
 
 ## Remaining High-Priority Risks
 
-- 🔴 Universal-outbox rollback compatibility: the installed automatic rollback
-  target predates `submission_kind`, soft removal, SaveInSentItems, and keyed
-  retries. Starting it after the new runtime has accepted traffic can process a
-  durable immediate row incorrectly while an old direct-SMTP retry sends again.
-  Do not deploy until an expand/contract bridge runtime is first installed or
-  outbound traffic and workers remain quarantined through rollback proof.
+- 🔴 Universal-outbox rollback compatibility: Cycle 9 implements and
+  independently reviews a bridge-first total outbound quarantine, exact-mode
+  recovery attestation, and a durable-row zero-side-effect rollback regression.
+  The installed production runtime is still the incompatible legacy build,
+  however, so this remains a live release blocker until `webmail-bridge` is
+  guarded-deployed, `webmail` is activated from that exact bridge, and a
+  controlled active-to-bridge rollback proves the durable row/key unchanged.
 - 🔴 Guarded rollout still stops on one exact duplicate production calendar
   tombstone pair. Read-only evidence identified the newer retention candidate,
   but no production row may be changed without separate explicit approval.

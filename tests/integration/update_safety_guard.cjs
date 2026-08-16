@@ -17,9 +17,11 @@ const webmailDeploy = read('functions/10_webmail.sh');
 const guardedDeploy = read('functions/protocol_guarded_deploy.sh');
 const protocolGuardLibrary = read('functions/lib_protocol_guard.sh');
 const webmailRuntimeLibrary = read('functions/lib_webmail_runtime.sh');
+const outboundBridgeLibrary = read('functions/lib_outbound_release_bridge.sh');
 const installationGuide = read('INSTALLATION.md');
 const architecture = read('docs/engineering/ARCHITECTURE.md');
 const adminRbacAudit = read('docs/engineering/ADMIN_RBAC_AUDIT.md');
+const outboundCompatibilityPath = path.join(root, 'webmail-backend', 'OUTBOUND_RELEASE_COMPATIBILITY');
 
 const legacyCase = action => {
   const marker = `case '${action}':`;
@@ -227,12 +229,122 @@ test('guarded webmail rollback validates the snapshot and remains reversible', (
   assert.ok(lockAcquired >= 0 && lockAcquired < bridgeRetired && bridgeRetired < snapshotNamed);
 });
 
+test('guarded deployment uses an explicit rollback-compatible outbound bridge', () => {
+  assert.ok(fs.existsSync(outboundCompatibilityPath), 'the backend release must carry a compatibility marker');
+  const marker = fs.readFileSync(outboundCompatibilityPath, 'utf8');
+  assert.match(marker, /^universal-outbox-bridge-v1\n$/);
+
+  assert.match(webmailDeploy, /INHERITED_GUARDED_OUTBOUND_RELEASE_MODE=/);
+  assert.match(webmailDeploy, /INHERITED_PROTOCOL_GUARDED_DEPLOY=/);
+  assert.match(webmailDeploy, /OMS_GUARDED_OUTBOUND_RELEASE_MODE/);
+  assert.match(webmailDeploy, /OMS_OUTBOUND_RELEASE_MODE must be bridge or active/);
+  assert.match(webmailDeploy, /write_env_line "OMS_OUTBOUND_RELEASE_MODE"/);
+  assert.match(webmailDeploy, /chown root:root "\$\{ENV_FILE\}"/);
+  assert.match(webmailDeploy, /chmod 0600 "\$\{ENV_FILE\}"/);
+  assert.match(webmailDeploy, /require_path "\$\{BACKEND_SRC\}\/OUTBOUND_RELEASE_COMPATIBILITY"/);
+  assert.match(webmailDeploy, /chown -R root:root "\$\{BACKEND_DIR\}"/);
+  assert.match(webmailDeploy, /-type d -exec chmod a\+rx,u\+w,go-w \{\} \+/);
+  assert.match(webmailDeploy, /-type f -exec chmod a\+rX,u\+w,go-w \{\} \+/);
+  assert.match(webmailDeploy, /chown -R "\$\{WEBMAIL_USER\}:\$\{WEBMAIL_GROUP\}" "\$\{BACKEND_DIR\}\/uploads"/);
+  const deployBackendBody = webmailDeploy.slice(
+    webmailDeploy.indexOf('deploy_backend()'),
+    webmailDeploy.indexOf('build_frontend()'),
+  );
+  assert.ok(
+    deployBackendBody.indexOf('chown -R root:root "${BACKEND_DIR}"')
+      < deployBackendBody.indexOf('chown -R "${WEBMAIL_USER}:${WEBMAIL_GROUP}" "${BACKEND_DIR}/uploads"'),
+    'only the runtime upload directory may return to service ownership',
+  );
+
+  assert.match(guardedDeploy, /webmail-bridge/);
+  assert.match(guardedDeploy, /source "\$\{SCRIPT_DIR\}\/lib_outbound_release_bridge\.sh"/);
+  assert.match(guardedDeploy, /CANONICAL_OUTBOUND_RELEASE_MODE/);
+  assert.match(guardedDeploy, /OMS_GUARDED_OUTBOUND_RELEASE_MODE="\$\{OUTBOUND_RELEASE_MODE\}"/);
+  assert.match(guardedDeploy, /validate_live_outbound_rollback_target/);
+  assert.match(guardedDeploy, /validate_recovered_outbound_runtime/);
+  assert.match(guardedDeploy, /record_legacy_unmarked_rollback_state/);
+  assert.match(guardedDeploy, /LEGACY_UNMARKED_ROLLBACK_RECORDED/);
+  assert.match(guardedDeploy, /LEGACY_UNMARKED_ROLLBACK_DIR/);
+  assert.match(guardedDeploy, /openmailstack_outbound_release_mode_is_absent "\$\{BACKEND_ENV\}"/);
+  assert.match(guardedDeploy, /cmp -s -- "\$\{snapshot_environment\}" "\$\{BACKEND_ENV\}"/);
+  assert.match(guardedDeploy, /diff -qr --no-dereference --exclude=uploads/);
+  assert.match(guardedDeploy, /protocol_secure_directory_metadata "\/opt"/);
+  assert.match(guardedDeploy, /dirname -- "\$\{BACKEND_DIR\}"/);
+  assert.match(guardedDeploy, /OUTBOUND_RELEASE_COMPATIBILITY/);
+  assert.match(guardedDeploy, /backend\/OUTBOUND_RELEASE_COMPATIBILITY/);
+
+  assert.match(outboundBridgeLibrary, /openmailstack_verify_outbound_bridge_transition\(\)/);
+  assert.match(outboundBridgeLibrary, /openmailstack_outbound_compatibility_marker_is_trusted\(\)/);
+  assert.match(outboundBridgeLibrary, /openmailstack_outbound_runtime_is_trusted\(\)/);
+  assert.match(outboundBridgeLibrary, /openmailstack_outbound_path_ancestors_are_trusted\(\)/);
+  assert.match(outboundBridgeLibrary, /openmailstack_outbound_environment_is_trusted\(\)/);
+  assert.match(outboundBridgeLibrary, /openmailstack_outbound_legacy_runtime_is_trusted\(\)/);
+  assert.match(outboundBridgeLibrary, /openmailstack_outbound_release_mode_is_absent\(\)/);
+  assert.match(outboundBridgeLibrary, /-path "\$\{candidate_backend\}\/uploads" -prune/);
+  assert.match(outboundBridgeLibrary, /realpath -ms --/);
+  assert.match(outboundBridgeLibrary, /readlink -f -- "\$\{runtime_symlink\}"/);
+  assert.match(outboundBridgeLibrary, /"\$\{candidate_backend\}\/uploads\/"\*/);
+  assert.match(outboundBridgeLibrary, /! -uid 0/);
+  assert.match(outboundBridgeLibrary, /! -gid 0/);
+  assert.match(outboundBridgeLibrary, /-perm \/022/);
+  assert.match(outboundBridgeLibrary, /! -perm -005/);
+  assert.match(outboundBridgeLibrary, /! -perm -004/);
+  assert.match(outboundBridgeLibrary, /0:0:600/);
+  assert.match(outboundBridgeLibrary, /0:0:444/);
+  assert.match(outboundBridgeLibrary, /INFORMATION_SCHEMA\.COLUMNS/);
+  assert.match(outboundBridgeLibrary, /idempotency_key IS NOT NULL/);
+
+  const bridgeAction = guardedDeploy.indexOf('if [[ "${ACTION}" == "webmail-bridge" ]]');
+  const markerlessModePreflight = guardedDeploy.indexOf(
+    'openmailstack_outbound_release_mode_is_absent "${BACKEND_ENV}"',
+    bridgeAction,
+  );
+  const bridgePreflight = guardedDeploy.indexOf('openmailstack_verify_outbound_bridge_transition', bridgeAction);
+  const activeAction = guardedDeploy.indexOf('if [[ "${ACTION}" == "webmail" ]]');
+  const activePreflight = guardedDeploy.indexOf('validate_live_outbound_rollback_target', activeAction);
+  const preDeployGate = guardedDeploy.indexOf('Running pre-deploy public IMAPS and ActiveSync gate');
+  assert.ok(bridgeAction >= 0 && bridgePreflight > bridgeAction && bridgePreflight < preDeployGate,
+    'a first bridge deployment must reject universal rows before the protocol canary');
+  assert.ok(markerlessModePreflight > bridgeAction && markerlessModePreflight < bridgePreflight,
+    'a markerless active/bridge runtime must be rejected before the legacy database preflight');
+  assert.ok(activePreflight >= 0 && activePreflight < preDeployGate,
+    'an active deployment must prove its live rollback target before the protocol canary');
+  assert.match(
+    guardedDeploy.slice(activeAction, bridgeAction),
+    /validate_live_outbound_rollback_target bridge/,
+    'active deployment must require a live bridge rather than another active runtime',
+  );
+  assert.match(guardedDeploy, /validate_live_outbound_rollback_target "\$\{OUTBOUND_RELEASE_MODE\}"/,
+    'post-deploy validation must prove the exact requested bridge or active mode');
+
+  const restoreBody = guardedDeploy.slice(
+    guardedDeploy.indexOf('restore_webmail_from()'),
+    guardedDeploy.indexOf('restore_webmail()'),
+  );
+  assert.doesNotMatch(restoreBody, /validate_webmail_snapshot/,
+    'automatic recovery of the first bridge deployment must still accept its legacy snapshot');
+  assert.match(restoreBody, /chown -R root:root "\$\{BACKEND_DIR\}"/);
+  assert.match(restoreBody, /chown root:root "\$\{BACKEND_ENV\}"/);
+  assert.match(restoreBody, /chmod 0600 "\$\{BACKEND_ENV\}"/);
+  assert.match(restoreBody, /-type d -exec chmod a\+rx,u\+w,go-w \{\} \+/);
+  assert.match(restoreBody, /-type f -exec chmod a\+rX,u\+w,go-w \{\} \+/);
+  assert.match(restoreBody, /chown -R openmailstack:openmailstack "\$\{BACKEND_DIR\}\/uploads"/);
+  assert.ok(
+    restoreBody.indexOf('chown -R root:root "${BACKEND_DIR}"')
+      < restoreBody.indexOf('chown -R openmailstack:openmailstack "${BACKEND_DIR}/uploads"'),
+    'restoring a snapshot must keep code immutable while preserving upload writes',
+  );
+});
+
 test('operator documentation defines the bounded manual release and rollback procedure', () => {
   assert.doesNotMatch(installationGuide, /Perfect for upgrading/);
   assert.match(installationGuide, /Option 1 does not upgrade already-installed components/);
   assert.match(installationGuide, /## Manual release upgrade procedure/);
   assert.match(installationGuide, /set -euo pipefail/);
+  assert.match(installationGuide, /functions\/protocol_guarded_deploy\.sh webmail-bridge/);
   assert.match(installationGuide, /functions\/protocol_guarded_deploy\.sh webmail/);
+  assert.match(installationGuide, /outbound sends are paused/i);
+  assert.match(installationGuide, /legacy rollback/i);
   assert.doesNotMatch(installationGuide, /protocol_guarded_deploy\.sh webmail \| tee/);
   assert.match(installationGuide, /as one transaction under one global lock/);
   assert.match(installationGuide, /captures both deployed applications/);
@@ -252,6 +364,10 @@ test('architecture and RBAC documentation describe the disabled automatic-update
   assert.match(upgradeSection, /Status: `Partial`/);
   assert.match(upgradeSection, /manual release procedure/i);
   assert.match(upgradeSection, /passwordless bridge is removed/i);
+  assert.match(upgradeSection, /protocol_guarded_deploy\.sh webmail-bridge/);
+  assert.match(architecture, /total outbound quarantine/i);
+  assert.doesNotMatch(upgradeSection, /One `protocol_guarded_deploy\.sh\s+webmail` transaction/);
+  assert.doesNotMatch(architecture, /Deployment is blocked because the currently installed rollback target/);
   assert.doesNotMatch(upgradeSection, /allows `www-data`|may run `git pull`|openmailstack-upgrade\.sh/);
   assert.match(adminRbacAudit, /\| `check_updates` \| Installed VERSION reporting; no shell execution \|/);
   assert.match(adminRbacAudit, /\| `run_upgrade` \| Disabled fail-closed compatibility action \|/);

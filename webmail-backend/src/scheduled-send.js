@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.startScheduledSender = exports.runScheduledSender = exports.submitOutbound = exports.getOutboundSubmission = exports.OutboundSubmissionUnavailableError = exports.OutboundIdempotencyConflictError = exports.OutboundIdempotencyKeyError = exports.abortScheduledEmailBeforeDelivery = exports.removeTerminalScheduledEmail = exports.releaseScheduledCancellation = exports.completeScheduledCancellation = exports.claimScheduledCancellation = exports.MySqlScheduledEmailStore = exports.ensureScheduledEmailsSchema = exports.processScheduledEmail = exports.classifyScheduledSmtpError = exports.computeOutboundRequestFingerprint = void 0;
+exports.startScheduledSender = exports.runScheduledSender = exports.submitOutbound = exports.getOutboundSubmission = exports.OutboundSubmissionUnavailableError = exports.OutboundIdempotencyConflictError = exports.OutboundIdempotencyKeyError = exports.abortScheduledEmailBeforeDelivery = exports.removeTerminalScheduledEmail = exports.releaseScheduledCancellation = exports.completeScheduledCancellation = exports.claimScheduledCancellation = exports.MySqlScheduledEmailStore = exports.ensureScheduledEmailsSchema = exports.processScheduledEmail = exports.classifyScheduledSmtpError = exports.computeOutboundRequestFingerprint = exports.OutboundReleaseBridgeError = void 0;
 const db_1 = require("./db");
 const crypto_1 = __importDefault(require("crypto"));
 const auth_1 = require("./auth");
@@ -11,6 +11,19 @@ const config_1 = require("./config");
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const user_settings_1 = require("./user-settings");
 const outbound_mail_1 = require("./outbound-mail");
+class OutboundReleaseBridgeError extends Error {
+    code = 'OUTBOUND_RELEASE_BRIDGE';
+    status = 503;
+    constructor() {
+        super('Outbound submission is paused while a rollback-compatible release bridge is active');
+        this.name = 'OutboundReleaseBridgeError';
+    }
+}
+exports.OutboundReleaseBridgeError = OutboundReleaseBridgeError;
+const requireActiveOutboundRelease = () => {
+    if (config_1.outboundReleaseMode === 'bridge')
+        throw new OutboundReleaseBridgeError();
+};
 const canonicalFingerprintValue = (value, seen = new Set()) => {
     if (value === null)
         return 'null';
@@ -480,10 +493,14 @@ exports.ensureScheduledEmailsSchema = ensureScheduledEmailsSchema;
 const retryDelaySeconds = (attempts) => Math.min(3600, 2 ** Math.max(1, attempts) * 15);
 class MySqlScheduledEmailStore {
     db;
-    constructor(db = db_1.pool) {
+    releaseMode;
+    constructor(db = db_1.pool, releaseMode = config_1.outboundReleaseMode) {
         this.db = db;
+        this.releaseMode = releaseMode;
     }
     async claimById(id, username, workerId) {
+        if (this.releaseMode === 'bridge')
+            return null;
         const connection = await this.db.getConnection();
         try {
             await connection.beginTransaction();
@@ -543,6 +560,8 @@ class MySqlScheduledEmailStore {
         }
     }
     async claimBatch(workerId, limit = 25) {
+        if (this.releaseMode === 'bridge')
+            return [];
         const connection = await this.db.getConnection();
         try {
             await connection.beginTransaction();
@@ -686,6 +705,7 @@ class MySqlScheduledEmailStore {
 }
 exports.MySqlScheduledEmailStore = MySqlScheduledEmailStore;
 const claimScheduledCancellation = async (db, id, username, workerId) => {
+    requireActiveOutboundRelease();
     const [result] = await db.query(`UPDATE scheduled_emails
          SET status = 'cancel_restore_pending', lease_owner = ?,
              lease_expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 120 SECOND)
@@ -709,6 +729,7 @@ const claimScheduledCancellation = async (db, id, username, workerId) => {
 };
 exports.claimScheduledCancellation = claimScheduledCancellation;
 const completeScheduledCancellation = async (db, id, username, workerId, restoredDraftUid) => {
+    requireActiveOutboundRelease();
     const [result] = await db.query(`UPDATE scheduled_emails
          SET status = 'cancelled', cancelled_at = UTC_TIMESTAMP(), raw_message = NULL,
              sent_raw_message = NULL,
@@ -723,6 +744,7 @@ const completeScheduledCancellation = async (db, id, username, workerId, restore
 };
 exports.completeScheduledCancellation = completeScheduledCancellation;
 const releaseScheduledCancellation = async (db, id, username, workerId, code) => {
+    requireActiveOutboundRelease();
     const [result] = await db.query(`UPDATE scheduled_emails
          SET lease_owner = NULL, lease_expires_at = NULL,
              last_error_code = ?, last_error_at = UTC_TIMESTAMP()
@@ -734,6 +756,7 @@ const releaseScheduledCancellation = async (db, id, username, workerId, code) =>
 };
 exports.releaseScheduledCancellation = releaseScheduledCancellation;
 const removeTerminalScheduledEmail = async (db, id, username) => {
+    requireActiveOutboundRelease();
     const [result] = await db.query(`UPDATE scheduled_emails
          SET removed_at = UTC_TIMESTAMP(), mail_options = '{}', envelope_json = NULL,
              raw_message = NULL, sent_raw_message = NULL,
@@ -750,6 +773,7 @@ const removeTerminalScheduledEmail = async (db, id, username) => {
 };
 exports.removeTerminalScheduledEmail = removeTerminalScheduledEmail;
 const abortScheduledEmailBeforeDelivery = async (db, id, username) => {
+    requireActiveOutboundRelease();
     const [result] = await db.query(`DELETE FROM scheduled_emails
          WHERE id = ? AND username = ? AND status = 'scheduled'
            AND submission_kind = 'scheduled'
@@ -898,6 +922,7 @@ const defaultScheduledDependencies = {
     },
 };
 const submitOutbound = async (db, input, runtime = {}) => {
+    requireActiveOutboundRelease();
     try {
         await (0, exports.ensureScheduledEmailsSchema)(db);
     }
@@ -1013,6 +1038,8 @@ const submitOutbound = async (db, input, runtime = {}) => {
 exports.submitOutbound = submitOutbound;
 const runningScheduledDatabases = new WeakSet();
 const runScheduledSender = async (dependencies = defaultScheduledDependencies, db = db_1.pool, workerId) => {
+    if (config_1.outboundReleaseMode === 'bridge')
+        return 0;
     if (runningScheduledDatabases.has(db))
         return 0;
     runningScheduledDatabases.add(db);

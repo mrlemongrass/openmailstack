@@ -1,5 +1,34 @@
 # Implementation State
 
+## 2026-08-16 Cycle 9 Rollback Bridge
+
+**Status: rollback-compatible outbound quarantine is implemented and locally
+review-clean, but not deployed; release remains NO-GO.** Guarded webmail
+releases now require two stages: `webmail-bridge` installs a total outbound
+quarantine, then `webmail` may activate only when the live rollback target is
+the exact attested bridge. Bridge mode rejects new web/scheduled/ActiveSync
+submissions before persistence or delivery, performs no worker claim or lease
+mutation, blocks scheduled cancellation/removal mutation, and retains
+owner-scoped status reads.
+
+The first bridge transition has a read-only legacy-schema/row preflight. Its
+one automatic legacy recovery exception is bound to the exact markerless
+snapshot recorded in that process and requires unchanged environment/runtime
+content after restore. Later snapshots require a supported marker, exact
+bridge/active mode, root-only mode file, and root-owned non-writable runtime
+beneath trusted ancestors. Only uploads remain service-writable; symlink
+targets cannot escape the protected tree or enter uploads.
+
+Local proof is green: backend 737 total / 732 pass / 5 documented skips / 0
+fail; focused rollback preserves a durable immediate row byte-for-byte with
+zero DB claim/SMTP/IMAP/auth side effect; disposable MariaDB 1/1; full
+integration and affected shell/restore/release gates pass; independent Spec
+and Standards re-reviews report no P0-P3. Do not deploy until the separately
+approved full snapshot and exact calendar-tombstone repair can precede the live
+bridge/active/rollback canary. Physical iOS SendMail retry, macOS Notes,
+authenticated EAS HTTP integration, clean-host restore, ordering, and outbox
+retention remain open.
+
 ## 2026-08-15 Eight-Cycle Hardening Closeout
 
 **Status: universal outbound delivery is locally verified, not deployed, and

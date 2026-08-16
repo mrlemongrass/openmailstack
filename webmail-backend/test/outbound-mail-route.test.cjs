@@ -20,6 +20,7 @@ let draftDeleteError = null;
 let submitOutboundError = null;
 let submitOutboundResult = null;
 let outboundStatusResult = null;
+let scheduledMutationError = null;
 
 const db = require('../src/db.js');
 db.pool.query = async (sql, params = []) => {
@@ -117,11 +118,13 @@ scheduled.getOutboundSubmission = async (_pool, owner, lookup) => {
   return outboundStatusResult;
 };
 scheduled.abortScheduledEmailBeforeDelivery = async (_pool, id, owner) => {
+  if (scheduledMutationError) throw scheduledMutationError;
   aborts.push({ id, owner });
   return true;
 };
 scheduled.ensureScheduledEmailsSchema = async () => {};
 scheduled.claimScheduledCancellation = async (_pool, id, owner, workerId) => {
+  if (scheduledMutationError) throw scheduledMutationError;
   cancellations.push({ phase: 'claim', id, owner, workerId });
   if (id === 78) {
     return {
@@ -141,12 +144,15 @@ scheduled.claimScheduledCancellation = async (_pool, id, owner, workerId) => {
   return { outcome: id === 77 ? 'conflict' : 'not_found' };
 };
 scheduled.completeScheduledCancellation = async (_pool, id, owner, workerId, draftUid) => {
+  if (scheduledMutationError) throw scheduledMutationError;
   cancellations.push({ phase: 'complete', id, owner, workerId, draftUid });
 };
 scheduled.releaseScheduledCancellation = async (_pool, id, owner, workerId, code) => {
+  if (scheduledMutationError) throw scheduledMutationError;
   cancellations.push({ phase: 'release', id, owner, workerId, code });
 };
 scheduled.removeTerminalScheduledEmail = async (_pool, id, owner) => {
+  if (scheduledMutationError) throw scheduledMutationError;
   removals.push({ id, owner });
   return id === 79 ? 'removed' : id === 77 ? 'conflict' : 'not_found';
 };
@@ -270,6 +276,70 @@ test('send returns 503 and performs no SMTP when durable reservation fails', asy
   assert.equal(response.json.code, 'OUTBOUND_SUBMISSION_UNAVAILABLE');
   assert.equal(smtpPayloads.length, 0);
   assert.equal(outboundSubmissions.length, 1);
+});
+
+test('release bridge returns a retryable 503 for immediate and scheduled web submissions', async t => {
+  smtpPayloads.length = 0;
+  outboundSubmissions.length = 0;
+  submitOutboundError = Object.assign(new Error('release bridge is active'), {
+    code: 'OUTBOUND_RELEASE_BRIDGE',
+    status: 503,
+  });
+  t.after(() => { submitOutboundError = null; });
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const cases = [
+    { subject: 'Immediate bridge rejection' },
+    {
+      subject: 'Scheduled bridge rejection',
+      delaySeconds: '30',
+      scheduledFor: new Date(Date.now() + 30_000).toISOString(),
+    },
+  ];
+  for (const body of cases) {
+    const response = await postJson(server.address().port, '/api/messages/send', {
+      from: username,
+      to: 'recipient@example.net',
+      body: 'The logical attempt must be retried after activation.',
+      ...body,
+    });
+    assert.equal(response.status, 503);
+    assert.equal(response.json.success, false);
+    assert.equal(response.json.code, 'OUTBOUND_RELEASE_BRIDGE');
+  }
+  assert.equal(outboundSubmissions.length, 2);
+  assert.equal(smtpPayloads.length, 0);
+});
+
+test('release bridge returns typed 503 responses for scheduled cancellation and removal', async t => {
+  scheduledMutationError = Object.assign(new Error('release bridge is active'), {
+    code: 'OUTBOUND_RELEASE_BRIDGE',
+    status: 503,
+  });
+  t.after(() => { scheduledMutationError = null; });
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const undo = await postJson(server.address().port, '/api/messages/undo', { scheduledId: 71 });
+  assert.equal(undo.status, 503);
+  assert.equal(undo.json.code, 'OUTBOUND_RELEASE_BRIDGE');
+
+  const removal = await fetch(`http://127.0.0.1:${server.address().port}/api/messages/scheduled/71`, {
+    method: 'DELETE',
+  });
+  assert.equal(removal.status, 503);
+  assert.equal((await removal.json()).code, 'OUTBOUND_RELEASE_BRIDGE');
 });
 
 test('immediate send requires a bounded visible-ASCII idempotency key', async t => {

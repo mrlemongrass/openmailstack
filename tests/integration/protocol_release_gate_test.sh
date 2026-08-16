@@ -518,6 +518,8 @@ cp "${PROJECT_ROOT}/functions/protocol_guarded_deploy.sh" "${GUARD_FIXTURE_ROOT}
 cp "${PROJECT_ROOT}/functions/lib_protocol_guard.sh" "${GUARD_FIXTURE_ROOT}/functions/"
 cp "${PROJECT_ROOT}/functions/lib_protocol_pending_runs.sh" "${GUARD_FIXTURE_ROOT}/functions/"
 cp "${PROJECT_ROOT}/functions/lib_webmail_runtime.sh" "${GUARD_FIXTURE_ROOT}/functions/"
+cp "${PROJECT_ROOT}/functions/lib_os.sh" "${GUARD_FIXTURE_ROOT}/functions/"
+cp "${PROJECT_ROOT}/functions/lib_outbound_release_bridge.sh" "${GUARD_FIXTURE_ROOT}/functions/"
 install -m 0755 /dev/null "${GUARD_FIXTURE_ROOT}/tests/integration/protocol_release_gate.sh"
 cat > "${GUARD_FIXTURE_ROOT}/config.conf" <<'EOF'
 GATE_SCRIPT="/tmp/not-the-openmailstack-gate"

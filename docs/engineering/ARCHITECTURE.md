@@ -946,15 +946,28 @@ Portal deployment, the retired passwordless bridge is removed before other
 fallible setup work begins.
 
 `INSTALLATION.md` defines the bounded manual release procedure for the modern
-web application and legacy Admin Portal. One `protocol_guarded_deploy.sh
-webmail` transaction holds the global release lock while it snapshots, deploys,
-and validates both applications. The transaction passes through the
-authenticated protocol release gate, restores both application versions on a
-failed deploy or validation, and handles HUP, INT, and TERM through the same
-validated recovery path. Its guarded `restore-webmail` mode also treats a
-retained pair as one reversible transaction. The historical passwordless
-upgrade bridge is retired after the lock is acquired and is intentionally not
-restored during application rollback.
+web application and legacy Admin Portal. Every release runs two consecutive
+guarded transactions: `protocol_guarded_deploy.sh webmail-bridge`, followed by
+`protocol_guarded_deploy.sh webmail`. Each holds the global release lock while
+it snapshots, deploys, and validates both applications. Bridge mode is a total
+outbound quarantine: web, scheduled, and ActiveSync submissions fail before
+persistence or delivery; workers claim nothing; and scheduled cancellation or
+removal performs no mutation. Status reads remain available. The active step
+requires an exactly attested live bridge.
+
+Both transactions pass through the authenticated protocol release gate,
+restore both application versions after a failed deploy or validation, and
+handle HUP, INT, and TERM through the same validated recovery path. The first
+failed bridge transition may restore its freshly captured unmarked legacy
+runtime because the bridge accepted no outbound mutation. After that boundary,
+automatic and requested recovery require a root-owned, non-writable,
+service-readable backend beneath trusted ancestors, the supported root-only
+compatibility marker, a root-only environment file, and an exact restored
+`bridge` or `active` mode. Only `uploads/` remains service-writable. Guarded
+`restore-webmail` treats a retained compatible pair as one reversible
+transaction. The historical passwordless upgrade bridge is retired after the
+lock is acquired and is intentionally not restored during application
+rollback.
 
 There is not yet a general transactional full-stack upgrade mechanism. Releases
 that change Postfix, Dovecot, MariaDB, mail data, operating-system packages, or
@@ -1132,7 +1145,7 @@ Evidence: `webmail-backend/src/scheduler/`, versioned migrations `001` through `
 
 Status: `Implemented And Locally Verified - Not Deployed`
 
-Last verified: 2026-08-15 in source tests, deterministic browser fixtures, and
+Last verified: 2026-08-16 in source tests, deterministic browser fixtures, and
 an isolated disposable MariaDB 11.8.6 instance.
 
 Web immediate mail, delayed/Undo mail, and ActiveSync SendMail now enter one
@@ -1185,12 +1198,18 @@ Resent-Bcc only from delivery headers, preserves the original Sent MIME, and
 honors SaveInSentItems. SmartReply and SmartForward remain unadvertised and
 fail closed; AccountId fails closed until Settings account identities exist.
 
-The additive legacy bridge and full crash/concurrency matrix pass on disposable
-MariaDB. Deployment is blocked because the currently installed rollback target
-predates the universal outbox and can process new rows or keyed retries
-incorrectly after rollback. Release requires an expand/contract bridge or a
-maintenance/quarantine rollback barrier, then guarded live and physical iOS
-retry proof.
+The additive schema and full crash/concurrency matrix pass on disposable
+MariaDB. A rollback-compatible expand/contract bridge is implemented locally.
+Its quarantine accepts no new outbound submission or scheduled mutation and
+performs no worker claim, lease recovery, SMTP, IMAP, or authorization work.
+The guarded release sequence requires bridge first and active second; active
+cannot deploy over another active runtime. Compatible runtime attestation binds
+the marker and exact mode to root-owned, non-writable code beneath trusted
+ancestors and a root-only environment file. A durable immediate-row regression
+proves that bridge recovery plus a same-key retry and worker cycle leaves the
+row byte-for-byte unchanged with zero delivery side effects. Live bridge/active
+deployment, public guarded rollback proof, and physical iOS retry observation
+remain required before changing this section's not-deployed status.
 
 ---
 
@@ -1542,6 +1561,9 @@ During repository intake, agents should answer these questions and update this f
 
 ## 16. Change Log for This Document
 
+- 2026-08-16: Documented the bridge-first universal-outbox release sequence,
+  total outbound quarantine, immutable runtime/environment attestation, and
+  the legacy-versus-compatible rollback boundary.
 - 2026-08-15: Documented the locally verified universal outbound outbox,
   browser and ActiveSync idempotency contracts, UTC boundary, privacy
   scrubbing, and the rollback-compatibility deployment blocker.

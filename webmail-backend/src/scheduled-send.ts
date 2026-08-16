@@ -1,7 +1,12 @@
 import { pool } from './db';
 import crypto from 'crypto';
 import { decryptPassword } from './auth';
-import { delegatedAuthEnabled, smtpTransportOptions } from './config';
+import {
+    delegatedAuthEnabled,
+    outboundReleaseMode,
+    smtpTransportOptions,
+    type OutboundReleaseMode,
+} from './config';
 import nodemailer from 'nodemailer';
 import { getUserSettings, type ContactsSettings } from './user-settings';
 import {
@@ -20,6 +25,20 @@ export type ScheduledEmailStatus = 'scheduled' | 'retry_wait' | 'claimed' | 'smt
     | 'delivery_uncertain' | 'partial_delivery' | 'cancelled';
 
 export type OutboundSubmissionKind = 'immediate' | 'scheduled';
+
+export class OutboundReleaseBridgeError extends Error {
+    readonly code = 'OUTBOUND_RELEASE_BRIDGE';
+    readonly status = 503;
+
+    constructor() {
+        super('Outbound submission is paused while a rollback-compatible release bridge is active');
+        this.name = 'OutboundReleaseBridgeError';
+    }
+}
+
+const requireActiveOutboundRelease = (): void => {
+    if (outboundReleaseMode === 'bridge') throw new OutboundReleaseBridgeError();
+};
 
 export type CanonicalFingerprintValue = null | boolean | number | string | Date | Buffer
     | CanonicalFingerprintValue[] | { [key: string]: CanonicalFingerprintValue | undefined };
@@ -561,13 +580,17 @@ export const ensureScheduledEmailsSchema = async (db: any = pool) => {
 const retryDelaySeconds = (attempts: number): number => Math.min(3600, 2 ** Math.max(1, attempts) * 15);
 
 export class MySqlScheduledEmailStore implements ScheduledEmailStore {
-    constructor(private readonly db: any = pool) {}
+    constructor(
+        private readonly db: any = pool,
+        private readonly releaseMode: OutboundReleaseMode = outboundReleaseMode,
+    ) {}
 
     async claimById(
         id: number,
         username: string,
         workerId: string,
     ): Promise<ScheduledEmailRow | null> {
+        if (this.releaseMode === 'bridge') return null;
         const connection = await this.db.getConnection();
         try {
             await connection.beginTransaction();
@@ -641,6 +664,7 @@ export class MySqlScheduledEmailStore implements ScheduledEmailStore {
     }
 
     async claimBatch(workerId: string, limit = 25): Promise<ScheduledEmailRow[]> {
+        if (this.releaseMode === 'bridge') return [];
         const connection = await this.db.getConnection();
         try {
             await connection.beginTransaction();
@@ -846,6 +870,7 @@ export const claimScheduledCancellation = async (
     username: string,
     workerId: string,
 ): Promise<ScheduledCancellationClaim> => {
+    requireActiveOutboundRelease();
     const [result]: any = await db.query(
         `UPDATE scheduled_emails
          SET status = 'cancel_restore_pending', lease_owner = ?,
@@ -880,6 +905,7 @@ export const completeScheduledCancellation = async (
     workerId: string,
     restoredDraftUid: number,
 ): Promise<void> => {
+    requireActiveOutboundRelease();
     const [result]: any = await db.query(
         `UPDATE scheduled_emails
          SET status = 'cancelled', cancelled_at = UTC_TIMESTAMP(), raw_message = NULL,
@@ -903,6 +929,7 @@ export const releaseScheduledCancellation = async (
     workerId: string,
     code: string,
 ): Promise<void> => {
+    requireActiveOutboundRelease();
     const [result]: any = await db.query(
         `UPDATE scheduled_emails
          SET lease_owner = NULL, lease_expires_at = NULL,
@@ -921,6 +948,7 @@ export const removeTerminalScheduledEmail = async (
     id: number,
     username: string,
 ): Promise<'removed' | 'not_found' | 'conflict'> => {
+    requireActiveOutboundRelease();
     const [result]: any = await db.query(
         `UPDATE scheduled_emails
          SET removed_at = UTC_TIMESTAMP(), mail_options = '{}', envelope_json = NULL,
@@ -945,6 +973,7 @@ export const abortScheduledEmailBeforeDelivery = async (
     id: number,
     username: string,
 ): Promise<boolean> => {
+    requireActiveOutboundRelease();
     const [result]: any = await db.query(
         `DELETE FROM scheduled_emails
          WHERE id = ? AND username = ? AND status = 'scheduled'
@@ -1159,6 +1188,7 @@ export const submitOutbound = async (
     input: OutboundSubmissionInput,
     runtime: SubmitOutboundRuntime = {},
 ): Promise<OutboundSubmissionResult> => {
+    requireActiveOutboundRelease();
     try {
         await ensureScheduledEmailsSchema(db);
     } catch (error) {
@@ -1277,6 +1307,7 @@ export const runScheduledSender = async (
     db: any = pool,
     workerId?: string,
 ) => {
+    if (outboundReleaseMode === 'bridge') return 0;
     if (runningScheduledDatabases.has(db)) return 0;
     runningScheduledDatabases.add(db);
     const claimToken = workerId || `webmail-${process.pid}-${crypto.randomUUID()}`;

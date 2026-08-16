@@ -223,6 +223,10 @@ test_protocol_guard_helpers() {
     bash "${PROJECT_ROOT}/tests/integration/protocol_guard_helpers_test.sh"
 }
 
+test_outbound_release_bridge_preflight() {
+    bash "${PROJECT_ROOT}/tests/integration/outbound_release_bridge_test.sh"
+}
+
 test_mail_message_view_regression() {
     (
         cd "${PROJECT_ROOT}/webmail-frontend"
@@ -307,6 +311,7 @@ test_modern_webmail_deployment_guards
 test_authenticated_smoke_guards
 test_protocol_release_gate
 test_protocol_guard_helpers
+test_outbound_release_bridge_preflight
 test_mail_message_view_regression
 test_scheduler_documentation_guards
 test_scheduler_phase1_guards

@@ -1,6 +1,12 @@
+import { type OutboundReleaseMode } from './config';
 import { type OwnedSenderIdentity } from './outbound-mail';
 export type ScheduledEmailStatus = 'scheduled' | 'retry_wait' | 'claimed' | 'smtp_inflight' | 'sent_copy_pending' | 'cancel_restore_pending' | 'completed' | 'failed' | 'delivery_uncertain' | 'partial_delivery' | 'cancelled';
 export type OutboundSubmissionKind = 'immediate' | 'scheduled';
+export declare class OutboundReleaseBridgeError extends Error {
+    readonly code = "OUTBOUND_RELEASE_BRIDGE";
+    readonly status = 503;
+    constructor();
+}
 export type CanonicalFingerprintValue = null | boolean | number | string | Date | Buffer | CanonicalFingerprintValue[] | {
     [key: string]: CanonicalFingerprintValue | undefined;
 };
@@ -61,7 +67,8 @@ export declare const processScheduledEmail: (row: ScheduledEmailRow, workerId: s
 export declare const ensureScheduledEmailsSchema: (db?: any) => Promise<void>;
 export declare class MySqlScheduledEmailStore implements ScheduledEmailStore {
     private readonly db;
-    constructor(db?: any);
+    private readonly releaseMode;
+    constructor(db?: any, releaseMode?: OutboundReleaseMode);
     claimById(id: number, username: string, workerId: string): Promise<ScheduledEmailRow | null>;
     claimBatch(workerId: string, limit?: number): Promise<ScheduledEmailRow[]>;
     private update;

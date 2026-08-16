@@ -15,6 +15,9 @@ REPO_DIR="${FIXTURE_ROOT}/repo"
 BACKEND_SRC="${REPO_DIR}/webmail-backend"
 FRONTEND_SRC="${REPO_DIR}/webmail-frontend"
 BACKEND_DIR="${FIXTURE_ROOT}/live/backend"
+# Used by the production restore function extracted below.
+# shellcheck disable=SC2034
+OUTBOUND_COMPATIBILITY_LIVE="${BACKEND_DIR}/OUTBOUND_RELEASE_COMPATIBILITY"
 FRONTEND_DIR="${FIXTURE_ROOT}/live/frontend"
 LEGACY_ADMIN_DIR="${FIXTURE_ROOT}/live/legacy-admin"
 # The extracted production function expands these variables at runtime.

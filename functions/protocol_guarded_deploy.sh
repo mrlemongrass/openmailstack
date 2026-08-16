@@ -11,6 +11,10 @@ source "${SCRIPT_DIR}/lib_protocol_guard.sh"
 source "${SCRIPT_DIR}/lib_protocol_pending_runs.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib_webmail_runtime.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib_os.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib_outbound_release_bridge.sh"
 ACTION="${1:-}"
 RESTORE_SOURCE="${2:-}"
 INHERITED_PROTOCOL_GATE_RUN_ID="${OMS_PROTOCOL_GATE_RUN_ID:-}"
@@ -26,6 +30,7 @@ readonly CANONICAL_CANARY_IDENTITY_FILE="${CANARY_IDENTITY_FILE}"
 REQUIRED_FILE="${OMS_PROTOCOL_GATE_REQUIRED_FILE:-/etc/openmailstack/protocol-gate.required}"
 BACKUP_ROOT="${OMS_PROTOCOL_ROLLBACK_ROOT:-/var/backups/openmailstack}"
 BACKEND_DIR="/opt/openmailstack-backend"
+readonly CANONICAL_BACKEND_DIR="${BACKEND_DIR}"
 FRONTEND_DIR="${OPENMAILSTACK_WEB_ROOT:-/var/www/openmailstack}"
 LEGACY_ADMIN_DIR="/var/www/openmailstack-admin"
 LEGACY_ADMIN_SOURCE="${REPO_DIR}/admin_portal_src/public"
@@ -33,6 +38,7 @@ LEGACY_UPGRADE_SCRIPT="/usr/local/bin/openmailstack-upgrade.sh"
 LEGACY_UPGRADE_SUDOERS="/etc/sudoers.d/openmailstack-upgrade"
 NGINX_CONF="/etc/nginx/sites-available/mailserver.conf"
 BACKEND_ENV="/etc/openmailstack/webmail-backend.env"
+readonly CANONICAL_BACKEND_ENV="${BACKEND_ENV}"
 BACKEND_SERVICE="/etc/systemd/system/openmailstack.service"
 REMEDIATE_SCRIPT="/usr/local/sbin/openmailstack-remediate"
 REMEDIATE_SUDOERS="/etc/sudoers.d/openmailstack-remediate"
@@ -51,6 +57,10 @@ ROLLBACK_RUNNING=0
 REQUESTED_SNAPSHOT=""
 RELEASE_VERSION=""
 PENDING_RUN_ACTIVE=0
+OUTBOUND_RELEASE_MODE=""
+LEGACY_UNMARKED_BRIDGE_PREFLIGHT=0
+LEGACY_UNMARKED_ROLLBACK_RECORDED=0
+LEGACY_UNMARKED_ROLLBACK_DIR=""
 
 fail() {
     echo "Error: $1" >&2
@@ -103,7 +113,15 @@ retire_legacy_upgrade_bridge() {
 }
 
 case "${ACTION}" in
-    webmail|dovecot)
+    webmail)
+        TARGET="webmail"
+        OUTBOUND_RELEASE_MODE="active"
+        ;;
+    webmail-bridge)
+        TARGET="webmail"
+        OUTBOUND_RELEASE_MODE="bridge"
+        ;;
+    dovecot)
         TARGET="${ACTION}"
         ;;
     restore-webmail)
@@ -112,9 +130,11 @@ case "${ACTION}" in
             || fail "Usage: $0 restore-webmail /var/backups/openmailstack/protocol-guarded-webmail-<timestamp>"
         ;;
     *)
-        fail "Usage: $0 <webmail|dovecot> | restore-webmail <snapshot>"
+        fail "Usage: $0 <webmail|webmail-bridge|dovecot> | restore-webmail <snapshot>"
         ;;
 esac
+CANONICAL_OUTBOUND_RELEASE_MODE="${OUTBOUND_RELEASE_MODE}"
+readonly CANONICAL_OUTBOUND_RELEASE_MODE
 
 if [[ "${TARGET}" == "webmail" ]]; then
     TARGET_SCRIPT="${SCRIPT_DIR}/10_webmail.sh"
@@ -139,6 +159,9 @@ GATE_SCRIPT="${CANONICAL_GATE_SCRIPT}"
 POST_GATE_SCRIPT="${CANONICAL_GATE_SCRIPT}"
 OMS_PROTOCOL_GATE_RUN_ID="${INHERITED_PROTOCOL_GATE_RUN_ID}"
 export OMS_PROTOCOL_GATE_RUN_ID
+OUTBOUND_RELEASE_MODE="${CANONICAL_OUTBOUND_RELEASE_MODE}"
+BACKEND_DIR="${CANONICAL_BACKEND_DIR}"
+BACKEND_ENV="${CANONICAL_BACKEND_ENV}"
 CANARY_IDENTITY_FILE="${CANONICAL_CANARY_IDENTITY_FILE}"
 OMS_PROTOCOL_GATE_IDENTITY_FILE="${CANARY_IDENTITY_FILE}"
 export OMS_PROTOCOL_GATE_IDENTITY_FILE
@@ -148,11 +171,19 @@ PENDING_RUN_DIR="${CANONICAL_PENDING_RUN_DIR}"
 
 FRONTEND_DIR="${OPENMAILSTACK_WEB_ROOT:-/var/www/openmailstack}"
 DOVECOT_MASTER_SECRET_FILE="${OMS_DOVECOT_MASTER_SECRET_FILE:-/etc/openmailstack/dovecot-master.secret}"
+OUTBOUND_COMPATIBILITY_SOURCE="${REPO_DIR}/webmail-backend/OUTBOUND_RELEASE_COMPATIBILITY"
+OUTBOUND_COMPATIBILITY_LIVE="${BACKEND_DIR}/OUTBOUND_RELEASE_COMPATIBILITY"
 
 BACKUP_ROOT=$(protocol_safe_root_directory "${BACKUP_ROOT}" /var/backups "rollback root") \
     || fail "Unsafe rollback root"
 BACKEND_DIR=$(protocol_safe_directory "${BACKEND_DIR}" /opt "backend deployment root") \
     || fail "Unsafe backend deployment path"
+protocol_secure_directory_metadata "/opt" "allowed parent for backend deployment root" 0 \
+    || fail "Unsafe backend deployment parent"
+[[ "$(dirname -- "${BACKEND_DIR}")" == "/opt" ]] \
+    || fail "Backend deployment path must be a direct child of /opt"
+[[ "${BACKEND_DIR}" == "/opt/openmailstack-backend" ]] \
+    || fail "Backend deployment path must remain /opt/openmailstack-backend"
 FRONTEND_DIR=$(protocol_safe_directory "${FRONTEND_DIR}" /var/www "frontend deployment root") \
     || fail "Unsafe frontend deployment path"
 if [[ "${TARGET}" == "webmail" ]]; then
@@ -165,7 +196,87 @@ DOVECOT_DIR=$(protocol_safe_directory "${DOVECOT_DIR}" /etc "Dovecot configurati
 if [[ "${TARGET}" == "webmail" ]]; then
     RELEASE_VERSION=$(protocol_read_release_version "${REPO_DIR}/VERSION") \
         || fail "Repository VERSION is missing, unsafe, or invalid"
+    [[ -s "${OUTBOUND_COMPATIBILITY_SOURCE}" && ! -L "${OUTBOUND_COMPATIBILITY_SOURCE}" ]] \
+        || fail "Repository outbound rollback compatibility marker is missing or unsafe"
+    openmailstack_outbound_environment_is_trusted "${BACKEND_ENV}" \
+        || fail "Webmail backend environment must be a root-only mode 0600 file beneath trusted ancestors"
 fi
+
+validate_live_outbound_rollback_target() {
+    local expected_mode="${1:-}"
+    local live_mode
+
+    openmailstack_outbound_runtime_is_trusted \
+        "${OUTBOUND_COMPATIBILITY_SOURCE}" "${BACKEND_DIR}" || return 1
+    openmailstack_outbound_environment_is_trusted "${BACKEND_ENV}" || return 1
+    live_mode=$(openmailstack_read_env_value "${BACKEND_ENV}" OMS_OUTBOUND_RELEASE_MODE) \
+        || return 1
+    if [[ -n "${expected_mode}" ]]; then
+        [[ "${live_mode}" == "${expected_mode}" ]]
+        return
+    fi
+    [[ "${live_mode}" == "bridge" || "${live_mode}" == "active" ]]
+}
+
+record_legacy_unmarked_rollback_state() {
+    local snapshot_dir="$1"
+    local snapshot_marker="${snapshot_dir}/backend/OUTBOUND_RELEASE_COMPATIBILITY"
+    local snapshot_environment="${snapshot_dir}/webmail-backend.env"
+
+    LEGACY_UNMARKED_ROLLBACK_RECORDED=0
+    LEGACY_UNMARKED_ROLLBACK_DIR=""
+    [[ "${ACTION}" == "webmail-bridge" \
+        && "${LEGACY_UNMARKED_BRIDGE_PREFLIGHT}" == "1" \
+        && "${snapshot_dir}" == "${ROLLBACK_DIR}" ]] || return 0
+    [[ ! -e "${snapshot_marker}" && ! -L "${snapshot_marker}" \
+        && ! -e "${OUTBOUND_COMPATIBILITY_LIVE}" \
+        && ! -L "${OUTBOUND_COMPATIBILITY_LIVE}" ]] || return 1
+    openmailstack_outbound_environment_is_trusted "${BACKEND_ENV}" || return 1
+    openmailstack_outbound_environment_is_trusted "${snapshot_environment}" || return 1
+    openmailstack_outbound_release_mode_is_absent "${BACKEND_ENV}" || return 1
+    openmailstack_outbound_release_mode_is_absent "${snapshot_environment}" || return 1
+    cmp -s -- "${snapshot_environment}" "${BACKEND_ENV}" || return 1
+    openmailstack_outbound_legacy_runtime_is_trusted \
+        "${snapshot_dir}/backend" || return 1
+    diff -qr --no-dereference --exclude=uploads -- \
+        "${snapshot_dir}/backend" "${BACKEND_DIR}" >/dev/null || return 1
+
+    LEGACY_UNMARKED_ROLLBACK_DIR="${snapshot_dir}"
+    LEGACY_UNMARKED_ROLLBACK_RECORDED=1
+}
+
+validate_recovered_outbound_runtime() {
+    local snapshot_dir="$1"
+    local snapshot_marker="${snapshot_dir}/backend/OUTBOUND_RELEASE_COMPATIBILITY"
+    local snapshot_environment="${snapshot_dir}/webmail-backend.env"
+    local snapshot_mode
+
+    if [[ ! -e "${snapshot_marker}" && ! -L "${snapshot_marker}" ]]; then
+        [[ "${ACTION}" == "webmail-bridge" \
+            && "${LEGACY_UNMARKED_BRIDGE_PREFLIGHT}" == "1" \
+            && "${LEGACY_UNMARKED_ROLLBACK_RECORDED}" == "1" \
+            && "${ROLLBACK_READY}" == "1" \
+            && "${snapshot_dir}" == "${LEGACY_UNMARKED_ROLLBACK_DIR}" \
+            && ! -e "${OUTBOUND_COMPATIBILITY_LIVE}" \
+            && ! -L "${OUTBOUND_COMPATIBILITY_LIVE}" ]] || return 1
+        openmailstack_outbound_environment_is_trusted "${BACKEND_ENV}" || return 1
+        openmailstack_outbound_environment_is_trusted "${snapshot_environment}" || return 1
+        openmailstack_outbound_release_mode_is_absent "${BACKEND_ENV}" || return 1
+        openmailstack_outbound_release_mode_is_absent "${snapshot_environment}" || return 1
+        cmp -s -- "${snapshot_environment}" "${BACKEND_ENV}" || return 1
+        openmailstack_outbound_legacy_runtime_is_trusted "${BACKEND_DIR}" || return 1
+        diff -qr --no-dereference --exclude=uploads -- \
+            "${snapshot_dir}/backend" "${BACKEND_DIR}" >/dev/null || return 1
+        return 0
+    fi
+    openmailstack_outbound_compatibility_marker_is_trusted \
+        "${OUTBOUND_COMPATIBILITY_SOURCE}" "${snapshot_marker}" || return 1
+    openmailstack_outbound_environment_is_trusted "${snapshot_environment}" || return 1
+    snapshot_mode=$(openmailstack_read_env_value \
+        "${snapshot_environment}" OMS_OUTBOUND_RELEASE_MODE) || return 1
+    [[ "${snapshot_mode}" == "bridge" || "${snapshot_mode}" == "active" ]] || return 1
+    validate_live_outbound_rollback_target "${snapshot_mode}"
+}
 
 LOCK_ROOT=$(protocol_prepare_secure_directory "${LOCK_ROOT}" /run "protocol release lock root") \
     || fail "Protocol release lock directory is unsafe"
@@ -179,6 +290,32 @@ chown root:root "${LOCK_FILE}"
 chmod 0600 "${LOCK_FILE}"
 protocol_acquire_lock "${PROTOCOL_LOCK_FD}" \
     || fail "Another guarded deploy or rollback is already running"
+
+if [[ "${ACTION}" == "webmail" ]]; then
+    validate_live_outbound_rollback_target bridge \
+        || fail "Active webmail deployment requires a live rollback-compatible bridge; run functions/protocol_guarded_deploy.sh webmail-bridge first"
+fi
+if [[ "${ACTION}" == "webmail-bridge" ]]; then
+    if [[ -e "${OUTBOUND_COMPATIBILITY_LIVE}" || -L "${OUTBOUND_COMPATIBILITY_LIVE}" ]]; then
+        validate_live_outbound_rollback_target \
+            || fail "Existing outbound compatibility marker does not attest an immutable bridge-capable runtime"
+    else
+        openmailstack_outbound_release_mode_is_absent "${BACKEND_ENV}" \
+            || fail "A markerless runtime that already declares an outbound release mode is not a legacy bridge rollback target"
+        OUTBOUND_BRIDGE_MYSQL_BIN=$(command -v mariadb || command -v mysql || true)
+        [[ -n "${OUTBOUND_BRIDGE_MYSQL_BIN}" ]] \
+            || fail "A MariaDB or MySQL client is required for the outbound bridge preflight"
+        openmailstack_verify_outbound_bridge_transition \
+            "${OUTBOUND_BRIDGE_MYSQL_BIN}" \
+            "${OMS_DB_HOST:-127.0.0.1}" \
+            "${OMS_DB_PORT:-3306}" \
+            "${OMS_DB_USER:-${POSTFIXADMIN_DB_USER:-}}" \
+            "${OMS_DB_PASSWORD:-${POSTFIXADMIN_DB_PASSWORD:-}}" \
+            "${OMS_DB_NAME:-${POSTFIXADMIN_DB_NAME:-}}" \
+            || fail "Rollback-compatible outbound bridge preflight failed"
+        LEGACY_UNMARKED_BRIDGE_PREFLIGHT=1
+    fi
+fi
 
 if [[ ! -e "${PENDING_RUN_PARENT}" && ! -L "${PENDING_RUN_PARENT}" ]]; then
     install -d -o root -g root -m 0755 "${PENDING_RUN_PARENT}" \
@@ -241,6 +378,14 @@ prepare_snapshot() {
         snapshot_file "${BACKEND_SERVICE}" "openmailstack.service" || return 1
         snapshot_file "${REMEDIATE_SCRIPT}" "openmailstack-remediate" || return 1
         snapshot_file "${REMEDIATE_SUDOERS}" "openmailstack-remediate.sudoers" || return 1
+        if [[ "${LEGACY_UNMARKED_BRIDGE_PREFLIGHT}" == "1" ]]; then
+            chown -hR root:root "${ROLLBACK_DIR}/backend" || return 1
+            find "${ROLLBACK_DIR}/backend" -type d \
+                -exec chmod a+rx,u+w,go-w {} + || return 1
+            find "${ROLLBACK_DIR}/backend" -type f \
+                -exec chmod a+rX,u+w,go-w {} + || return 1
+        fi
+        record_legacy_unmarked_rollback_state "${ROLLBACK_DIR}" || return 1
     else
         [[ -d "${DOVECOT_DIR}" ]] || fail "Existing Dovecot configuration is required for guarded upgrade"
         install -d -o root -g root -m 0700 "${ROLLBACK_DIR}/dovecot" || return 1
@@ -268,11 +413,24 @@ restore_webmail_from() {
     chmod --reference="${snapshot_dir}/legacy-admin" "${LEGACY_ADMIN_DIR}" || return 1
     cp -a "${snapshot_dir}/mailserver.conf" "${NGINX_CONF}" || return 1
     cp -a "${snapshot_dir}/webmail-backend.env" "${BACKEND_ENV}" || return 1
+    chown root:root "${BACKEND_ENV}" || return 1
+    chmod 0600 "${BACKEND_ENV}" || return 1
     cp -a "${snapshot_dir}/openmailstack.service" "${BACKEND_SERVICE}" || return 1
     cp -a "${snapshot_dir}/openmailstack-remediate" "${REMEDIATE_SCRIPT}" || return 1
     cp -a "${snapshot_dir}/openmailstack-remediate.sudoers" "${REMEDIATE_SUDOERS}" || return 1
     visudo -cf /etc/sudoers >/dev/null || return 1
-    chown -R openmailstack:openmailstack "${BACKEND_DIR}" || return 1
+    chown -R root:root "${BACKEND_DIR}" || return 1
+    find "${BACKEND_DIR}" -path "${BACKEND_DIR}/uploads" -prune -o \
+        -type d -exec chmod a+rx,u+w,go-w {} + || return 1
+    find "${BACKEND_DIR}" -path "${BACKEND_DIR}/uploads" -prune -o \
+        -type f -exec chmod a+rX,u+w,go-w {} + || return 1
+    install -d -o openmailstack -g openmailstack -m 0750 "${BACKEND_DIR}/uploads" || return 1
+    chown -R openmailstack:openmailstack "${BACKEND_DIR}/uploads" || return 1
+    if [[ -e "${OUTBOUND_COMPATIBILITY_LIVE}" || -L "${OUTBOUND_COMPATIBILITY_LIVE}" ]]; then
+        [[ -f "${OUTBOUND_COMPATIBILITY_LIVE}" && ! -L "${OUTBOUND_COMPATIBILITY_LIVE}" ]] || return 1
+        chown root:root "${OUTBOUND_COMPATIBILITY_LIVE}" || return 1
+        chmod 0444 "${OUTBOUND_COMPATIBILITY_LIVE}" || return 1
+    fi
     chown -R root:root "${FRONTEND_DIR}" || return 1
     retire_legacy_upgrade_bridge || return 1
     systemctl daemon-reload || return 1
@@ -330,6 +488,7 @@ validate_webmail_snapshot() {
     local snapshot_name
     local required_directory
     local required_file
+    local snapshot_mode
 
     [[ "${requested_path}" == /* ]] || fail "Rollback snapshot path must be absolute"
     [[ ! -L "${requested_path}" ]] || fail "Rollback snapshot must not be a symlink"
@@ -360,10 +519,19 @@ validate_webmail_snapshot() {
         [[ -f "${snapshot_real}/${required_file}" && ! -L "${snapshot_real}/${required_file}" ]] \
             || fail "Rollback snapshot is missing ${required_file}"
     done
-    for required_file in backend/package.json backend/src/index.js frontend/index.html legacy-admin/config.php legacy-admin/VERSION legacy-admin/public/api.php legacy-admin/public/js/app.js; do
+    for required_file in backend/package.json backend/src/index.js backend/OUTBOUND_RELEASE_COMPATIBILITY frontend/index.html legacy-admin/config.php legacy-admin/VERSION legacy-admin/public/api.php legacy-admin/public/js/app.js; do
         [[ -s "${snapshot_real}/${required_file}" && ! -L "${snapshot_real}/${required_file}" ]] \
             || fail "Rollback snapshot is missing ${required_file}"
     done
+    openmailstack_outbound_runtime_is_trusted \
+        "${OUTBOUND_COMPATIBILITY_SOURCE}" "${snapshot_real}/backend" \
+        || fail "Rollback snapshot outbound compatibility marker is not supported"
+    openmailstack_outbound_environment_is_trusted "${snapshot_real}/webmail-backend.env" \
+        || fail "Rollback snapshot outbound environment is not root-only or has unsafe ancestry"
+    snapshot_mode=$(openmailstack_read_env_value "${snapshot_real}/webmail-backend.env" OMS_OUTBOUND_RELEASE_MODE) \
+        || fail "Rollback snapshot outbound mode is unreadable"
+    [[ "${snapshot_mode}" == "bridge" || "${snapshot_mode}" == "active" ]] \
+        || fail "Rollback snapshot does not contain a compatible outbound release mode"
 
     printf '%s\n' "${snapshot_real}"
 }
@@ -408,6 +576,7 @@ validate_legacy_admin_against_snapshot() {
 }
 
 validate_deployed_legacy_admin() {
+    validate_live_outbound_rollback_target "${OUTBOUND_RELEASE_MODE}" || return 1
     protocol_version_file_matches "${RELEASE_VERSION}" "${BACKEND_DIR}/VERSION" || return 1
     protocol_version_file_matches "${RELEASE_VERSION}" "${LEGACY_ADMIN_DIR}/VERSION" || return 1
     diff -qr "${LEGACY_ADMIN_SOURCE}" "${LEGACY_ADMIN_DIR}/public" >/dev/null || return 1
@@ -416,12 +585,14 @@ validate_deployed_legacy_admin() {
 
 validate_requested_webmail() {
     validate_webmail_runtime || return 1
+    validate_recovered_outbound_runtime "${REQUESTED_SNAPSHOT}" || return 1
     validate_legacy_admin_against_snapshot "${REQUESTED_SNAPSHOT}" || return 1
     bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile auto || return 1
 }
 
 validate_recovered_webmail() {
     validate_webmail_runtime || return 1
+    validate_recovered_outbound_runtime "${ROLLBACK_DIR}" || return 1
     validate_legacy_admin_against_snapshot "${ROLLBACK_DIR}" || return 1
     echo "Removing and proving zero residue from the attempted suite canary..."
     bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --cleanup-suite-only || return 1
@@ -437,7 +608,13 @@ deploy_target() {
         if [[ "${TARGET}" == "webmail" ]]; then
             deploy_legacy_admin || exit 1
         fi
-        OMS_PROTOCOL_GUARDED_DEPLOY=1 bash "${TARGET_SCRIPT}"
+        if [[ "${TARGET}" == "webmail" ]]; then
+            OMS_PROTOCOL_GUARDED_DEPLOY=1 \
+                OMS_GUARDED_OUTBOUND_RELEASE_MODE="${OUTBOUND_RELEASE_MODE}" \
+                bash "${TARGET_SCRIPT}"
+        else
+            OMS_PROTOCOL_GUARDED_DEPLOY=1 bash "${TARGET_SCRIPT}"
+        fi
     )
 }
 

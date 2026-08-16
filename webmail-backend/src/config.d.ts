@@ -1,3 +1,5 @@
+export type OutboundReleaseMode = 'bridge' | 'active';
+export declare const outboundReleaseMode: OutboundReleaseMode;
 export declare const serverConfig: {
     host: string;
     port: number;

@@ -969,6 +969,18 @@ transaction. The historical passwordless upgrade bridge is retired after the
 lock is acquired and is intentionally not restored during application
 rollback.
 
+Bridge startup also places a strict authorization boundary around destructive
+calendar tombstone repair. If duplicate DAV tombstones exist, bridge mode
+requires a root-supplied, canonical base64url-encoded JSON
+`OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL` manifest. The
+backend validates its exact keys and bounds, takes the existing global repair
+lock and row locks, then compares every approved ID, owner calendar, retained
+ID, binary identifier length and SHA-256, revision, deletion timestamp, and
+live-event absence inside the repair transaction. Any mismatch rolls back
+before the archive or canonical table changes. While this manifest is present,
+the broader live-event/tombstone collision cleanup is proved empty and skipped,
+so only the explicitly approved redundant source IDs can be deleted.
+
 There is not yet a general transactional full-stack upgrade mechanism. Releases
 that change Postfix, Dovecot, MariaDB, mail data, operating-system packages, or
 their configuration require release-specific migration and rollback steps.

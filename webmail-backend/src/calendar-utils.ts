@@ -78,6 +78,25 @@ interface TombstoneRepairRow {
     resource_name: string | Buffer;
     sync_token: number | string;
     deleted_at: Date | string;
+    deleted_at_approval?: string;
+}
+
+interface TombstoneRepairApprovalRow {
+    id: number;
+    uidSha256: string;
+    uidBytes: number;
+    resourceNameSha256: string;
+    resourceNameBytes: number;
+    syncToken: string;
+    deletedAt: string;
+}
+
+interface TombstoneRepairApproval {
+    version: 1;
+    calendarId: number;
+    retainedId: number;
+    eventMatches: 0;
+    rows: TombstoneRepairApprovalRow[];
 }
 
 const tombstoneDuplicateQuery = `SELECT calendar_id, MIN(BINARY resource_name) AS resource_name,
@@ -92,6 +111,115 @@ const tombstoneDuplicateQuery = `SELECT calendar_id, MIN(BINARY resource_name) A
 
 function identifierBytes(value: string | Buffer): Buffer {
     return Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8');
+}
+
+function hasExactObjectKeys(value: Record<string, unknown>, keys: string[]): boolean {
+    const actual = Object.keys(value).sort();
+    const expected = [...keys].sort();
+    return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function parseTombstoneRepairApproval(): TombstoneRepairApproval | null {
+    const raw = process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+    if (raw === undefined || raw === '') return null;
+    if (process.env.OMS_OUTBOUND_RELEASE_MODE !== 'bridge') {
+        throw new Error(
+            'Calendar tombstone repair approval is valid only during guarded bridge mode; '
+            + 'no tombstones were deleted',
+        );
+    }
+    if (raw.length > 8192 || !/^[A-Za-z0-9_-]+$/.test(raw)) {
+        throw new Error('Calendar tombstone repair approval is malformed; no tombstones were deleted');
+    }
+
+    let parsed: unknown;
+    try {
+        const encoded = Buffer.from(raw, 'base64url');
+        const decoded = encoded.toString('utf8');
+        if (encoded.toString('base64url') !== raw
+            || !Buffer.from(decoded, 'utf8').equals(encoded)) {
+            throw new Error('non-canonical approval encoding');
+        }
+        parsed = JSON.parse(decoded);
+    } catch {
+        throw new Error('Calendar tombstone repair approval is malformed; no tombstones were deleted');
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Calendar tombstone repair approval is malformed; no tombstones were deleted');
+    }
+    const approval = parsed as Record<string, unknown>;
+    if (!hasExactObjectKeys(approval, ['version', 'calendarId', 'retainedId', 'eventMatches', 'rows'])
+        || approval.version !== 1
+        || !Number.isSafeInteger(approval.calendarId) || Number(approval.calendarId) < 1
+        || !Number.isSafeInteger(approval.retainedId) || Number(approval.retainedId) < 1
+        || approval.eventMatches !== 0
+        || !Array.isArray(approval.rows)
+        || approval.rows.length < 2
+        || approval.rows.length > MAX_TOMBSTONES_PER_REPAIR_GROUP) {
+        throw new Error('Calendar tombstone repair approval is malformed; no tombstones were deleted');
+    }
+
+    const rowIds = new Set<number>();
+    const rows: TombstoneRepairApprovalRow[] = approval.rows.map(value => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            throw new Error('Calendar tombstone repair approval is malformed; no tombstones were deleted');
+        }
+        const row = value as Record<string, unknown>;
+        if (!hasExactObjectKeys(row, [
+            'id',
+            'uidSha256',
+            'uidBytes',
+            'resourceNameSha256',
+            'resourceNameBytes',
+            'syncToken',
+            'deletedAt',
+        ])
+            || !Number.isSafeInteger(row.id) || Number(row.id) < 1
+            || !Number.isSafeInteger(row.uidBytes) || Number(row.uidBytes) < 1
+            || !Number.isSafeInteger(row.resourceNameBytes) || Number(row.resourceNameBytes) < 1
+            || typeof row.uidSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.uidSha256)
+            || typeof row.resourceNameSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.resourceNameSha256)
+            || typeof row.syncToken !== 'string' || !/^(?:0|[1-9][0-9]*)$/.test(row.syncToken)
+            || typeof row.deletedAt !== 'string'
+            || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.deletedAt)) {
+            throw new Error('Calendar tombstone repair approval is malformed; no tombstones were deleted');
+        }
+        const id = Number(row.id);
+        if (rowIds.has(id)) {
+            throw new Error('Calendar tombstone repair approval is malformed; no tombstones were deleted');
+        }
+        rowIds.add(id);
+        return {
+            id,
+            uidSha256: row.uidSha256,
+            uidBytes: Number(row.uidBytes),
+            resourceNameSha256: row.resourceNameSha256,
+            resourceNameBytes: Number(row.resourceNameBytes),
+            syncToken: row.syncToken,
+            deletedAt: row.deletedAt,
+        };
+    });
+    if (!rowIds.has(Number(approval.retainedId))) {
+        throw new Error('Calendar tombstone repair approval is malformed; no tombstones were deleted');
+    }
+    return {
+        version: 1,
+        calendarId: Number(approval.calendarId),
+        retainedId: Number(approval.retainedId),
+        eventMatches: 0,
+        rows,
+    };
+}
+
+function identifierSha256(value: string | Buffer): string {
+    return crypto.createHash('sha256').update(identifierBytes(value)).digest('hex');
+}
+
+function approvalTimestamp(row: TombstoneRepairRow): string {
+    if (typeof row.deleted_at_approval === 'string') return row.deleted_at_approval;
+    const raw = String(row.deleted_at);
+    const match = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+    return match ? `${match[1]} ${match[2]}` : raw;
 }
 
 function sameIdentifier(left: string | Buffer, right: string | Buffer): boolean {
@@ -138,7 +266,57 @@ function sameTombstoneRepairRow(left: TombstoneRepairRow, right: TombstoneRepair
         && sameTimestamp(left.deleted_at, right.deleted_at);
 }
 
-async function repairExactDuplicateCalendarTombstones(): Promise<void> {
+async function assertTombstoneRepairApproval(
+    connection: PoolConnection,
+    duplicateGroups: TombstoneRepairRow[][],
+    approval: TombstoneRepairApproval,
+): Promise<void> {
+    if (duplicateGroups.length !== 1) {
+        throw new Error('Calendar tombstone repair approval does not match the locked duplicate set; no tombstones were deleted');
+    }
+    const group = duplicateGroups[0];
+    if (group.length !== approval.rows.length
+        || Number(group[0]?.calendar_id) !== approval.calendarId
+        || Number(group[0]?.id) !== approval.retainedId) {
+        throw new Error('Calendar tombstone repair approval does not match the locked duplicate set; no tombstones were deleted');
+    }
+
+    const expectedRows = new Map(approval.rows.map(row => [row.id, row]));
+    for (const row of group) {
+        const expected = expectedRows.get(Number(row.id));
+        const uid = identifierBytes(row.uid);
+        const resourceName = identifierBytes(row.resource_name);
+        if (!expected
+            || Number(row.calendar_id) !== approval.calendarId
+            || uid.length !== expected.uidBytes
+            || identifierSha256(uid) !== expected.uidSha256
+            || resourceName.length !== expected.resourceNameBytes
+            || identifierSha256(resourceName) !== expected.resourceNameSha256
+            || String(row.sync_token) !== expected.syncToken
+            || approvalTimestamp(row) !== expected.deletedAt) {
+            throw new Error('Calendar tombstone repair approval does not match the locked duplicate set; no tombstones were deleted');
+        }
+    }
+
+    const [calendarEvents]: any = await connection.query(
+        `SELECT id, uid, resource_name
+         FROM events
+         WHERE calendar_id = ?
+         FOR UPDATE`,
+        [approval.calendarId],
+    );
+    const matchingEvents = calendarEvents.filter((event: any) => (
+        sameIdentifier(event.resource_name, group[0].resource_name)
+        || sameIdentifier(event.uid, group[0].uid)
+    ));
+    if (matchingEvents.length !== approval.eventMatches) {
+        throw new Error('Calendar tombstone repair approval does not match live event state; no tombstones were deleted');
+    }
+}
+
+async function repairExactDuplicateCalendarTombstones(
+    approval: TombstoneRepairApproval | null,
+): Promise<void> {
     const connection = await pool.getConnection();
     let acquired = false;
     let transactionStarted = false;
@@ -153,8 +331,26 @@ async function repairExactDuplicateCalendarTombstones(): Promise<void> {
         }
         acquired = true;
 
+        // The approval boundary must freeze both existing rows and insertion
+        // gaps even when an operator has changed the server/session default
+        // to READ COMMITTED. SET TRANSACTION affects only this next
+        // transaction and avoids changing pooled-session behavior.
+        if (approval) {
+            await connection.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+        }
         await connection.beginTransaction();
         transactionStarted = true;
+        if (approval) {
+            // Freeze every existing row and the primary-key supremum gap. This
+            // one-time bridge migration must not authorize an insert, update,
+            // or delete that arrived after the approval snapshot.
+            await connection.query(
+                `SELECT id
+                 FROM calendar_tombstones FORCE INDEX (PRIMARY)
+                 ORDER BY id ASC
+                 FOR UPDATE`,
+            );
+        }
         const [currentDuplicateGroups]: any = await connection.query(
             `${tombstoneDuplicateQuery} LIMIT ${MAX_TOMBSTONE_REPAIR_GROUPS + 1}`,
         );
@@ -163,7 +359,8 @@ async function repairExactDuplicateCalendarTombstones(): Promise<void> {
         const duplicateGroups: TombstoneRepairRow[][] = [];
         for (const duplicate of currentDuplicateGroups as TombstoneDuplicateGroup[]) {
             const [candidateRows]: any = await connection.query(
-                `SELECT id, calendar_id, uid, resource_name, CAST(sync_token AS CHAR) AS sync_token, deleted_at
+                `SELECT id, calendar_id, uid, resource_name, CAST(sync_token AS CHAR) AS sync_token, deleted_at,
+                        DATE_FORMAT(deleted_at, '%Y-%m-%d %H:%i:%s') AS deleted_at_approval
                  FROM calendar_tombstones
                  WHERE calendar_id = ? AND BINARY resource_name = BINARY ?
                  ORDER BY deleted_at DESC, id DESC
@@ -191,7 +388,8 @@ async function repairExactDuplicateCalendarTombstones(): Promise<void> {
             }
             const placeholders = candidateIds.map(() => '?').join(',');
             const [lockedRows]: any = await connection.query(
-                `SELECT id, calendar_id, uid, resource_name, CAST(sync_token AS CHAR) AS sync_token, deleted_at
+                `SELECT id, calendar_id, uid, resource_name, CAST(sync_token AS CHAR) AS sync_token, deleted_at,
+                        DATE_FORMAT(deleted_at, '%Y-%m-%d %H:%i:%s') AS deleted_at_approval
                  FROM calendar_tombstones FORCE INDEX (PRIMARY)
                  WHERE id IN (${placeholders})
                  ORDER BY deleted_at DESC, id DESC
@@ -217,6 +415,10 @@ async function repairExactDuplicateCalendarTombstones(): Promise<void> {
                 distinct_sync_token_count: new Set(lockedGroup.map(row => String(row.sync_token))).size,
             }]);
             duplicateGroups.push(lockedGroup);
+        }
+
+        if (approval) {
+            await assertTombstoneRepairApproval(connection, duplicateGroups, approval);
         }
 
         const archivedRows: Array<{ source: TombstoneRepairRow; retainedId: number }> = [];
@@ -334,6 +536,7 @@ async function repairExactDuplicateCalendarTombstones(): Promise<void> {
 
 export async function ensureCalendarSchema(): Promise<void> {
     if (!schemaPromise) {
+        const tombstoneRepairApproval = parseTombstoneRepairApproval();
         schemaPromise = (async () => {
             const [slugColumn]: any = await pool.query("SHOW COLUMNS FROM calendars LIKE 'dav_slug'");
             if (slugColumn.length === 0) {
@@ -599,6 +802,19 @@ export async function ensureCalendarSchema(): Promise<void> {
                 && hasFullUniqueTombstoneResourceName;
 
             if (!hasSteadyTombstoneResourceInvariant) {
+                if (tombstoneRepairApproval) {
+                    const [missingResourceNames]: any = await pool.query(
+                        `SELECT id FROM calendar_tombstones
+                         WHERE resource_name IS NULL OR resource_name = ''
+                         LIMIT 1`
+                    );
+                    if (missingResourceNames.length > 0) {
+                        throw new Error(
+                            'Calendar tombstone repair approval does not permit resource-name backfill; '
+                            + 'no tombstones were deleted',
+                        );
+                    }
+                }
                 await pool.query(
                     `UPDATE calendar_tombstones SET resource_name = uid
                      WHERE resource_name IS NULL OR resource_name = ''`
@@ -623,8 +839,19 @@ export async function ensureCalendarSchema(): Promise<void> {
                     `${tombstoneDuplicateQuery} LIMIT ${MAX_TOMBSTONE_REPAIR_GROUPS + 1}`
                 );
                 if (duplicateTombstoneResourceNames.length > 0) {
+                    if (process.env.OMS_OUTBOUND_RELEASE_MODE === 'bridge' && !tombstoneRepairApproval) {
+                        throw new Error(
+                            'Calendar tombstone repair approval is required during a guarded bridge startup; '
+                            + 'no tombstones were deleted',
+                        );
+                    }
                     assertRepairableTombstoneGroups(duplicateTombstoneResourceNames);
-                    await repairExactDuplicateCalendarTombstones();
+                    await repairExactDuplicateCalendarTombstones(tombstoneRepairApproval);
+                } else if (tombstoneRepairApproval) {
+                    throw new Error(
+                        'Calendar tombstone repair approval does not match the duplicate set; '
+                        + 'no tombstones were deleted',
+                    );
                 }
                 const [remainingDuplicateTombstoneResourceNames]: any = await pool.query(
                     `${tombstoneDuplicateQuery} LIMIT 1`
@@ -677,13 +904,34 @@ export async function ensureCalendarSchema(): Promise<void> {
             }
 
             // A live row supersedes every historical delete marker for its UID.
-            await pool.query(
-                `DELETE calendar_tombstones FROM calendar_tombstones
-                 INNER JOIN events
-                   ON events.calendar_id = calendar_tombstones.calendar_id
-                  AND BINARY COALESCE(NULLIF(events.resource_name, ''), events.uid)
-                      = BINARY COALESCE(NULLIF(calendar_tombstones.resource_name, ''), calendar_tombstones.uid)`
-            );
+            // An approval-pinned repair is intentionally narrower: prove this
+            // cleanup would be a no-op, then skip it so the startup can delete
+            // only the explicitly approved redundant source rows.
+            if (tombstoneRepairApproval) {
+                const [liveEventCollisions]: any = await pool.query(
+                    `SELECT calendar_tombstones.id
+                     FROM calendar_tombstones
+                     INNER JOIN events
+                       ON events.calendar_id = calendar_tombstones.calendar_id
+                      AND BINARY COALESCE(NULLIF(events.resource_name, ''), events.uid)
+                          = BINARY COALESCE(NULLIF(calendar_tombstones.resource_name, ''), calendar_tombstones.uid)
+                     LIMIT 1`
+                );
+                if (liveEventCollisions.length > 0) {
+                    throw new Error(
+                        'Calendar tombstone repair approval does not permit live-event collision cleanup; '
+                        + 'no additional tombstones were deleted',
+                    );
+                }
+            } else {
+                await pool.query(
+                    `DELETE calendar_tombstones FROM calendar_tombstones
+                     INNER JOIN events
+                       ON events.calendar_id = calendar_tombstones.calendar_id
+                      AND BINARY COALESCE(NULLIF(events.resource_name, ''), events.uid)
+                          = BINARY COALESCE(NULLIF(calendar_tombstones.resource_name, ''), calendar_tombstones.uid)`
+                );
+            }
 
             // Tombstones track the DAV href that disappeared. A historical
             // unique logical-UID key incorrectly prevents deleting a resource

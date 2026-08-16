@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 
 process.env.OMS_DB_PASSWORD ||= 'calendar-tombstone-repair-test';
 
@@ -10,7 +11,50 @@ function binaryKey(value) {
 }
 
 function cloneRows(rows) {
-  return rows.map(row => ({ ...row }));
+    return rows.map(row => ({ ...row }));
+}
+
+function approvalTimestamp(value) {
+  const match = String(value).match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  return match ? `${match[1]} ${match[2]}` : String(value);
+}
+
+function repairApproval(rows, retainedId) {
+  return {
+    version: 1,
+    calendarId: Number(rows[0].calendar_id),
+    retainedId,
+    eventMatches: 0,
+    rows: rows.map(row => {
+      const uid = Buffer.from(String(row.uid), 'utf8');
+      const resourceName = Buffer.from(String(row.resource_name), 'utf8');
+      return {
+        id: Number(row.id),
+        uidSha256: crypto.createHash('sha256').update(uid).digest('hex'),
+        uidBytes: uid.length,
+        resourceNameSha256: crypto.createHash('sha256').update(resourceName).digest('hex'),
+        resourceNameBytes: resourceName.length,
+        syncToken: String(row.sync_token),
+        deletedAt: approvalTimestamp(row.deleted_at),
+      };
+    }),
+  };
+}
+
+function installRepairApproval(t, approval, releaseMode = 'bridge') {
+  const originalApproval = process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+  const originalReleaseMode = process.env.OMS_OUTBOUND_RELEASE_MODE;
+  process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL = Buffer.from(
+    JSON.stringify(approval),
+    'utf8',
+  ).toString('base64url');
+  process.env.OMS_OUTBOUND_RELEASE_MODE = releaseMode;
+  t.after(() => {
+    if (originalApproval === undefined) delete process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+    else process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL = originalApproval;
+    if (originalReleaseMode === undefined) delete process.env.OMS_OUTBOUND_RELEASE_MODE;
+    else process.env.OMS_OUTBOUND_RELEASE_MODE = originalReleaseMode;
+  });
 }
 
 function installCalendarSchemaDatabase(t, {
@@ -126,6 +170,16 @@ function installCalendarSchemaDatabase(t, {
       }
       return [{ affectedRows: 0 }, []];
     }
+    if (compact === "SELECT id FROM calendar_tombstones WHERE resource_name IS NULL OR resource_name = '' LIMIT 1") {
+      return [storedTombstones.filter(row => row.resource_name === null || row.resource_name === '').slice(0, 1), []];
+    }
+    if (compact.startsWith('SELECT calendar_tombstones.id FROM calendar_tombstones INNER JOIN events')) {
+      const collisions = storedTombstones.filter(tombstone => storedEvents.some(event => (
+        Number(event.calendar_id) === Number(tombstone.calendar_id)
+        && binaryKey(event.resource_name || event.uid) === binaryKey(tombstone.resource_name || tombstone.uid)
+      )));
+      return [collisions.slice(0, 1), []];
+    }
     if (compact.includes('FROM calendar_tombstones')
       && compact.includes('GROUP BY calendar_id, BINARY resource_name')
       && compact.includes('HAVING')) {
@@ -169,19 +223,37 @@ function installCalendarSchemaDatabase(t, {
         lockReleases += 1;
         return [[{ released: 1 }], []];
       }
+      if (compact === 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE') {
+        return [{ affectedRows: 0 }, []];
+      }
       if (compact.includes('FROM calendar_tombstones FORCE INDEX (PRIMARY)')
         && compact.endsWith('FOR UPDATE')) {
         const ids = new Set(params.map(Number));
-        const rows = sortedTombstones().filter(row => ids.has(Number(row.id)));
+        const rows = sortedTombstones().filter(row => ids.has(Number(row.id))).map(row => ({
+          ...row,
+          deleted_at_approval: approvalTimestamp(row.deleted_at),
+        }));
         if (mutateLockedRows && rows.length > 0) rows[0].sync_token = Number(rows[0].sync_token) + 1;
         return [rows, []];
       }
-      if (compact.startsWith('SELECT id, calendar_id, uid, resource_name, CAST(sync_token AS CHAR) AS sync_token, deleted_at FROM calendar_tombstones')
+      if (compact.startsWith('SELECT id, calendar_id, uid, resource_name, CAST(sync_token AS CHAR) AS sync_token, deleted_at')
+        && compact.includes('FROM calendar_tombstones')
+        && !compact.includes('FORCE INDEX (PRIMARY)')
         && !compact.includes('FOR UPDATE')) {
         const [calendarId, resourceName] = params;
         return [sortedTombstones().filter(row => (
           Number(row.calendar_id) === Number(calendarId)
           && binaryKey(row.resource_name) === binaryKey(resourceName)
+        )).map(row => ({
+          ...row,
+          deleted_at_approval: approvalTimestamp(row.deleted_at),
+        })), []];
+      }
+      if (compact.startsWith('SELECT id, uid, resource_name FROM events WHERE calendar_id = ?')
+        && compact.endsWith('FOR UPDATE')) {
+        const [calendarId] = params;
+        return [storedEvents.filter(event => (
+          Number(event.calendar_id) === Number(calendarId)
         )), []];
       }
       if (compact.startsWith('INSERT INTO calendar_tombstone_repair_archive')) {
@@ -384,6 +456,192 @@ test('startup archives an exact tombstone duplicate group and retains the newest
   ));
   assert.ok(backfillIndex >= 0 && backfillIndex < archiveTableIndex);
   assert.ok(archiveTableIndex < repairScanIndex && repairScanIndex < uniqueIndex);
+});
+
+test('guarded bridge repair deletes only the exact approval-pinned redundant row', async (t) => {
+  const rows = [
+    { id: 22, calendar_id: 1, uid: 'approved-exact-identity', resource_name: 'approved-exact-identity', sync_token: 1, deleted_at: '2026-07-20 14:18:06' },
+    { id: 23, calendar_id: 1, uid: 'approved-exact-identity', resource_name: 'approved-exact-identity', sync_token: 1, deleted_at: '2026-07-21 07:41:01' },
+  ];
+  installRepairApproval(t, repairApproval(rows, 23));
+  const state = installCalendarSchemaDatabase(t, { tombstones: rows });
+
+  await freshCalendarUtils().ensureCalendarSchema();
+
+  assert.deepEqual(state.tombstones().map(row => row.id), [23]);
+  assert.deepEqual(state.archive.map(row => Number(row.source_tombstone_id)).sort((a, b) => a - b), [22, 23]);
+  assert.ok(state.archive.every(row => Number(row.retained_tombstone_id) === 23));
+  assert.equal(
+    state.statements.some(sql => sql.startsWith('DELETE calendar_tombstones FROM calendar_tombstones')),
+    false,
+    'approval-pinned startup must not run the broader collision cleanup',
+  );
+  assert.ok(state.statements.some(sql => sql.startsWith(
+    'SELECT calendar_tombstones.id FROM calendar_tombstones INNER JOIN events',
+  )));
+  const fullLock = state.statements.findIndex(sql => (
+    sql === 'SELECT id FROM calendar_tombstones FORCE INDEX (PRIMARY) ORDER BY id ASC FOR UPDATE'
+  ));
+  const isolation = state.statements.findIndex(sql => (
+    sql === 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE'
+  ));
+  const lockedDiscovery = state.statements.findIndex((sql, index) => (
+    index > fullLock
+      && sql.includes('GROUP BY calendar_id, BINARY resource_name')
+      && sql.includes('LIMIT 101')
+  ));
+  const firstArchive = state.statements.findIndex(sql => sql.startsWith(
+    'INSERT INTO calendar_tombstone_repair_archive',
+  ));
+  assert.ok(
+    isolation >= 0
+      && isolation < fullLock
+      && fullLock < lockedDiscovery
+      && lockedDiscovery < firstArchive,
+    'approval-pinned repair must establish serializable isolation before locking the approved set',
+  );
+
+  const archiveAfterRepair = cloneRows(state.archive);
+  await freshCalendarUtils().ensureCalendarSchema();
+  assert.deepEqual(state.tombstones().map(row => row.id), [23]);
+  assert.deepEqual(state.archive, archiveAfterRepair);
+  assert.equal(state.lockAcquisitions(), 1, 'a steady post-repair restart must not reacquire the repair lock');
+});
+
+test('guarded bridge without an approval manifest fails before archive or deletion', async (t) => {
+  const originalReleaseMode = process.env.OMS_OUTBOUND_RELEASE_MODE;
+  const originalApproval = process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+  process.env.OMS_OUTBOUND_RELEASE_MODE = 'bridge';
+  delete process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+  t.after(() => {
+    if (originalReleaseMode === undefined) delete process.env.OMS_OUTBOUND_RELEASE_MODE;
+    else process.env.OMS_OUTBOUND_RELEASE_MODE = originalReleaseMode;
+    if (originalApproval === undefined) delete process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+    else process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL = originalApproval;
+  });
+  const rows = [
+    { id: 22, calendar_id: 1, uid: 'approval-required', resource_name: 'approval-required', sync_token: 1, deleted_at: '2026-07-20 14:18:06' },
+    { id: 23, calendar_id: 1, uid: 'approval-required', resource_name: 'approval-required', sync_token: 1, deleted_at: '2026-07-21 07:41:01' },
+  ];
+  const state = installCalendarSchemaDatabase(t, { tombstones: rows });
+
+  await assert.rejects(
+    freshCalendarUtils().ensureCalendarSchema(),
+    /approval is required during a guarded bridge startup/i,
+  );
+
+  assert.deepEqual(state.tombstones(), rows);
+  assert.deepEqual(state.archive, []);
+  assert.equal(state.lockAcquisitions(), 0);
+  assert.equal(state.statements.some(sql => sql.startsWith('DELETE FROM calendar_tombstones WHERE id IN')), false);
+});
+
+test('malformed approval fails before the first schema query', async (t) => {
+  const originalApproval = process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+  const originalReleaseMode = process.env.OMS_OUTBOUND_RELEASE_MODE;
+  process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL = Buffer.from(
+    '{"version":1,"unexpected":true}',
+    'utf8',
+  ).toString('base64url');
+  process.env.OMS_OUTBOUND_RELEASE_MODE = 'bridge';
+  t.after(() => {
+    if (originalApproval === undefined) delete process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+    else process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL = originalApproval;
+    if (originalReleaseMode === undefined) delete process.env.OMS_OUTBOUND_RELEASE_MODE;
+    else process.env.OMS_OUTBOUND_RELEASE_MODE = originalReleaseMode;
+  });
+  const state = installCalendarSchemaDatabase(t, { tombstones: [] });
+
+  await assert.rejects(
+    freshCalendarUtils().ensureCalendarSchema(),
+    /approval is malformed/i,
+  );
+
+  assert.deepEqual(state.statements, []);
+  assert.deepEqual(state.archive, []);
+});
+
+test('approval outside guarded bridge mode fails before the first schema query', async (t) => {
+  const rows = [
+    { id: 22, calendar_id: 1, uid: 'bridge-only', resource_name: 'bridge-only', sync_token: 1, deleted_at: '2026-07-20 14:18:06' },
+    { id: 23, calendar_id: 1, uid: 'bridge-only', resource_name: 'bridge-only', sync_token: 1, deleted_at: '2026-07-21 07:41:01' },
+  ];
+  installRepairApproval(t, repairApproval(rows, 23), 'active');
+  const state = installCalendarSchemaDatabase(t, { tombstones: rows });
+
+  await assert.rejects(
+    freshCalendarUtils().ensureCalendarSchema(),
+    /valid only during guarded bridge mode/i,
+  );
+
+  assert.deepEqual(state.statements, []);
+  assert.deepEqual(state.archive, []);
+});
+
+test('approval mismatch inside the lock rolls back before archive or deletion', async (t) => {
+  const approvedRows = [
+    { id: 22, calendar_id: 1, uid: 'field-pinned', resource_name: 'field-pinned', sync_token: 1, deleted_at: '2026-07-20 14:18:06' },
+    { id: 23, calendar_id: 1, uid: 'field-pinned', resource_name: 'field-pinned', sync_token: 1, deleted_at: '2026-07-21 07:41:01' },
+  ];
+  installRepairApproval(t, repairApproval(approvedRows, 23));
+  const changedRows = cloneRows(approvedRows);
+  changedRows[0].deleted_at = '2026-07-20 14:18:07';
+  const state = installCalendarSchemaDatabase(t, { tombstones: changedRows });
+
+  await assert.rejects(
+    freshCalendarUtils().ensureCalendarSchema(),
+    /approval does not match the locked duplicate set/i,
+  );
+
+  assert.deepEqual(state.tombstones(), changedRows);
+  assert.deepEqual(state.archive, []);
+  assert.equal(state.lockAcquisitions(), 1);
+  assert.equal(state.lockReleases(), 1);
+  assert.equal(state.statements.some(sql => sql.startsWith('DELETE FROM calendar_tombstones WHERE id IN')), false);
+});
+
+test('approval rejects an additional duplicate group before any archive or deletion', async (t) => {
+  const approvedRows = [
+    { id: 22, calendar_id: 1, uid: 'only-approved-group', resource_name: 'only-approved-group', sync_token: 1, deleted_at: '2026-07-20 14:18:06' },
+    { id: 23, calendar_id: 1, uid: 'only-approved-group', resource_name: 'only-approved-group', sync_token: 1, deleted_at: '2026-07-21 07:41:01' },
+  ];
+  installRepairApproval(t, repairApproval(approvedRows, 23));
+  const rows = [
+    ...approvedRows,
+    { id: 31, calendar_id: 2, uid: 'unapproved-group', resource_name: 'unapproved-group', sync_token: 2, deleted_at: '2026-07-20 14:18:06' },
+    { id: 32, calendar_id: 2, uid: 'unapproved-group', resource_name: 'unapproved-group', sync_token: 2, deleted_at: '2026-07-21 07:41:01' },
+  ];
+  const state = installCalendarSchemaDatabase(t, { tombstones: rows });
+
+  await assert.rejects(
+    freshCalendarUtils().ensureCalendarSchema(),
+    /approval does not match the locked duplicate set/i,
+  );
+
+  assert.deepEqual(state.tombstones(), rows);
+  assert.deepEqual(state.archive, []);
+  assert.equal(state.statements.some(sql => sql.startsWith('DELETE FROM calendar_tombstones WHERE id IN')), false);
+});
+
+test('approval rejects a matching live event before archive or deletion', async (t) => {
+  const rows = [
+    { id: 22, calendar_id: 1, uid: 'live-conflict', resource_name: 'live-conflict', sync_token: 1, deleted_at: '2026-07-20 14:18:06' },
+    { id: 23, calendar_id: 1, uid: 'live-conflict', resource_name: 'live-conflict', sync_token: 1, deleted_at: '2026-07-21 07:41:01' },
+  ];
+  installRepairApproval(t, repairApproval(rows, 23));
+  const state = installCalendarSchemaDatabase(t, {
+    tombstones: rows,
+    events: [{ id: 90, calendar_id: 1, uid: 'live-conflict', resource_name: 'live-conflict' }],
+  });
+
+  await assert.rejects(
+    freshCalendarUtils().ensureCalendarSchema(),
+    /approval does not match live event state/i,
+  );
+
+  assert.deepEqual(state.tombstones(), rows);
+  assert.deepEqual(state.archive, []);
+  assert.equal(state.statements.some(sql => sql.startsWith('DELETE FROM calendar_tombstones WHERE id IN')), false);
 });
 
 test('a mid-repair failure rolls back both the archive and redundant tombstone deletion', async (t) => {

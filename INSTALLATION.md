@@ -95,6 +95,8 @@ Each guarded command below updates the modern web application and the legacy Adm
 
 Every release is a two-step bridge-first deployment. The first command installs a temporary outbound quarantine. From the time the bridge service starts until the active service starts, outbound sends are paused: new web and scheduled submissions receive a retryable `503`, ActiveSync SendMail fails closed with `MailSubmissionFailed`, the sender worker does not claim mail, and scheduled cancellation/removal is disabled. Existing send status, list, and detail reads remain available. Run the active command immediately after the bridge command succeeds; it refuses to run unless the live runtime is exactly the attested bridge. Sends can resume when the active service starts while its post-deploy checks are still running.
 
+If a release-specific startup must remove duplicate calendar tombstones, first create and independently verify a complete backup, then follow that release's exact approval-manifest instructions. During bridge mode, duplicate tombstones are never repaired without `OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL`. The root-supplied value is canonical base64url-encoded JSON that pins every permitted source ID, calendar, retained ID, binary identifier length and SHA-256, sync token, deletion timestamp, and the absence of a matching live event. It is rechecked after the source rows are locked and before archival or deletion. A missing, malformed, stale, or broader manifest blocks startup without deleting a tombstone; do not construct one from unreviewed live data merely to make deployment pass.
+
 ```bash
 set -euo pipefail
 test "$(id -u)" -eq 0

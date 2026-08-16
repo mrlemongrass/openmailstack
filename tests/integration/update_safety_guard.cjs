@@ -237,6 +237,24 @@ test('guarded deployment uses an explicit rollback-compatible outbound bridge', 
   assert.match(webmailDeploy, /INHERITED_GUARDED_OUTBOUND_RELEASE_MODE=/);
   assert.match(webmailDeploy, /INHERITED_PROTOCOL_GUARDED_DEPLOY=/);
   assert.match(webmailDeploy, /OMS_GUARDED_OUTBOUND_RELEASE_MODE/);
+  assert.match(webmailDeploy, /INHERITED_GUARDED_CALENDAR_TOMBSTONE_REPAIR_APPROVAL/);
+  assert.match(webmailDeploy, /INHERITED_CALENDAR_TOMBSTONE_REPAIR_APPROVAL=/);
+  assert.ok(
+    webmailDeploy.indexOf('INHERITED_CALENDAR_TOMBSTONE_REPAIR_APPROVAL=')
+      < webmailDeploy.indexOf('source "${REPO_DIR}/config.conf"'),
+    'direct-install approval must be captured before persistent config is sourced',
+  );
+  assert.match(
+    webmailDeploy,
+    /CALENDAR_TOMBSTONE_REPAIR_APPROVAL="\$\{INHERITED_CALENDAR_TOMBSTONE_REPAIR_APPROVAL\}"/,
+  );
+  assert.match(webmailDeploy, /write_env_line "OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL"/);
+  const tombstoneApprovalConfig = webmailDeploy.slice(
+    webmailDeploy.indexOf('CALENDAR_TOMBSTONE_REPAIR_APPROVAL="${INHERITED_GUARDED_CALENDAR_TOMBSTONE_REPAIR_APPROVAL}"'),
+    webmailDeploy.indexOf('NOTES_COLLABORATION_ENABLED='),
+  );
+  assert.doesNotMatch(tombstoneApprovalConfig, /existing_env_value/,
+    'one-time destructive approval must never be inherited from a prior runtime');
   assert.match(webmailDeploy, /OMS_OUTBOUND_RELEASE_MODE must be bridge or active/);
   assert.match(webmailDeploy, /write_env_line "OMS_OUTBOUND_RELEASE_MODE"/);
   assert.match(webmailDeploy, /chown root:root "\$\{ENV_FILE\}"/);
@@ -260,6 +278,11 @@ test('guarded deployment uses an explicit rollback-compatible outbound bridge', 
   assert.match(guardedDeploy, /source "\$\{SCRIPT_DIR\}\/lib_outbound_release_bridge\.sh"/);
   assert.match(guardedDeploy, /CANONICAL_OUTBOUND_RELEASE_MODE/);
   assert.match(guardedDeploy, /OMS_GUARDED_OUTBOUND_RELEASE_MODE="\$\{OUTBOUND_RELEASE_MODE\}"/);
+  assert.match(guardedDeploy, /INHERITED_CALENDAR_TOMBSTONE_REPAIR_APPROVAL/);
+  assert.match(
+    guardedDeploy,
+    /OMS_GUARDED_CALENDAR_TOMBSTONE_REPAIR_APPROVAL="\$\{OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL:-\}"/,
+  );
   assert.match(guardedDeploy, /validate_live_outbound_rollback_target/);
   assert.match(guardedDeploy, /validate_recovered_outbound_runtime/);
   assert.match(guardedDeploy, /record_legacy_unmarked_rollback_state/);

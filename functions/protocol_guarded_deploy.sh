@@ -88,6 +88,7 @@ validate_guarded_gate_configuration() {
         OMS_PROTOCOL_GATE_FIXTURE_MODE \
         OMS_PROTOCOL_GATE_SMOKE_SCRIPT \
         OMS_PROTOCOL_GATE_MAIL_SMOKE_SCRIPT \
+        OMS_PROTOCOL_GATE_PING_SMOKE_SCRIPT \
         OMS_PROTOCOL_GATE_CONTACTS_SMOKE_SCRIPT \
         OMS_PROTOCOL_GATE_CALENDAR_SMOKE_SCRIPT \
         OMS_PROTOCOL_GATE_MYSQL_BIN \
@@ -103,6 +104,8 @@ validate_guarded_gate_configuration() {
         OMS_PROTOCOL_GATE_CLEANUP_DEADLINE_MS \
         OMS_PROTOCOL_GATE_CLEANUP_POLL_MS \
         OMS_SMOKE_CLEANUP_ONLY \
+        OMS_SMOKE_PING_LONG_MODE \
+        OMS_SMOKE_PING_FIXTURE_SECOND_MS \
         OMS_SMOKE_NETWORK_TIMEOUT_MS; do
         [[ -z "${!fixture_variable:-}" ]] \
             || fail "${fixture_variable} is fixture-only and cannot alter a guarded deployment"
@@ -628,10 +631,10 @@ validate_deployed_target() {
         validate_webmail_runtime || return 1
         validate_deployed_legacy_admin || return 1
         echo "Running post-deploy public IMAPS and ActiveSync suite gate..."
-        bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile suite || return 1
+        bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile suite --require-ping || return 1
     else
         echo "Running post-deploy public IMAPS and ActiveSync mail gate..."
-        bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile auto || return 1
+        bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile auto --require-ping || return 1
     fi
 }
 

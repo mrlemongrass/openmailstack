@@ -1373,6 +1373,22 @@ export async function addressBookSyncToken(user: string): Promise<string> {
     return `${row.contact_count || 0}-${row.max_sync_token || 1}-${row.max_updated_at || 1}`;
 }
 
+export async function getContactCollectionRevisionOnConnection(
+    connection: Pick<PoolConnection, 'query'>,
+    user: string,
+): Promise<string> {
+    const [rows]: any = await connection.query(
+        `SELECT GREATEST(
+            COALESCE((SELECT MAX(sync_token) FROM contacts WHERE username = ?), 1),
+            COALESCE((SELECT MAX(sync_token) FROM contact_tombstones WHERE username = ?), 1)
+        ) AS collection_revision`,
+        [user, user],
+    );
+    const revision = String(rows[0]?.collection_revision ?? '');
+    if (!/^\d+$/.test(revision)) throw new Error('Contact collection revision is malformed');
+    return revision;
+}
+
 export function contactVCard(contact: ContactRow): string {
     const davUid = getContactDavUid(contact);
     const fallback = {

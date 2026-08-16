@@ -70,6 +70,7 @@ test('ActiveSync OPTIONS advertises only commands with reachable implementations
     'Sync',
     'FolderSync',
     'ItemOperations',
+    'Ping',
     'SendMail',
   ]);
   assert.deepEqual(ACTIVE_SYNC_UNSUPPORTED_COMMANDS, [
@@ -78,7 +79,6 @@ test('ActiveSync OPTIONS advertises only commands with reachable implementations
     'FolderUpdate',
     'GetItemEstimate',
     'MoveItems',
-    'Ping',
     'Provision',
     'Settings',
     'SmartForward',
@@ -91,7 +91,9 @@ test('ActiveSync OPTIONS advertises only commands with reachable implementations
 
 test('ActiveSync route wires bounded parsing, post-auth logs, explicit unsupported responses, and ItemOperations budgets', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
-  const routeBodyLimit = source.indexOf("app.use('/Microsoft-Server-ActiveSync', bodyParser.raw({");
+  const routeBodyParser = source.indexOf("app.use('/Microsoft-Server-ActiveSync', (req, res, next) => {");
+  const defaultParser = source.indexOf('const activeSyncRawParser = bodyParser.raw({');
+  const pingParser = source.indexOf('const activeSyncPingRawParser = bodyParser.raw({');
   const globalBodyParser = source.indexOf('app.use(express.json(');
   const routeStart = source.indexOf("app.all(['/Microsoft-Server-ActiveSync']");
   const authenticate = source.indexOf('await authenticationImap.connect()', routeStart);
@@ -99,10 +101,14 @@ test('ActiveSync route wires bounded parsing, post-auth logs, explicit unsupport
   const unsupportedGuard = source.indexOf('ACTIVE_SYNC_UNSUPPORTED_COMMANDS as readonly string[]', routeStart);
   const legacyFolderCreate = source.indexOf("if (cmd === 'FolderCreate')", routeStart);
 
-  assert.ok(routeBodyLimit >= 0 && routeBodyLimit < globalBodyParser);
-  assert.match(source.slice(routeBodyLimit, globalBodyParser), /limit: `\$\{ACTIVE_SYNC_MAX_REQUEST_BYTES\}b`/);
+  assert.ok(defaultParser >= 0 && defaultParser < pingParser);
+  assert.ok(pingParser < routeBodyParser && routeBodyParser < globalBodyParser);
+  assert.match(source.slice(defaultParser, pingParser), /limit: `\$\{ACTIVE_SYNC_MAX_REQUEST_BYTES\}b`/);
+  assert.match(source.slice(pingParser, routeBodyParser), /limit: `\$\{ACTIVE_SYNC_PING_MAX_REQUEST_BYTES\}b`/);
+  assert.match(source.slice(routeBodyParser, globalBodyParser),
+    /String\(req\.query\.Cmd \|\| ''\) === 'Ping'[\s\S]*activeSyncPingRawParser[\s\S]*activeSyncRawParser/);
   assert.ok(authenticate >= 0 && authenticate < structuralLog);
-  assert.match(source.slice(routeStart), /if \(requestParseFailed\)[\s\S]*cmd === 'SendMail' \? sendComposeStatus\('102'\) : res\.status\(400\)\.send\(\)/);
+  assert.match(source.slice(routeStart), /if \(requestParseFailed\)[\s\S]*cmd === 'Ping'[\s\S]*sendPingProtocolStatus\('102'\)[\s\S]*cmd === 'SendMail' \? sendComposeStatus\('102'\) : res\.status\(400\)\.send\(\)/);
   assert.match(source.slice(routeStart), /MS-ASProtocolCommands', ACTIVE_SYNC_ADVERTISED_COMMANDS\.join\(','\)/);
   assert.ok(unsupportedGuard >= 0 && unsupportedGuard < legacyFolderCreate);
   assert.match(source.slice(unsupportedGuard, legacyFolderCreate), /return res\.status\(501\)\.send\(\)/);

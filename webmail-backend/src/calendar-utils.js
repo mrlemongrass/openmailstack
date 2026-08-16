@@ -42,6 +42,8 @@ exports.createCalendar = createCalendar;
 exports.ensureDefaultCalendar = ensureDefaultCalendar;
 exports.getCalendarByToken = getCalendarByToken;
 exports.getVisibleCalendars = getVisibleCalendars;
+exports.getVisibleCalendarIdsOnConnection = getVisibleCalendarIdsOnConnection;
+exports.getVisibleCalendarRevisionsOnConnection = getVisibleCalendarRevisionsOnConnection;
 exports.getCalendarHref = getCalendarHref;
 const db_1 = require("./db");
 const calendar_format_1 = require("./calendar-format");
@@ -949,6 +951,20 @@ async function getCalendarByToken(user, token) {
          LIMIT 1`, [user, user, user, user, (0, calendar_format_1.slugifyCalendarName)(decodedToken), decodedToken, user]);
     return rows.length > 0 ? rows[0] : null;
 }
+function filterVisibleCalendarRows(rows) {
+    let keptPersonal = false;
+    return rows.filter((cal) => {
+        if (cal.name !== 'Personal')
+            return true;
+        if ((cal.event_count || 0) > 0)
+            return true;
+        if (!keptPersonal) {
+            keptPersonal = true;
+            return true;
+        }
+        return false;
+    });
+}
 async function getVisibleCalendars(user) {
     await ensureCalendarSchema();
     await ensureDefaultCalendar(user);
@@ -960,22 +976,58 @@ async function getVisibleCalendars(user) {
          WHERE c.user_id = ? OR cs.shared_with_user_id = ?
          GROUP BY c.id
          ORDER BY c.id ASC`, [user, user, user, user]);
-    let keptPersonal = false;
-    const visible = rows.filter((cal) => {
-        if (cal.name !== 'Personal')
-            return true;
-        if ((cal.event_count || 0) > 0)
-            return true;
-        if (!keptPersonal) {
-            keptPersonal = true;
-            return true;
-        }
-        return false;
-    });
+    const visible = filterVisibleCalendarRows(rows);
     for (const cal of visible) {
         await ensureCalendarSlug(cal);
     }
     return visible;
+}
+/**
+ * Read-only FolderSync calendar inventory for long-lived protocol requests.
+ * Schema/default/slug repairs belong to startup and FolderSync, never Ping.
+ */
+async function getVisibleCalendarIdsOnConnection(connection, user) {
+    const [rows] = await connection.query(`SELECT c.id, c.name,
+                EXISTS (SELECT 1 FROM events e WHERE e.calendar_id = c.id) AS event_count
+         FROM calendars c
+         WHERE c.user_id = ?
+            OR EXISTS (
+                SELECT 1 FROM calendar_shares cs
+                WHERE cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+            )
+         ORDER BY c.id ASC`, [user, user]);
+    const ids = filterVisibleCalendarRows(rows).map(calendar => Number(calendar.id));
+    if (ids.some(id => !Number.isSafeInteger(id) || id < 1)
+        || new Set(ids).size !== ids.length) {
+        throw new Error('Calendar inventory returned malformed rows');
+    }
+    return ids;
+}
+async function getVisibleCalendarRevisionsOnConnection(connection, user, calendarIds) {
+    if (!Array.isArray(calendarIds) || calendarIds.length > 64
+        || calendarIds.some(id => !Number.isSafeInteger(id) || id < 1)
+        || new Set(calendarIds).size !== calendarIds.length) {
+        throw new Error('Calendar revision probe contains invalid ids');
+    }
+    if (calendarIds.length === 0)
+        return [];
+    const placeholders = calendarIds.map(() => '?').join(', ');
+    const [rows] = await connection.query(`SELECT c.id, CAST(c.sync_token AS CHAR) AS sync_token
+         FROM calendars c
+         LEFT JOIN calendar_shares cs ON cs.calendar_id = c.id AND cs.shared_with_user_id = ?
+         WHERE c.id IN (${placeholders})
+           AND (c.user_id = ? OR cs.shared_with_user_id = ?)
+         ORDER BY c.id ASC`, [user, ...calendarIds, user, user]);
+    const revisions = rows.map((row) => ({
+        id: Number(row.id),
+        syncToken: String(row.sync_token),
+    }));
+    if (revisions.some((revision) => !Number.isSafeInteger(revision.id) || revision.id < 1
+        || !/^\d+$/.test(revision.syncToken))
+        || new Set(revisions.map((revision) => revision.id)).size !== revisions.length) {
+        throw new Error('Calendar revision probe returned malformed rows');
+    }
+    return revisions;
 }
 function getCalendarHref(user, calendar) {
     return `/caldav/calendars/${encodeURIComponent(user)}/${calendar.id}/`;

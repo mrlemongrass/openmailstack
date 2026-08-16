@@ -19,6 +19,7 @@ exports.ACTIVE_SYNC_ADVERTISED_COMMANDS = [
     'Sync',
     'FolderSync',
     'ItemOperations',
+    'Ping',
     'SendMail',
 ];
 exports.ACTIVE_SYNC_UNSUPPORTED_COMMANDS = [
@@ -27,7 +28,6 @@ exports.ACTIVE_SYNC_UNSUPPORTED_COMMANDS = [
     'FolderUpdate',
     'GetItemEstimate',
     'MoveItems',
-    'Ping',
     'Provision',
     'Settings',
     'SmartForward',

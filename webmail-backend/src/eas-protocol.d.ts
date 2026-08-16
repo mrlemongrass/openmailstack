@@ -1,7 +1,7 @@
 import type { WbxmlNode } from './wbxml/parser';
 export declare const ACTIVE_SYNC_MAX_REQUEST_BYTES: number;
-export declare const ACTIVE_SYNC_ADVERTISED_COMMANDS: readonly ["Sync", "FolderSync", "ItemOperations", "SendMail"];
-export declare const ACTIVE_SYNC_UNSUPPORTED_COMMANDS: readonly ["FolderCreate", "FolderDelete", "FolderUpdate", "GetItemEstimate", "MoveItems", "Ping", "Provision", "Settings", "SmartForward", "SmartReply"];
+export declare const ACTIVE_SYNC_ADVERTISED_COMMANDS: readonly ["Sync", "FolderSync", "ItemOperations", "Ping", "SendMail"];
+export declare const ACTIVE_SYNC_UNSUPPORTED_COMMANDS: readonly ["FolderCreate", "FolderDelete", "FolderUpdate", "GetItemEstimate", "MoveItems", "Provision", "Settings", "SmartForward", "SmartReply"];
 export interface ActiveSyncLogSummary {
     method: string;
     command: string;

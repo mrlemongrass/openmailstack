@@ -126,6 +126,43 @@ if [[ "${OMS_PROTOCOL_GATE_FAKE_CLEANUP_CHANGES:-none}" == "once" \
     cleanup_changes=1
 fi
 
+if [[ -n "${OMS_PROTOCOL_GATE_FAKE_PING_STATE:-}" && -f "${OMS_PROTOCOL_GATE_FAKE_PING_STATE}" ]]; then
+    ping_targets_complete=1
+    for expected_hex in \
+        "${OMS_PROTOCOL_GATE_FAKE_PING_CONTACT_UID_HEX:-missing}" \
+        "${OMS_PROTOCOL_GATE_FAKE_PING_CONTACT_EMAIL_HEX:-missing}" \
+        "${OMS_PROTOCOL_GATE_FAKE_PING_CALENDAR_SLUG_HEX:-missing}" \
+        "${OMS_PROTOCOL_GATE_FAKE_PING_CALENDAR_NAME_HEX:-missing}"; do
+        grep -Fq "0x${expected_hex}" <<< "${sql}" || ping_targets_complete=0
+    done
+    for exact_join in \
+        'JOIN oms_protocol_contact_targets AS targets' \
+        'JOIN oms_protocol_birthday_targets AS targets' \
+        'JOIN oms_protocol_calendar_targets AS targets'; do
+        grep -Fq "${exact_join}" <<< "${sql}" || ping_targets_complete=0
+    done
+    ping_conflict_guards_complete=1
+    for conflict_guard in \
+        '@oms_ping_contact_identity_rows=1' \
+        '@oms_ping_contact_exact_rows=1' \
+        '@oms_ping_calendar_identity_rows=1' \
+        '@oms_ping_calendar_exact_rows=1'; do
+        grep -Fq "${conflict_guard}" <<< "${sql}" || ping_conflict_guards_complete=0
+    done
+    ping_identity_collision=0
+    grep -q '^collision_' "${OMS_PROTOCOL_GATE_FAKE_PING_STATE}" \
+        && ping_identity_collision=1
+    if grep -q '^exact_' "${OMS_PROTOCOL_GATE_FAKE_PING_STATE}" \
+        && [[ "${ping_targets_complete}" == "1" ]] \
+        && ! [[ "${ping_identity_collision}" == "1" \
+            && "${ping_conflict_guards_complete}" == "1" ]]; then
+        ping_state_next="${OMS_PROTOCOL_GATE_FAKE_PING_STATE}.next"
+        grep -v '^exact_' "${OMS_PROTOCOL_GATE_FAKE_PING_STATE}" > "${ping_state_next}" || true
+        mv "${ping_state_next}" "${OMS_PROTOCOL_GATE_FAKE_PING_STATE}"
+        cleanup_changes=$((cleanup_changes + 9))
+    fi
+fi
+
 emit_residue() {
     printf 'OMS_PROTOCOL_GATE_RESIDUE'
     if [[ "${residue_output_format}" == 'columns' ]]; then
@@ -135,6 +172,23 @@ emit_residue() {
     fi
     printf '\n'
 }
+
+if [[ -n "${OMS_PROTOCOL_GATE_FAKE_PING_STATE:-}" && -f "${OMS_PROTOCOL_GATE_FAKE_PING_STATE}" ]]; then
+    state_count() { grep -Fc "$1" "${OMS_PROTOCOL_GATE_FAKE_PING_STATE}" || true; }
+    emit_residue \
+        "$(( $(state_count exact_active) + $(state_count collision_contact) ))" \
+        "$(state_count exact_deleted)" \
+        "$(state_count exact_tombstone)" \
+        "$(state_count exact_birthday_event)" \
+        "$(state_count exact_birthday_tombstone)" \
+        0 \
+        "$(state_count exact_calendar_event)" \
+        "$(state_count exact_calendar_tombstone)" \
+        "$(state_count exact_calendar_share)" \
+        "$(( $(state_count exact_calendar) + $(state_count collision_calendar) ))" \
+        0 0 0 "${cleanup_changes}"
+    exit 0
+fi
 
 case "${OMS_PROTOCOL_GATE_FAKE_RESIDUE:-none}" in
     active) emit_residue 1 0 0 0 0 0 0 0 0 0 0 0 0 "${cleanup_changes}" ;;
@@ -173,6 +227,7 @@ fi
 echo "PASS: protocol release gate fails closed when credentials are missing"
 
 "${PROJECT_ROOT}/tests/integration/activesync_mail_smoke_test.sh"
+node "${PROJECT_ROOT}/tests/integration/activesync_ping_smoke_test.cjs"
 "${PROJECT_ROOT}/tests/integration/activesync_contacts_smoke_test.sh"
 bash "${PROJECT_ROOT}/tests/integration/protocol_pending_runs_test.sh"
 bash "${PROJECT_ROOT}/tests/integration/provision_protocol_canary_test.sh"
@@ -185,6 +240,7 @@ fi
 CREDENTIAL_PATH="${TEST_ROOT}/protocol-smoke.env"
 IDENTITY_PATH="${TEST_ROOT}/protocol-canary.identity"
 SMOKE_PATH="${TEST_ROOT}/smoke.sh"
+PING_SMOKE_PATH="${TEST_ROOT}/ping-smoke.sh"
 CONTACTS_SMOKE_PATH="${TEST_ROOT}/contacts-smoke.sh"
 CALENDAR_SMOKE_PATH="${TEST_ROOT}/calendar-smoke.sh"
 CANARY_ATTESTATION='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
@@ -225,6 +281,22 @@ printf '%s\n' 'mail' >> "${OMS_PROTOCOL_GATE_ORDER_LOG}"
 echo 'PASS: fake dual-protocol smoke completed'
 EOF
 chmod 0755 "${SMOKE_PATH}"
+
+cat > "${PING_SMOKE_PATH}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'PING_DEVICE=%s\n' "${OMS_SMOKE_DEVICE_ID}"
+printf 'PING_LONG=%s\n' "${OMS_SMOKE_PING_LONG_MODE}"
+printf 'PING_CONTACT_UID=%s\n' "${OMS_SMOKE_PING_CONTACT_UID}"
+printf 'PING_CONTACT_EMAIL=%s\n' "${OMS_SMOKE_PING_CONTACT_EMAIL}"
+printf 'PING_CALENDAR_SLUG=%s\n' "${OMS_SMOKE_PING_CALENDAR_SLUG}"
+printf 'PING_CALENDAR_NAME=%s\n' "${OMS_SMOKE_PING_CALENDAR_NAME}"
+printf 'PING_CALENDAR_EVENT_UID=%s\n' "${OMS_SMOKE_PING_CALENDAR_EVENT_UID}"
+printf 'PING_CALENDAR_SUBJECT=%s\n' "${OMS_SMOKE_PING_CALENDAR_SUBJECT}"
+printf '%s\n' 'ping' >> "${OMS_PROTOCOL_GATE_ORDER_LOG}"
+echo 'PASS: fake ActiveSync Ping smoke completed'
+EOF
+chmod 0755 "${PING_SMOKE_PATH}"
 
 cat > "${CONTACTS_SMOKE_PATH}" <<'EOF'
 #!/usr/bin/env bash
@@ -407,6 +479,177 @@ fi
 
 echo "PASS: protocol release gate configures the public authenticated client seams"
 
+: > "${CLEANUP_LOG}"
+: > "${ORDER_LOG}"
+OMS_PROTOCOL_GATE_CREDENTIAL_FILE="${CREDENTIAL_PATH}" \
+OMS_PROTOCOL_GATE_PROFILE="suite" \
+OMS_PROTOCOL_GATE_MAIL_SMOKE_SCRIPT="${SMOKE_PATH}" \
+OMS_PROTOCOL_GATE_PING_SMOKE_SCRIPT="${PING_SMOKE_PATH}" \
+OMS_PROTOCOL_GATE_CONTACTS_SMOKE_SCRIPT="${CONTACTS_SMOKE_PATH}" \
+OMS_PROTOCOL_GATE_CALENDAR_SMOKE_SCRIPT="${CALENDAR_SMOKE_PATH}" \
+OMS_PROTOCOL_GATE_MYSQL_BIN="${MYSQL_PATH}" \
+    bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --profile suite --require-ping --ping-long \
+    >"${OUTPUT_PATH}" 2>&1
+grep -Eq '^PING_DEVICE=OMSPG[0-9a-f]{24}$' "${OUTPUT_PATH}"
+grep -Fq 'PING_LONG=1' "${OUTPUT_PATH}"
+ping_contact_uid=$(sed -n 's/^PING_CONTACT_UID=//p' "${OUTPUT_PATH}")
+ping_contact_email=$(sed -n 's/^PING_CONTACT_EMAIL=//p' "${OUTPUT_PATH}")
+ping_calendar_slug=$(sed -n 's/^PING_CALENDAR_SLUG=//p' "${OUTPUT_PATH}")
+ping_calendar_name=$(sed -n 's/^PING_CALENDAR_NAME=//p' "${OUTPUT_PATH}")
+ping_calendar_event_uid=$(sed -n 's/^PING_CALENDAR_EVENT_UID=//p' "${OUTPUT_PATH}")
+ping_calendar_subject=$(sed -n 's/^PING_CALENDAR_SUBJECT=//p' "${OUTPUT_PATH}")
+ping_suffix=${ping_contact_uid#oms-ping-contact-}
+[[ "${ping_suffix}" =~ ^[0-9a-f]{24}$ ]]
+[[ "${ping_contact_email}" == "oms-ping-${ping_suffix}@example.invalid" ]]
+[[ "${ping_calendar_slug}" == "oms-ping-${ping_suffix}" ]]
+[[ "${ping_calendar_name}" == "OMS Ping Calendar ${ping_suffix}" ]]
+[[ "${ping_calendar_event_uid}" == "oms-ping-event-${ping_suffix}" ]]
+[[ "${ping_calendar_subject}" == "OMS Ping Event ${ping_suffix}" ]]
+for ping_identity in "${ping_contact_uid}" "${ping_contact_email}" \
+    "${ping_calendar_slug}" "${ping_calendar_name}"; do
+    ping_identity_hex=$(printf '%s' "${ping_identity}" | LC_ALL=C od -An -v -tx1 | tr -d '[:space:]')
+    grep -Fq "0x${ping_identity_hex}" "${CLEANUP_LOG}"
+done
+grep -Fq 'BINARY email=BINARY' "${CLEANUP_LOG}"
+grep -Fq 'AND BINARY dav_uid=BINARY' "${CLEANUP_LOG}"
+grep -Fq '@oms_ping_contact_identity_rows=1' "${CLEANUP_LOG}"
+grep -Fq '@oms_ping_contact_exact_rows=1' "${CLEANUP_LOG}"
+grep -Fq '@oms_ping_calendar_identity_rows=1' "${CLEANUP_LOG}"
+grep -Fq '@oms_ping_calendar_exact_rows=1' "${CLEANUP_LOG}"
+grep -Fq 'AND calendars.subscribed_url IS NULL' "${CLEANUP_LOG}"
+grep -Fq 'BINARY calendar_rows.name=BINARY' "${CLEANUP_LOG}"
+grep -Fq 'BINARY calendar_rows.dav_slug=BINARY' "${CLEANUP_LOG}"
+grep -Fq 'OR BINARY contacts.email=BINARY' "${CLEANUP_LOG}"
+grep -Fq 'OR BINARY contacts.dav_uid=BINARY' "${CLEANUP_LOG}"
+grep -Fq 'PASS: fake ActiveSync Ping smoke completed' "${OUTPUT_PATH}"
+grep -Fq 'public IMAPS and ActiveSync mail, Ping, contacts, and calendar' "${OUTPUT_PATH}"
+collapsed_order=$(awk 'NR == 1 || $0 != previous { print } { previous = $0 }' "${ORDER_LOG}" | paste -sd ' ')
+[[ "${collapsed_order}" == 'cleanup setup mail ping contacts calendar cleanup' ]] \
+    || { echo "FAIL: required Ping did not run inside exact canary setup/cleanup" >&2; exit 1; }
+
+if OMS_PROTOCOL_GATE_CREDENTIAL_FILE="${CREDENTIAL_PATH}" \
+    OMS_PROTOCOL_GATE_MAIL_SMOKE_SCRIPT="${SMOKE_PATH}" \
+    OMS_PROTOCOL_GATE_PING_SMOKE_SCRIPT="${PING_SMOKE_PATH}" \
+    OMS_PROTOCOL_GATE_MYSQL_BIN="${MYSQL_PATH}" \
+    bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --ping-long >"${OUTPUT_PATH}" 2>&1; then
+    echo "FAIL: protocol release gate accepted long Ping mode without requiring Ping" >&2
+    exit 1
+fi
+grep -Fq -- '--ping-long requires --require-ping' "${OUTPUT_PATH}"
+
+echo "PASS: required Ping shares the unique canary identity and long mode is explicit"
+
+INTERRUPTED_PING_PATH="${TEST_ROOT}/interrupted-ping-smoke.sh"
+PING_STATE_PATH="${TEST_ROOT}/ping-residue.state"
+cat > "${INTERRUPTED_PING_PATH}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' \
+    exact_active exact_deleted exact_tombstone \
+    exact_birthday_event exact_birthday_tombstone \
+    exact_calendar exact_calendar_event exact_calendar_tombstone exact_calendar_share \
+    >> "${OMS_PROTOCOL_GATE_FAKE_PING_STATE}"
+printf '%s\n' 'ping' >> "${OMS_PROTOCOL_GATE_ORDER_LOG}"
+kill -TERM "$$"
+sleep 1
+EOF
+chmod 0755 "${INTERRUPTED_PING_PATH}"
+printf '%s\n' \
+    near_active near_deleted near_tombstone \
+    near_birthday_event near_birthday_tombstone \
+    near_calendar near_calendar_event near_calendar_tombstone near_calendar_share \
+    > "${PING_STATE_PATH}"
+INTERRUPTED_RUN_ID='dddddddddddddddddddddddd'
+INTERRUPTED_DEVICE_ID="OMSPG${INTERRUPTED_RUN_ID}"
+interrupted_digest=$(
+    {
+        printf '%s\0' 'openmailstack-protocol-mail-canary'
+        LC_ALL=C printf '%s' "o'ms-canary@example.test"
+        printf '\0%s' "${INTERRUPTED_DEVICE_ID}"
+    } | openssl dgst -sha256 -binary | LC_ALL=C od -An -v -tx1 | tr -d '[:space:]'
+)
+interrupted_suffix=${interrupted_digest:0:24}
+interrupted_contact_uid="oms-ping-contact-${interrupted_suffix}"
+interrupted_contact_email="oms-ping-${interrupted_suffix}@example.invalid"
+interrupted_calendar_slug="oms-ping-${interrupted_suffix}"
+interrupted_calendar_name="OMS Ping Calendar ${interrupted_suffix}"
+hex_identity() { printf '%s' "$1" | LC_ALL=C od -An -v -tx1 | tr -d '[:space:]'; }
+: > "${CLEANUP_LOG}"
+: > "${ORDER_LOG}"
+if OMS_PROTOCOL_GATE_RUN_ID="${INTERRUPTED_RUN_ID}" \
+    OMS_PROTOCOL_GATE_CREDENTIAL_FILE="${CREDENTIAL_PATH}" \
+    OMS_PROTOCOL_GATE_PROFILE="suite" \
+    OMS_PROTOCOL_GATE_MAIL_SMOKE_SCRIPT="${SMOKE_PATH}" \
+    OMS_PROTOCOL_GATE_PING_SMOKE_SCRIPT="${INTERRUPTED_PING_PATH}" \
+    OMS_PROTOCOL_GATE_CONTACTS_SMOKE_SCRIPT="${CONTACTS_SMOKE_PATH}" \
+    OMS_PROTOCOL_GATE_CALENDAR_SMOKE_SCRIPT="${CALENDAR_SMOKE_PATH}" \
+    OMS_PROTOCOL_GATE_MYSQL_BIN="${MYSQL_PATH}" \
+    OMS_PROTOCOL_GATE_FAKE_PING_STATE="${PING_STATE_PATH}" \
+    OMS_PROTOCOL_GATE_FAKE_PING_CONTACT_UID_HEX="$(hex_identity "${interrupted_contact_uid}")" \
+    OMS_PROTOCOL_GATE_FAKE_PING_CONTACT_EMAIL_HEX="$(hex_identity "${interrupted_contact_email}")" \
+    OMS_PROTOCOL_GATE_FAKE_PING_CALENDAR_SLUG_HEX="$(hex_identity "${interrupted_calendar_slug}")" \
+    OMS_PROTOCOL_GATE_FAKE_PING_CALENDAR_NAME_HEX="$(hex_identity "${interrupted_calendar_name}")" \
+    bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --profile suite --require-ping >"${OUTPUT_PATH}" 2>&1; then
+    echo "FAIL: protocol release gate accepted an interrupted Ping smoke" >&2
+    exit 1
+fi
+grep -Fq 'Authenticated public protocol smoke failed with exit 143' "${OUTPUT_PATH}"
+if grep -q '^exact_' "${PING_STATE_PATH}"; then
+    echo "FAIL: interrupted Ping smoke left exact contact/calendar residue" >&2
+    exit 1
+fi
+expected_nearby=$'near_active\nnear_deleted\nnear_tombstone\nnear_birthday_event\nnear_birthday_tombstone\nnear_calendar\nnear_calendar_event\nnear_calendar_tombstone\nnear_calendar_share'
+[[ "$(cat "${PING_STATE_PATH}")" == "${expected_nearby}" ]] \
+    || { echo "FAIL: interrupted Ping cleanup modified nearby identities" >&2; exit 1; }
+collapsed_order=$(awk 'NR == 1 || $0 != previous { print } { previous = $0 }' "${ORDER_LOG}" | paste -sd ' ')
+[[ "${collapsed_order}" == 'cleanup setup mail ping cleanup' ]] \
+    || { echo "FAIL: interrupted Ping did not reach outer EXIT cleanup" >&2; exit 1; }
+
+echo "PASS: outer Ping cleanup removes exact active/deleted/tombstone/birthday/calendar residue and preserves nearby identities after interruption"
+
+COLLIDING_PING_PATH="${TEST_ROOT}/colliding-ping-smoke.sh"
+COLLIDING_PING_STATE_PATH="${TEST_ROOT}/colliding-ping-residue.state"
+cat > "${COLLIDING_PING_PATH}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' \
+    exact_active exact_deleted exact_tombstone \
+    exact_birthday_event exact_birthday_tombstone \
+    exact_calendar exact_calendar_event exact_calendar_tombstone exact_calendar_share \
+    collision_contact collision_calendar collision_calendar_subscribed \
+    >> "${OMS_PROTOCOL_GATE_FAKE_PING_STATE}"
+printf '%s\n' 'ping' >> "${OMS_PROTOCOL_GATE_ORDER_LOG}"
+kill -TERM "$$"
+sleep 1
+EOF
+chmod 0755 "${COLLIDING_PING_PATH}"
+: > "${COLLIDING_PING_STATE_PATH}"
+: > "${CLEANUP_LOG}"
+: > "${ORDER_LOG}"
+if OMS_PROTOCOL_GATE_RUN_ID="${INTERRUPTED_RUN_ID}" \
+    OMS_PROTOCOL_GATE_CREDENTIAL_FILE="${CREDENTIAL_PATH}" \
+    OMS_PROTOCOL_GATE_PROFILE="suite" \
+    OMS_PROTOCOL_GATE_MAIL_SMOKE_SCRIPT="${SMOKE_PATH}" \
+    OMS_PROTOCOL_GATE_PING_SMOKE_SCRIPT="${COLLIDING_PING_PATH}" \
+    OMS_PROTOCOL_GATE_CONTACTS_SMOKE_SCRIPT="${CONTACTS_SMOKE_PATH}" \
+    OMS_PROTOCOL_GATE_CALENDAR_SMOKE_SCRIPT="${CALENDAR_SMOKE_PATH}" \
+    OMS_PROTOCOL_GATE_MYSQL_BIN="${MYSQL_PATH}" \
+    OMS_PROTOCOL_GATE_FAKE_PING_STATE="${COLLIDING_PING_STATE_PATH}" \
+    OMS_PROTOCOL_GATE_FAKE_PING_CONTACT_UID_HEX="$(hex_identity "${interrupted_contact_uid}")" \
+    OMS_PROTOCOL_GATE_FAKE_PING_CONTACT_EMAIL_HEX="$(hex_identity "${interrupted_contact_email}")" \
+    OMS_PROTOCOL_GATE_FAKE_PING_CALENDAR_SLUG_HEX="$(hex_identity "${interrupted_calendar_slug}")" \
+    OMS_PROTOCOL_GATE_FAKE_PING_CALENDAR_NAME_HEX="$(hex_identity "${interrupted_calendar_name}")" \
+    bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --profile suite --require-ping >"${OUTPUT_PATH}" 2>&1; then
+    echo "FAIL: protocol release gate accepted colliding Ping cleanup identities" >&2
+    exit 1
+fi
+grep -Fq 'Synthetic protocol canary cleanup left residue' "${OUTPUT_PATH}"
+expected_collision_state=$'exact_active\nexact_deleted\nexact_tombstone\nexact_birthday_event\nexact_birthday_tombstone\nexact_calendar\nexact_calendar_event\nexact_calendar_tombstone\nexact_calendar_share\ncollision_contact\ncollision_calendar\ncollision_calendar_subscribed'
+[[ "$(cat "${COLLIDING_PING_STATE_PATH}")" == "${expected_collision_state}" ]] \
+    || { echo "FAIL: colliding Ping identity cleanup mutated exact or conflicting rows" >&2; exit 1; }
+
+echo "PASS: Ping cleanup refuses all mutation when exact and conflicting identities coexist"
+
 PRODUCTION_SENTINEL="${TEST_ROOT}/protocol-gate.required"
 install -m 0600 /dev/null "${PRODUCTION_SENTINEL}"
 if OMS_PROTOCOL_GATE_REQUIRED_FILE="${PRODUCTION_SENTINEL}" \
@@ -414,6 +657,7 @@ if OMS_PROTOCOL_GATE_REQUIRED_FILE="${PRODUCTION_SENTINEL}" \
     OMS_PROTOCOL_GATE_CREDENTIAL_FILE="${CREDENTIAL_PATH}" \
     OMS_PROTOCOL_GATE_PROFILE="suite" \
     OMS_PROTOCOL_GATE_MAIL_SMOKE_SCRIPT="${SMOKE_PATH}" \
+    OMS_PROTOCOL_GATE_PING_SMOKE_SCRIPT="${PING_SMOKE_PATH}" \
     OMS_PROTOCOL_GATE_CONTACTS_SMOKE_SCRIPT="${CONTACTS_SMOKE_PATH}" \
     OMS_PROTOCOL_GATE_CALENDAR_SMOKE_SCRIPT="${CALENDAR_SMOKE_PATH}" \
     OMS_PROTOCOL_GATE_MYSQL_BIN="${MYSQL_PATH}" \
@@ -438,6 +682,9 @@ grep -Fq 'OMS_PROTOCOL_GATE_FIXTURE_MODE' \
 grep -Fq 'OMS_SMOKE_POSTQUEUE_BIN' \
     "${PROJECT_ROOT}/functions/protocol_guarded_deploy.sh" \
     || { echo "FAIL: guarded deploy does not reject inherited mail cleanup helpers" >&2; exit 1; }
+grep -Fq 'bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile suite --require-ping' \
+    "${PROJECT_ROOT}/functions/protocol_guarded_deploy.sh" \
+    || { echo "FAIL: guarded webmail deployment does not require the Ping canary post-deploy" >&2; exit 1; }
 grep -Fq 'OMS_SMOKE_MAIL_CLEANUP_QUIET_MS' "${GATE_SCRIPT}" \
     || { echo "FAIL: protocol gate does not classify mail quiet-window overrides as fixture-only" >&2; exit 1; }
 calendar_created_line=$(grep -n '^calendar_created=true$' \

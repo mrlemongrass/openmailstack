@@ -45,6 +45,7 @@ export declare class ImapService {
     constructor(user: string, pass: string, useMasterCredentials?: boolean);
     connect(): Promise<void>;
     logout(): Promise<void>;
+    close(): void;
     getFolders(): Promise<any[]>;
     getMessageIdentities(folderPath: string): Promise<any[]>;
     getSearchFolderSnapshot(): Promise<{
@@ -73,6 +74,10 @@ export declare class ImapService {
             uid: number;
             flags: string[];
         }[];
+        highestModseq: string;
+    }>;
+    getActiveSyncMailboxCursor(folderPath: string): Promise<{
+        uidValidity: string;
         highestModseq: string;
     }>;
     getActiveSyncMailSnapshot(folderPath: string, cutoff: Date | null, sinceModseq: string, knownUids: number[], forceFullSnapshot?: boolean): Promise<ActiveSyncMailSnapshot>;

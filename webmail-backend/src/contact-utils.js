@@ -44,6 +44,7 @@ exports.softDeleteContactsByIds = softDeleteContactsByIds;
 exports.restoreContactById = restoreContactById;
 exports.purgeExpiredContacts = purgeExpiredContacts;
 exports.addressBookSyncToken = addressBookSyncToken;
+exports.getContactCollectionRevisionOnConnection = getContactCollectionRevisionOnConnection;
 exports.contactVCard = contactVCard;
 const crypto_1 = require("crypto");
 const db_1 = require("./db");
@@ -1118,6 +1119,16 @@ async function addressBookSyncToken(user) {
             ) AS max_updated_at`, [user, user, user, user, user]);
     const row = rows[0] || {};
     return `${row.contact_count || 0}-${row.max_sync_token || 1}-${row.max_updated_at || 1}`;
+}
+async function getContactCollectionRevisionOnConnection(connection, user) {
+    const [rows] = await connection.query(`SELECT GREATEST(
+            COALESCE((SELECT MAX(sync_token) FROM contacts WHERE username = ?), 1),
+            COALESCE((SELECT MAX(sync_token) FROM contact_tombstones WHERE username = ?), 1)
+        ) AS collection_revision`, [user, user]);
+    const revision = String(rows[0]?.collection_revision ?? '');
+    if (!/^\d+$/.test(revision))
+        throw new Error('Contact collection revision is malformed');
+    return revision;
 }
 function contactVCard(contact) {
     const davUid = getContactDavUid(contact);

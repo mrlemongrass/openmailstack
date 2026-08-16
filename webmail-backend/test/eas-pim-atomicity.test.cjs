@@ -292,8 +292,14 @@ test('PIM route transaction callbacks use only connection-scoped helpers and def
   const mailStart = source.indexOf('const classifiedCollection = classifyActiveSyncCollection', calendarStart);
   const contacts = source.slice(contactsStart, calendarStart);
   const calendar = source.slice(calendarStart, mailStart);
+  const pingSnapshots = source.slice(
+    source.indexOf('async function loadActiveSyncPingSnapshots'),
+    source.indexOf('function isContactsCollection'),
+  );
 
   assert.equal((source.match(/withPimSqlTransaction\(creds\.user/g) || []).length, 2);
+  assert.equal((source.match(/loadPimSyncStateOnConnection\(/g) || []).length, 3);
+  assert.match(pingSnapshots, /loadPimSyncStateOnConnection\(connection/);
   assert.doesNotMatch(contacts, /await pool\.query|\blistContacts\(|\bsaveContactFromVCard\(|\bdeleteContactByDavUid\(/);
   assert.doesNotMatch(contacts, /listContactsOnConnection\(connection/);
   assert.match(contacts, /loadBoundedContactPimSnapshot\(connection/);
@@ -323,7 +329,6 @@ test('PIM route transaction callbacks use only connection-scoped helpers and def
   );
   assert.doesNotMatch(contactTransactionBody, /\bres\.|io\.to/);
   assert.doesNotMatch(calendarTransactionBody, /\bres\.|io\.to/);
-  assert.equal((source.match(/loadPimSyncStateOnConnection\(/g) || []).length, 2);
   assert.match(contactTransactionBody, /loadPimSyncStateOnConnection\(connection/);
   assert.match(calendarTransactionBody, /loadPimSyncStateOnConnection\(connection/);
   assert.match(contactTransactionBody, /await renderPimCommandPage/);

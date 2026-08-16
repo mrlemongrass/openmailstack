@@ -399,16 +399,31 @@ export const loadMailSyncState = async (
     username: string,
     deviceId: string,
     collectionId: string,
+    signal?: AbortSignal,
 ): Promise<StoredMailSyncState | null> => {
     await ensureEasMailSyncSchema();
     const scopeHash = mailSyncScopeHash(username, deviceId, collectionId);
     const connection = await pool.getConnection();
     let transactionStarted = false;
     let connectionUsable = true;
+    let connectionDestroyed = false;
+    const abortConnection = () => {
+        connectionUsable = false;
+        connectionDestroyed = true;
+        connection.destroy();
+    };
+    const throwIfAborted = () => {
+        if (!signal?.aborted) return;
+        throw signal.reason instanceof Error ? signal.reason : new MailSyncStateError('Mail sync state load was aborted');
+    };
+    signal?.addEventListener('abort', abortConnection, { once: true });
+    if (signal?.aborted) abortConnection();
     try {
+        throwIfAborted();
         try {
             await connection.beginTransaction();
             transactionStarted = true;
+            throwIfAborted();
         } catch (error) {
             connectionUsable = false;
             throw error;
@@ -423,9 +438,11 @@ export const loadMailSyncState = async (
              FROM eas_mail_sync_states WHERE scope_hash = ? LIMIT 1 FOR UPDATE`,
             [scopeHash],
         );
+        throwIfAborted();
         if (!metadataRows.length) {
             await connection.commit();
             transactionStarted = false;
+            throwIfAborted();
             return null;
         }
         const metadata = metadataRows[0];
@@ -460,6 +477,7 @@ export const loadMailSyncState = async (
              LIMIT 1`,
             [scopeHash, ...payloadLengths.map(([, rawBytes]) => Number(rawBytes))],
         );
+        throwIfAborted();
         if (payloadRows.length !== 1) {
             throw new MailSyncStateError('Mail sync state changed while its payload was loading');
         }
@@ -533,9 +551,10 @@ export const loadMailSyncState = async (
         };
         await connection.commit();
         transactionStarted = false;
+        throwIfAborted();
         return result;
     } catch (error) {
-        if (transactionStarted) {
+        if (transactionStarted && !connectionDestroyed) {
             try {
                 await connection.rollback();
             } catch {
@@ -545,8 +564,9 @@ export const loadMailSyncState = async (
         }
         throw error;
     } finally {
+        signal?.removeEventListener('abort', abortConnection);
         if (connectionUsable) connection.release();
-        else connection.destroy();
+        else if (!connectionDestroyed) connection.destroy();
     }
 };
 

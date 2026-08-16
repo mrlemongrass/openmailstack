@@ -150,5 +150,6 @@ export declare function softDeleteContactsByIds(user: string, ids: Array<string 
 export declare function restoreContactById(user: string, id: string | number): Promise<boolean>;
 export declare function purgeExpiredContacts(user: string): Promise<number>;
 export declare function addressBookSyncToken(user: string): Promise<string>;
+export declare function getContactCollectionRevisionOnConnection(connection: Pick<PoolConnection, 'query'>, user: string): Promise<string>;
 export declare function contactVCard(contact: ContactRow): string;
 //# sourceMappingURL=contact-utils.d.ts.map

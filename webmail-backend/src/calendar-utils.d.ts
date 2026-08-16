@@ -31,5 +31,14 @@ export declare function createCalendar(user: string, name: string, options?: {
 export declare function ensureDefaultCalendar(user: string): Promise<CalendarRow>;
 export declare function getCalendarByToken(user: string, token: string): Promise<CalendarRow | null>;
 export declare function getVisibleCalendars(user: string): Promise<CalendarRow[]>;
+/**
+ * Read-only FolderSync calendar inventory for long-lived protocol requests.
+ * Schema/default/slug repairs belong to startup and FolderSync, never Ping.
+ */
+export declare function getVisibleCalendarIdsOnConnection(connection: Pick<PoolConnection, 'query'>, user: string): Promise<number[]>;
+export declare function getVisibleCalendarRevisionsOnConnection(connection: Pick<PoolConnection, 'query'>, user: string, calendarIds: number[]): Promise<Array<{
+    id: number;
+    syncToken: string;
+}>>;
 export declare function getCalendarHref(user: string, calendar: CalendarRow): string;
 //# sourceMappingURL=calendar-utils.d.ts.map

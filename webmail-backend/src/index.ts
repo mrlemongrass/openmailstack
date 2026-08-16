@@ -6,9 +6,8 @@ import { WbxmlParser } from './wbxml/parser';
 import { WbxmlWriter } from './wbxml/writer';
 import { ImapService } from './imap';
 import { apiRouter } from './api';
-import nodemailer from 'nodemailer';
 import { pool } from './db';
-import { getPublicBaseUrl, normalizeMailboxUsername, serverConfig, smtpTransportOptions } from './config';
+import { getPublicBaseUrl, normalizeMailboxUsername, serverConfig } from './config';
 import { rateLimit, securityHeaders } from './security';
 import { ensureMailSearchSchema } from './search-index';
 import { ensureUserSettingsSchema } from './user-settings';
@@ -105,7 +104,14 @@ import {
     type PimSyncCommand,
     type StoredPimSyncState,
 } from './eas-pim-sync';
-import { buildActiveSyncSendMailEnvelope, extractActiveSyncSendMailMime } from './eas-send';
+import {
+    ActiveSyncSendMailRequestError,
+    activeSyncSendMailIdempotencyKey,
+    activeSyncSendMailResultStatus,
+    parseActiveSyncSendMailRequest,
+    prepareActiveSyncSendMailSubmission,
+    type ActiveSyncSendMailStatus,
+} from './eas-send';
 import {
     ACTIVE_SYNC_ADVERTISED_COMMANDS,
     ACTIVE_SYNC_MAX_REQUEST_BYTES,
@@ -137,7 +143,12 @@ import {
     itemOperationsSourceAllowance,
 } from './eas-item-operations';
 import { startSearchWorker } from './search-worker';
-import { ensureScheduledEmailsSchema, startScheduledSender } from './scheduled-send';
+import {
+    ensureScheduledEmailsSchema,
+    OutboundIdempotencyConflictError,
+    startScheduledSender,
+    submitOutbound,
+} from './scheduled-send';
 import { ensureCalendarSubscriptionSchema, startCalendarSubscriptionWorker } from './calendar-subscription';
 import { schedulerRouter } from './scheduler/router';
 import { getSession, initializeSessionStore, requireSession } from './auth';
@@ -149,6 +160,7 @@ import {
     requireSameOriginBrowserRequest,
 } from './browser-origin';
 import { createPrivateUploadsRouter } from './private-uploads';
+import { authorizeOutboundSender } from './outbound-mail';
 
 const app = express();
 const server = http.createServer(app);
@@ -389,6 +401,14 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
 
     // Check command and respond
     const cmd = String(req.query.Cmd || '');
+    const sendComposeStatus = (status: ActiveSyncSendMailStatus) => {
+        const writer = new WbxmlWriter();
+        writer.writeNode({
+            tag: 'SendMail', page: 21, children: [{ tag: 'Status', page: 21, content: status }],
+        });
+        res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+        return res.status(200).send(writer.getBuffer());
+    };
     const requestCredentials = getAuthCredentials();
     if (!requestCredentials) return res.status(401).send();
     const authenticationImap = new ImapService(requestCredentials.user, requestCredentials.pass, false);
@@ -416,7 +436,9 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         decodedForStructure,
         requestParseFailed,
     )));
-    if (requestParseFailed) return res.status(400).send();
+    if (requestParseFailed) {
+        return cmd === 'SendMail' ? sendComposeStatus('102') : res.status(400).send();
+    }
     if ((ACTIVE_SYNC_UNSUPPORTED_COMMANDS as readonly string[]).includes(cmd)) {
         return res.status(501).send();
     }
@@ -1877,75 +1899,72 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         return res.status(200).send(writer.getBuffer());
     }
 
-    if (cmd === 'SendMail' || cmd === 'SmartForward' || cmd === 'SmartReply') {
-        const creds = getAuthCredentials();
-        if (!creds) return res.status(401).send();
+    if (cmd === 'SendMail') {
+        const creds = requestCredentials;
+        const deviceId = validateActiveSyncDeviceId(req.query.DeviceId);
+        if (!deviceId) return sendComposeStatus('108');
 
-        let mimeContent: Buffer | string = "";
-        let saveInSent = false;
+        let parsedRequest;
+        try {
+            parsedRequest = parseActiveSyncSendMailRequest(decodedForStructure);
+        } catch (error) {
+            const status = error instanceof ActiveSyncSendMailRequestError ? error.status : '101';
+            return sendComposeStatus(status);
+        }
+        if (parsedRequest.accountId) return sendComposeStatus('166');
 
-        if (req.body && req.body.length > 0) {
-            try {
-                const parser = new WbxmlParser(req.body);
-                const decoded = parser.parse();
-                
-                // Find SaveInSentItems recursively. MIME extraction searches all payload-bearing
-                // nodes because iOS may place the raw RFC822 bytes under a decoded fallback tag.
-                const findNode = (node: any, tag: string): any => {
-                    if (!node) return null;
-                    if (node.tag === tag) return node;
-                    if (node.children) {
-                        for (let child of node.children) {
-                            const res = findNode(child, tag);
-                            if (res) return res;
-                        }
-                    }
-                    return null;
-                };
-
-                mimeContent = extractActiveSyncSendMailMime(decoded);
-                const saveNode = findNode(decoded, 'SaveInSentItems');
-                if (saveNode) saveInSent = true;
-            } catch {
-                console.error(`[EAS] ${cmd} WBXML parsing failed`);
-            }
+        let prepared;
+        try {
+            prepared = await prepareActiveSyncSendMailSubmission(
+                parsedRequest.mime,
+                creds.user,
+                deviceId,
+                parsedRequest.clientId,
+            );
+        } catch (error) {
+            const status = error instanceof ActiveSyncSendMailRequestError ? error.status : '107';
+            return sendComposeStatus(status);
         }
 
-        if (mimeContent) {
-            try {
-                const transporter = nodemailer.createTransport(smtpTransportOptions({
-                    user: creds.user,
-                    pass: creds.pass,
-                }));
+        let sender;
+        try {
+            sender = await authorizeOutboundSender(pool, creds.user, prepared.envelope.from);
+        } catch {
+            console.warn('[EAS] SendMail rejected an unauthorized From identity');
+            return sendComposeStatus('120');
+        }
 
-                const envelope = await buildActiveSyncSendMailEnvelope(mimeContent, creds.user);
-                console.log(`[EAS] Sending email to ${envelope.to.length} recipient(s)`);
-                await transporter.sendMail({ raw: mimeContent, envelope });
-                console.log(`[EAS] Email sent successfully.`);
-
-                // If saveInSent is true, we should append to Sent folder via IMAP
-                if (saveInSent) {
-                    console.log(`[EAS] Saving to Sent Items via IMAP...`);
-                    const imap = new ImapService(creds.user, creds.pass);
-                    await imap.connect();
-                    // Identify sent folder
-                    const folders = await imap.getFolders();
-                    let sentFolderObj = folders.find((f: any) => f.path.toUpperCase() === 'SENT' || f.path.toUpperCase() === 'SENT MESSAGES');
-                    if (sentFolderObj) {
-                        await imap.appendMessage(sentFolderObj.path, mimeContent, ['\\Seen']);
-                        console.log('[EAS] Saved outgoing email to the Sent mailbox');
-                    }
-                    await imap.logout();
-                }
-
-                return res.status(200).send();
-            } catch {
-                console.error('[EAS] SendMail failed');
-                return res.status(500).send();
-            }
-        } else {
-            console.warn(`[EAS] ${cmd} received without Mime content!`);
-            return res.status(500).send();
+        try {
+            const submission = await submitOutbound(pool, {
+                submissionKind: 'immediate',
+                idempotencyKey: activeSyncSendMailIdempotencyKey(
+                    creds.user,
+                    deviceId,
+                    parsedRequest.clientId,
+                ),
+                fingerprintSource: {
+                    ...prepared.fingerprintSource,
+                    saveSentCopy: parsedRequest.saveInSentItems,
+                },
+                message: {
+                    username: creds.user,
+                    sendAt: new Date(),
+                    senderAddress: sender.address,
+                    messageId: prepared.messageId,
+                    envelope: { ...prepared.envelope, from: sender.address },
+                    raw: prepared.raw,
+                    sentRaw: prepared.sentRaw,
+                    metadata: prepared.metadata,
+                    saveSentCopy: parsedRequest.saveInSentItems,
+                },
+                requestCredential: creds.pass,
+            });
+            const status = activeSyncSendMailResultStatus(submission);
+            return status ? sendComposeStatus(status) : res.status(200).send();
+        } catch (error) {
+            if (error instanceof OutboundIdempotencyConflictError) return sendComposeStatus('118');
+            console.error('[EAS] SendMail durable submission failed');
+            return sendComposeStatus('120');
         }
     }
 

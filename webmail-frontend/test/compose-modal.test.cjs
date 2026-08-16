@@ -73,7 +73,7 @@ function loadComposeModule() {
   return componentModule.exports;
 }
 
-function renderCompose() {
+function renderCompose(overrides = {}) {
   const noop = () => undefined;
   return renderToStaticMarkup(React.createElement(loadComposeModule().ComposeModal, {
     mail: {
@@ -88,6 +88,8 @@ function renderCompose() {
       composeIdentities: [{ address: 'localtest@housevo.us', name: 'Local Test' }],
       composeSignature: 'none',
       composeError: null,
+      immediateSendPhase: 'idle',
+      immediateSendNotice: null,
       draftSaveStatus: 'saved',
       sending: false,
       showCc: false,
@@ -107,6 +109,10 @@ function renderCompose() {
       setShowBcc: noop,
       handleSend: noop,
       handleSendAndArchive: noop,
+      allowRetryAfterVerifiedNonDelivery: noop,
+      checkEarlierComposeSend: noop,
+      checkingEarlierComposeSend: false,
+      ...overrides,
     },
   }));
 }
@@ -169,4 +175,50 @@ test('scheduled send arms cancellation feedback and exposes labelled local date/
   assert.match(source, /aria-label="Scheduled send time"/);
   assert.match(source, /role="alert"[\s\S]{0,200}\{scheduleError\}/);
   assert.match(source, /setScheduleError\('Choose a future date and time\.'\)/);
+});
+
+test('compose makes uncertain delivery explicit and prevents an unchanged resend', () => {
+  const markup = renderCompose({
+    immediateSendPhase: 'uncertain',
+    immediateSendNotice: {
+      tone: 'warning',
+      message: 'Delivery status is uncertain. Do not resend until you verify whether the recipient received it.',
+    },
+  });
+
+  assert.match(markup, /class="compose-send-notice warning"[^>]*role="alert"/);
+  assert.match(markup, /Delivery status is uncertain/);
+  assert.match(markup, /Do not resend/);
+  assert.match(markup, /Check earlier send/);
+  assert.match(markup, /I verified it was not delivered/);
+  assert.match(markup, /<button[^>]*disabled=""[^>]*><svg[^>]*><\/svg> Do not resend<\/button>/);
+});
+
+test('compose exposes recovery for an unresolved delivery change without rotating the send', () => {
+  const markup = renderCompose({
+    immediateSendPhase: 'blocked',
+    immediateSendNotice: {
+      tone: 'warning',
+      message: 'An earlier send of this unchanged message is unresolved.',
+    },
+  });
+
+  assert.match(markup, /class="compose-send-notice warning"[^>]*role="alert"/);
+  assert.match(markup, /Check earlier send/);
+  assert.doesNotMatch(markup, /I verified it was not delivered/);
+  assert.match(markup, /<button[^>]*disabled=""[^>]*><svg[^>]*><\/svg> Do not resend<\/button>/);
+});
+
+test('compose labels a retained ambiguous attempt as a safe delivery check', () => {
+  const markup = renderCompose({
+    immediateSendPhase: 'retryable',
+    immediateSendNotice: {
+      tone: 'info',
+      message: 'Delivery was not confirmed. Use “Check delivery” to safely continue the same send attempt.',
+    },
+  });
+
+  assert.match(markup, /class="compose-send-notice info"[^>]*role="status"/);
+  assert.match(markup, /same send attempt/);
+  assert.match(markup, /<svg[^>]*><\/svg> Check delivery<\/button>/);
 });

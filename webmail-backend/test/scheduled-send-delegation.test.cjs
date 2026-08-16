@@ -22,6 +22,29 @@ const baseRow = (overrides = {}) => ({
   ...overrides,
 });
 
+const processSmtpFailure = async error => {
+  const events = [];
+  const store = {
+    async beginSmtp() { events.push('begin'); },
+    async uncertain(_row, _workerId, code) { events.push(['uncertain', code]); },
+    async retry(_row, _workerId, code) { events.push(['retry', code]); },
+    async failed(_row, _workerId, code) { events.push(['failed', code]); },
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(baseRow(), 'worker-classification', store, {
+    async getCredential() { return ''; },
+    createTransport() {
+      return {
+        async sendMail() { throw error; },
+        close() {},
+      };
+    },
+    async createImap() { throw new Error('IMAP must not run'); },
+    async authorizeSender() { return { address: 'user@example.test', name: 'User' }; },
+  });
+  return { events, outcome };
+};
+
 test('an SMTP-accepted scheduled message reconciles only its Sent copy by Message-ID', async () => {
   const events = [];
   const store = {
@@ -86,6 +109,86 @@ test('a DATA-phase scheduled SMTP failure is retained as delivery uncertain', as
   assert.deepEqual(events, ['begin', ['uncertain', 'ETIMEDOUT:DATA']]);
 });
 
+test('an explicit permanent DATA rejection fails once without retry or uncertainty', async () => {
+  const events = [];
+  const store = {
+    async beginSmtp() { events.push('begin'); },
+    async uncertain(_row, _workerId, code) { events.push(['uncertain', code]); },
+    async retry(_row, _workerId, code) { events.push(['retry', code]); },
+    async failed(_row, _workerId, code) { events.push(['failed', code]); },
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(baseRow(), 'worker-data-5xx', store, {
+    async getCredential() { return ''; },
+    createTransport() {
+      return {
+        async sendMail() {
+          const error = new Error('554 rejected for private-recipient@example.test');
+          error.code = 'EMESSAGE';
+          error.command = 'DATA';
+          error.responseCode = 554;
+          throw error;
+        },
+        close() {},
+      };
+    },
+    async createImap() { throw new Error('IMAP must not run'); },
+    async authorizeSender() { return { address: 'user@example.test', name: 'User' }; },
+  });
+
+  assert.equal(outcome, 'failed');
+  assert.deepEqual(events, ['begin', ['failed', 'EMESSAGE:DATA:554']]);
+  assert.doesNotMatch(JSON.stringify(events), /private-recipient/i);
+});
+
+for (const scenario of [
+  { name: 'all-recipient RCPT 550 rejection', code: 'EENVELOPE', command: 'RCPT', responseCode: 550 },
+  { name: 'AUTH 535 rejection', code: 'EAUTH', command: 'AUTH', responseCode: '535' },
+]) {
+  test(`${scenario.name} is terminal on its first attempt`, async () => {
+    const error = new Error(`server rejected private-recipient@example.test during ${scenario.command}`);
+    Object.assign(error, scenario);
+    const { events, outcome } = await processSmtpFailure(error);
+
+    assert.equal(outcome, 'failed');
+    assert.deepEqual(events, [
+      'begin',
+      ['failed', `${scenario.code}:${scenario.command}:${scenario.responseCode}`],
+    ]);
+    assert.doesNotMatch(JSON.stringify(events), /private-recipient/i);
+  });
+}
+
+for (const scenario of [
+  { name: 'temporary RCPT rejection', code: 'EENVELOPE', command: 'RCPT', responseCode: 450 },
+  { name: 'temporary DATA rejection', code: 'EMESSAGE', command: 'DATA', responseCode: 451 },
+  { name: 'pre-DATA connection failure', code: 'ECONNECTION', command: 'CONN' },
+]) {
+  test(`${scenario.name} remains safe to retry`, async () => {
+    const error = new Error(`temporary server detail for private-recipient@example.test`);
+    Object.assign(error, scenario);
+    const { events, outcome } = await processSmtpFailure(error);
+    const expectedCode = [scenario.code, scenario.command, scenario.responseCode]
+      .filter(value => value !== undefined)
+      .join(':');
+
+    assert.equal(outcome, 'retry_wait');
+    assert.deepEqual(events, ['begin', ['retry', expectedCode]]);
+    assert.doesNotMatch(JSON.stringify(events), /private-recipient/i);
+  });
+}
+
+test('a connection loss during DATA without a server response stays delivery uncertain', async () => {
+  const error = new Error('connection lost after private-recipient@example.test DATA');
+  error.code = 'ECONNRESET';
+  error.command = 'DATA';
+  const { events, outcome } = await processSmtpFailure(error);
+
+  assert.equal(outcome, 'delivery_uncertain');
+  assert.deepEqual(events, ['begin', ['uncertain', 'ECONNRESET:DATA']]);
+  assert.doesNotMatch(JSON.stringify(events), /private-recipient/i);
+});
+
 test('partial scheduled SMTP acceptance becomes terminal without retrying accepted recipients', async () => {
   const events = [];
   let smtpCalls = 0;
@@ -140,6 +243,73 @@ test('partial scheduled SMTP acceptance becomes terminal without retrying accept
     ['renew'],
     ['complete'],
   ]);
+});
+
+test('accepted no-Sent-copy submissions complete without opening IMAP', async () => {
+  const events = [];
+  const store = {
+    async beginSmtp() { events.push('begin'); },
+    async accepted() { events.push('accepted'); },
+    async renewSentCopyLease() { events.push('renew'); },
+    async complete() { events.push('complete'); },
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(
+    baseRow({ save_in_sent_items: 0 }),
+    'worker-no-sent-copy',
+    store,
+    {
+      async getCredential() { events.push('credential'); return 'request-secret'; },
+      createTransport() {
+        return {
+          async sendMail() { events.push('smtp'); return { accepted: ['recipient@example.test'], rejected: [] }; },
+          close() {},
+        };
+      },
+      async createImap() { throw new Error('IMAP must not open when SaveInSentItems is false'); },
+      async authorizeSender() { events.push('authorize'); return { address: 'user@example.test', name: 'User' }; },
+      async onAccepted(_row, recipients) { events.push(['side-effect', recipients]); },
+    },
+  );
+
+  assert.equal(outcome, 'completed');
+  assert.deepEqual(events, [
+    'authorize',
+    'credential',
+    'begin',
+    'smtp',
+    'accepted',
+    ['side-effect', ['recipient@example.test']],
+    'renew',
+    'complete',
+  ]);
+});
+
+test('no-Sent-copy crash recovery completes without credentials, SMTP, or IMAP', async () => {
+  const events = [];
+  const store = {
+    async renewSentCopyLease() { events.push('renew'); },
+    async complete() { events.push('complete'); },
+  };
+  const { processScheduledEmail } = require('../src/scheduled-send.js');
+  const outcome = await processScheduledEmail(
+    baseRow({
+      status: 'sent_copy_pending',
+      smtp_accepted_at: new Date('2026-08-15T12:00:01.000Z'),
+      save_in_sent_items: 0,
+    }),
+    'worker-no-sent-recovery',
+    store,
+    {
+      async getCredential() { throw new Error('credentials must not load after acceptance'); },
+      createTransport() { throw new Error('SMTP must never rerun after acceptance'); },
+      async createImap() { throw new Error('IMAP must not open when SaveInSentItems is false'); },
+      async authorizeSender() { throw new Error('sender authorization must not rerun'); },
+    },
+  );
+
+  assert.equal(outcome, 'completed');
+  assert.deepEqual(events, ['renew', 'complete']);
 });
 
 test('a legacy scheduled row is authorized from its stored From and materialized once before SMTP', async () => {

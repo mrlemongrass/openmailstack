@@ -19,6 +19,27 @@ function ResizeHandle() {
   );
 }
 
+function OutboundRecoveryNotice({ mail }: MailLayoutProps) {
+  if (!mail.outboundRecoveryNotice) return null;
+  return (
+    <div
+      className={`mail-send-recovery-notice ${mail.outboundRecoveryNotice.tone}`}
+      role="status"
+      aria-live="polite"
+    >
+      <span>{mail.outboundRecoveryNotice.message}</span>
+      <button
+        type="button"
+        className="btn btn-ghost"
+        aria-label="Dismiss send recovery notice"
+        onClick={() => mail.setOutboundRecoveryNotice(null)}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 export function MailLayout({ mail }: MailLayoutProps) {
   const isMobile = useMediaQuery('(max-width: 767px)');
   const { uid } = useParams<{ uid: string }>();
@@ -33,6 +54,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
   if (isMobile) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        <OutboundRecoveryNotice mail={mail} />
         {showViewer ? <MessageViewer mail={mail} /> : <Outlet />}
         {!showViewer && (
           <button
@@ -59,6 +81,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <OutboundRecoveryNotice mail={mail} />
       <PanelGroup
         id="oms-webmail-v11"
         orientation="horizontal"

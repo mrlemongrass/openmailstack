@@ -47,11 +47,75 @@ export async function fetchMessage(folder: string, uid: number): Promise<Message
   return res.json();
 }
 
-export async function sendMessage(formData: FormData): Promise<SendMessageResponse> {
-  const res = await fetch('/api/messages/send', { method: 'POST', body: formData });
+export class OutboundSendRequestError extends Error {
+  readonly definitive: boolean;
+  readonly status?: number;
+
+  constructor(message: string, definitive: boolean, status?: number) {
+    super(message);
+    this.name = 'OutboundSendRequestError';
+    this.definitive = definitive;
+    this.status = status;
+  }
+}
+
+export function isDefinitiveSendError(error: unknown): boolean {
+  return error instanceof OutboundSendRequestError && error.definitive;
+}
+
+function retryAfterMilliseconds(res: Response): number | undefined {
+  const value = res.headers?.get('Retry-After');
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  return Math.round(seconds * 1000);
+}
+
+function withRetryAfter(res: Response, data: SendMessageResponse): SendMessageResponse {
+  if (data.retryAfterMs !== undefined) return data;
+  const retryAfterMs = retryAfterMilliseconds(res);
+  return retryAfterMs === undefined ? data : { ...data, retryAfterMs };
+}
+
+function assertSuccessfulSendResponse(res: Response, data: SendMessageResponse): SendMessageResponse {
+  if (!res.ok || !data.success) {
+    const definitive = res.status >= 400 && res.status < 500 && res.status !== 429;
+    throw new OutboundSendRequestError(data.error || 'Failed to send message', definitive, res.status);
+  }
+  return withRetryAfter(res, data);
+}
+
+export async function sendMessage(
+  formData: FormData,
+  options: { idempotencyKey: string },
+): Promise<SendMessageResponse> {
+  if (!options?.idempotencyKey) {
+    throw new OutboundSendRequestError('An idempotency key is required before sending a message', true);
+  }
+  const request: RequestInit = { method: 'POST', body: formData };
+  request.headers = { 'Idempotency-Key': options.idempotencyKey };
+  const res = await fetch('/api/messages/send', request);
   const data: SendMessageResponse = await res.json().catch(() => ({ success: false }));
-  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to send message');
-  return data;
+  return assertSuccessfulSendResponse(res, data);
+}
+
+export async function fetchOutboundMessageStatus(statusUrl: string): Promise<SendMessageResponse> {
+  if (!/^\/api\/messages\/outbound\/\d+$/.test(statusUrl)) {
+    throw new OutboundSendRequestError('Invalid outbound status URL', true);
+  }
+  const res = await fetch(statusUrl);
+  const data: SendMessageResponse = await res.json().catch(() => ({ success: false }));
+  return assertSuccessfulSendResponse(res, data);
+}
+
+export async function fetchOutboundMessageStatusByKey(
+  idempotencyKey: string,
+): Promise<SendMessageResponse> {
+  const res = await fetch('/api/messages/outbound/status', {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  });
+  const data: SendMessageResponse = await res.json().catch(() => ({ success: false }));
+  return assertSuccessfulSendResponse(res, data);
 }
 
 export async function saveDraft(formData: FormData): Promise<SaveDraftResponse> {

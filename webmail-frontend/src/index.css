@@ -193,6 +193,73 @@ body {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
 }
 
+.compose-send-notice {
+  flex-shrink: 0;
+  margin: 0 16px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 28%, var(--border-glass));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--surface-color));
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.compose-send-resolution {
+  flex: 0 0 auto;
+  min-height: 32px;
+  white-space: normal;
+}
+
+.compose-send-resolution-actions {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.compose-send-notice.warning {
+  border-color: color-mix(in srgb, #f59e0b 42%, var(--border-glass));
+  background: color-mix(in srgb, #f59e0b 10%, var(--surface-color));
+  color: var(--text-primary);
+}
+
+.mail-send-recovery-notice {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-primary) 24%, var(--border-glass));
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--surface-color));
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.mail-send-recovery-notice.warning {
+  border-bottom-color: color-mix(in srgb, #f59e0b 38%, var(--border-glass));
+  background: color-mix(in srgb, #f59e0b 8%, var(--surface-color));
+  color: var(--text-primary);
+}
+
+.mail-send-recovery-notice .btn {
+  flex: 0 0 auto;
+  min-width: 32px;
+  padding: 3px 8px;
+  font-size: 1rem;
+}
+
 .event-modal-overlay {
   position: fixed;
   inset: 0;
@@ -319,6 +386,36 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.inline-reply-send-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 28%, var(--border-glass));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--surface-color));
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.inline-reply-send-notice.warning {
+  border-color: color-mix(in srgb, #f59e0b 42%, var(--border-glass));
+  background: color-mix(in srgb, #f59e0b 10%, var(--surface-color));
+  color: var(--text-primary);
+}
+
+.inline-reply-send-resolution-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .glass-input {
@@ -2163,6 +2260,10 @@ body {
 
   .compose-body {
     padding: 0 12px 12px;
+  }
+
+  .compose-send-notice {
+    margin: 0 12px;
   }
 
   .compose-body > textarea {

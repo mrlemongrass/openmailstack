@@ -58,7 +58,7 @@ export function scheduledDateFromLocalInputs(dateValue: string, timeValue: strin
 
 export function outboundSendFeedback(
   result: Pick<SendMessageResponse,
-    'scheduledId' | 'draftCleanupStatus' | 'deliveryStatus' | 'rejectedRecipients' | 'sentCopyStatus'>,
+    'scheduledId' | 'draftCleanupStatus' | 'deliveryStatus' | 'rejectedRecipients' | 'sentCopyStatus' | 'error'>,
   mode: OutboundSendMode,
   delaySeconds: number,
 ): OutboundSendFeedback {
@@ -90,6 +90,18 @@ export function outboundSendFeedback(
       type: 'error',
       message: `Message sent to some recipients; ${rejectedRecipientMessage(result.rejectedRecipients)}${sentCopyNote}`,
     };
+  }
+  if (result.deliveryStatus === 'uncertain') {
+    return {
+      type: 'error',
+      message: 'Delivery status is uncertain. Do not resend until you verify whether the recipient received it.',
+    };
+  }
+  if (result.deliveryStatus === 'failed') {
+    return { type: 'error', message: result.error || 'Message was not sent' };
+  }
+  if (result.deliveryStatus === 'pending') {
+    return { type: 'info', message: 'Confirming message delivery' };
   }
   if (result.deliveryStatus === 'accepted' && result.sentCopyStatus === 'pending') {
     return { type: 'info', message: 'Message sent; saving your Sent copy' };

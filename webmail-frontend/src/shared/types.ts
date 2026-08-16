@@ -158,10 +158,14 @@ export interface UndoActionResponse {
 }
 
 export interface SendMessageResponse extends MessageActionResponse {
+  submissionKind?: 'immediate' | 'scheduled';
   scheduledId?: number;
   sendAt?: string;
   draftCleanupStatus?: 'removed' | 'failed';
-  deliveryStatus?: 'accepted' | 'partial';
+  outboundId?: number;
+  deliveryStatus?: 'pending' | 'accepted' | 'partial' | 'failed' | 'uncertain';
+  statusUrl?: string;
+  retryAfterMs?: number;
   rejectedRecipients?: string[];
   sentCopyStatus?: 'saved' | 'pending' | 'unavailable';
   messageId?: string;

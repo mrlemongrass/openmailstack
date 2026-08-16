@@ -89,4 +89,16 @@ test('send feedback distinguishes undo, user scheduling, and Sent-copy outcomes'
     type: 'error',
     message: 'Message sent to some recipients; at least one recipient was rejected; saving your Sent copy',
   });
+  assert.deepEqual(outboundSendFeedback({ deliveryStatus: 'pending' }, null, 0), {
+    type: 'info',
+    message: 'Confirming message delivery',
+  });
+  assert.deepEqual(outboundSendFeedback({ deliveryStatus: 'failed', error: 'SMTP rejected the message' }, null, 0), {
+    type: 'error',
+    message: 'SMTP rejected the message',
+  });
+  assert.deepEqual(outboundSendFeedback({ deliveryStatus: 'uncertain' }, null, 0), {
+    type: 'error',
+    message: 'Delivery status is uncertain. Do not resend until you verify whether the recipient received it.',
+  });
 });

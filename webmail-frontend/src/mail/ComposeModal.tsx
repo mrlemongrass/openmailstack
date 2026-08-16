@@ -150,6 +150,11 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     composeError,
     composeSignature,
     isComposing,
+    immediateSendNotice,
+    immediateSendPhase,
+    allowRetryAfterVerifiedNonDelivery,
+    checkEarlierComposeSend,
+    checkingEarlierComposeSend,
     lastSendResult,
     sending,
     setComposeBody,
@@ -159,7 +164,8 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     undoSendId,
     undoSendMode,
   } = mail;
-  const composeBusy = sending || closingComposer;
+  const composeBusy = sending || closingComposer || checkingEarlierComposeSend;
+  const unchangedSendBlocked = immediateSendPhase === 'uncertain' || immediateSendPhase === 'blocked';
   useEffect(() => {
     if (didSend && !sending && !composeError && !isComposing) {
       const timer = window.setTimeout(() => {
@@ -502,8 +508,57 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             {mail.composeError}
           </div>
         )}
+        {immediateSendNotice && (
+          <div
+            className={`compose-send-notice ${immediateSendNotice.tone}`}
+            role={immediateSendNotice.tone === 'warning' ? 'alert' : 'status'}
+            aria-live={immediateSendNotice.tone === 'warning' ? 'assertive' : 'polite'}
+          >
+            <span>{immediateSendNotice.message}</span>
+            {unchangedSendBlocked && (
+              <div className="compose-send-resolution-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost compose-send-resolution"
+                  disabled={checkingEarlierComposeSend}
+                  onClick={() => {
+                    void checkEarlierComposeSend().catch((error: unknown) => {
+                      showToast({
+                        type: 'error',
+                        message: error instanceof Error
+                          ? error.message
+                          : 'The earlier send could not be checked.',
+                      });
+                    });
+                  }}
+                >
+                  {checkingEarlierComposeSend ? <><Spinner size={12} /> Checking...</> : 'Check earlier send'}
+                </button>
+                {immediateSendPhase === 'uncertain' && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost compose-send-resolution"
+                    disabled={checkingEarlierComposeSend}
+                    onClick={() => {
+                      void allowRetryAfterVerifiedNonDelivery().catch((error: unknown) => {
+                        showToast({
+                          type: 'error',
+                          message: error instanceof Error
+                            ? error.message
+                            : 'The protected send attempt could not be cleared.',
+                        });
+                      });
+                    }}
+                  >
+                    I verified it was not delivered
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {/* Footer */}
-        <div className="compose-footer" style={{ borderTop: mail.composeError ? 'none' : undefined }}>
+        <div className="compose-footer" style={{ borderTop: mail.composeError || immediateSendNotice ? 'none' : undefined }}>
           <div className="compose-footer-tools">
             <label className="btn btn-ghost" aria-label="Attach files" style={{ cursor: 'pointer' }}>
               <Paperclip size={16} />
@@ -573,12 +628,12 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           <div className="compose-footer-actions">
             {/* Schedule send (#3) */}
             <div style={{ position: 'relative' }}>
-              <button className="btn btn-ghost" disabled={composeBusy}
+              <button className="btn btn-ghost" disabled={composeBusy || immediateSendPhase !== 'idle'}
                 onClick={() => { setScheduleError(''); setShowSchedule(!showSchedule); }}
                 style={{ fontSize: '0.8rem' }} title="Schedule send" aria-label="Schedule send">
                 <Clock size={16} />
               </button>
-              {showSchedule && !composeBusy && (
+              {showSchedule && !composeBusy && immediateSendPhase === 'idle' && (
                 <div style={{ position: 'absolute', bottom: '100%', right: 0, zIndex: 50, marginBottom: 4, minWidth: 260 }}
                   onClick={(e) => e.stopPropagation()}>
                   <div className="glass-panel compose-popover" style={{ padding: 12 }}>
@@ -612,6 +667,8 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                           if (sent) {
                             setScheduleDate('');
                             setScheduleTime('');
+                          } else {
+                            setDidSend(false);
                           }
                         });
                       }}>
@@ -621,9 +678,16 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                 </div>
               )}
             </div>
-            <button className="btn btn-primary" disabled={composeBusy || sizeExceedsBlock}
-              onClick={() => { setDidSend(true); void mail.handleSend(); }}>
-              <Send size={16} /> {sending ? <><Spinner size={14} /> Sending...</> : 'Send'}
+            <button className="btn btn-primary" disabled={composeBusy || sizeExceedsBlock || unchangedSendBlocked}
+              onClick={() => {
+                setDidSend(true);
+                void mail.handleSend().then((sent) => { if (!sent) setDidSend(false); });
+              }}>
+              <Send size={16} /> {sending
+                ? <><Spinner size={14} /> {immediateSendPhase === 'pending' ? 'Confirming delivery...' : 'Sending...'}</>
+                : immediateSendPhase === 'retryable'
+                  ? 'Check delivery'
+                  : unchangedSendBlocked ? 'Do not resend' : 'Send'}
             </button>
           </div>
         </div>

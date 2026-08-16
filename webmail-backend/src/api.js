@@ -1471,7 +1471,9 @@ exports.apiRouter.get('/folders', requireAuth, async (req, res) => {
         const folders = [...await imap.getFolders()];
         const [scheduledRows] = await db_1.pool.query(`SELECT COUNT(*) AS total
              FROM scheduled_emails
-             WHERE username = ? AND status NOT IN ('completed', 'cancelled')`, [user]);
+             WHERE username = ? AND submission_kind = 'scheduled'
+               AND removed_at IS NULL
+               AND status NOT IN ('completed', 'cancelled')`, [user]);
         if (Number(scheduledRows?.[0]?.total || 0) > 0 && !folders.some((folder) => folder.path === 'SCHEDULED')) {
             folders.push({ path: 'SCHEDULED', delimiter: '/', unseen: 0 });
         }
@@ -1534,10 +1536,14 @@ exports.apiRouter.get('/folders/*folder/messages', requireAuth, async (req, res)
     const fetchOlderThan = Number.isFinite(olderThan) && olderThan > 1 ? olderThan : undefined;
     if (folder === 'SCHEDULED') {
         try {
-            const [rows] = await db_1.pool.query(`SELECT id, send_at, mail_options, sender_address, status, last_error_code,
+            const [rows] = await db_1.pool.query(`SELECT id, idempotency_key, send_at,
+                        DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
+                        mail_options, sender_address, status, last_error_code,
                         rejected_recipients_json
                  FROM scheduled_emails
-                 WHERE username = ? AND status NOT IN ('completed', 'cancelled')
+                 WHERE username = ? AND submission_kind = 'scheduled'
+                   AND removed_at IS NULL
+                   AND status NOT IN ('completed', 'cancelled')
                  ORDER BY send_at ASC`, [user]);
             const messages = rows.map((r) => {
                 let opts = {};
@@ -1553,7 +1559,7 @@ exports.apiRouter.get('/folders/*folder/messages', requireAuth, async (req, res)
                     to: scheduledAddressText(opts.to),
                     cc: scheduledAddressText(opts.cc),
                     bcc: scheduledAddressText(opts.bcc),
-                    date: r.send_at,
+                    date: r.idempotency_key === null ? r.send_at : (r.send_at_utc || r.send_at),
                     flags: [],
                     unseen: false,
                     is_scheduled: true,
@@ -2082,6 +2088,165 @@ const optionalDraftUid = (value) => {
         throw new outbound_mail_1.OutboundMessageValidationError('Draft UID is invalid');
     return uid;
 };
+const scheduledDeliveryInstant = (value) => {
+    if (typeof value !== 'string'
+        || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+        throw new outbound_mail_1.OutboundMessageValidationError('Scheduled delivery time is invalid');
+    }
+    const instant = new Date(value);
+    if (!Number.isFinite(instant.getTime()) || instant.toISOString() !== value
+        || instant.getTime() > Date.now() + MAX_SCHEDULE_DELAY_SECONDS * 1000) {
+        throw new outbound_mail_1.OutboundMessageValidationError('Scheduled delivery time is invalid');
+    }
+    return instant;
+};
+const OUTBOUND_STATUS_RETRY_SECONDS = 2;
+const pendingOutboundStatuses = new Set([
+    'scheduled',
+    'retry_wait',
+    'claimed',
+    'smtp_inflight',
+]);
+const queuedScheduledStatuses = new Set([
+    'scheduled',
+    'retry_wait',
+    'claimed',
+    'smtp_inflight',
+]);
+const sendOutboundSubmissionStatus = (res, result) => {
+    res.set('Cache-Control', 'no-store');
+    const statusUrl = `/api/messages/outbound/${result.id}`;
+    const base = {
+        success: true,
+        outboundId: result.id,
+        submissionKind: result.submissionKind,
+        messageId: result.messageId || undefined,
+        sendAt: result.sendAt.toISOString(),
+        rejectedRecipients: result.rejectedRecipients,
+    };
+    if (pendingOutboundStatuses.has(result.status)) {
+        if (result.submissionKind === 'scheduled') {
+            return res.status(200).json({
+                ...base,
+                ...(queuedScheduledStatuses.has(result.status) ? { scheduledId: result.id } : {}),
+                deliveryStatus: 'pending',
+            });
+        }
+        res.set('Location', statusUrl);
+        res.set('Retry-After', String(OUTBOUND_STATUS_RETRY_SECONDS));
+        return res.status(202).json({
+            ...base,
+            statusUrl,
+            deliveryStatus: 'pending',
+            retryAfterMs: OUTBOUND_STATUS_RETRY_SECONDS * 1000,
+        });
+    }
+    if (result.status === 'completed' || result.status === 'partial_delivery') {
+        return res.status(200).json({
+            ...base,
+            deliveryStatus: result.status === 'partial_delivery' ? 'partial' : 'accepted',
+            sentCopyStatus: result.saveSentCopy ? 'saved' : 'unavailable',
+        });
+    }
+    if (result.status === 'sent_copy_pending') {
+        return res.status(200).json({
+            ...base,
+            deliveryStatus: result.rejectedRecipients.length > 0 ? 'partial' : 'accepted',
+            sentCopyStatus: 'pending',
+        });
+    }
+    if (result.status === 'delivery_uncertain') {
+        return res.status(200).json({
+            ...base,
+            deliveryStatus: 'uncertain',
+            sentCopyStatus: 'unavailable',
+            error: 'OpenMailStack could not confirm whether the mail server accepted this message.',
+            errorCode: result.lastErrorCode || 'delivery_uncertain',
+        });
+    }
+    if (result.status === 'cancelled' || result.status === 'cancel_restore_pending') {
+        return res.status(200).json({
+            ...base,
+            deliveryStatus: 'failed',
+            sentCopyStatus: 'unavailable',
+            error: result.status === 'cancelled'
+                ? 'The previously scheduled message was cancelled.'
+                : 'The previously scheduled message is being cancelled.',
+            errorCode: result.status,
+        });
+    }
+    return res.status(200).json({
+        ...base,
+        deliveryStatus: 'failed',
+        sentCopyStatus: 'unavailable',
+        error: 'The mail server did not accept this message.',
+        errorCode: result.lastErrorCode || 'delivery_failed',
+    });
+};
+const sendOutboundError = (res, error) => {
+    const supported = error instanceof scheduled_send_1.OutboundIdempotencyKeyError
+        || error instanceof scheduled_send_1.OutboundIdempotencyConflictError
+        || error instanceof scheduled_send_1.OutboundSubmissionUnavailableError
+        || [
+            'OUTBOUND_IDEMPOTENCY_KEY_INVALID',
+            'OUTBOUND_IDEMPOTENCY_CONFLICT',
+            'OUTBOUND_SUBMISSION_UNAVAILABLE',
+        ].includes(String(error?.code || ''));
+    if (!supported)
+        return false;
+    const status = [400, 409, 503].includes(Number(error?.status)) ? Number(error.status) : 503;
+    res.status(status).json({
+        success: false,
+        error: status === 503 ? 'The durable outbound submission service is unavailable' : error.message,
+        code: error.code,
+    });
+    return true;
+};
+exports.apiRouter.get('/messages/outbound/status', requireAuth, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const rawIdempotencyKey = req.headers['idempotency-key'];
+    const idempotencyKey = typeof rawIdempotencyKey === 'string' ? rawIdempotencyKey : '';
+    try {
+        const result = await (0, scheduled_send_1.getOutboundSubmission)(db_1.pool, req.user.username, { idempotencyKey });
+        if (!result) {
+            return res.status(404).json({ success: false, error: 'Outbound submission was not found' });
+        }
+        return sendOutboundSubmissionStatus(res, result);
+    }
+    catch (error) {
+        if (sendOutboundError(res, error))
+            return;
+        console.error('Failed to recover outbound submission status:', error);
+        return res.status(503).json({
+            success: false,
+            error: 'The durable outbound submission service is unavailable',
+            code: 'OUTBOUND_SUBMISSION_UNAVAILABLE',
+        });
+    }
+});
+exports.apiRouter.get('/messages/outbound/:id', requireAuth, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const id = strictInteger(req.params.id, 1, Number.MAX_SAFE_INTEGER);
+    if (id === null)
+        return res.status(400).json({ success: false, error: 'Outbound ID is invalid' });
+    try {
+        const result = await (0, scheduled_send_1.getOutboundSubmission)(db_1.pool, req.user.username, { id });
+        if (!result || result.submissionKind !== 'immediate') {
+            return res.status(404).json({ success: false, error: 'Outbound submission was not found' });
+        }
+        return sendOutboundSubmissionStatus(res, result);
+    }
+    catch (error) {
+        if (sendOutboundError(res, error))
+            return;
+        console.error('Failed to load outbound submission status:', error);
+        return res.status(503).json({
+            success: false,
+            error: 'The durable outbound submission service is unavailable',
+            code: 'OUTBOUND_SUBMISSION_UNAVAILABLE',
+        });
+    }
+});
 exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'), async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -2089,7 +2254,6 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
     const files = req.files || [];
     try {
         const parsedDraftUid = optionalDraftUid(draftUid);
-        const nodemailer = require('nodemailer');
         const sender = await (0, outbound_mail_1.authorizeOutboundSender)(db_1.pool, user, from);
         const compiled = await (0, outbound_mail_1.compileOutboundMessage)({
             sender,
@@ -2118,9 +2282,37 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
         if (!Number.isSafeInteger(delaySeconds) || delaySeconds > MAX_SCHEDULE_DELAY_SECONDS) {
             throw new outbound_mail_1.OutboundMessageValidationError('Scheduled delivery delay is invalid');
         }
-        if (delaySeconds > 0) {
-            const sendAt = new Date(Date.now() + delaySeconds * 1000);
-            const scheduledId = await (0, scheduled_send_1.enqueueScheduledEmail)(db_1.pool, {
+        const scheduledFor = typeof req.body.scheduledFor === 'string'
+            ? req.body.scheduledFor.trim()
+            : '';
+        if (delaySeconds > 0 && !scheduledFor) {
+            throw new outbound_mail_1.OutboundMessageValidationError('Scheduled delivery time is required');
+        }
+        const submissionKind = scheduledFor ? 'scheduled' : 'immediate';
+        const sendAt = scheduledFor ? scheduledDeliveryInstant(scheduledFor) : new Date();
+        const rawIdempotencyKey = req.headers['idempotency-key'];
+        const idempotencyKey = typeof rawIdempotencyKey === 'string' ? rawIdempotencyKey : '';
+        const submission = await (0, scheduled_send_1.submitOutbound)(db_1.pool, {
+            submissionKind,
+            idempotencyKey,
+            fingerprintSource: {
+                from: sender.address,
+                to: compiled.metadata.to,
+                cc: compiled.metadata.cc,
+                bcc: compiled.metadata.bcc,
+                replyTo: compiled.metadata.replyTo,
+                subject: compiled.metadata.subject,
+                text: compiled.metadata.text,
+                html: compiled.metadata.html,
+                inReplyTo: compiled.metadata.inReplyTo,
+                references: compiled.metadata.references,
+                attachments: files.map((file) => ({
+                    filename: String(file.originalname || ''),
+                    contentType: String(file.mimetype || ''),
+                    content: Buffer.from(file.buffer),
+                })),
+            },
+            message: {
                 username: user,
                 sendAt,
                 senderAddress: sender.address,
@@ -2130,9 +2322,17 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
                 sentRaw: compiled.sentRaw,
                 metadata: compiled.metadata,
                 draftUid: parsedDraftUid,
-            });
+                saveSentCopy: true,
+            },
+            requestCredential: pass,
+        });
+        if (submissionKind === 'scheduled') {
+            if (submission.replayed && !queuedScheduledStatuses.has(submission.status)) {
+                return sendOutboundSubmissionStatus(res, submission);
+            }
+            const scheduledId = submission.id;
             let draftCleanupStatus;
-            if (parsedDraftUid) {
+            if (parsedDraftUid && !submission.replayed) {
                 try {
                     const imap = await getPooledImap(user, pass);
                     const folders = await imap.getFolders();
@@ -2158,101 +2358,14 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
             return res.json({
                 success: true,
                 scheduledId,
-                sendAt,
+                sendAt: submission.sendAt,
                 draftCleanupStatus,
                 message: draftCleanupStatus === 'failed'
                     ? 'Message scheduled, but its old Draft could not be removed'
                     : 'Message scheduled',
             });
         }
-        const transporter = nodemailer.createTransport((0, config_1.smtpTransportOptions)({ user, pass }));
-        let smtpRecipientOutcome;
-        try {
-            const smtpInfo = await transporter.sendMail({ raw: compiled.raw, envelope: compiled.envelope });
-            smtpRecipientOutcome = (0, outbound_mail_1.classifySmtpRecipientOutcome)(smtpInfo, compiled.envelope.to);
-        }
-        finally {
-            try {
-                transporter.close?.();
-            }
-            catch { }
-        }
-        // SMTP acceptance is irreversible. Every remaining side effect is best-effort
-        // and must never turn an accepted delivery into an HTTP failure.
-        try {
-            const contactsSettings = await (0, user_settings_1.getUserSettings)(user, 'contacts');
-            if (contactsSettings.autoCreateFromSent !== false) {
-                for (const contactEmail of smtpRecipientOutcome.accepted) {
-                    const contactName = contactEmail.split('@')[0];
-                    try {
-                        await db_1.pool.query('INSERT IGNORE INTO contacts (username, name, email) VALUES (?, ?, ?)', [user, contactName, contactEmail]);
-                    }
-                    catch { }
-                }
-            }
-        }
-        catch (error) {
-            console.error('Failed to update contacts after accepted delivery:', error);
-        }
-        try {
-            const imap = await getPooledImap(user, pass);
-            const folders = await imap.getFolders();
-            let sentFolder = folders.find((folder) => folder.path.toLowerCase().includes('sent'))?.path;
-            if (!sentFolder) {
-                try {
-                    await imap.client.mailboxCreate('Sent');
-                }
-                catch { }
-                sentFolder = 'Sent';
-            }
-            await imap.appendMessage(sentFolder, compiled.sentRaw, ['\\Seen']);
-            if (parsedDraftUid) {
-                const draftsFolder = folders.find((folder) => folder.path.toLowerCase().includes('draft'))?.path;
-                if (draftsFolder) {
-                    try {
-                        await imap.messageAction(draftsFolder, [parsedDraftUid], 'delete');
-                    }
-                    catch { }
-                }
-            }
-            return res.json({
-                success: true,
-                deliveryStatus: smtpRecipientOutcome.partial ? 'partial' : 'accepted',
-                rejectedRecipients: smtpRecipientOutcome.rejected,
-                sentCopyStatus: 'saved',
-                messageId: compiled.messageId,
-            });
-        }
-        catch (sentCopyError) {
-            console.error('Failed to save accepted message in Sent:', sentCopyError);
-            let scheduledId;
-            let sentCopyStatus = 'pending';
-            try {
-                scheduledId = await (0, scheduled_send_1.retainAcceptedSentCopy)(db_1.pool, {
-                    username: user,
-                    sendAt: new Date(),
-                    senderAddress: sender.address,
-                    messageId: compiled.messageId,
-                    envelope: compiled.envelope,
-                    raw: compiled.raw,
-                    sentRaw: compiled.sentRaw,
-                    metadata: compiled.metadata,
-                    draftUid: parsedDraftUid,
-                });
-            }
-            catch (persistError) {
-                console.error('Failed to retain accepted message for Sent-copy retry:', persistError);
-                sentCopyStatus = 'unavailable';
-            }
-            return res.json({
-                success: true,
-                deliveryStatus: smtpRecipientOutcome.partial ? 'partial' : 'accepted',
-                rejectedRecipients: smtpRecipientOutcome.rejected,
-                sentCopyStatus,
-                scheduledId,
-                messageId: compiled.messageId,
-            });
-        }
+        return sendOutboundSubmissionStatus(res, submission);
     }
     catch (err) {
         if (err instanceof outbound_mail_1.SenderAuthorizationError) {
@@ -2261,6 +2374,8 @@ exports.apiRouter.post('/messages/send', requireAuth, upload.array('attachments'
         if (err instanceof outbound_mail_1.OutboundMessageValidationError) {
             return res.status(400).json({ success: false, error: err.message, code: err.code });
         }
+        if (sendOutboundError(res, err))
+            return;
         console.error('Failed to send message:', err);
         res.status(500).json({ success: false, error: err.message });
     }
@@ -2606,8 +2721,12 @@ exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req,
     if (folder === 'SCHEDULED') {
         try {
             const realId = uid - 100000000;
-            const [rows] = await db_1.pool.query(`SELECT * FROM scheduled_emails
-                 WHERE id = ? AND username = ? AND status NOT IN ('completed', 'cancelled')`, [realId, user]);
+            const [rows] = await db_1.pool.query(`SELECT scheduled_emails.*,
+                        DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc
+                 FROM scheduled_emails
+                 WHERE id = ? AND username = ? AND submission_kind = 'scheduled'
+                   AND removed_at IS NULL
+                   AND status NOT IN ('completed', 'cancelled')`, [realId, user]);
             if (rows.length === 0)
                 return res.status(404).json({ success: false, error: 'Not found' });
             let opts = {};
@@ -2624,7 +2743,9 @@ exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req,
                     to: scheduledAddressText(opts.to),
                     cc: scheduledAddressText(opts.cc),
                     bcc: scheduledAddressText(opts.bcc),
-                    date: rows[0].send_at,
+                    date: rows[0].idempotency_key === null
+                        ? rows[0].send_at
+                        : (rows[0].send_at_utc || rows[0].send_at),
                     html: opts.html || '',
                     text: opts.text || '',
                     attachments: [], // We won't try to parse attachments for scheduled messages for now

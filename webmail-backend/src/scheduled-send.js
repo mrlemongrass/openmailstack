@@ -3,13 +3,74 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.startScheduledSender = exports.runScheduledSender = exports.retainAcceptedSentCopy = exports.enqueueScheduledEmail = exports.abortScheduledEmailBeforeDelivery = exports.removeTerminalScheduledEmail = exports.releaseScheduledCancellation = exports.completeScheduledCancellation = exports.claimScheduledCancellation = exports.MySqlScheduledEmailStore = exports.ensureScheduledEmailsSchema = exports.processScheduledEmail = exports.classifyScheduledSmtpError = void 0;
+exports.startScheduledSender = exports.runScheduledSender = exports.submitOutbound = exports.getOutboundSubmission = exports.OutboundSubmissionUnavailableError = exports.OutboundIdempotencyConflictError = exports.OutboundIdempotencyKeyError = exports.abortScheduledEmailBeforeDelivery = exports.removeTerminalScheduledEmail = exports.releaseScheduledCancellation = exports.completeScheduledCancellation = exports.claimScheduledCancellation = exports.MySqlScheduledEmailStore = exports.ensureScheduledEmailsSchema = exports.processScheduledEmail = exports.classifyScheduledSmtpError = exports.computeOutboundRequestFingerprint = void 0;
 const db_1 = require("./db");
 const crypto_1 = __importDefault(require("crypto"));
 const auth_1 = require("./auth");
 const config_1 = require("./config");
 const nodemailer_1 = __importDefault(require("nodemailer"));
+const user_settings_1 = require("./user-settings");
 const outbound_mail_1 = require("./outbound-mail");
+const canonicalFingerprintValue = (value, seen = new Set()) => {
+    if (value === null)
+        return 'null';
+    if (typeof value === 'boolean' || typeof value === 'string')
+        return JSON.stringify(value);
+    if (typeof value === 'number') {
+        if (!Number.isFinite(value))
+            throw new Error('Outbound fingerprint values must be finite');
+        return Object.is(value, -0) ? '0' : String(value);
+    }
+    if (value instanceof Date) {
+        if (!Number.isFinite(value.getTime()))
+            throw new Error('Outbound fingerprint dates must be valid');
+        return JSON.stringify({ $date: value.toISOString() });
+    }
+    if (Buffer.isBuffer(value)) {
+        return JSON.stringify({
+            $bufferLength: value.length,
+            $bufferSha256: crypto_1.default.createHash('sha256').update(value).digest('hex'),
+        });
+    }
+    if (seen.has(value))
+        throw new Error('Outbound fingerprint values must not contain cycles');
+    seen.add(value);
+    try {
+        if (Array.isArray(value)) {
+            return `[${value.map(item => canonicalFingerprintValue(item, seen)).join(',')}]`;
+        }
+        const prototype = Object.getPrototypeOf(value);
+        if (prototype !== Object.prototype && prototype !== null) {
+            throw new Error('Outbound fingerprint values must contain only plain objects');
+        }
+        const entries = Object.keys(value).sort().flatMap(key => {
+            const item = value[key];
+            return item === undefined ? [] : [`${JSON.stringify(key)}:${canonicalFingerprintValue(item, seen)}`];
+        });
+        return `{${entries.join(',')}}`;
+    }
+    finally {
+        seen.delete(value);
+    }
+};
+const computeOutboundRequestFingerprint = (input) => {
+    const username = (0, outbound_mail_1.normalizeMailboxAddress)(input.username);
+    const senderAddress = (0, outbound_mail_1.normalizeMailboxAddress)(input.senderAddress);
+    const recipients = Array.from(new Set(input.recipients.map(outbound_mail_1.normalizeMailboxAddress).filter(Boolean))).sort();
+    if (!username || !senderAddress || recipients.length === 0) {
+        throw new Error('Outbound fingerprint mailbox identities are invalid');
+    }
+    const payload = {
+        submissionKind: input.submissionKind,
+        sendAt: input.submissionKind === 'scheduled' ? input.sendAt : null,
+        username,
+        senderAddress,
+        recipients,
+        request: input.fingerprintSource,
+    };
+    return crypto_1.default.createHash('sha256').update(canonicalFingerprintValue(payload)).digest('hex');
+};
+exports.computeOutboundRequestFingerprint = computeOutboundRequestFingerprint;
 const timeoutError = () => {
     const error = new Error('Scheduled delivery operation timed out');
     error.code = 'ETIMEDOUT';
@@ -34,9 +95,24 @@ const withOperationTimeout = async (operation, timeoutMs, onTimeout) => {
             clearTimeout(timeout);
     }
 };
-const smtpErrorCode = (error) => ([error?.code || error?.name || 'delivery_failed', error?.command]
-    .filter(Boolean).join(':').slice(0, 80));
+const smtpResponseCode = (error) => {
+    const responseCode = Number(error?.responseCode);
+    return Number.isInteger(responseCode) && responseCode >= 100 && responseCode <= 599
+        ? responseCode
+        : null;
+};
+const privacySafeErrorToken = (value) => (String(value).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 32));
+const smtpErrorCode = (error) => ([error?.code || error?.name || 'delivery_failed', error?.command, smtpResponseCode(error)]
+    .filter(value => value !== null && value !== undefined && value !== '')
+    .map(privacySafeErrorToken)
+    .join(':')
+    .slice(0, 80));
 const classifyScheduledSmtpError = (error) => {
+    const responseCode = smtpResponseCode(error);
+    if (responseCode !== null && responseCode >= 500)
+        return 'permanent_failure';
+    if (responseCode !== null && responseCode >= 400)
+        return 'safe_to_retry';
     const command = String(error?.command || '').toUpperCase();
     if (command)
         return command === 'DATA' ? 'delivery_uncertain' : 'safe_to_retry';
@@ -94,6 +170,15 @@ const processScheduledEmail = async (row, workerId, store, dependencies) => {
     const operationTimeoutMs = Math.max(1, Math.min(60_000, Number(dependencies.operationTimeoutMs || 60_000)));
     const connectTimeoutMs = Math.min(30_000, operationTimeoutMs);
     const accepted = Boolean(row.smtp_accepted_at) || row.status === 'sent_copy_pending';
+    const saveSentCopy = row.save_in_sent_items === undefined || Boolean(row.save_in_sent_items);
+    const completeWithoutSentCopy = async () => {
+        await store.renewSentCopyLease?.(row, workerId);
+        await store.complete?.(row, workerId);
+        const rejectedRecipients = JSON.parse(String(row.rejected_recipients_json || '[]'));
+        return Array.isArray(rejectedRecipients) && rejectedRecipients.length > 0
+            ? 'partial_delivery'
+            : 'completed';
+    };
     let password = '';
     if (!accepted) {
         try {
@@ -157,6 +242,9 @@ const processScheduledEmail = async (row, workerId, store, dependencies) => {
             return 'retry_wait';
         }
     }
+    if (accepted && !saveSentCopy) {
+        return completeWithoutSentCopy();
+    }
     try {
         password = await withOperationTimeout(dependencies.getCredential(row.username), operationTimeoutMs);
     }
@@ -210,12 +298,25 @@ const processScheduledEmail = async (row, workerId, store, dependencies) => {
             row.smtp_accepted_at = new Date();
             row.status = 'sent_copy_pending';
             await store.accepted?.(row, workerId);
+            try {
+                if (dependencies.onAccepted) {
+                    await withOperationTimeout(Promise.resolve(dependencies.onAccepted(row, recipientOutcome.accepted)), Math.min(5_000, operationTimeoutMs));
+                }
+            }
+            catch (error) {
+                console.error(`Outbound submission ${row.id} acceptance side effect failed:`, smtpErrorCode(error));
+            }
         }
         catch (error) {
             const code = smtpErrorCode(error);
-            if (smtpAccepted || (0, exports.classifyScheduledSmtpError)(error) === 'delivery_uncertain') {
+            const classification = (0, exports.classifyScheduledSmtpError)(error);
+            if (smtpAccepted || classification === 'delivery_uncertain') {
                 await store.uncertain?.(row, workerId, code);
                 return 'delivery_uncertain';
+            }
+            if (classification === 'permanent_failure') {
+                await store.failed?.(row, workerId, code);
+                return 'failed';
             }
             if (Number(row.attempts || 0) >= 8) {
                 await store.failed?.(row, workerId, code);
@@ -230,6 +331,9 @@ const processScheduledEmail = async (row, workerId, store, dependencies) => {
             }
             catch { }
         }
+    }
+    if (!saveSentCopy) {
+        return completeWithoutSentCopy();
     }
     await store.renewSentCopyLease?.(row, workerId);
     let imap = null;
@@ -258,7 +362,11 @@ exports.processScheduledEmail = processScheduledEmail;
 const schemaPromises = new WeakMap();
 const scheduledColumnDefinitions = {
     payload_version: 'TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER draft_uid',
-    status: "VARCHAR(32) NOT NULL DEFAULT 'scheduled' AFTER payload_version",
+    submission_kind: "VARCHAR(16) NOT NULL DEFAULT 'scheduled' AFTER payload_version",
+    idempotency_key: 'VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER submission_kind',
+    request_fingerprint: 'CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER idempotency_key',
+    save_in_sent_items: 'TINYINT(1) NOT NULL DEFAULT 1 AFTER request_fingerprint',
+    status: "VARCHAR(32) NOT NULL DEFAULT 'scheduled' AFTER save_in_sent_items",
     available_at: 'DATETIME NULL AFTER status',
     attempts: 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER available_at',
     lease_owner: 'VARCHAR(64) NULL AFTER attempts',
@@ -273,7 +381,8 @@ const scheduledColumnDefinitions = {
     sent_copy_completed_at: 'DATETIME NULL AFTER smtp_accepted_at',
     completed_at: 'DATETIME NULL AFTER sent_copy_completed_at',
     cancelled_at: 'DATETIME NULL AFTER completed_at',
-    last_error_code: 'VARCHAR(80) NULL AFTER cancelled_at',
+    removed_at: 'DATETIME NULL AFTER cancelled_at',
+    last_error_code: 'VARCHAR(80) NULL AFTER removed_at',
     last_error_at: 'DATETIME NULL AFTER last_error_code',
     updated_at: 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at',
 };
@@ -290,6 +399,10 @@ const ensureScheduledEmailsSchema = async (db = db_1.pool) => {
                 mail_options MEDIUMTEXT NOT NULL,
                 draft_uid BIGINT NULL,
                 payload_version TINYINT UNSIGNED NOT NULL DEFAULT 1,
+                submission_kind VARCHAR(16) NOT NULL DEFAULT 'scheduled',
+                idempotency_key VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL,
+                request_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+                save_in_sent_items TINYINT(1) NOT NULL DEFAULT 1,
                 status VARCHAR(32) NOT NULL DEFAULT 'scheduled',
                 available_at DATETIME NULL,
                 attempts INT UNSIGNED NOT NULL DEFAULT 0,
@@ -305,40 +418,53 @@ const ensureScheduledEmailsSchema = async (db = db_1.pool) => {
                 sent_copy_completed_at DATETIME NULL,
                 completed_at DATETIME NULL,
                 cancelled_at DATETIME NULL,
+                removed_at DATETIME NULL,
                 last_error_code VARCHAR(80) NULL,
                 last_error_at DATETIME NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 KEY idx_send_at (send_at),
                 KEY idx_scheduled_claim (status, available_at, lease_expires_at, id),
-                KEY idx_scheduled_owner_state (username, status, send_at, id)
+                KEY idx_scheduled_owner_state (username, status, send_at, id),
+                UNIQUE KEY uq_scheduled_owner_idempotency (username, idempotency_key)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
         const [columnRows] = await db.query(`SELECT COLUMN_NAME, COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'scheduled_emails'`);
         const columns = new Set((columnRows || []).map((row) => String(row.COLUMN_NAME || row.column_name)));
-        for (const [name, definition] of Object.entries(scheduledColumnDefinitions)) {
-            if (!columns.has(name))
-                await db.query(`ALTER TABLE scheduled_emails ADD COLUMN ${name} ${definition}`);
-        }
+        const columnAlterations = Object.entries(scheduledColumnDefinitions)
+            .filter(([name]) => !columns.has(name))
+            .map(([name, definition]) => `ADD COLUMN ${name} ${definition}`);
         const attemptsColumn = (columnRows || []).find((row) => String(row.COLUMN_NAME || row.column_name) === 'attempts');
         if (attemptsColumn && !String(attemptsColumn.COLUMN_TYPE || attemptsColumn.column_type || '').toLowerCase().startsWith('int')) {
-            await db.query('ALTER TABLE scheduled_emails MODIFY COLUMN attempts INT UNSIGNED NOT NULL DEFAULT 0');
+            columnAlterations.push('MODIFY COLUMN attempts INT UNSIGNED NOT NULL DEFAULT 0');
+        }
+        if (columnAlterations.length > 0) {
+            await db.query(`ALTER TABLE scheduled_emails ${columnAlterations.join(', ')}`);
         }
         await db.query(`UPDATE scheduled_emails
              SET status = COALESCE(NULLIF(status, ''), 'scheduled'),
                  available_at = COALESCE(available_at, send_at),
                  sender_address = COALESCE(NULLIF(sender_address, ''), username),
-                 payload_version = COALESCE(payload_version, 1)
-             WHERE available_at IS NULL OR sender_address IS NULL OR sender_address = '' OR status = ''`);
+                 payload_version = COALESCE(payload_version, 1),
+                 submission_kind = COALESCE(NULLIF(submission_kind, ''), 'scheduled')
+             WHERE available_at IS NULL OR sender_address IS NULL OR sender_address = ''
+                OR status = '' OR submission_kind = ''`);
         const [indexRows] = await db.query(`SELECT DISTINCT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'scheduled_emails'`);
         const indexes = new Set((indexRows || []).map((row) => String(row.INDEX_NAME || row.index_name)));
+        const indexAlterations = [];
         if (!indexes.has('idx_scheduled_claim')) {
-            await db.query('ALTER TABLE scheduled_emails ADD KEY idx_scheduled_claim (status, available_at, lease_expires_at, id)');
+            indexAlterations.push('ADD KEY idx_scheduled_claim (status, available_at, lease_expires_at, id)');
         }
         if (!indexes.has('idx_scheduled_owner_state')) {
-            await db.query('ALTER TABLE scheduled_emails ADD KEY idx_scheduled_owner_state (username, status, send_at, id)');
+            indexAlterations.push('ADD KEY idx_scheduled_owner_state (username, status, send_at, id)');
+        }
+        if (!indexes.has('uq_scheduled_owner_idempotency')) {
+            indexAlterations.push('ADD UNIQUE KEY uq_scheduled_owner_idempotency (username, idempotency_key)');
+        }
+        if (indexAlterations.length > 0) {
+            await db.query(`ALTER TABLE scheduled_emails ${indexAlterations.join(', ')}`);
         }
     })();
     schemaPromises.set(db, promise);
@@ -357,12 +483,75 @@ class MySqlScheduledEmailStore {
     constructor(db = db_1.pool) {
         this.db = db;
     }
+    async claimById(id, username, workerId) {
+        const connection = await this.db.getConnection();
+        try {
+            await connection.beginTransaction();
+            await connection.query(`UPDATE scheduled_emails
+                 SET status = 'delivery_uncertain', last_error_code = 'lease_expired_during_smtp',
+                     raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE raw_message END,
+                     sent_raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE sent_raw_message END,
+                     envelope_json = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE envelope_json END,
+                     mail_options = CASE WHEN submission_kind = 'immediate' THEN '{}' ELSE mail_options END,
+                     last_error_at = UTC_TIMESTAMP(), lease_owner = NULL, lease_expires_at = NULL
+                 WHERE id = ? AND username = ? AND submission_kind = 'immediate'
+                   AND status = 'smtp_inflight' AND lease_expires_at <= UTC_TIMESTAMP()`, [id, username]);
+            await connection.query(`UPDATE scheduled_emails
+                 SET status = 'retry_wait', available_at = UTC_TIMESTAMP(),
+                     last_error_code = 'lease_expired_before_smtp', last_error_at = UTC_TIMESTAMP(),
+                     lease_owner = NULL, lease_expires_at = NULL
+                 WHERE id = ? AND username = ? AND submission_kind = 'immediate'
+                   AND status = 'claimed' AND lease_expires_at <= UTC_TIMESTAMP()`, [id, username]);
+            const [rows] = await connection.query(`SELECT * FROM scheduled_emails
+                 WHERE id = ? AND username = ? AND submission_kind = 'immediate'
+                   AND status IN ('scheduled', 'retry_wait', 'sent_copy_pending')
+                   AND COALESCE(available_at, send_at) <= UTC_TIMESTAMP()
+                   AND (lease_expires_at IS NULL OR lease_expires_at <= UTC_TIMESTAMP())
+                 LIMIT 1 FOR UPDATE SKIP LOCKED`, [id, username]);
+            const row = rows?.[0];
+            if (!row) {
+                await connection.commit();
+                return null;
+            }
+            const previousStatus = String(row.status || 'scheduled');
+            const [result] = previousStatus === 'sent_copy_pending'
+                ? await connection.query(`UPDATE scheduled_emails
+                     SET attempts = attempts + 1, lease_owner = ?,
+                         lease_expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 120 SECOND)
+                     WHERE id = ? AND username = ? AND submission_kind = 'immediate'
+                       AND status = 'sent_copy_pending'`, [workerId, id, username])
+                : await connection.query(`UPDATE scheduled_emails
+                     SET status = 'claimed', attempts = attempts + 1, lease_owner = ?,
+                         lease_expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 120 SECOND)
+                     WHERE id = ? AND username = ? AND submission_kind = 'immediate'
+                       AND status = ?`, [workerId, id, username, previousStatus]);
+            if (Number(result?.affectedRows) !== 1) {
+                throw new Error('Outbound submission was claimed by another worker');
+            }
+            row.status = previousStatus === 'sent_copy_pending' ? 'sent_copy_pending' : 'claimed';
+            row.attempts = Number(row.attempts || 0) + 1;
+            row.lease_owner = workerId;
+            await connection.commit();
+            return row;
+        }
+        catch (error) {
+            await connection.rollback();
+            throw error;
+        }
+        finally {
+            connection.release();
+        }
+    }
     async claimBatch(workerId, limit = 25) {
         const connection = await this.db.getConnection();
         try {
             await connection.beginTransaction();
             await connection.query(`UPDATE scheduled_emails
                  SET status = 'delivery_uncertain', last_error_code = 'lease_expired_during_smtp',
+                     raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE raw_message END,
+                     sent_raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE sent_raw_message END,
+                     envelope_json = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE envelope_json END,
+                     mail_options = CASE WHEN submission_kind = 'immediate' THEN '{}' ELSE mail_options END,
                      last_error_at = UTC_TIMESTAMP(), lease_owner = NULL, lease_expires_at = NULL
                  WHERE status = 'smtp_inflight' AND lease_expires_at <= UTC_TIMESTAMP()`);
             await connection.query(`UPDATE scheduled_emails
@@ -372,10 +561,15 @@ class MySqlScheduledEmailStore {
                  WHERE status = 'claimed' AND lease_expires_at <= UTC_TIMESTAMP()`);
             const [rows] = await connection.query(`SELECT * FROM scheduled_emails
                  WHERE status IN ('scheduled', 'retry_wait', 'sent_copy_pending')
-                   AND COALESCE(available_at, send_at) <= UTC_TIMESTAMP()
+                   AND (
+                       (idempotency_key IS NULL AND status = 'scheduled'
+                        AND COALESCE(available_at, send_at) <= ?)
+                       OR ((idempotency_key IS NOT NULL OR status <> 'scheduled')
+                           AND COALESCE(available_at, send_at) <= UTC_TIMESTAMP())
+                   )
                    AND (lease_expires_at IS NULL OR lease_expires_at <= UTC_TIMESTAMP())
                  ORDER BY COALESCE(available_at, send_at), id
-                 LIMIT ? FOR UPDATE SKIP LOCKED`, [Math.max(1, Math.min(100, Math.trunc(limit)))]);
+                 LIMIT ? FOR UPDATE SKIP LOCKED`, [new Date(), Math.max(1, Math.min(100, Math.trunc(limit)))]);
             for (const row of rows || []) {
                 const previousStatus = String(row.status || 'scheduled');
                 if (previousStatus === 'sent_copy_pending') {
@@ -444,6 +638,7 @@ class MySqlScheduledEmailStore {
                  SET status = 'partial_delivery', sent_copy_completed_at = UTC_TIMESTAMP(),
                      completed_at = UTC_TIMESTAMP(), raw_message = NULL, sent_raw_message = NULL,
                      envelope_json = NULL,
+                     mail_options = CASE WHEN submission_kind = 'immediate' THEN '{}' ELSE mail_options END,
                      last_error_code = 'partial_recipient_rejection', last_error_at = UTC_TIMESTAMP(),
                      lease_owner = NULL, lease_expires_at = NULL
                  WHERE id = ? AND lease_owner = ? AND status = 'sent_copy_pending'
@@ -471,12 +666,20 @@ class MySqlScheduledEmailStore {
     async failed(row, workerId, code) {
         await this.update(`UPDATE scheduled_emails
              SET status = 'failed', last_error_code = ?, last_error_at = UTC_TIMESTAMP(),
+                 raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE raw_message END,
+                 sent_raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE sent_raw_message END,
+                 envelope_json = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE envelope_json END,
+                 mail_options = CASE WHEN submission_kind = 'immediate' THEN '{}' ELSE mail_options END,
                  lease_owner = NULL, lease_expires_at = NULL
              WHERE id = ? AND lease_owner = ? AND smtp_accepted_at IS NULL`, [code.slice(0, 80), row.id, workerId], 'Scheduled email lease was lost while recording failure');
     }
     async uncertain(row, workerId, code) {
         await this.update(`UPDATE scheduled_emails
              SET status = 'delivery_uncertain', last_error_code = ?, last_error_at = UTC_TIMESTAMP(),
+                 raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE raw_message END,
+                 sent_raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE sent_raw_message END,
+                 envelope_json = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE envelope_json END,
+                 mail_options = CASE WHEN submission_kind = 'immediate' THEN '{}' ELSE mail_options END,
                  lease_owner = NULL, lease_expires_at = NULL
              WHERE id = ? AND lease_owner = ? AND status = 'smtp_inflight'`, [code.slice(0, 80), row.id, workerId], 'Scheduled email lease was lost while recording uncertain delivery');
     }
@@ -486,7 +689,7 @@ const claimScheduledCancellation = async (db, id, username, workerId) => {
     const [result] = await db.query(`UPDATE scheduled_emails
          SET status = 'cancel_restore_pending', lease_owner = ?,
              lease_expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 120 SECOND)
-         WHERE id = ? AND username = ?
+         WHERE id = ? AND username = ? AND submission_kind = 'scheduled'
            AND (status IN ('scheduled', 'retry_wait')
              OR (status = 'cancel_restore_pending'
                AND (lease_owner IS NULL OR lease_expires_at <= UTC_TIMESTAMP())))`, [workerId, id, username]);
@@ -531,45 +734,118 @@ const releaseScheduledCancellation = async (db, id, username, workerId, code) =>
 };
 exports.releaseScheduledCancellation = releaseScheduledCancellation;
 const removeTerminalScheduledEmail = async (db, id, username) => {
-    const [result] = await db.query(`DELETE FROM scheduled_emails
-         WHERE id = ? AND username = ? AND status IN ('failed', 'delivery_uncertain', 'partial_delivery')`, [id, username]);
+    const [result] = await db.query(`UPDATE scheduled_emails
+         SET removed_at = UTC_TIMESTAMP(), mail_options = '{}', envelope_json = NULL,
+             raw_message = NULL, sent_raw_message = NULL,
+             lease_owner = NULL, lease_expires_at = NULL
+         WHERE id = ? AND username = ? AND submission_kind = 'scheduled'
+           AND status IN ('failed', 'delivery_uncertain', 'partial_delivery')
+           AND removed_at IS NULL`, [id, username]);
     if (Number(result?.affectedRows) === 1)
         return 'removed';
-    const [rows] = await db.query('SELECT status FROM scheduled_emails WHERE id = ? AND username = ? LIMIT 1', [id, username]);
-    return !rows || rows.length === 0 ? 'not_found' : 'conflict';
+    const [rows] = await db.query('SELECT status, removed_at FROM scheduled_emails WHERE id = ? AND username = ? LIMIT 1', [id, username]);
+    if (!rows || rows.length === 0 || rows[0].removed_at)
+        return 'not_found';
+    return 'conflict';
 };
 exports.removeTerminalScheduledEmail = removeTerminalScheduledEmail;
 const abortScheduledEmailBeforeDelivery = async (db, id, username) => {
     const [result] = await db.query(`DELETE FROM scheduled_emails
          WHERE id = ? AND username = ? AND status = 'scheduled'
+           AND submission_kind = 'scheduled'
            AND smtp_accepted_at IS NULL`, [id, username]);
     return Number(result?.affectedRows) === 1;
 };
 exports.abortScheduledEmailBeforeDelivery = abortScheduledEmailBeforeDelivery;
-const enqueueScheduledEmail = async (db, message) => {
-    await (0, exports.ensureScheduledEmailsSchema)(db);
-    const [result] = await db.query(`INSERT INTO scheduled_emails
-            (username, send_at, mail_options, draft_uid, payload_version, status, available_at, attempts,
-             sender_address, message_id, envelope_json, raw_message, sent_raw_message)
-         VALUES (?, ?, ?, ?, 2, 'scheduled', ?, 0, ?, ?, ?, ?, ?)`, [message.username, message.sendAt, JSON.stringify(message.metadata), message.draftUid || null,
-        message.sendAt, message.senderAddress, message.messageId, JSON.stringify(message.envelope), message.raw,
-        message.sentRaw || message.raw]);
-    return Number(result.insertId);
+class OutboundIdempotencyKeyError extends Error {
+    code = 'OUTBOUND_IDEMPOTENCY_KEY_INVALID';
+    status = 400;
+    constructor(message = 'An ASCII idempotency key between 1 and 128 characters is required') {
+        super(message);
+        this.name = 'OutboundIdempotencyKeyError';
+    }
+}
+exports.OutboundIdempotencyKeyError = OutboundIdempotencyKeyError;
+class OutboundIdempotencyConflictError extends Error {
+    code = 'OUTBOUND_IDEMPOTENCY_CONFLICT';
+    status = 409;
+    constructor() {
+        super('The idempotency key was already used for a different outbound request');
+        this.name = 'OutboundIdempotencyConflictError';
+    }
+}
+exports.OutboundIdempotencyConflictError = OutboundIdempotencyConflictError;
+class OutboundSubmissionUnavailableError extends Error {
+    code = 'OUTBOUND_SUBMISSION_UNAVAILABLE';
+    status = 503;
+    constructor(cause) {
+        super('The durable outbound submission service is unavailable', { cause });
+        this.name = 'OutboundSubmissionUnavailableError';
+    }
+}
+exports.OutboundSubmissionUnavailableError = OutboundSubmissionUnavailableError;
+const normalizeOutboundIdempotencyKey = (value) => {
+    if (typeof value !== 'string' || !/^[\x21-\x7e]{1,128}$/.test(value)) {
+        throw new OutboundIdempotencyKeyError();
+    }
+    return value;
 };
-exports.enqueueScheduledEmail = enqueueScheduledEmail;
-const retainAcceptedSentCopy = async (db, message) => {
-    await (0, exports.ensureScheduledEmailsSchema)(db);
-    const [result] = await db.query(`INSERT INTO scheduled_emails
-            (username, send_at, mail_options, draft_uid, payload_version, status, available_at, attempts,
-             sender_address, message_id, envelope_json, raw_message, sent_raw_message,
-             smtp_accepted_at, last_error_code, last_error_at)
-         VALUES (?, ?, ?, ?, 2, 'sent_copy_pending', UTC_TIMESTAMP(), 1, ?, ?, ?, ?, ?, UTC_TIMESTAMP(),
-                 'sent_copy_pending', UTC_TIMESTAMP())`, [message.username, message.sendAt, JSON.stringify(message.metadata), message.draftUid || null,
-        message.senderAddress, message.messageId, JSON.stringify(message.envelope), message.raw,
-        message.sentRaw || message.raw]);
-    return Number(result.insertId);
+const outboundSqlUtcDate = (value) => (value.toISOString().slice(0, 19).replace('T', ' '));
+const isDuplicateKeyError = (error) => (String(error?.code || '') === 'ER_DUP_ENTRY' || Number(error?.errno) === 1062);
+const rowRejectedRecipients = (row) => {
+    try {
+        const values = JSON.parse(String(row?.rejected_recipients_json || '[]'));
+        return Array.isArray(values)
+            ? values.filter(value => typeof value === 'string').map(String)
+            : [];
+    }
+    catch {
+        return [];
+    }
 };
-exports.retainAcceptedSentCopy = retainAcceptedSentCopy;
+const projectOutboundSubmission = (row) => {
+    const sendAt = row.idempotency_key === null
+        ? row.send_at
+        : row.send_at_utc || row.send_at;
+    return {
+        id: Number(row.id),
+        submissionKind: row.submission_kind === 'immediate' ? 'immediate' : 'scheduled',
+        status: String(row.status || 'scheduled'),
+        messageId: row.message_id ? String(row.message_id) : null,
+        sendAt: sendAt instanceof Date ? sendAt : new Date(sendAt),
+        smtpAccepted: Boolean(row.smtp_accepted_at),
+        saveSentCopy: row.save_in_sent_items === undefined || Boolean(row.save_in_sent_items),
+        rejectedRecipients: rowRejectedRecipients(row),
+        lastErrorCode: row.last_error_code ? String(row.last_error_code) : null,
+    };
+};
+const getOutboundSubmission = async (db, username, lookup) => {
+    await (0, exports.ensureScheduledEmailsSchema)(db);
+    let sql = '';
+    let params = [];
+    if ('id' in lookup) {
+        if (!Number.isSafeInteger(lookup.id) || lookup.id <= 0)
+            return null;
+        sql = `SELECT id, submission_kind, idempotency_key, status, message_id, send_at,
+                      DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
+                      smtp_accepted_at,
+                      save_in_sent_items, rejected_recipients_json, last_error_code
+               FROM scheduled_emails WHERE id = ? AND username = ? LIMIT 1`;
+        params = [lookup.id, username];
+    }
+    else {
+        const key = normalizeOutboundIdempotencyKey(lookup.idempotencyKey);
+        sql = `SELECT id, submission_kind, idempotency_key, status, message_id, send_at,
+                      DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
+                      smtp_accepted_at,
+                      save_in_sent_items, rejected_recipients_json, last_error_code
+               FROM scheduled_emails WHERE username = ? AND idempotency_key = ? LIMIT 1`;
+        params = [username, key];
+    }
+    const [rows] = await db.query(sql, params);
+    return rows?.[0] ? projectOutboundSubmission(rows[0]) : null;
+};
+exports.getOutboundSubmission = getOutboundSubmission;
 const getScheduledCredential = async (username) => {
     if (config_1.delegatedAuthEnabled)
         return '';
@@ -606,7 +882,135 @@ const defaultScheduledDependencies = {
         }
     },
     authorizeSender: (username, sender) => (0, outbound_mail_1.authorizeOutboundSender)(db_1.pool, username, sender),
+    onAccepted: async (row, acceptedRecipients) => {
+        const contactsSettings = await (0, user_settings_1.getUserSettings)(row.username, 'contacts');
+        if (contactsSettings.autoCreateFromSent === false)
+            return;
+        for (const recipient of acceptedRecipients) {
+            const address = (0, outbound_mail_1.normalizeMailboxAddress)(recipient);
+            if (!address)
+                continue;
+            try {
+                await db_1.pool.query('INSERT IGNORE INTO contacts (username, name, email) VALUES (?, ?, ?)', [row.username, address.slice(0, address.indexOf('@')), address]);
+            }
+            catch { }
+        }
+    },
 };
+const submitOutbound = async (db, input, runtime = {}) => {
+    try {
+        await (0, exports.ensureScheduledEmailsSchema)(db);
+    }
+    catch (error) {
+        throw new OutboundSubmissionUnavailableError(error);
+    }
+    if (input.submissionKind !== 'immediate' && input.submissionKind !== 'scheduled') {
+        throw new Error('Outbound submission kind is invalid');
+    }
+    const idempotencyKey = normalizeOutboundIdempotencyKey(input.idempotencyKey);
+    const message = input.message;
+    if (!Buffer.isBuffer(message.raw) || (message.sentRaw !== undefined && !Buffer.isBuffer(message.sentRaw))
+        || !message.messageId || !message.envelope || !Array.isArray(message.envelope.to)
+        || message.envelope.to.length === 0) {
+        throw new Error('Outbound submission payload is incomplete');
+    }
+    const requestedSendAt = message.sendAt instanceof Date ? message.sendAt : new Date(message.sendAt);
+    if (!Number.isFinite(requestedSendAt.getTime()))
+        throw new Error('Outbound submission time is invalid');
+    const sendAt = input.submissionKind === 'scheduled' ? requestedSendAt : new Date();
+    const sendAtSql = outboundSqlUtcDate(sendAt);
+    const saveSentCopy = message.saveSentCopy !== false;
+    const requestFingerprint = (0, exports.computeOutboundRequestFingerprint)({
+        submissionKind: input.submissionKind,
+        sendAt,
+        username: message.username,
+        senderAddress: message.senderAddress,
+        recipients: message.envelope.to,
+        fingerprintSource: {
+            request: input.fingerprintSource,
+            saveSentCopy,
+        },
+    });
+    let id = 0;
+    try {
+        const [result] = await db.query(`INSERT INTO scheduled_emails
+                (username, send_at, mail_options, draft_uid, payload_version,
+                 submission_kind, idempotency_key, request_fingerprint, save_in_sent_items,
+                 status, available_at, attempts, sender_address, message_id, envelope_json,
+                 raw_message, sent_raw_message)
+             VALUES (?, ?, ?, ?, 2, ?, ?, ?, ?, 'scheduled', ?, 0, ?, ?, ?, ?, ?)`, [message.username, sendAtSql, JSON.stringify(message.metadata), message.draftUid || null,
+            input.submissionKind, idempotencyKey, requestFingerprint, saveSentCopy ? 1 : 0,
+            sendAtSql, message.senderAddress, message.messageId, JSON.stringify(message.envelope),
+            message.raw, message.sentRaw || message.raw]);
+        id = Number(result?.insertId);
+        if (!Number.isSafeInteger(id) || id <= 0)
+            throw new Error('Outbound submission was not persisted');
+    }
+    catch (error) {
+        if (!isDuplicateKeyError(error)) {
+            throw new OutboundSubmissionUnavailableError(error);
+        }
+        let rows;
+        try {
+            [rows] = await db.query(`SELECT id, submission_kind, idempotency_key, status, message_id, send_at,
+                        DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
+                        smtp_accepted_at,
+                        save_in_sent_items, rejected_recipients_json, last_error_code, request_fingerprint
+                 FROM scheduled_emails WHERE username = ? AND idempotency_key = ? LIMIT 1`, [message.username, idempotencyKey]);
+        }
+        catch (lookupError) {
+            throw new OutboundSubmissionUnavailableError(lookupError);
+        }
+        const existing = rows?.[0];
+        if (!existing)
+            throw new OutboundSubmissionUnavailableError(error);
+        if (String(existing.request_fingerprint || '') !== requestFingerprint) {
+            throw new OutboundIdempotencyConflictError();
+        }
+        return { ...projectOutboundSubmission(existing), replayed: true };
+    }
+    if (input.submissionKind === 'immediate') {
+        const workerId = runtime.workerId || `request-${process.pid}-${crypto_1.default.randomUUID()}`;
+        const store = new MySqlScheduledEmailStore(db);
+        try {
+            const row = await store.claimById(id, message.username, workerId);
+            if (row) {
+                const baseDependencies = {
+                    ...defaultScheduledDependencies,
+                    ...runtime.dependencies,
+                };
+                const dependencies = input.requestCredential === undefined
+                    ? baseDependencies
+                    : {
+                        ...baseDependencies,
+                        getCredential: async (username) => {
+                            if ((0, outbound_mail_1.normalizeMailboxAddress)(username) !== (0, outbound_mail_1.normalizeMailboxAddress)(message.username)) {
+                                throw new Error('Outbound request credential owner mismatch');
+                            }
+                            return input.requestCredential;
+                        },
+                    };
+                await (0, exports.processScheduledEmail)(row, workerId, store, dependencies);
+            }
+        }
+        catch (error) {
+            throw new OutboundSubmissionUnavailableError(error);
+        }
+    }
+    let result;
+    try {
+        result = await (0, exports.getOutboundSubmission)(db, message.username, { id });
+    }
+    catch (error) {
+        if (error instanceof OutboundIdempotencyKeyError)
+            throw error;
+        throw new OutboundSubmissionUnavailableError(error);
+    }
+    if (!result)
+        throw new OutboundSubmissionUnavailableError();
+    return { ...result, replayed: false };
+};
+exports.submitOutbound = submitOutbound;
 const runningScheduledDatabases = new WeakSet();
 const runScheduledSender = async (dependencies = defaultScheduledDependencies, db = db_1.pool, workerId) => {
     if (runningScheduledDatabases.has(db))
@@ -616,8 +1020,12 @@ const runScheduledSender = async (dependencies = defaultScheduledDependencies, d
     try {
         await (0, exports.ensureScheduledEmailsSchema)(db);
         const store = new MySqlScheduledEmailStore(db);
-        const rows = await store.claimBatch(claimToken, 25);
-        for (const row of rows) {
+        let processed = 0;
+        while (processed < 25) {
+            const [row] = await store.claimBatch(claimToken, 1);
+            if (!row)
+                break;
+            processed += 1;
             try {
                 await (0, exports.processScheduledEmail)(row, claimToken, store, dependencies);
             }
@@ -625,7 +1033,7 @@ const runScheduledSender = async (dependencies = defaultScheduledDependencies, d
                 console.error(`Scheduled email ${row.id} worker failure:`, error);
             }
         }
-        return rows.length;
+        return processed;
     }
     finally {
         runningScheduledDatabases.delete(db);

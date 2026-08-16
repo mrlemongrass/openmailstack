@@ -1128,6 +1128,70 @@ The React app lazy-loads authenticated Scheduler management and unauthenticated 
 
 Evidence: `webmail-backend/src/scheduler/`, versioned migrations `001` through `025`, `functions/10_webmail.sh`, `functions/12_scheduler.sh`, the native owner/Admin/public React surfaces, backend tests, static integration guards, disposable MariaDB lifecycle/concurrency tests, and the guarded live deployments. Migrations `001`-`025` apply twice and all 114 backend tests pass without skips. Real Express acceptance covers session/Admin authorization, tenant/provider isolation, notification IDOR, unsubscribe confirmation/mutation, and semantic delivery metrics. Desktop/mobile owner surfaces and the Admin delivery dashboard pass browser checks with zero console errors. On the live host migration `025` and its provider-health columns exist; the keyring is configured; API and worker services are active with zero recent error-level lines; workflow/Admin APIs return `401` unauthenticated; the public profile and workflow SPA return `200`; repository/deployed backend and frontend artifacts are exact; workflow/job/provider/open-alert counts remain zero; the Postfix queue is empty; and staging smoke including Rspamd functional health passes. Rollback snapshot: `/var/backups/openmailstack/20260716T151429Z-scheduler-phase3`. Remaining validation is physical CalDAV/ActiveSync observation and clean-VM work after a second development Linux server is available.
 
+### 8.9 Universal Outbound Delivery
+
+Status: `Implemented And Locally Verified - Not Deployed`
+
+Last verified: 2026-08-15 in source tests, deterministic browser fixtures, and
+an isolated disposable MariaDB 11.8.6 instance.
+
+Web immediate mail, delayed/Undo mail, and ActiveSync SendMail now enter one
+durable outbox implemented on the core `scheduled_emails` table. The server
+commits the complete delivery MIME, the Bcc-preserving Sent MIME, envelope,
+stable Message-ID, owner, request fingerprint, and recovery state before SMTP.
+Every submission requires an owner-scoped visible-ASCII idempotency key; a
+server-computed SHA-256 fingerprint distinguishes a replay from key reuse with
+different content. Same-key/same-fingerprint requests project the stored result
+without SMTP, while mismatches fail with `409`.
+
+The request may claim its own new row for normal latency and the background
+worker recovers committed work. Pre-SMTP claims can retry. SMTP acceptance moves
+the row to Sent-copy reconciliation; explicit temporary responses retry and
+explicit permanent responses fail. A connection loss during DATA or an expired
+`smtp_inflight` lease becomes terminal `delivery_uncertain` and is never
+automatically resent. Sent append is independently retryable and reconciled by
+Message-ID. Workers claim one row immediately before processing instead of
+pre-leasing a batch. New keyed outbox DATETIME values are serialized explicitly
+as UTC strings and compared to `UTC_TIMESTAMP()` without changing the shared
+pool's legacy timezone behavior. Historical null-key rows still in
+`status='scheduled'` are the deliberate exception: their `send_at`/
+`available_at` values were written by mysql2 as process-local wall time, so
+claim and projection use a raw JavaScript `Date`. Once a legacy row enters
+`retry_wait` (and for all leases/Sent-copy states), its database-generated time
+is UTC again. Do not collapse these bases or mass-convert ambiguous rows. The
+Scheduled-folder SQL order is still the raw mixed-basis `send_at` order, so an
+upgraded installation can display an old row out of true-instant order even
+though eligibility and displayed timestamps are correct; a future normalized
+sort key must preserve this compatibility rule.
+
+Terminal immediate rows scrub MIME, envelope, and message content while
+retaining the owner/key/fingerprint/outcome tombstone needed to prevent a later
+duplicate. Scheduled rows retain recovery content until owner Undo/removal;
+removal soft-hides and scrubs the payload without deleting its idempotency
+tombstone. A bounded archival/retention policy for these metadata tombstones is
+not yet defined, so hot-table growth remains an operational follow-up.
+
+The browser stores only UUIDs and privacy-safe scope/content digests in
+IndexedDB, coordinates concurrent tabs transactionally, and recovers attempts
+by idempotency key after reload without needing message content. Ambiguous,
+pending, and uncertain attempts keep their key and block a new unchanged send
+or schedule. Only an explicit user confirmation that delivery was independently
+verified as absent rotates an uncertain attempt to a new key. Authenticated
+status responses are owner-scoped and `Cache-Control: no-store`.
+
+ActiveSync uses the official ComposeMail token map and scopes ClientId by owner
+and validated DeviceId. It validates one owned From address, strips Bcc and
+Resent-Bcc only from delivery headers, preserves the original Sent MIME, and
+honors SaveInSentItems. SmartReply and SmartForward remain unadvertised and
+fail closed; AccountId fails closed until Settings account identities exist.
+
+The additive legacy bridge and full crash/concurrency matrix pass on disposable
+MariaDB. Deployment is blocked because the currently installed rollback target
+predates the universal outbox and can process new rows or keyed retries
+incorrectly after rollback. Release requires an expand/contract bridge or a
+maintenance/quarantine rollback barrier, then guarded live and physical iOS
+retry proof.
+
 ---
 
 ## 9. ActiveSync, CalDAV, CardDAV, JMAP, and Sync Services
@@ -1478,6 +1542,9 @@ During repository intake, agents should answer these questions and update this f
 
 ## 16. Change Log for This Document
 
+- 2026-08-15: Documented the locally verified universal outbound outbox,
+  browser and ActiveSync idempotency contracts, UTC boundary, privacy
+  scrubbing, and the rollback-compatibility deployment blocker.
 - 2026-07-30: Documented deployed owner-only CardDAV privilege metadata,
   truthful non-ACL boundaries, regression coverage, and the remaining physical
   macOS Default Account gate.

@@ -1820,3 +1820,32 @@ Future entry template:
   durable replay record exists. Next work is a universal idempotent outbox with
   disposable MariaDB migration/concurrency proof, then guarded live and physical
   client validation. See `docs/engineering/RELEASE_READINESS_2026-08-15.md`.
+
+## 2026-08-15 — Cycles 6-8 Universal Outbox And Qualification
+
+- Replaced direct web and ActiveSync SMTP ownership with one durable outbox on
+  `scheduled_emails`. Complete transport/Sent MIME, envelope, stable Message-ID,
+  owner-scoped idempotency key, request fingerprint, and crash state are
+  committed before SMTP; same-key replay cannot resend.
+- Added strict scheduled and immediate key contracts, owner-scoped status by ID
+  or key, partial/uncertain truth, safe SMTP response classification,
+  claim-on-demand workers, UTC-safe outbox timestamps, terminal immediate
+  payload scrubbing, and soft scheduled removal that preserves dedupe state.
+- Added browser IndexedDB coordination for concurrent tabs and reload recovery,
+  privacy-safe digests, cross-mode replay protection, no-store status polling,
+  and explicit verified-non-delivery resolution before a new attempt can exist.
+- Corrected and enabled strict ActiveSync SendMail with official ComposeMail
+  tokens, owner/DeviceId/ClientId scope, owned From authorization,
+  SaveInSentItems semantics, and transport-only Bcc/Resent-Bcc stripping.
+  SmartReply/SmartForward remain fail-closed.
+- Verified backend 724/729 with five documented skips, frontend 175/175 plus
+  lint/build, complete integration, generated-runtime parity, independent
+  focused review, a 240/240 Chromium/WebKit desktop/mobile matrix, and an
+  isolated MariaDB 11.8.6 migration/concurrency/crash/
+  UTC/privacy matrix. No production data was mutated and the disposable
+  schema/user were removed.
+- Release remains NO-GO because the installed automatic rollback target is not
+  compatible with rows and keyed retries created by the new runtime. The
+  duplicate production calendar tombstone, physical iOS SendMail retry,
+  physical macOS Notes lifecycle, clean-host recovery drill, and bounded
+  outbox-metadata retention policy remain open.

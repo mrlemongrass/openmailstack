@@ -9,7 +9,7 @@ const { renderToStaticMarkup } = require('react-dom/server');
 
 const componentPath = path.resolve(__dirname, '../src/mail/components/InlineReply.tsx');
 
-function renderInlineReply() {
+function renderInlineReply(overrides = {}) {
   const source = fs.readFileSync(componentPath, 'utf8');
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
@@ -43,6 +43,9 @@ function renderInlineReply() {
     onSend: () => undefined,
     onSendAndArchive: () => undefined,
     onOpenFullCompose: () => undefined,
+    onCheckEarlierSend: () => undefined,
+    onVerifiedNonDelivery: () => undefined,
+    ...overrides,
   }));
 }
 
@@ -58,4 +61,49 @@ test('mobile inline reply keeps its primary and secondary actions readable', () 
     css,
     /@media \(max-width: 767px\)[\s\S]*\.inline-reply-actions\s*\{[\s\S]*grid-template-columns:\s*1fr 1fr[\s\S]*\.inline-reply-actions \.btn:first-child\s*\{[\s\S]*grid-column:\s*1 \/ -1/,
   );
+});
+
+test('inline reply renders a persistent recovery action while an earlier send is blocked', () => {
+  const markup = renderInlineReply({
+    sendPhase: 'blocked',
+    sendNotice: {
+      tone: 'warning',
+      message: 'An earlier send of this unchanged reply is unresolved.',
+    },
+  });
+
+  assert.match(markup, /role="alert"/);
+  assert.match(markup, /Check earlier send/);
+  assert.doesNotMatch(markup, /I verified it was not delivered/);
+  assert.match(markup, /<button[^>]*disabled=""[^>]*><svg[^>]*><\/svg> Do not resend<\/button>/);
+});
+
+test('inline reply keeps explicit verified non-delivery separate from status recovery', () => {
+  const markup = renderInlineReply({
+    sendPhase: 'uncertain',
+    sendNotice: {
+      tone: 'warning',
+      message: 'Delivery status is uncertain. Do not resend.',
+    },
+  });
+
+  assert.match(markup, /Check earlier send/);
+  assert.match(markup, /I verified it was not delivered/);
+});
+
+test('inline reply reports a terminal earlier send without leaving resend recovery controls', () => {
+  const markup = renderInlineReply({
+    replyText: '',
+    sendPhase: 'idle',
+    sendNotice: {
+      tone: 'info',
+      message: 'The earlier reply was accepted for delivery. It was not sent again.',
+    },
+  });
+
+  assert.match(markup, /role="status"/);
+  assert.match(markup, /accepted for delivery/);
+  assert.doesNotMatch(markup, /Check earlier send/);
+  assert.doesNotMatch(markup, /I verified it was not delivered/);
+  assert.match(markup, /<button[^>]*disabled=""[^>]*><svg[^>]*><\/svg> Send<\/button>/);
 });

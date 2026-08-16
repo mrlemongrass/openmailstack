@@ -6,6 +6,14 @@ Last updated: 2026-08-15
 
 ## Resolved Risks
 
+- ✅ Direct web/ActiveSync SMTP before durable replay state: Cycles 6-8 route
+  immediate, delayed, Undo, and ActiveSync SendMail through one universal
+  `scheduled_emails` outbox. Full MIME/envelope/fingerprint state commits before
+  SMTP; same-key replay never resends; post-DATA ambiguity becomes terminal;
+  browser attempts survive tabs/reload; and disposable MariaDB proves the
+  additive bridge, races, crash states, UTC boundary, and payload scrubbing.
+  This is code-closed locally but is not deployment-closed; see the rollback
+  compatibility risk below.
 - ✅ IMAP/ActiveSync release regressions escaping route-only checks: the
   installed-host gate now fails closed on missing credentials or skipped
   smokes and authenticates through strict public IMAPS plus ActiveSync against
@@ -94,6 +102,26 @@ Last updated: 2026-08-15
 
 ## Remaining High-Priority Risks
 
+- 🔴 Universal-outbox rollback compatibility: the installed automatic rollback
+  target predates `submission_kind`, soft removal, SaveInSentItems, and keyed
+  retries. Starting it after the new runtime has accepted traffic can process a
+  durable immediate row incorrectly while an old direct-SMTP retry sends again.
+  Do not deploy until an expand/contract bridge runtime is first installed or
+  outbound traffic and workers remain quarantined through rollback proof.
+- 🔴 Guarded rollout still stops on one exact duplicate production calendar
+  tombstone pair. Read-only evidence identified the newer retention candidate,
+  but no production row may be changed without separate explicit approval.
+- 🟡 Universal-outbox terminal tombstones preserve dedupe metadata indefinitely.
+  Payloads are scrubbed, but owner, sender/Message-ID, rejected-recipient JSON,
+  hashes, and indexes can grow without bound. Define an archival/retention
+  horizon that does not reopen web or ActiveSync duplicate-delivery risk, then
+  add cleanup and scale tests before enterprise-volume enablement.
+- 🟡 Mixed-generation Scheduled-folder ordering compares raw SQL `send_at`
+  values even though old null-key scheduled rows are local-wall-clock and new
+  keyed rows are UTC. Projection and delivery timing are correct, but a legacy
+  row can be displayed after a later keyed row. Normalize ordering on projected
+  instants or introduce a migration-safe sort key before claiming exact order
+  on upgraded installations.
 - The bounded findings from the 2026-07-29 desktop/mobile Playwright audit are resolved. This is not proof that the suite has no other UX defects; keep `docs/engineering/UX_AUDIT.md` current as additional authenticated workflows are reviewed.
 - Notes collaboration is production-bounded to same-owner sessions behind an operator opt-in. Preserve the same-origin signaling route, short-lived owner/session/room capability, expiry and size/connection limits, query-string-free access logging, atomic persistence, and local fallback. Cross-account invitations, membership, and sharing ACLs are not shipped and must not be inferred from the owner-only foundation. Direct clipboard-image paste must continue to use the authenticated bounded upload path, distinguish image-only HTML from genuinely mixed rich content, retain a Yjs-relative insertion anchor, and cancel stale note/editor work rather than storing base64 document images or inserting into the wrong note.
 - 🟡 Notes IMAP duplicate/delete race is code-closed at `bfbe1d7` and deployed through the guarded release path. The deterministic fake SQL/IMAP seam now proves same-owner and independent-runtime serialization, different-owner progress, complete mailboxes beyond 25 messages, exact revision acknowledgement, conditional missing-IMAP deletion, edit/import/delete interleavings, duplicate Message-ID cleanup, failed replacement delete, and uncertain accepted append. Focused, complete, independent-review, artifact, staging, and public protocol gates pass. Keep this risk yellow until the owner repeats the original edit/delete sequence in physical macOS Notes; do not use real Notes data for automated closure.

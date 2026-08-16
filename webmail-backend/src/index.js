@@ -45,7 +45,7 @@ const parser_1 = require("./wbxml/parser");
 const writer_1 = require("./wbxml/writer");
 const imap_1 = require("./imap");
 const api_1 = require("./api");
-const nodemailer_1 = __importDefault(require("nodemailer"));
+const db_1 = require("./db");
 const config_1 = require("./config");
 const security_1 = require("./security");
 const search_index_1 = require("./search-index");
@@ -77,6 +77,7 @@ const mail_autoconfig_1 = require("./mail-autoconfig");
 const notes_collaboration_1 = require("./notes-collaboration");
 const browser_origin_1 = require("./browser-origin");
 const private_uploads_1 = require("./private-uploads");
+const outbound_mail_1 = require("./outbound-mail");
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
 exports.io = new socket_io_1.Server(server, {
@@ -288,6 +289,14 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     }
     // Check command and respond
     const cmd = String(req.query.Cmd || '');
+    const sendComposeStatus = (status) => {
+        const writer = new writer_1.WbxmlWriter();
+        writer.writeNode({
+            tag: 'SendMail', page: 21, children: [{ tag: 'Status', page: 21, content: status }],
+        });
+        res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+        return res.status(200).send(writer.getBuffer());
+    };
     const requestCredentials = getAuthCredentials();
     if (!requestCredentials)
         return res.status(401).send();
@@ -315,8 +324,9 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         }
     }
     console.log('[EAS] Request', JSON.stringify((0, eas_protocol_1.activeSyncRequestLogSummary)(req.method, cmd, requestBody.length, decodedForStructure, requestParseFailed)));
-    if (requestParseFailed)
-        return res.status(400).send();
+    if (requestParseFailed) {
+        return cmd === 'SendMail' ? sendComposeStatus('102') : res.status(400).send();
+    }
     if (eas_protocol_1.ACTIVE_SYNC_UNSUPPORTED_COMMANDS.includes(cmd)) {
         return res.status(501).send();
     }
@@ -1726,75 +1736,66 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
         return res.status(200).send(writer.getBuffer());
     }
-    if (cmd === 'SendMail' || cmd === 'SmartForward' || cmd === 'SmartReply') {
-        const creds = getAuthCredentials();
-        if (!creds)
-            return res.status(401).send();
-        let mimeContent = "";
-        let saveInSent = false;
-        if (req.body && req.body.length > 0) {
-            try {
-                const parser = new parser_1.WbxmlParser(req.body);
-                const decoded = parser.parse();
-                // Find SaveInSentItems recursively. MIME extraction searches all payload-bearing
-                // nodes because iOS may place the raw RFC822 bytes under a decoded fallback tag.
-                const findNode = (node, tag) => {
-                    if (!node)
-                        return null;
-                    if (node.tag === tag)
-                        return node;
-                    if (node.children) {
-                        for (let child of node.children) {
-                            const res = findNode(child, tag);
-                            if (res)
-                                return res;
-                        }
-                    }
-                    return null;
-                };
-                mimeContent = (0, eas_send_1.extractActiveSyncSendMailMime)(decoded);
-                const saveNode = findNode(decoded, 'SaveInSentItems');
-                if (saveNode)
-                    saveInSent = true;
-            }
-            catch {
-                console.error(`[EAS] ${cmd} WBXML parsing failed`);
-            }
+    if (cmd === 'SendMail') {
+        const creds = requestCredentials;
+        const deviceId = (0, eas_mail_sync_1.validateActiveSyncDeviceId)(req.query.DeviceId);
+        if (!deviceId)
+            return sendComposeStatus('108');
+        let parsedRequest;
+        try {
+            parsedRequest = (0, eas_send_1.parseActiveSyncSendMailRequest)(decodedForStructure);
         }
-        if (mimeContent) {
-            try {
-                const transporter = nodemailer_1.default.createTransport((0, config_1.smtpTransportOptions)({
-                    user: creds.user,
-                    pass: creds.pass,
-                }));
-                const envelope = await (0, eas_send_1.buildActiveSyncSendMailEnvelope)(mimeContent, creds.user);
-                console.log(`[EAS] Sending email to ${envelope.to.length} recipient(s)`);
-                await transporter.sendMail({ raw: mimeContent, envelope });
-                console.log(`[EAS] Email sent successfully.`);
-                // If saveInSent is true, we should append to Sent folder via IMAP
-                if (saveInSent) {
-                    console.log(`[EAS] Saving to Sent Items via IMAP...`);
-                    const imap = new imap_1.ImapService(creds.user, creds.pass);
-                    await imap.connect();
-                    // Identify sent folder
-                    const folders = await imap.getFolders();
-                    let sentFolderObj = folders.find((f) => f.path.toUpperCase() === 'SENT' || f.path.toUpperCase() === 'SENT MESSAGES');
-                    if (sentFolderObj) {
-                        await imap.appendMessage(sentFolderObj.path, mimeContent, ['\\Seen']);
-                        console.log('[EAS] Saved outgoing email to the Sent mailbox');
-                    }
-                    await imap.logout();
-                }
-                return res.status(200).send();
-            }
-            catch {
-                console.error('[EAS] SendMail failed');
-                return res.status(500).send();
-            }
+        catch (error) {
+            const status = error instanceof eas_send_1.ActiveSyncSendMailRequestError ? error.status : '101';
+            return sendComposeStatus(status);
         }
-        else {
-            console.warn(`[EAS] ${cmd} received without Mime content!`);
-            return res.status(500).send();
+        if (parsedRequest.accountId)
+            return sendComposeStatus('166');
+        let prepared;
+        try {
+            prepared = await (0, eas_send_1.prepareActiveSyncSendMailSubmission)(parsedRequest.mime, creds.user, deviceId, parsedRequest.clientId);
+        }
+        catch (error) {
+            const status = error instanceof eas_send_1.ActiveSyncSendMailRequestError ? error.status : '107';
+            return sendComposeStatus(status);
+        }
+        let sender;
+        try {
+            sender = await (0, outbound_mail_1.authorizeOutboundSender)(db_1.pool, creds.user, prepared.envelope.from);
+        }
+        catch {
+            console.warn('[EAS] SendMail rejected an unauthorized From identity');
+            return sendComposeStatus('120');
+        }
+        try {
+            const submission = await (0, scheduled_send_1.submitOutbound)(db_1.pool, {
+                submissionKind: 'immediate',
+                idempotencyKey: (0, eas_send_1.activeSyncSendMailIdempotencyKey)(creds.user, deviceId, parsedRequest.clientId),
+                fingerprintSource: {
+                    ...prepared.fingerprintSource,
+                    saveSentCopy: parsedRequest.saveInSentItems,
+                },
+                message: {
+                    username: creds.user,
+                    sendAt: new Date(),
+                    senderAddress: sender.address,
+                    messageId: prepared.messageId,
+                    envelope: { ...prepared.envelope, from: sender.address },
+                    raw: prepared.raw,
+                    sentRaw: prepared.sentRaw,
+                    metadata: prepared.metadata,
+                    saveSentCopy: parsedRequest.saveInSentItems,
+                },
+                requestCredential: creds.pass,
+            });
+            const status = (0, eas_send_1.activeSyncSendMailResultStatus)(submission);
+            return status ? sendComposeStatus(status) : res.status(200).send();
+        }
+        catch (error) {
+            if (error instanceof scheduled_send_1.OutboundIdempotencyConflictError)
+                return sendComposeStatus('118');
+            console.error('[EAS] SendMail durable submission failed');
+            return sendComposeStatus('120');
         }
     }
     if (cmd === 'MoveItems') {

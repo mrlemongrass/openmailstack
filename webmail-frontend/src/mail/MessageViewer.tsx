@@ -21,6 +21,7 @@ import { filterEmailRemoteContent, shouldLoadExternalContent } from './message-p
 import { scheduleDelayedMarkRead } from './message-reading';
 import { outboundSendFeedback } from './outbound-send-feedback';
 import { isDraftFolder } from './draft-resume';
+import { UncertainSendBlockedError } from './immediate-send';
 
 export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const { showToast } = useToast();
@@ -227,6 +228,22 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   };
 
   const showReplyFailure = (error: unknown) => {
+    if (error instanceof UncertainSendBlockedError && error.reason === 'delivery_uncertain') {
+      showToast({
+        type: 'error',
+        message: `Reply could not be confirmed: ${error.message}`,
+        duration: 12_000,
+        actionLabel: 'I verified it was not delivered',
+        onAction: async () => {
+          await mail.allowReplyRetryAfterVerifiedNonDelivery();
+          showToast({
+            type: 'info',
+            message: 'A new reply attempt is ready because you confirmed the earlier reply was not delivered.',
+          });
+        },
+      });
+      return;
+    }
     showToast({
       type: 'error',
       message: error instanceof Error ? `Reply could not be sent: ${error.message}` : 'Reply could not be sent',
@@ -268,6 +285,10 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
       (message.references || []).join(' '),
     );
   };
+  const inlineReplyScope = message.messageId || (message.references || []).join(' ');
+  const inlineReplyHasRecovery = Boolean(
+    inlineReplyScope && mail.replySendScope === inlineReplyScope,
+  );
 
   const remoteContentKey = `${sourceFolder}\u0000${message.uid}`;
   const explicitlyLoadedRemoteContent = mail.loadedImagesForMsg.has(remoteContentKey);
@@ -569,6 +590,9 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         replyTo={message.from?.replace(/<.+?>/, '').trim() || message.from || ''}
         replyText={mail.replyText || ''}
         replySending={mail.replySending}
+        sendPhase={inlineReplyHasRecovery ? mail.replySendPhase : 'idle'}
+        sendNotice={inlineReplyHasRecovery ? mail.replySendNotice : null}
+        checkingEarlierSend={inlineReplyHasRecovery && mail.checkingEarlierReplySend}
         onReplyTextChange={mail.setReplyText}
         onSend={() => {
           void sendInlineReply().then(showReplyFeedback).catch(showReplyFailure);
@@ -590,6 +614,29 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           }
         }}
         showSendAndArchive={mail.mailSettings.compose.undoSendSeconds === 0}
+        onCheckEarlierSend={() => {
+          void mail.checkEarlierReplySend().catch((error: unknown) => {
+            showToast({
+              type: 'error',
+              message: error instanceof Error ? error.message : 'The earlier reply could not be checked.',
+            });
+          });
+        }}
+        onVerifiedNonDelivery={() => {
+          void mail.allowReplyRetryAfterVerifiedNonDelivery().then(() => {
+            showToast({
+              type: 'info',
+              message: 'A new reply attempt is ready because you confirmed the earlier reply was not delivered.',
+            });
+          }).catch((error: unknown) => {
+            showToast({
+              type: 'error',
+              message: error instanceof Error
+                ? error.message
+                : 'The protected reply attempt could not be cleared.',
+            });
+          });
+        }}
         onOpenFullCompose={() => {
           if (message) {
             mail.startCompose({

@@ -1,5 +1,46 @@
 # Implementation State
 
+## 2026-08-15 Eight-Cycle Hardening Closeout
+
+**Status: universal outbound delivery is locally verified, not deployed, and
+the release remains NO-GO.** Cycles 6-8 replace direct web and ActiveSync SMTP
+with one durable `scheduled_emails` outbox. The server reserves complete MIME,
+envelope, Message-ID, owner-scoped idempotency key, and canonical request
+fingerprint before SMTP; replays do not resend and mismatched reuse fails. The
+worker has explicit safe-retry, accepted/Sent-copy, partial, failed, and
+delivery-uncertain states, claims work on demand, uses an outbox-only UTC
+serialization boundary, and scrubs terminal immediate payloads while preserving
+dedupe tombstones.
+
+Web compose, inline reply, delayed/Undo mail, and strict ActiveSync SendMail use
+the same seam. Browser keys survive concurrent tabs, reloads, ambiguous
+responses, pending polling, and attempts to change delivery mode. IndexedDB
+stores only UUIDs and privacy-safe digests. Unchanged uncertain mail cannot be
+resent until the user explicitly confirms independent verification of
+non-delivery. Status responses are owner-scoped and no-store. ActiveSync scopes
+ClientId by owner and DeviceId, honors SaveInSentItems, authorizes From, removes
+Bcc and Resent-Bcc from transport only, and keeps unsupported Smart operations
+fail-closed.
+
+Current proof: backend 729 tests (724 pass, 5 documented skips, 0 fail);
+frontend 175/175 plus lint and production build; generated-runtime parity and
+repository integration pass; independent focused review passes 80/80; and the
+isolated MariaDB 11.8.6 proof passes migration-twice, reservation races, crash
+states, exact UTC behavior under a non-UTC process timezone, privacy scrubbing,
+soft removal, replay, and conflict behavior. The disposable schema/user were
+removed after the proof. Chromium/WebKit desktop/mobile browser qualification
+passes 240/240 with zero unexpected diagnostics.
+
+Do not deploy this tree through the current automatic rollback target. The
+installed older runtime does not understand the new immediate-row and keyed
+retry contract, so rollback after accepting new traffic can duplicate delivery
+or expose immediate rows as scheduled mail. Close this with an expand/contract
+bridge or an outbound maintenance/quarantine rollback barrier. The existing
+duplicate production calendar tombstone still blocks the guarded rollout and
+requires separate explicit data-repair approval. Physical iOS SendMail retry,
+physical macOS Notes lifecycle, and a clean-host recovery drill also remain.
+Universal-outbox metadata tombstones currently have no bounded archival policy.
+
 ## 2026-08-15 Five-Cycle Hardening Closeout
 
 **Status: locally validated, not deployed, and NO-GO for release.** Commit

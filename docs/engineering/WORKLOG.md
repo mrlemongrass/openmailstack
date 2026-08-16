@@ -8812,3 +8812,83 @@ Branch: `main`
 - Final decision: **NO-GO** for paid-quality small-business or enterprise use.
   The complete risk register, five-cycle account, and next plan are in
   `docs/engineering/RELEASE_READINESS_2026-08-15.md`.
+
+## 2026-08-15 — Cycles 6-8: Universal Outbox And Final Qualification
+
+Agent/tool: Codex with delegated backend, frontend, ActiveSync, spec,
+standards, migration, and Chromium/WebKit browser passes
+
+Branch: `main`
+
+### Selected task
+
+Close the Cycle 5 SMTP-before-durable-record P1 for immediate web and
+ActiveSync mail, carry the same idempotency contract through delayed/Undo mail,
+and independently attack its migration, retry, privacy, browser, and rollback
+boundaries.
+
+### Changes made
+
+- Reused the core `scheduled_emails` table as one universal outbox. A complete
+  transport MIME, Bcc-preserving Sent MIME, envelope, stable Message-ID,
+  owner-scoped idempotency key, server fingerprint, and recovery state now
+  commit before SMTP.
+- Added replay/conflict, request/worker race, safe retry, partial delivery,
+  accepted/Sent-copy, terminal failure, and delivery-uncertain state handling.
+  The worker claims on demand; terminal immediate rows scrub content while
+  preserving the dedupe/outcome tombstone; scheduled removal soft-hides and
+  scrubs without reopening replay.
+- Routed full compose, inline reply, explicit scheduling, Undo Send, and strict
+  ActiveSync SendMail through the same seam. Corrected ComposeMail token values,
+  ClientId scope, From ownership, SaveInSentItems, and transport-only Bcc plus
+  Resent-Bcc stripping. Unsupported SmartReply/SmartForward remain fail-closed.
+- Added privacy-safe IndexedDB send identity across reloads and concurrent tabs.
+  Pending, ambiguous, and uncertain mail retains one key across status errors
+  and delivery-mode changes. A user can rotate true uncertainty only after
+  explicitly confirming independent verification of non-delivery, while a
+  blocked pending attempt has an in-place status recheck.
+- Added no-store owner status responses, retryable IndexedDB open/version
+  handling, truthful partial/uncertain UI, and stable absolute schedule time.
+- Made new outbox writes explicitly UTC without changing the shared pool. Added
+  dual-basis compatibility so historical null-key scheduled rows keep mysql2's
+  old local-wall interpretation while retries, leases, and every keyed row stay
+  on database UTC.
+
+### Proof / checks run
+
+- Backend build and generated-runtime parity pass. The complete backend suite
+  passes 724/729 with five documented skips and zero failures.
+- Independent focused backend/spec/standards suites pass, including 80/80 for
+  the final outbox/parity review.
+- A fresh isolated MariaDB 11.8.6 proof passes migration twice, simultaneous
+  reservation/claim, worker races, crash states, owner isolation, replay and
+  conflict, SaveInSentItems, soft removal, exact UTC under
+  `Pacific/Kiritimati`, historical local-wall scheduling, retry UTC behavior,
+  and terminal payload scrubbing. The temporary schema/user/server/datadir were
+  removed and zero leftovers were confirmed.
+- The complete frontend suite passes 175/175; ESLint, production build,
+  repository integration, production dependency audits, changed-shell
+  syntax/ShellCheck, and diff check pass. Chromium/WebKit desktop/mobile pass
+  240/240 with zero unexpected diagnostics; full evidence is in
+  `output/playwright/cycle8/REPORT.md`.
+- The broad historical root lint wrapper remains nonzero only for pre-existing
+  ShellCheck findings in `install.sh`, `functions/07_security.sh`, and its own
+  unquoted `find` expansion; those unrelated files were not changed.
+
+### Second-pass findings and decision
+
+- Code-level universal-outbox spec review found no remaining P1. Late passes
+  nevertheless caught and fixed status-poll key deletion, cross-mode duplicate
+  attempts, terminal plaintext retention, UTC/local-time skew, legacy upgrade
+  interpretation, response caching, transient IndexedDB failure, and blocked
+  recovery UX.
+- Deployment remains P1-blocked: the currently installed rollback target can
+  direct-send keyed retries or process new immediate rows incorrectly after the
+  new runtime has accepted traffic. It cannot be the automatic recovery target.
+- The guarded release also remains blocked by an existing duplicate production
+  calendar tombstone that was inspected read-only but not mutated. Physical iOS
+  SendMail retry and physical macOS Notes lifecycle are not proven.
+- Final decision remains **NO-GO**. Next work is a rollback-compatible
+  expand/contract bridge, exact approved tombstone repair, bounded live canary,
+  physical Apple-client proof, clean-host recovery, and an outbox metadata
+  retention/archive policy.

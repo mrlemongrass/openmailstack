@@ -6,6 +6,7 @@ export const ACTIVE_SYNC_ADVERTISED_COMMANDS = [
     'Sync',
     'FolderSync',
     'ItemOperations',
+    'SendMail',
 ] as const;
 export const ACTIVE_SYNC_UNSUPPORTED_COMMANDS = [
     'FolderCreate',
@@ -16,7 +17,6 @@ export const ACTIVE_SYNC_UNSUPPORTED_COMMANDS = [
     'Ping',
     'Provision',
     'Settings',
-    'SendMail',
     'SmartForward',
     'SmartReply',
 ] as const;

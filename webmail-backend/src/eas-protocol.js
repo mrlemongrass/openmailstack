@@ -19,6 +19,7 @@ exports.ACTIVE_SYNC_ADVERTISED_COMMANDS = [
     'Sync',
     'FolderSync',
     'ItemOperations',
+    'SendMail',
 ];
 exports.ACTIVE_SYNC_UNSUPPORTED_COMMANDS = [
     'FolderCreate',
@@ -29,7 +30,6 @@ exports.ACTIVE_SYNC_UNSUPPORTED_COMMANDS = [
     'Ping',
     'Provision',
     'Settings',
-    'SendMail',
     'SmartForward',
     'SmartReply',
 ];

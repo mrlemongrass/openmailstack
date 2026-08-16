@@ -27,11 +27,106 @@ import { createDraftSaveCoordinator } from '../draft-save-coordinator';
 import { draftComposeState, hydrateDraftAttachments } from '../draft-resume';
 import { outboundIdentityFields } from '../outbound-identity';
 import { reopenRestoredScheduledDraft } from '../scheduled-undo-draft';
+import {
+  checkProtectedOutboundSendAttempt,
+  createBrowserOutboundSendAttemptCoordinator,
+  sendOutboundMessage,
+  UncertainSendBlockedError,
+  type OutboundSendDelivery,
+  type PreparedOutboundSendAttempt,
+  type ProtectedOutboundSendCheck,
+} from '../immediate-send';
 
 interface UseMailOptions {
   mailSettings: MailUserSettings;
   isThreaded: boolean;
   userIdentities: UserIdentities;
+}
+
+export type ImmediateSendPhase = 'idle' | 'pending' | 'retryable' | 'uncertain' | 'blocked';
+
+export interface ImmediateSendNotice {
+  tone: 'info' | 'warning';
+  message: string;
+}
+
+function protectedSendCheckFeedback(
+  check: ProtectedOutboundSendCheck,
+  subject: 'message' | 'reply',
+  attempt?: PreparedOutboundSendAttempt,
+): { phase: ImmediateSendPhase; notice: ImmediateSendNotice } {
+  if (check.state === 'failed') {
+    return {
+      phase: 'idle',
+      notice: {
+        tone: 'info',
+        message: `The earlier ${subject} definitively failed and was not delivered. You can safely send it now.`,
+      },
+    };
+  }
+  if (check.state === 'accepted') {
+    return {
+      phase: 'blocked',
+      notice: {
+        tone: 'info',
+        message: `The earlier ${subject} was accepted for delivery. It was not sent again.`,
+      },
+    };
+  }
+  if (check.state === 'partial') {
+    const rejectedCount = check.result?.rejectedRecipients?.length || 0;
+    return {
+      phase: 'blocked',
+      notice: {
+        tone: 'warning',
+        message: rejectedCount > 0
+          ? `The earlier ${subject} reached some recipients, but ${rejectedCount} ${rejectedCount === 1 ? 'recipient' : 'recipients'} rejected it. It was not sent again.`
+          : `The earlier ${subject} reached only some recipients. It was not sent again.`,
+      },
+    };
+  }
+  if (check.state === 'scheduled') {
+    const scheduledFor = check.result?.sendAt || attempt?.scheduledFor;
+    const parsedSendAt = scheduledFor ? Date.parse(scheduledFor) : Number.NaN;
+    const sendTime = Number.isFinite(parsedSendAt)
+      ? ` for ${new Date(parsedSendAt).toLocaleString()}`
+      : '';
+    const scheduledMessage = attempt?.deliveryKind === 'undo'
+      ? `The earlier ${subject} is already queued by Undo Send${sendTime}. It was not queued again.`
+      : `The earlier ${subject} is already scheduled${sendTime}. It was not scheduled again.`;
+    return {
+      phase: 'blocked',
+      notice: {
+        tone: 'info',
+        message: scheduledMessage,
+      },
+    };
+  }
+  if (check.state === 'pending') {
+    return {
+      phase: 'blocked',
+      notice: {
+        tone: 'info',
+        message: `The earlier ${subject} is still pending. No new message was submitted.`,
+      },
+    };
+  }
+  if (check.state === 'uncertain') {
+    return {
+      phase: 'uncertain',
+      notice: {
+        tone: 'warning',
+        message: `Delivery status for the earlier ${subject} is uncertain. Do not resend until you verify whether the recipient received it.`,
+      },
+    };
+  }
+  return {
+    phase: 'blocked',
+    notice: {
+      tone: 'warning',
+      message: `OpenMailStack could not check the earlier ${subject} right now. Its protected send key was retained, and no new message was submitted.`,
+    },
+  };
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -156,6 +251,7 @@ export function useMail(_opts: UseMailOptions) {
   );
   const [composeSignature, setComposeSignature] = useState('none');
   const [composeAttachments, setComposeAttachments] = useState<File[]>([]);
+  const [composeAttachmentRevision, setComposeAttachmentRevision] = useState(0);
   const [composeMode, setComposeMode] = useState<'rich' | 'plain'>('rich');
   const [draftUid, setDraftUid] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -163,6 +259,13 @@ export function useMail(_opts: UseMailOptions) {
   const [composeError, setComposeError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [lastSendResult, setLastSendResult] = useState<SendMessageResponse | null>(null);
+  const [immediateSendPhase, setImmediateSendPhase] = useState<ImmediateSendPhase>('idle');
+  const [immediateSendNotice, setImmediateSendNotice] = useState<ImmediateSendNotice | null>(null);
+  const [protectedSendAttempt, setProtectedSendAttempt] = useState<PreparedOutboundSendAttempt | null>(null);
+  const [checkingEarlierComposeSend, setCheckingEarlierComposeSend] = useState(false);
+  const [outboundRecoveryNotice, setOutboundRecoveryNotice] = useState<ImmediateSendNotice | null>(null);
+  const immediateSendAttemptsRef = useRef(createBrowserOutboundSendAttemptCoordinator());
+  const replySendAttemptsRef = useRef(createBrowserOutboundSendAttemptCoordinator());
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftSaveCoordinatorRef = useRef(createDraftSaveCoordinator());
   const draftSaveRevisionRef = useRef(0);
@@ -170,6 +273,123 @@ export function useMail(_opts: UseMailOptions) {
   // Inline reply state
   const [replyText, setReplyText] = useState('');
   const [replySending, setReplySending] = useState(false);
+  const [replySendPhase, setReplySendPhase] = useState<ImmediateSendPhase>('idle');
+  const [replySendNotice, setReplySendNotice] = useState<ImmediateSendNotice | null>(null);
+  const [replySendScope, setReplySendScope] = useState<string | null>(null);
+  const [protectedReplySend, setProtectedReplySend] = useState<{
+    attempt: PreparedOutboundSendAttempt;
+    scope: string;
+  } | null>(null);
+  const [checkingEarlierReplySend, setCheckingEarlierReplySend] = useState(false);
+
+  useEffect(() => {
+    const mailbox = _opts.userIdentities.address.trim().toLowerCase();
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setOutboundRecoveryNotice(null);
+    });
+    if (!mailbox) return () => { active = false; };
+    void immediateSendAttemptsRef.current.reconcileMailbox(
+      mailbox,
+      api.fetchOutboundMessageStatusByKey,
+    ).then(result => {
+      if (!active || result.checked === 0) return;
+      if (result.uncertain > 0) {
+        setOutboundRecoveryNotice({
+          tone: 'warning',
+          message: `${result.uncertain} earlier send ${result.uncertain === 1 ? 'has' : 'have'} an uncertain delivery status. Do not resend without verifying delivery.`,
+        });
+      } else if (result.failed > 0) {
+        setOutboundRecoveryNotice({
+          tone: 'warning',
+          message: `${result.failed} earlier ${result.failed === 1 ? 'message was' : 'messages were'} not sent. You can safely retry from the original Draft when available.`,
+        });
+      } else if (result.partial > 0) {
+        setOutboundRecoveryNotice({
+          tone: 'warning',
+          message: `${result.partial} earlier ${result.partial === 1 ? 'message reached' : 'messages reached'} only some recipients. Review the delivery result before retrying.`,
+        });
+      } else if (result.pending > 0) {
+        setOutboundRecoveryNotice({
+          tone: 'info',
+          message: `OpenMailStack is still confirming ${result.pending} earlier ${result.pending === 1 ? 'send' : 'sends'}. You do not need to resend.`,
+        });
+      } else if (result.unavailable > 0) {
+        setOutboundRecoveryNotice({
+          tone: 'info',
+          message: `OpenMailStack could not confirm ${result.unavailable} earlier ${result.unavailable === 1 ? 'send' : 'sends'} yet. Protected retry information was retained.`,
+        });
+      } else if (result.scheduled > 0) {
+        setOutboundRecoveryNotice({
+          tone: 'info',
+          message: `OpenMailStack confirmed ${result.scheduled} earlier scheduled ${result.scheduled === 1 ? 'send' : 'sends'}.`,
+        });
+      } else if (result.accepted > 0) {
+        setOutboundRecoveryNotice({
+          tone: 'info',
+          message: `OpenMailStack confirmed ${result.accepted} earlier ${result.accepted === 1 ? 'send' : 'sends'}.`,
+        });
+      }
+    }).catch(error => {
+      console.error('Outbound send recovery failed', error);
+      if (!active) return;
+      setOutboundRecoveryNotice({
+        tone: 'warning',
+        message: 'OpenMailStack could not check earlier send status right now. Do not resend those messages until their status can be confirmed.',
+      });
+    });
+    return () => { active = false; };
+  }, [_opts.userIdentities.address]);
+
+  const composeContentFingerprint = useMemo(() => {
+    const identity = outboundIdentityFields({
+      from: composeFrom,
+      replyTo: composeReplyTo ?? _opts.mailSettings.identity.replyTo,
+      bcc: composeBcc,
+      alwaysBccSelf: _opts.mailSettings.identity.alwaysBccSelf,
+      selfAddress: _opts.userIdentities.address || composeFrom,
+    });
+    const attachments = composeAttachments.map(file => (
+      [file.name, file.size, file.type, file.lastModified, file.webkitRelativePath]
+    ));
+    return JSON.stringify([
+      composeAttachmentRevision,
+      identity.from || '',
+      identity.replyTo || '',
+      identity.bcc || '',
+      composeTo,
+      composeCc,
+      composeSubject || '(no subject)',
+      composeBody,
+      attachments,
+    ]);
+  }, [composeAttachmentRevision, composeAttachments, composeBcc, composeBody, composeCc, composeFrom,
+    composeReplyTo, composeSubject, composeTo, _opts.mailSettings.identity.alwaysBccSelf,
+    _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
+
+  const updateComposeAttachments = useCallback((update: SetStateAction<File[]>) => {
+    setComposeAttachments(update);
+    setComposeAttachmentRevision(revision => revision + 1);
+  }, []);
+
+  const observedComposeFingerprintRef = useRef(composeContentFingerprint);
+  useEffect(() => {
+    if (observedComposeFingerprintRef.current === composeContentFingerprint) return;
+    observedComposeFingerprintRef.current = composeContentFingerprint;
+    setImmediateSendPhase('idle');
+    setImmediateSendNotice(null);
+    setProtectedSendAttempt(null);
+  }, [composeContentFingerprint]);
+
+  const observedReplyTextRef = useRef(replyText);
+  useEffect(() => {
+    if (observedReplyTextRef.current === replyText) return;
+    observedReplyTextRef.current = replyText;
+    setReplySendPhase('idle');
+    setReplySendNotice(null);
+    setReplySendScope(null);
+    setProtectedReplySend(null);
+  }, [replyText]);
 
   const startCompose = useCallback((initial: {
     to?: string;
@@ -189,6 +409,9 @@ export function useMail(_opts: UseMailOptions) {
     setDraftSaveStatus(null);
     setComposeError(null);
     setLastSendResult(null);
+    setImmediateSendPhase('idle');
+    setImmediateSendNotice(null);
+    setProtectedSendAttempt(null);
     setComposeTo(initial.to || '');
     setComposeCc(initial.cc || '');
     setComposeBcc(initial.bcc || '');
@@ -345,6 +568,9 @@ export function useMail(_opts: UseMailOptions) {
     setDraftSaveStatus('saved');
     setComposeError(null);
     setLastSendResult(null);
+    setImmediateSendPhase('idle');
+    setImmediateSendNotice(null);
+    setProtectedSendAttempt(null);
     // Preserve the requested alias while identities are still loading. The
     // derived compose sender remains restricted to an allowed identity.
     setComposeFrom(state.from);
@@ -419,8 +645,23 @@ export function useMail(_opts: UseMailOptions) {
     return saved;
   }, [saveCurrentDraft]);
 
+  const finishComposeAfterConfirmedSend = useCallback(() => {
+    setComposeTo(''); setComposeCc(''); setComposeBcc('');
+    setComposeReplyTo(null);
+    setComposeSubject(''); setComposeBody('');
+    setComposeFrom(''); setComposeSignature('none');
+    setComposeAttachments([]);
+    setDraftUid(null); setDraftId(null);
+    draftSaveCoordinatorRef.current.reset();
+    setDraftSaveStatus(null);
+    setShowCc(false); setShowBcc(false);
+    setIsComposing(false);
+    void Promise.all([fetchFolders(), fetchMessages()]);
+  }, [fetchFolders, fetchMessages]);
+
   // Compose send
   const handleSend = useCallback(async (sendAt?: Date | null) => {
+    let preparedAttempt: PreparedOutboundSendAttempt | null = null;
     setSending(true);
     setComposeError(null);
     setLastSendResult(null);
@@ -429,7 +670,14 @@ export function useMail(_opts: UseMailOptions) {
         clearTimeout(draftTimerRef.current);
         draftTimerRef.current = null;
       }
+      if (!await saveCurrentDraft()) {
+        setComposeError('Your latest Draft could not be saved, so no message was submitted. Try again.');
+        return false;
+      }
       const currentDraft = await draftSaveCoordinatorRef.current.flush();
+      if (!currentDraft.draftId) {
+        throw new Error('A stable Draft ID could not be established. No message was submitted.');
+      }
       const formData = new FormData();
       const identityFields = outboundIdentityFields({
         from: composeFrom,
@@ -445,55 +693,171 @@ export function useMail(_opts: UseMailOptions) {
       if (composeCc) formData.append('cc', composeCc);
       formData.append('subject', composeSubject || '(no subject)');
       formData.append('html', composeBody);
-      if (currentDraft.draftId) formData.append('draftId', currentDraft.draftId);
+      formData.append('draftId', currentDraft.draftId);
       if (currentDraft.draftUid) formData.append('draftUid', currentDraft.draftUid);
       composeAttachments.forEach((file) => {
         formData.append('attachments', file);
       });
+      const requestedAt = Date.now();
       let delaySeconds = 0;
-      let sendMode: 'undo' | 'scheduled' | null = null;
-      if (sendAt && sendAt.getTime() > Date.now()) {
-        delaySeconds = Math.ceil((sendAt.getTime() - Date.now()) / 1000);
-        sendMode = 'scheduled';
+      let delivery: OutboundSendDelivery = { kind: 'immediate' };
+      if (sendAt && sendAt.getTime() > requestedAt) {
+        delaySeconds = Math.ceil((sendAt.getTime() - requestedAt) / 1000);
+        delivery = { kind: 'scheduled', scheduledFor: sendAt.toISOString() };
       } else if (!sendAt && _opts.mailSettings.compose.undoSendSeconds > 0) {
         delaySeconds = _opts.mailSettings.compose.undoSendSeconds;
-        sendMode = 'undo';
+        delivery = {
+          kind: 'undo',
+          scheduledFor: new Date(requestedAt + delaySeconds * 1000).toISOString(),
+        };
       }
-      if (delaySeconds > 0) formData.append('delaySeconds', String(delaySeconds));
-      const result = await api.sendMessage(formData);
+      let preparedDeliveryKind = delivery.kind;
+      let preparedScheduledFor = delivery.scheduledFor;
+      const result = await sendOutboundMessage({
+        scope: {
+          mailbox: _opts.userIdentities.address || identityFields.from || '',
+          draftId: currentDraft.draftId,
+        },
+        formData,
+        delivery,
+        attempts: immediateSendAttemptsRef.current,
+        submit: (payload, idempotencyKey) => api.sendMessage(payload, { idempotencyKey }),
+        loadStatus: api.fetchOutboundMessageStatus,
+        onPrepared: attempt => {
+          preparedAttempt = attempt;
+          preparedDeliveryKind = attempt.deliveryKind;
+          preparedScheduledFor = attempt.scheduledFor;
+        },
+        onPending: () => {
+          setImmediateSendPhase('pending');
+          setImmediateSendNotice({
+            tone: 'info',
+            message: 'OpenMailStack accepted this send request and is confirming delivery.',
+          });
+        },
+      });
       setLastSendResult(result);
-      if (result.scheduledId && sendMode) {
+      if (result.deliveryStatus === 'failed') {
+        setProtectedSendAttempt(null);
+        setImmediateSendPhase('idle');
+        setImmediateSendNotice(null);
+        setComposeError(result.error
+          ? `Message was not sent: ${result.error}`
+          : 'Message was not sent. You can safely try again.');
+        return false;
+      }
+      if (result.deliveryStatus === 'uncertain') {
+        setProtectedSendAttempt(preparedAttempt);
+        setImmediateSendPhase('uncertain');
+        setImmediateSendNotice({
+          tone: 'warning',
+          message: 'Delivery status is uncertain. Do not resend until you verify whether the recipient received it.',
+        });
+        return false;
+      }
+      setImmediateSendPhase('idle');
+      setImmediateSendNotice(null);
+      setProtectedSendAttempt(null);
+      if (result.scheduledId && preparedDeliveryKind !== 'immediate') {
+        const authoritativeSendAt = result.sendAt || preparedScheduledFor;
+        const effectiveDelaySeconds = authoritativeSendAt
+          ? Math.max(0, Math.ceil((Date.parse(authoritativeSendAt) - Date.now()) / 1000))
+          : delaySeconds;
         setUndoSendId(result.scheduledId);
-        setUndoSendMode(sendMode);
-        setUndoSendDelaySeconds(delaySeconds);
+        setUndoSendMode(preparedDeliveryKind);
+        setUndoSendDelaySeconds(effectiveDelaySeconds);
       } else {
         setUndoSendId(null);
         setUndoSendMode(null);
         setUndoSendDelaySeconds(0);
       }
-      // Clear compose state on success
-      setComposeTo(''); setComposeCc(''); setComposeBcc('');
-      setComposeReplyTo(null);
-      setComposeSubject(''); setComposeBody('');
-      setComposeFrom(''); setComposeSignature('none');
-      setComposeAttachments([]);
-      setDraftUid(null); setDraftId(null);
-      draftSaveCoordinatorRef.current.reset();
-      setDraftSaveStatus(null);
-      setShowCc(false); setShowBcc(false);
-      setIsComposing(false);
-      void Promise.all([fetchFolders(), fetchMessages()]);
+      finishComposeAfterConfirmedSend();
       return true;
     } catch (e: unknown) {
       console.error('Send failed', e);
-      setComposeError(errorMessage(e, 'Failed to send message'));
+      if (e instanceof UncertainSendBlockedError) {
+        setImmediateSendPhase(e.reason === 'delivery_uncertain' ? 'uncertain' : 'blocked');
+        setProtectedSendAttempt(preparedAttempt);
+        setImmediateSendNotice({ tone: 'warning', message: e.message });
+      } else if (!api.isDefinitiveSendError(e)) {
+        setImmediateSendPhase('retryable');
+        setImmediateSendNotice({
+          tone: 'info',
+          message: 'Delivery was not confirmed. Use “Check delivery” to safely continue the same send attempt.',
+        });
+      } else {
+        setImmediateSendPhase('idle');
+        setImmediateSendNotice(null);
+        setProtectedSendAttempt(null);
+        setComposeError(errorMessage(e, 'Failed to send message'));
+      }
       return false;
     } finally {
       setSending(false);
     }
   }, [composeFrom, composeReplyTo, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments,
-    fetchFolders, fetchMessages, _opts.mailSettings.compose.undoSendSeconds, _opts.mailSettings.identity.alwaysBccSelf,
+    finishComposeAfterConfirmedSend, saveCurrentDraft,
+    _opts.mailSettings.compose.undoSendSeconds, _opts.mailSettings.identity.alwaysBccSelf,
     _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
+
+  const allowRetryAfterVerifiedNonDelivery = useCallback(async () => {
+    if (immediateSendPhase !== 'uncertain' || !protectedSendAttempt) return;
+    await immediateSendAttemptsRef.current.markDefinitive(protectedSendAttempt);
+    setProtectedSendAttempt(null);
+    setImmediateSendPhase('idle');
+    setImmediateSendNotice({
+      tone: 'info',
+      message: 'A new send attempt is ready because you confirmed the earlier message was not delivered.',
+    });
+  }, [immediateSendPhase, protectedSendAttempt]);
+
+  const checkEarlierComposeSend = useCallback(async () => {
+    if (!protectedSendAttempt || checkingEarlierComposeSend) return;
+    setCheckingEarlierComposeSend(true);
+    try {
+      const check = await checkProtectedOutboundSendAttempt({
+        attempt: protectedSendAttempt,
+        attempts: immediateSendAttemptsRef.current,
+        loadStatus: api.fetchOutboundMessageStatusByKey,
+      });
+      const feedback = protectedSendCheckFeedback(check, 'message', protectedSendAttempt);
+      if (
+        check.state === 'accepted'
+        || check.state === 'partial'
+        || check.state === 'scheduled'
+      ) {
+        setLastSendResult(check.result || null);
+        if (check.state === 'scheduled' && check.result?.scheduledId) {
+          const authoritativeSendAt = check.result.sendAt || protectedSendAttempt.scheduledFor;
+          setUndoSendId(check.result.scheduledId);
+          setUndoSendMode(protectedSendAttempt.deliveryKind === 'undo' ? 'undo' : 'scheduled');
+          setUndoSendDelaySeconds(authoritativeSendAt
+            ? Math.max(0, Math.ceil((Date.parse(authoritativeSendAt) - Date.now()) / 1000))
+            : 0);
+        } else {
+          setUndoSendId(null);
+          setUndoSendMode(null);
+          setUndoSendDelaySeconds(0);
+        }
+        setOutboundRecoveryNotice(feedback.notice);
+        setImmediateSendPhase('idle');
+        setImmediateSendNotice(null);
+        setProtectedSendAttempt(null);
+        finishComposeAfterConfirmedSend();
+        await immediateSendAttemptsRef.current.markDefinitive(protectedSendAttempt);
+        return;
+      }
+      setImmediateSendPhase(
+        check.state === 'unavailable' && immediateSendPhase === 'uncertain'
+          ? 'uncertain'
+          : feedback.phase,
+      );
+      setImmediateSendNotice(feedback.notice);
+      if (check.state === 'failed') setProtectedSendAttempt(null);
+    } finally {
+      setCheckingEarlierComposeSend(false);
+    }
+  }, [checkingEarlierComposeSend, finishComposeAfterConfirmedSend, immediateSendPhase, protectedSendAttempt]);
 
   // Other mail state
   const [signatures, setSignatures] = useState<Signature[]>([]);
@@ -503,6 +867,8 @@ export function useMail(_opts: UseMailOptions) {
   const [showSearchHints, setShowSearchHints] = useState(false);
 
   const sendReply = useCallback(async (to: string, subject: string, inReplyTo: string, references: string) => {
+    let preparedAttempt: PreparedOutboundSendAttempt | null = null;
+    const replyScope = inReplyTo || references;
     setReplySending(true);
     try {
       const formData = new FormData();
@@ -526,29 +892,144 @@ export function useMail(_opts: UseMailOptions) {
       formData.append('inReplyTo', inReplyTo);
       formData.append('references', references);
       const undoDelaySeconds = Math.max(0, Math.trunc(_opts.mailSettings.compose.undoSendSeconds));
-      if (undoDelaySeconds > 0) formData.append('delaySeconds', String(undoDelaySeconds));
-      const result = await api.sendMessage(formData);
-      if (result.scheduledId && undoDelaySeconds > 0) {
+      const requestedAt = Date.now();
+      const delivery: OutboundSendDelivery = undoDelaySeconds > 0
+        ? {
+          kind: 'undo',
+          scheduledFor: new Date(requestedAt + undoDelaySeconds * 1000).toISOString(),
+        }
+        : { kind: 'immediate' };
+      let preparedDeliveryKind = delivery.kind;
+      let preparedScheduledFor = delivery.scheduledFor;
+      const result = await sendOutboundMessage({
+        scope: {
+          mailbox: _opts.userIdentities.address || identityFields.from || '',
+          replyParent: replyScope,
+        },
+        formData,
+        delivery,
+        attempts: replySendAttemptsRef.current,
+        submit: (payload, idempotencyKey) => api.sendMessage(payload, { idempotencyKey }),
+        loadStatus: api.fetchOutboundMessageStatus,
+        onPrepared: attempt => {
+          preparedAttempt = attempt;
+          preparedDeliveryKind = attempt.deliveryKind;
+          preparedScheduledFor = attempt.scheduledFor;
+        },
+      });
+      if (result.deliveryStatus === 'failed') {
+        throw new Error(result.error
+          ? `Message was not sent: ${result.error}`
+          : 'Message was not sent. You can safely try again.');
+      }
+      if (result.deliveryStatus === 'uncertain') {
+        if (preparedAttempt) setProtectedReplySend({ attempt: preparedAttempt, scope: replyScope });
+        setReplySendScope(replyScope);
+        setReplySendPhase('uncertain');
+        setReplySendNotice({
+          tone: 'warning',
+          message: 'Delivery status for the earlier reply is uncertain. Do not resend until you verify whether the recipient received it.',
+        });
+        throw new UncertainSendBlockedError();
+      }
+      if (result.scheduledId && preparedDeliveryKind !== 'immediate') {
+        const authoritativeSendAt = result.sendAt || preparedScheduledFor;
+        const effectiveDelaySeconds = authoritativeSendAt
+          ? Math.max(0, Math.ceil((Date.parse(authoritativeSendAt) - Date.now()) / 1000))
+          : undoDelaySeconds;
         setUndoSendId(result.scheduledId);
-        setUndoSendMode('undo');
-        setUndoSendDelaySeconds(undoDelaySeconds);
+        setUndoSendMode(preparedDeliveryKind);
+        setUndoSendDelaySeconds(effectiveDelaySeconds);
       } else {
         setUndoSendId(null);
         setUndoSendMode(null);
         setUndoSendDelaySeconds(0);
       }
       setReplyText('');
+      setProtectedReplySend(null);
+      setReplySendPhase('idle');
+      setReplySendNotice(null);
+      setReplySendScope(null);
       await fetchFolders();
       await fetchMessages();
       return result;
     } catch (e) {
+      if (e instanceof UncertainSendBlockedError) {
+        if (preparedAttempt) setProtectedReplySend({ attempt: preparedAttempt, scope: replyScope });
+        setReplySendScope(replyScope);
+        setReplySendPhase(e.reason === 'delivery_uncertain' ? 'uncertain' : 'blocked');
+        setReplySendNotice({ tone: 'warning', message: e.message });
+      }
       console.error('Reply failed', e);
       throw e;
     }
     finally { setReplySending(false); }
-  }, [identities, replyText, fetchFolders, fetchMessages, _opts.mailSettings.compose.undoSendSeconds,
+  }, [identities, replyText, fetchFolders, fetchMessages, setReplySending, setReplyText,
+    _opts.mailSettings.compose.undoSendSeconds,
     _opts.mailSettings.identity.alwaysBccSelf, _opts.mailSettings.identity.defaultFrom,
     _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
+
+  const allowReplyRetryAfterVerifiedNonDelivery = useCallback(async () => {
+    if (replySendPhase !== 'uncertain' || !protectedReplySend) return;
+    await replySendAttemptsRef.current.markDefinitive(protectedReplySend.attempt);
+    setProtectedReplySend(null);
+    setReplySendPhase('idle');
+    setReplySendScope(protectedReplySend.scope);
+    setReplySendNotice({
+      tone: 'info',
+      message: 'A new reply attempt is ready because you confirmed the earlier reply was not delivered.',
+    });
+  }, [protectedReplySend, replySendPhase]);
+
+  const checkEarlierReplySend = useCallback(async () => {
+    if (!protectedReplySend || checkingEarlierReplySend) return;
+    setCheckingEarlierReplySend(true);
+    try {
+      const check = await checkProtectedOutboundSendAttempt({
+        attempt: protectedReplySend.attempt,
+        attempts: replySendAttemptsRef.current,
+        loadStatus: api.fetchOutboundMessageStatusByKey,
+      });
+      const feedback = protectedSendCheckFeedback(check, 'reply', protectedReplySend.attempt);
+      if (
+        check.state === 'accepted'
+        || check.state === 'partial'
+        || check.state === 'scheduled'
+      ) {
+        if (check.state === 'scheduled' && check.result?.scheduledId) {
+          const authoritativeSendAt = check.result.sendAt || protectedReplySend.attempt.scheduledFor;
+          setUndoSendId(check.result.scheduledId);
+          setUndoSendMode(protectedReplySend.attempt.deliveryKind === 'undo' ? 'undo' : 'scheduled');
+          setUndoSendDelaySeconds(authoritativeSendAt
+            ? Math.max(0, Math.ceil((Date.parse(authoritativeSendAt) - Date.now()) / 1000))
+            : 0);
+        } else {
+          setUndoSendId(null);
+          setUndoSendMode(null);
+          setUndoSendDelaySeconds(0);
+        }
+        observedReplyTextRef.current = '';
+        setReplyText('');
+        setReplySendPhase('idle');
+        setReplySendNotice(feedback.notice);
+        setReplySendScope(protectedReplySend.scope);
+        setProtectedReplySend(null);
+        await replySendAttemptsRef.current.markDefinitive(protectedReplySend.attempt);
+        await Promise.all([fetchFolders(), fetchMessages()]);
+        return;
+      }
+      setReplySendPhase(
+        check.state === 'unavailable' && replySendPhase === 'uncertain'
+          ? 'uncertain'
+          : feedback.phase,
+      );
+      setReplySendNotice(feedback.notice);
+      setReplySendScope(protectedReplySend.scope);
+      if (check.state === 'failed') setProtectedReplySend(null);
+    } finally {
+      setCheckingEarlierReplySend(false);
+    }
+  }, [checkingEarlierReplySend, fetchFolders, fetchMessages, protectedReplySend, replySendPhase]);
 
   // Fetch a single message body (full content)
   const fetchMessageBody = useCallback(async (uid: number, folderPath: string) => {
@@ -875,12 +1356,17 @@ export function useMail(_opts: UseMailOptions) {
     composeReplyTo, setComposeReplyTo,
     composeSubject, setComposeSubject, composeBody, setComposeBody,
     composeFrom, setComposeFrom, composeIdentities: identities, composeSignature, setComposeSignature,
-    composeAttachments, setComposeAttachments,
+    composeAttachments, setComposeAttachments: updateComposeAttachments,
     composeMode, setComposeMode,
     draftUid, setDraftUid, draftId, setDraftId,
     draftSaveStatus, setDraftSaveStatus, composeError, setComposeError,
-    sending, handleSend, lastSendResult, closeComposer,
+    sending, handleSend, lastSendResult, immediateSendPhase, immediateSendNotice, closeComposer,
+    allowRetryAfterVerifiedNonDelivery, checkEarlierComposeSend, checkingEarlierComposeSend,
+    outboundRecoveryNotice, setOutboundRecoveryNotice,
     replyText, setReplyText, replySending, sendReply,
+    replySendPhase, replySendNotice,
+    replySendScope,
+    checkEarlierReplySend, checkingEarlierReplySend, allowReplyRetryAfterVerifiedNonDelivery,
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
     fetchFolders, fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,

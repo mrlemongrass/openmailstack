@@ -251,7 +251,9 @@ test('send API preserves the backend error message', async () => {
     json: async () => ({ success: false, error: 'The selected From address is no longer authorized' }),
   });
   try {
-    await assert.rejects(sendMessage(new FormData()), /selected From address is no longer authorized/);
+    await assert.rejects(sendMessage(new FormData(), {
+      idempotencyKey: '00000000-0000-4000-8000-000000000254',
+    }), /selected From address is no longer authorized/);
   } finally {
     global.fetch = originalFetch;
   }
@@ -263,7 +265,8 @@ test('inline replies honor Undo Send and never offer early archive while undo is
   const viewer = read('../src/mail/MessageViewer.tsx');
   const inlineReply = read('../src/mail/components/InlineReply.tsx');
 
-  assert.match(hook, /sendReply[\s\S]*undoSendSeconds[\s\S]*formData\.append\('delaySeconds'/);
+  assert.match(hook, /sendReply[\s\S]*undoSendSeconds[\s\S]*scheduledFor:[\s\S]*sendOutboundMessage/);
+  assert.doesNotMatch(hook, /formData\.append\('delaySeconds'/);
   assert.match(viewer, /showSendAndArchive=\{mail\.mailSettings\.compose\.undoSendSeconds === 0\}/);
   assert.match(viewer, /Reply could not be sent/);
   assert.match(viewer, /result\.deliveryStatus === 'accepted'[\s\S]*messageAction\('archive'[\s\S]*navigate/);

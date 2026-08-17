@@ -170,6 +170,30 @@ test('valid mail sync state loads on one transaction with exact payload-length p
   assert.match(events[1][1], /LIMIT 1 FOR UPDATE$/);
 });
 
+test('aborting a blocked Ping mail-state load destroys rather than releases its DB connection', async () => {
+  const events = [];
+  let rejectQuery;
+  const connection = {
+    beginTransaction: async () => events.push('begin'),
+    query: async () => new Promise((_resolve, reject) => { rejectQuery = reject; }),
+    rollback: async () => events.push('rollback'),
+    release: () => events.push('release'),
+    destroy: () => {
+      events.push('destroy');
+      rejectQuery?.(new Error('connection destroyed'));
+    },
+  };
+  const controller = new AbortController();
+  const loading = withPoolStubs(
+    connection,
+    () => loadMailSyncState(username, deviceId, collectionId, controller.signal),
+  );
+  while (typeof rejectQuery !== 'function') await Promise.resolve();
+  controller.abort();
+  await assert.rejects(loading);
+  assert.deepEqual(events, ['begin', 'destroy']);
+});
+
 test('a mail sync payload changed between preflight and fetch is rejected', async () => {
   const { connection } = lifecycleConnection(async sql => {
     if (sql.includes('AS known_items_bytes')) return [[validMetadata()], []];

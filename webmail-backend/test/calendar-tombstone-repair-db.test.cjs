@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 
 process.env.OMS_DB_PASSWORD ||= 'calendar-tombstone-repair-db-test';
 
@@ -21,7 +22,13 @@ test('exact tombstone repair is recoverable and ambiguity stays fail-closed on M
   );
 
   const { pool } = require('../src/db.js');
+  const originalApproval = process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+  const originalReleaseMode = process.env.OMS_OUTBOUND_RELEASE_MODE;
   t.after(async () => {
+    if (originalApproval === undefined) delete process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+    else process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL = originalApproval;
+    if (originalReleaseMode === undefined) delete process.env.OMS_OUTBOUND_RELEASE_MODE;
+    else process.env.OMS_OUTBOUND_RELEASE_MODE = originalReleaseMode;
     await pool.query('DROP TABLE IF EXISTS calendar_tombstone_repair_archive');
     await pool.query('DROP TABLE IF EXISTS calendar_shares');
     await pool.query('DROP TABLE IF EXISTS calendar_tombstones');
@@ -75,6 +82,29 @@ test('exact tombstone repair is recoverable and ambiguity stays fail-closed on M
       (12, 1, 'UID-É', 'résumé.ics', 314, '2026-08-15 08:00:00'),
       (20, 1, 'case-distinct', 'RÉSUMÉ.ics', 315, '2026-08-15 09:00:00')`);
 
+  const approvedIdentity = Buffer.from('UID-É', 'utf8');
+  const approvedResource = Buffer.from('résumé.ics', 'utf8');
+  process.env.OMS_OUTBOUND_RELEASE_MODE = 'bridge';
+  process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL = Buffer.from(JSON.stringify({
+    version: 1,
+    calendarId: 1,
+    retainedId: 12,
+    eventMatches: 0,
+    rows: [
+      { id: 10, deletedAt: '2026-08-14 08:00:00' },
+      { id: 11, deletedAt: '2026-08-15 08:00:00' },
+      { id: 12, deletedAt: '2026-08-15 08:00:00' },
+    ].map(row => ({
+      id: row.id,
+      uidSha256: crypto.createHash('sha256').update(approvedIdentity).digest('hex'),
+      uidBytes: approvedIdentity.length,
+      resourceNameSha256: crypto.createHash('sha256').update(approvedResource).digest('hex'),
+      resourceNameBytes: approvedResource.length,
+      syncToken: '314',
+      deletedAt: row.deletedAt,
+    })),
+  }), 'utf8').toString('base64url');
+
   await freshCalendarUtils().ensureCalendarSchema();
 
   const [retained] = await pool.query('SELECT id, uid, resource_name, sync_token FROM calendar_tombstones ORDER BY id');
@@ -98,6 +128,9 @@ test('exact tombstone repair is recoverable and ambiguity stays fail-closed on M
   await freshCalendarUtils().ensureCalendarSchema();
   const [[archiveCountAfterRetry]] = await pool.query('SELECT COUNT(*) AS total FROM calendar_tombstone_repair_archive');
   assert.equal(Number(archiveCountAfterRetry.total), 3);
+
+  delete process.env.OMS_CALENDAR_TOMBSTONE_REPAIR_APPROVAL;
+  delete process.env.OMS_OUTBOUND_RELEASE_MODE;
 
   await pool.query('ALTER TABLE calendar_tombstones DROP INDEX uniq_calendar_tombstone_resource_name');
   await pool.query('DELETE FROM calendar_tombstones');
@@ -127,4 +160,61 @@ test('exact tombstone repair is recoverable and ambiguity stays fail-closed on M
   assert.equal(Number(syncAmbiguityCount.total), 2);
   const [[eventCountAfterFailures]] = await pool.query('SELECT COUNT(*) AS total FROM events');
   assert.equal(Number(eventCountAfterFailures.total), 1);
+
+  // Prove the approval transaction remains closed to new tombstones and
+  // target-calendar events even when the pooled session default is READ
+  // COMMITTED. The production unit seam separately asserts that this exact
+  // SERIALIZABLE setup occurs before the same locking reads.
+  const lockConnection = await pool.getConnection();
+  const tombstoneWriter = await pool.getConnection();
+  const eventWriter = await pool.getConnection();
+  let lockTransactionOpen = false;
+  try {
+    await lockConnection.query('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
+    await lockConnection.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+    await lockConnection.beginTransaction();
+    lockTransactionOpen = true;
+    await lockConnection.query(
+      `SELECT id
+       FROM calendar_tombstones FORCE INDEX (PRIMARY)
+       ORDER BY id ASC
+       FOR UPDATE`,
+    );
+    await lockConnection.query(
+      `SELECT id, uid, resource_name
+       FROM events
+       WHERE calendar_id = ?
+       FOR UPDATE`,
+      [1],
+    );
+    await tombstoneWriter.query('SET SESSION innodb_lock_wait_timeout = 5');
+    await eventWriter.query('SET SESSION innodb_lock_wait_timeout = 5');
+
+    let tombstoneSettled = false;
+    let eventSettled = false;
+    const tombstoneInsert = tombstoneWriter.query(
+      `INSERT INTO calendar_tombstones
+          (id, calendar_id, uid, resource_name, sync_token, deleted_at)
+       VALUES (99, 2, 'late-tombstone', 'late-tombstone.ics', 1, '2026-08-16 12:00:00')`,
+    ).finally(() => { tombstoneSettled = true; });
+    const eventInsert = eventWriter.query(
+      `INSERT INTO events
+          (id, calendar_id, uid, resource_name, ical_data, sync_token)
+       VALUES (92, 1, 'late-event', 'late-event.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n', 315)`,
+    ).finally(() => { eventSettled = true; });
+
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const bothBlocked = !tombstoneSettled && !eventSettled;
+    await lockConnection.commit();
+    lockTransactionOpen = false;
+    const insertResults = await Promise.allSettled([tombstoneInsert, eventInsert]);
+    assert.equal(bothBlocked, true, 'both unapproved inserts must wait behind the approval locks');
+    assert.ok(insertResults.every(result => result.status === 'fulfilled'));
+  } finally {
+    if (lockTransactionOpen) await lockConnection.rollback();
+    await lockConnection.query('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    lockConnection.release();
+    tombstoneWriter.release();
+    eventWriter.release();
+  }
 });

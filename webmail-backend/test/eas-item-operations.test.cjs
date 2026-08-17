@@ -4,6 +4,10 @@ const test = require('node:test');
 const { WbxmlParser } = require('../src/wbxml/parser.js');
 const { WbxmlWriter } = require('../src/wbxml/writer.js');
 const {
+  activeSyncMailCollectionId,
+  activeSyncMailMessageServerId,
+} = require('../src/eas-protocol.js');
+const {
   ITEM_OPERATIONS_MAX_AGGREGATE_SOURCE_BYTES,
   ITEM_OPERATIONS_MAX_BODY_BYTES,
   ITEM_OPERATIONS_MAX_FETCHES,
@@ -113,17 +117,78 @@ test('ItemOperations Fetch returns bounded per-item protocol errors', async () =
 });
 
 test('ItemOperations validates required Mailbox Store and item identifiers per Fetch', () => {
-  assert.deepEqual(itemOperationsMailboxTarget('', 'SU5CT1g=', 'SU5CT1g=-9'), { ok: false, status: '2' });
-  assert.deepEqual(itemOperationsMailboxTarget('DocumentLibrary', 'SU5CT1g=', 'SU5CT1g=-9'), { ok: false, status: '9' });
-  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', 'mock-notes', 'mock-notes-9'), { ok: false, status: '2' });
-  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', 'SU5CT1g=', 'wrong-9'), { ok: false, status: '2' });
-  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', 'SU5CT1g=', `SU5CT1g=-${'9'.repeat(1_000)}`), { ok: false, status: '2' });
-  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', 'SU5CT1g=', 'SU5CT1g=-4294967296'), { ok: false, status: '2' });
-  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', 'SU5CT1g=', 'SU5CT1g=-9'), {
+  const collectionId = 'SU5CT1g=';
+  const serverId = activeSyncMailMessageServerId(collectionId, 9);
+  const folders = [{ path: 'INBOX', delimiter: '/' }];
+
+  assert.deepEqual(itemOperationsMailboxTarget('', collectionId, serverId, folders), { ok: false, status: '2' });
+  assert.deepEqual(itemOperationsMailboxTarget('DocumentLibrary', collectionId, serverId, folders), { ok: false, status: '9' });
+  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', 'mock-notes', serverId, folders), { ok: false, status: '2' });
+  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', collectionId, 'wrong-9', folders), { ok: false, status: '2' });
+  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', collectionId, `i-${'9'.repeat(1_000)}-9`, folders), { ok: false, status: '2' });
+  assert.deepEqual(itemOperationsMailboxTarget(
+    'Mailbox',
+    collectionId,
+    activeSyncMailMessageServerId(collectionId, 4294967296),
+    folders,
+  ), { ok: false, status: '2' });
+  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', collectionId, serverId, folders), {
     ok: true,
     folderPath: 'INBOX',
     uid: 9,
   });
+});
+
+test('ItemOperations resolves the opaque mail identifiers emitted by Sync within the authenticated folder set', () => {
+  const collectionId = activeSyncMailCollectionId('INBOX');
+  const serverId = activeSyncMailMessageServerId(collectionId, 54);
+  const archiveCollectionId = activeSyncMailCollectionId('Archive');
+  const archiveServerId = activeSyncMailMessageServerId(archiveCollectionId, 73);
+  const folders = [
+    { path: 'INBOX', delimiter: '/' },
+    { path: 'Archive', delimiter: '/' },
+  ];
+
+  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', collectionId, serverId, folders), {
+    ok: true,
+    folderPath: 'INBOX',
+    uid: 54,
+  });
+  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', archiveCollectionId, archiveServerId, folders), {
+    ok: true,
+    folderPath: 'Archive',
+    uid: 73,
+  });
+  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', collectionId, serverId, [
+    { path: 'Archive', delimiter: '/' },
+  ]), { ok: false, status: '2' });
+
+  assert.deepEqual(
+    itemOperationsMailboxTarget('Mailbox', archiveCollectionId, serverId, folders),
+    { ok: false, status: '2' },
+  );
+
+  const unlistedLegacyCollectionId = Buffer.from('Private').toString('base64');
+  assert.deepEqual(itemOperationsMailboxTarget(
+    'Mailbox',
+    unlistedLegacyCollectionId,
+    activeSyncMailMessageServerId(unlistedLegacyCollectionId, 54),
+    folders,
+  ), { ok: false, status: '2' });
+
+  const prefix = serverId.slice(0, serverId.lastIndexOf('-') + 1);
+  for (const malformedServerId of [
+    `${prefix}054`,
+    `${prefix}-54`,
+    `${prefix}54suffix`,
+    `${prefix}0`,
+  ]) {
+    assert.deepEqual(
+      itemOperationsMailboxTarget('Mailbox', collectionId, malformedServerId, folders),
+      { ok: false, status: '2' },
+    );
+  }
+  assert.deepEqual(itemOperationsMailboxTarget('Mailbox', collectionId, serverId), { ok: false, status: '2' });
 });
 
 test('ItemOperations enforces one aggregate UTF-8 body budget across Fetches', async () => {

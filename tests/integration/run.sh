@@ -172,6 +172,7 @@ test_authenticated_smoke_guards() {
     local calendar_smoke="${PROJECT_ROOT}/tests/integration/calendar_sync_smoke.sh"
     local carddav_smoke="${PROJECT_ROOT}/tests/integration/carddav_sync_smoke.sh"
     local eas_mail_smoke="${PROJECT_ROOT}/tests/integration/activesync_mail_smoke.sh"
+    local eas_ping_smoke="${PROJECT_ROOT}/tests/integration/activesync_ping_smoke.sh"
     local eas_contacts_smoke="${PROJECT_ROOT}/tests/integration/activesync_contacts_smoke.sh"
 
     assert_contains "${mail_smoke}" 'SKIP: set OMS_SMOKE_USER and OMS_SMOKE_PASSWORD'
@@ -184,6 +185,10 @@ test_authenticated_smoke_guards() {
     assert_contains "${carddav_smoke}" 'PASS: CardDAV sync smoke completed'
     assert_contains "${eas_mail_smoke}" 'SKIP: set OMS_SMOKE_USER and OMS_SMOKE_PASSWORD'
     assert_contains "${eas_mail_smoke}" 'PASS: ActiveSync mail smoke completed'
+    assert_contains "${eas_ping_smoke}" 'SKIP: set OMS_SMOKE_USER and OMS_SMOKE_PASSWORD'
+    assert_contains "${eas_ping_smoke}" 'PASS: ActiveSync Ping smoke completed'
+    assert_contains "${eas_ping_smoke}" 'OMS_SMOKE_PING_LONG_MODE'
+    assert_contains "${eas_ping_smoke}" 'ActiveSync Ping gate observed a backend or proxy restart'
     assert_contains "${eas_contacts_smoke}" 'PASS: ActiveSync contacts smoke completed'
     assert_contains "${eas_contacts_smoke}" 'curl --config "${curl_auth_config}"'
     assert_contains "${eas_contacts_smoke}" '--max-time "${CURL_MAX_TIME}"'
@@ -191,6 +196,7 @@ test_authenticated_smoke_guards() {
     assert_contains "${eas_contacts_smoke}" 'Birthday'
     assert_contains "${eas_contacts_smoke}" 'WARN: cleanup failed:'
     assert_not_contains "${eas_contacts_smoke}" '-u "${SMOKE_USER}:${SMOKE_PASSWORD}"'
+    bash "${PROJECT_ROOT}/tests/integration/calendar_sync_smoke_test.sh"
     pass "Authenticated smoke scripts are credential-gated and present"
 }
 
@@ -205,6 +211,7 @@ test_protocol_release_gate() {
     assert_contains "${gate}" 'OMS_SMOKE_IMAP_PORT="993"'
     assert_contains "${gate}" 'OMS_SMOKE_IMAP_REJECT_UNAUTHORIZED="true"'
     assert_contains "${gate}" 'activesync_contacts_smoke.sh'
+    assert_contains "${gate}" 'activesync_ping_smoke.sh'
     assert_contains "${gate}" 'calendar_sync_smoke.sh'
     assert_contains "${gate}" 'eas_pim_sync_states'
     assert_contains "${gate}" 'oms_protocol_contact_targets'
@@ -220,6 +227,7 @@ test_protocol_release_gate() {
     assert_contains "${guarded_deploy}" 'restore_snapshot'
     assert_contains "${guarded_deploy}" 'Running post-deploy public IMAPS and ActiveSync suite gate'
     assert_contains "${guarded_deploy}" 'bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile suite'
+    assert_contains "${guarded_deploy}" 'bash "${POST_GATE_SCRIPT}" "${CONFIG_PATH}" --profile suite --require-ping'
     assert_contains "${guarded_deploy}" 'bash "${GATE_SCRIPT}" "${CONFIG_PATH}" --profile auto'
     assert_contains "${webmail_deploy}" 'protocol_guarded_deploy.sh webmail'
     assert_contains "${dovecot_deploy}" 'protocol_guarded_deploy.sh dovecot'

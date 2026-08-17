@@ -1,4 +1,6 @@
 import type { PoolConnection } from 'mysql2/promise';
+import { deterministicPimAddServerId, pimSyncScopeHash, pimWireServerId } from './eas-pim-identity';
+export { deterministicPimAddServerId, pimSyncScopeHash, pimWireServerId };
 export declare const MAX_PIM_KNOWN_ITEMS = 50000;
 export declare const MAX_PIM_KNOWN_ITEMS_BYTES: number;
 export declare const MAX_PIM_ITEM_SOURCE_BYTES: number;
@@ -76,11 +78,8 @@ export declare function parsePimSupportedFields(value: unknown): string[];
 export declare function assertPimKnownItemsBound(knownItems: PimKnownItems): string;
 export declare function parsePimKnownItems(value: unknown): PimKnownItems;
 export declare const pimItemFingerprint: (serverId: string, version: string) => string;
-export declare const pimSyncScopeHash: (username: string, deviceId: string, collectionId: string) => string;
 export declare const pimSyncRequestHash: (requestBody: Buffer) => string;
-export declare const pimWireServerId: (collectionId: string, sourceId: string) => string;
 export declare const createPimSyncKey: () => string;
-export declare function deterministicPimAddServerId(scopeHash: string, syncKey: string, clientId: string): string;
 export declare function validatePimClientCommands(commands: any[], dataClass: 'Contacts' | 'Calendar'): {
     ok: true;
 } | {

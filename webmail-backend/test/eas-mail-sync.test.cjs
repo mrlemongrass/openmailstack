@@ -123,6 +123,29 @@ test('ordinary no-change IMAP poll short-circuits before SEARCH ALL', async () =
   assert.deepEqual(snapshot.changedReadFlags, {});
 });
 
+test('Ping mailbox cursor preflight reads UIDVALIDITY and HIGHESTMODSEQ without SEARCH', async () => {
+  const { ImapService } = require('../src/imap.js');
+  const service = Object.create(ImapService.prototype);
+  let searched = false;
+  let closed = false;
+  service.client = {
+    mailboxOpen: async (path, options) => {
+      assert.equal(path, 'INBOX');
+      assert.deepEqual(options, { readOnly: true });
+      return { uidValidity: 10n, highestModseq: 20n };
+    },
+    search: async () => { searched = true; return []; },
+    mailboxClose: async () => { closed = true; },
+  };
+
+  assert.deepEqual(await service.getActiveSyncMailboxCursor('INBOX'), {
+    uidValidity: '10',
+    highestModseq: '20',
+  });
+  assert.equal(searched, false);
+  assert.equal(closed, true);
+});
+
 test('legacy all-mail floor forces one complete IMAP snapshot despite unchanged MODSEQ', async () => {
   const { ImapService } = require('../src/imap.js');
   const service = Object.create(ImapService.prototype);

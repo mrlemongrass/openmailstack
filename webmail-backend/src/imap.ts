@@ -90,6 +90,10 @@ export class ImapService {
         await this.client.logout();
     }
 
+    close() {
+        this.client.close();
+    }
+
     async getFolders(): Promise<any[]> {
         const folders = await this.client.list({ statusQuery: { unseen: true } });
         return folders.map(f => ({
@@ -481,6 +485,21 @@ export class ImapService {
         }
         await this.client.mailboxClose();
         return { changed, highestModseq };
+    }
+
+    async getActiveSyncMailboxCursor(folderPath: string): Promise<{
+        uidValidity: string;
+        highestModseq: string;
+    }> {
+        const mailbox = await this.client.mailboxOpen(folderPath, { readOnly: true });
+        try {
+            return {
+                uidValidity: String(mailbox.uidValidity || '0'),
+                highestModseq: String(mailbox.highestModseq || '0'),
+            };
+        } finally {
+            await this.client.mailboxClose();
+        }
     }
 
     async getActiveSyncMailSnapshot(

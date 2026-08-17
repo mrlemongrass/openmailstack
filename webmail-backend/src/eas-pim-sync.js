@@ -1,13 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deletePimSyncState = exports.deletePimSyncStateOnConnection = exports.savePimSyncState = exports.savePimSyncStateOnConnection = exports.loadPimSyncState = exports.loadPimSyncStateOnConnection = exports.pimSqlLockName = exports.ensureEasPimSyncSchema = exports.pimQuarantineFingerprint = exports.pimSyncReplayResponse = exports.pimSyncStateDisposition = exports.createPimSyncKey = exports.pimWireServerId = exports.pimSyncRequestHash = exports.pimSyncScopeHash = exports.pimItemFingerprint = exports.PimSyncStateError = exports.PimSyncLimitError = exports.PIM_QUARANTINE_PREFIX = exports.PIM_SYNC_STATE_TTL_MS = exports.MAX_PIM_SYNC_PARTNERSHIPS_PER_USER = exports.MAX_PIM_SYNC_USER_BYTES = exports.MAX_PIM_SYNC_ROW_BYTES = exports.MAX_PIM_SYNC_COMMANDS_BYTES = exports.MAX_PIM_SYNC_RESPONSE_BYTES = exports.MAX_PIM_SYNC_REPLAY_BYTES = exports.MAX_PIM_SYNC_CLIENT_COMMANDS = exports.MAX_PIM_SNAPSHOT_SOURCE_BYTES = exports.MAX_PIM_ITEM_SOURCE_BYTES = exports.MAX_PIM_KNOWN_ITEMS_BYTES = exports.MAX_PIM_KNOWN_ITEMS = void 0;
+exports.deletePimSyncState = exports.deletePimSyncStateOnConnection = exports.savePimSyncState = exports.savePimSyncStateOnConnection = exports.loadPimSyncState = exports.loadPimSyncStateOnConnection = exports.pimSqlLockName = exports.ensureEasPimSyncSchema = exports.pimQuarantineFingerprint = exports.pimSyncReplayResponse = exports.pimSyncStateDisposition = exports.createPimSyncKey = exports.pimSyncRequestHash = exports.pimItemFingerprint = exports.PimSyncStateError = exports.PimSyncLimitError = exports.PIM_QUARANTINE_PREFIX = exports.PIM_SYNC_STATE_TTL_MS = exports.MAX_PIM_SYNC_PARTNERSHIPS_PER_USER = exports.MAX_PIM_SYNC_USER_BYTES = exports.MAX_PIM_SYNC_ROW_BYTES = exports.MAX_PIM_SYNC_COMMANDS_BYTES = exports.MAX_PIM_SYNC_RESPONSE_BYTES = exports.MAX_PIM_SYNC_REPLAY_BYTES = exports.MAX_PIM_SYNC_CLIENT_COMMANDS = exports.MAX_PIM_SNAPSHOT_SOURCE_BYTES = exports.MAX_PIM_ITEM_SOURCE_BYTES = exports.MAX_PIM_KNOWN_ITEMS_BYTES = exports.MAX_PIM_KNOWN_ITEMS = exports.pimWireServerId = exports.pimSyncScopeHash = exports.deterministicPimAddServerId = void 0;
 exports.parsePimSupportedProperties = parsePimSupportedProperties;
 exports.pimOmittedFieldsToClear = pimOmittedFieldsToClear;
 exports.serializePimSupportedFields = serializePimSupportedFields;
 exports.parsePimSupportedFields = parsePimSupportedFields;
 exports.assertPimKnownItemsBound = assertPimKnownItemsBound;
 exports.parsePimKnownItems = parsePimKnownItems;
-exports.deterministicPimAddServerId = deterministicPimAddServerId;
 exports.validatePimClientCommands = validatePimClientCommands;
 exports.computePimSyncDelta = computePimSyncDelta;
 exports.pimQuarantineCommand = pimQuarantineCommand;
@@ -25,6 +24,10 @@ exports.withPimCollectionLock = withPimCollectionLock;
 const crypto_1 = require("crypto");
 const db_1 = require("./db");
 const contact_utils_1 = require("./contact-utils");
+const eas_pim_identity_1 = require("./eas-pim-identity");
+Object.defineProperty(exports, "deterministicPimAddServerId", { enumerable: true, get: function () { return eas_pim_identity_1.deterministicPimAddServerId; } });
+Object.defineProperty(exports, "pimSyncScopeHash", { enumerable: true, get: function () { return eas_pim_identity_1.pimSyncScopeHash; } });
+Object.defineProperty(exports, "pimWireServerId", { enumerable: true, get: function () { return eas_pim_identity_1.pimWireServerId; } });
 exports.MAX_PIM_KNOWN_ITEMS = 50_000;
 exports.MAX_PIM_KNOWN_ITEMS_BYTES = 8 * 1024 * 1024;
 exports.MAX_PIM_ITEM_SOURCE_BYTES = 16 * 1024 * 1024;
@@ -235,29 +238,11 @@ const parsePimCommands = (value) => {
 };
 const pimItemFingerprint = (serverId, version) => (0, crypto_1.createHash)('sha256').update(serverId).update('\0').update(version).digest('hex');
 exports.pimItemFingerprint = pimItemFingerprint;
-const pimSyncScopeHash = (username, deviceId, collectionId) => (0, crypto_1.createHash)('sha256').update(username).update('\0').update(deviceId).update('\0').update(collectionId).digest('hex');
-exports.pimSyncScopeHash = pimSyncScopeHash;
 const pimSyncRequestHash = (requestBody) => (0, crypto_1.createHash)('sha256').update(requestBody).digest('hex');
 exports.pimSyncRequestHash = pimSyncRequestHash;
-const pimWireServerId = (collectionId, sourceId) => (0, crypto_1.createHash)('sha256').update(collectionId).update('\0').update(sourceId).digest('hex');
-exports.pimWireServerId = pimWireServerId;
 const createPimSyncKey = () => `oms-pim-${(0, crypto_1.randomBytes)(24).toString('hex')}`;
 exports.createPimSyncKey = createPimSyncKey;
 const isPimSyncKey = (value) => /^oms-pim-[0-9a-f]{48}$/.test(value);
-function deterministicPimAddServerId(scopeHash, syncKey, clientId) {
-    const bytes = (0, crypto_1.createHash)('sha256')
-        .update(scopeHash)
-        .update('\0')
-        .update(syncKey)
-        .update('\0')
-        .update(clientId)
-        .digest()
-        .subarray(0, 16);
-    bytes[6] = (bytes[6] & 0x0f) | 0x50;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = bytes.toString('hex');
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
 function validatePimClientCommands(commands, dataClass) {
     if (!Array.isArray(commands) || commands.length > exports.MAX_PIM_SYNC_CLIENT_COMMANDS)
         return { ok: false };
@@ -494,7 +479,7 @@ function boundedSnapshotMetadata(rows, expectedCount, collectionId, sourceIdForR
             || sourceBytes > exports.MAX_PIM_ITEM_SOURCE_BYTES) {
             throw new PimSyncLimitError('PIM item metadata exceeds its source bound');
         }
-        const serverId = (0, exports.pimWireServerId)(collectionId, sourceId);
+        const serverId = (0, eas_pim_identity_1.pimWireServerId)(collectionId, sourceId);
         const metadata = {
             serverId,
             sourceId,
@@ -721,7 +706,7 @@ async function withPimSqlTransaction(username, operation, secondaryLock) {
     return result;
 }
 async function loadPimSyncStateWithExecutor(executor, username, deviceId, collectionId) {
-    const scopeHash = (0, exports.pimSyncScopeHash)(username, deviceId, collectionId);
+    const scopeHash = (0, eas_pim_identity_1.pimSyncScopeHash)(username, deviceId, collectionId);
     const [metadataRows] = await executor.query(`SELECT scope_hash, username, device_id, collection_id, current_sync_key, previous_sync_key,
                 window_size, supported_was_present, last_more_available, last_request_hash, updated_at,
                 OCTET_LENGTH(known_items) AS known_items_bytes,
@@ -829,7 +814,7 @@ exports.loadPimSyncStateOnConnection = loadPimSyncStateOnConnection;
 const loadPimSyncState = async (username, deviceId, collectionId) => withPimSqlTransaction(username, connection => (0, exports.loadPimSyncStateOnConnection)(connection, username, deviceId, collectionId));
 exports.loadPimSyncState = loadPimSyncState;
 const savePimSyncStateOnConnection = async (connection, state) => {
-    if (state.scopeHash !== (0, exports.pimSyncScopeHash)(state.username, state.deviceId, state.collectionId)
+    if (state.scopeHash !== (0, eas_pim_identity_1.pimSyncScopeHash)(state.username, state.deviceId, state.collectionId)
         || Buffer.byteLength(state.deviceId, 'utf8') > 32
         || Buffer.byteLength(state.collectionId, 'utf8') > 64
         || state.lastRequestHash !== null && !/^[0-9a-f]{64}$/.test(state.lastRequestHash)) {
@@ -904,7 +889,7 @@ exports.savePimSyncStateOnConnection = savePimSyncStateOnConnection;
 const savePimSyncState = async (state) => withPimSqlTransaction(state.username, connection => (0, exports.savePimSyncStateOnConnection)(connection, state));
 exports.savePimSyncState = savePimSyncState;
 const deletePimSyncStateOnConnection = async (connection, username, deviceId, collectionId) => {
-    const scopeHash = (0, exports.pimSyncScopeHash)(username, deviceId, collectionId);
+    const scopeHash = (0, eas_pim_identity_1.pimSyncScopeHash)(username, deviceId, collectionId);
     await connection.query('DELETE FROM eas_pim_sync_states WHERE scope_hash = ? AND username = ? AND device_id = ? AND collection_id = ?', [scopeHash, username, deviceId, collectionId]);
 };
 exports.deletePimSyncStateOnConnection = deletePimSyncStateOnConnection;

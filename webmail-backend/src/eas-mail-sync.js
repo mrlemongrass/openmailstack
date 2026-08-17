@@ -328,16 +328,32 @@ const parseCommands = (value) => {
         throw new MailSyncStateError('Mail command replay state is malformed');
     }
 };
-const loadMailSyncState = async (username, deviceId, collectionId) => {
+const loadMailSyncState = async (username, deviceId, collectionId, signal) => {
     await (0, exports.ensureEasMailSyncSchema)();
     const scopeHash = (0, exports.mailSyncScopeHash)(username, deviceId, collectionId);
     const connection = await db_1.pool.getConnection();
     let transactionStarted = false;
     let connectionUsable = true;
+    let connectionDestroyed = false;
+    const abortConnection = () => {
+        connectionUsable = false;
+        connectionDestroyed = true;
+        connection.destroy();
+    };
+    const throwIfAborted = () => {
+        if (!signal?.aborted)
+            return;
+        throw signal.reason instanceof Error ? signal.reason : new MailSyncStateError('Mail sync state load was aborted');
+    };
+    signal?.addEventListener('abort', abortConnection, { once: true });
+    if (signal?.aborted)
+        abortConnection();
     try {
+        throwIfAborted();
         try {
             await connection.beginTransaction();
             transactionStarted = true;
+            throwIfAborted();
         }
         catch (error) {
             connectionUsable = false;
@@ -350,9 +366,11 @@ const loadMailSyncState = async (username, deviceId, collectionId) => {
                     OCTET_LENGTH(last_commands) AS last_commands_bytes,
                     COALESCE(OCTET_LENGTH(last_response), 0) AS last_response_bytes
              FROM eas_mail_sync_states WHERE scope_hash = ? LIMIT 1 FOR UPDATE`, [scopeHash]);
+        throwIfAborted();
         if (!metadataRows.length) {
             await connection.commit();
             transactionStarted = false;
+            throwIfAborted();
             return null;
         }
         const metadata = metadataRows[0];
@@ -385,6 +403,7 @@ const loadMailSyncState = async (username, deviceId, collectionId) => {
                AND OCTET_LENGTH(last_commands) = ?
                AND COALESCE(OCTET_LENGTH(last_response), 0) = ?
              LIMIT 1`, [scopeHash, ...payloadLengths.map(([, rawBytes]) => Number(rawBytes))]);
+        throwIfAborted();
         if (payloadRows.length !== 1) {
             throw new MailSyncStateError('Mail sync state changed while its payload was loading');
         }
@@ -454,10 +473,11 @@ const loadMailSyncState = async (username, deviceId, collectionId) => {
         };
         await connection.commit();
         transactionStarted = false;
+        throwIfAborted();
         return result;
     }
     catch (error) {
-        if (transactionStarted) {
+        if (transactionStarted && !connectionDestroyed) {
             try {
                 await connection.rollback();
             }
@@ -469,9 +489,10 @@ const loadMailSyncState = async (username, deviceId, collectionId) => {
         throw error;
     }
     finally {
+        signal?.removeEventListener('abort', abortConnection);
         if (connectionUsable)
             connection.release();
-        else
+        else if (!connectionDestroyed)
             connection.destroy();
     }
 };

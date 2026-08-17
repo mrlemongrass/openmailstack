@@ -13,6 +13,14 @@ grep -Fq 'OMS_PROTOCOL_GATE_CONTACT_DAV_UID' "${SMOKE_SCRIPT}" \
     || fail "contacts smoke does not publish an immutable cleanup identity"
 grep -Fq 'eas_contact_url' "${SMOKE_SCRIPT}" \
     || fail "contacts smoke does not retain the exact created href"
+grep -Fq "vcard_has_internet_email \"\${tmpdir}/after-add.vcf\" \"\${eas_email}\"" "${SMOKE_SCRIPT}" \
+    || fail "contacts smoke Add does not use the semantic vCard email assertion"
+grep -Fq "vcard_has_internet_email \"\${tmpdir}/after-change.vcf\" \"\${eas_changed_email}\"" "${SMOKE_SCRIPT}" \
+    || fail "contacts smoke Change does not use the semantic vCard email assertion"
+
+vcard_email_source=$(sed -n '/^vcard_has_internet_email()/,/^DEVICE_ID=/p' "${SMOKE_SCRIPT}" | sed '$d')
+[[ -n "${vcard_email_source}" ]] || fail "could not extract semantic vCard email assertion"
+eval "${vcard_email_source}"
 
 function_source=$(sed -n '/^cleanup_marker_contacts()/,/^}/p' "${SMOKE_SCRIPT}")
 [[ -n "${function_source}" ]] || fail "could not extract contact marker cleanup"
@@ -25,6 +33,41 @@ test_root=$(mktemp -d)
 trap 'rm -rf -- "${test_root}"' EXIT
 export tmpdir=${test_root}
 deleted_log="${test_root}/deleted.log"
+
+cat > "${test_root}/slot-after-type.vcf" <<'VCARD'
+BEGIN:VCARD
+VERSION:3.0
+FN:OMS Fixture
+EMAIL;TYPE=INTERNET;X-OMS-EAS-SLOT=Email1Address:fixture@example.invalid
+END:VCARD
+VCARD
+vcard_has_internet_email "${test_root}/slot-after-type.vcf" 'fixture@example.invalid' \
+    || fail "semantic email assertion rejected ActiveSync slot metadata"
+
+cat > "${test_root}/slot-before-type.vcf" <<'VCARD'
+BEGIN:VCARD
+VERSION:3.0
+FN:OMS Fixture
+EMAIL;X-OMS-EAS-SLOT=Email1Address;
+ TYPE=HOME,INTERNET:fixture@example.invalid
+END:VCARD
+VCARD
+vcard_has_internet_email "${test_root}/slot-before-type.vcf" 'fixture@example.invalid' \
+    || fail "semantic email assertion depended on parameter order or folding"
+if vcard_has_internet_email "${test_root}/slot-after-type.vcf" 'different@example.invalid'; then
+    fail "semantic email assertion accepted the wrong email value"
+fi
+
+cat > "${test_root}/missing-internet-type.vcf" <<'VCARD'
+BEGIN:VCARD
+VERSION:3.0
+FN:OMS Fixture
+EMAIL;TYPE=HOME:fixture@example.invalid
+END:VCARD
+VCARD
+if vcard_has_internet_email "${test_root}/missing-internet-type.vcf" 'fixture@example.invalid'; then
+    fail "semantic email assertion accepted an EMAIL without INTERNET type"
+fi
 
 report_contacts() {
     : > "$1"
@@ -69,4 +112,4 @@ write_matching_contact_urls() {
 grep -Fxq 'https://mail.example.test/carddav/addressbooks/fixture@example.test/personal/immutable.vcf' "${deleted_log}" \
     || fail "cleanup lost the immutable href after an email change"
 
-echo 'PASS: ActiveSync contact cleanup handles one unterminated href and changed email'
+echo 'PASS: ActiveSync contact smoke validates semantic vCard emails and exact cleanup identity'

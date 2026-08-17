@@ -4,6 +4,9 @@ set -euo pipefail
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 readonly CANONICAL_PROJECT_ROOT="${PROJECT_ROOT}"
 CONFIG_PATH="${1:-${PROJECT_ROOT}/config.conf}"
+if (( $# > 0 )); then
+    shift
+fi
 CREDENTIAL_FILE="${OMS_PROTOCOL_GATE_CREDENTIAL_FILE:-/etc/openmailstack/protocol-smoke.env}"
 IDENTITY_FILE="${OMS_PROTOCOL_GATE_IDENTITY_FILE:-/etc/openmailstack/protocol-canary.identity}"
 REQUIRED_FILE="${OMS_PROTOCOL_GATE_REQUIRED_FILE:-/etc/openmailstack/protocol-gate.required}"
@@ -15,35 +18,61 @@ readonly CANONICAL_IDENTITY_FILE="${IDENTITY_FILE}"
 readonly CANONICAL_REQUIRED_FILE="${REQUIRED_FILE}"
 CLI_GATE_PROFILE=''
 GATE_MODE='validate'
+PING_REQUIRED=0
+PING_LONG_MODE=0
 
-case "${2:-}" in
-    '')
-        [[ $# -le 1 ]] || {
-            echo "FAIL: unsupported protocol gate arguments" >&2
+while (( $# > 0 )); do
+    case "$1" in
+        --profile)
+            [[ -z "${CLI_GATE_PROFILE}" && $# -ge 2 && -n "${2:-}" ]] || {
+                echo "FAIL: --profile requires exactly one value and may be specified once" >&2
+                exit 1
+            }
+            CLI_GATE_PROFILE=$2
+            shift 2
+            ;;
+        --cleanup-suite-only)
+            [[ "${GATE_MODE}" == "validate" ]] || {
+                echo "FAIL: --cleanup-suite-only may be specified once" >&2
+                exit 1
+            }
+            GATE_MODE='cleanup-suite-only'
+            shift
+            ;;
+        --require-ping)
+            [[ "${PING_REQUIRED}" == "0" ]] || {
+                echo "FAIL: --require-ping may be specified once" >&2
+                exit 1
+            }
+            PING_REQUIRED=1
+            shift
+            ;;
+        --ping-long)
+            [[ "${PING_LONG_MODE}" == "0" ]] || {
+                echo "FAIL: --ping-long may be specified once" >&2
+                exit 1
+            }
+            PING_LONG_MODE=1
+            shift
+            ;;
+        *)
+            echo "FAIL: unsupported protocol gate argument: $1" >&2
             exit 1
-        }
-        ;;
-    --profile)
-        [[ $# -eq 3 && -n "${3:-}" ]] || {
-            echo "FAIL: --profile requires exactly one value" >&2
-            exit 1
-        }
-        CLI_GATE_PROFILE=${3}
-        ;;
-    --cleanup-suite-only)
-        [[ $# -eq 2 ]] || {
-            echo "FAIL: --cleanup-suite-only accepts no value" >&2
-            exit 1
-        }
-        GATE_MODE='cleanup-suite-only'
-        CLI_GATE_PROFILE='suite'
-        ;;
-    *)
-        echo "FAIL: unsupported protocol gate argument: ${2}" >&2
+            ;;
+    esac
+done
+if [[ "${GATE_MODE}" == "cleanup-suite-only" ]]; then
+    [[ -z "${CLI_GATE_PROFILE}" && "${PING_REQUIRED}" == "0" && "${PING_LONG_MODE}" == "0" ]] || {
+        echo "FAIL: --cleanup-suite-only cannot be combined with profile or Ping checks" >&2
         exit 1
-        ;;
-esac
-readonly CLI_GATE_PROFILE GATE_MODE
+    }
+    CLI_GATE_PROFILE='suite'
+fi
+if [[ "${PING_LONG_MODE}" == "1" && "${PING_REQUIRED}" != "1" ]]; then
+    echo "FAIL: --ping-long requires --require-ping" >&2
+    exit 1
+fi
+readonly CLI_GATE_PROFILE GATE_MODE PING_REQUIRED PING_LONG_MODE
 
 fail() {
     echo "FAIL: $1" >&2
@@ -70,6 +99,7 @@ validate_protocol_overrides() {
     for override_name in \
         OMS_PROTOCOL_GATE_SMOKE_SCRIPT \
         OMS_PROTOCOL_GATE_MAIL_SMOKE_SCRIPT \
+        OMS_PROTOCOL_GATE_PING_SMOKE_SCRIPT \
         OMS_PROTOCOL_GATE_CONTACTS_SMOKE_SCRIPT \
         OMS_PROTOCOL_GATE_CALENDAR_SMOKE_SCRIPT \
         OMS_PROTOCOL_GATE_MYSQL_BIN \
@@ -85,6 +115,14 @@ validate_protocol_overrides() {
         OMS_PROTOCOL_GATE_CLEANUP_DEADLINE_MS \
         OMS_PROTOCOL_GATE_CLEANUP_POLL_MS \
         OMS_SMOKE_CLEANUP_ONLY \
+        OMS_SMOKE_PING_LONG_MODE \
+        OMS_SMOKE_PING_FIXTURE_SECOND_MS \
+        OMS_SMOKE_PING_CONTACT_UID \
+        OMS_SMOKE_PING_CONTACT_EMAIL \
+        OMS_SMOKE_PING_CALENDAR_SLUG \
+        OMS_SMOKE_PING_CALENDAR_NAME \
+        OMS_SMOKE_PING_CALENDAR_EVENT_UID \
+        OMS_SMOKE_PING_CALENDAR_SUBJECT \
         OMS_SMOKE_NETWORK_TIMEOUT_MS; do
         if [[ -n "${!override_name:-}" ]]; then
             fixture_override=1
@@ -275,19 +313,37 @@ done
 MAIL_SMOKE_SCRIPT="${OMS_PROTOCOL_GATE_MAIL_SMOKE_SCRIPT:-${OMS_PROTOCOL_GATE_SMOKE_SCRIPT:-${PROJECT_ROOT}/tests/integration/activesync_mail_smoke.sh}}"
 [[ -f "${MAIL_SMOKE_SCRIPT}" ]] \
     || fail "Authenticated mail cleanup script not found: ${MAIL_SMOKE_SCRIPT}"
+PING_SMOKE_SCRIPT="${OMS_PROTOCOL_GATE_PING_SMOKE_SCRIPT:-${PROJECT_ROOT}/tests/integration/activesync_ping_smoke.sh}"
+if [[ "${PING_REQUIRED}" == "1" ]]; then
+    [[ -f "${PING_SMOKE_SCRIPT}" ]] \
+        || fail "Authenticated Ping smoke script not found: ${PING_SMOKE_SCRIPT}"
+fi
+OMS_SMOKE_PING_LONG_MODE="${PING_LONG_MODE}"
+export OMS_SMOKE_PING_LONG_MODE
 
 if [[ "${GATE_MODE}" == "cleanup-suite-only" ]]; then
     SMOKE_SCRIPTS=()
 elif [[ -n "${OMS_PROTOCOL_GATE_SMOKE_SCRIPT:-}" ]]; then
     # Backward-compatible single-script override for disposable gate tests.
     SMOKE_SCRIPTS=("${OMS_PROTOCOL_GATE_SMOKE_SCRIPT}")
+    if [[ "${PING_REQUIRED}" == "1" ]]; then
+        SMOKE_SCRIPTS+=("${PING_SMOKE_SCRIPT}")
+    fi
 elif [[ "${GATE_PROFILE}" == "mail" ]]; then
     SMOKE_SCRIPTS=(
         "${MAIL_SMOKE_SCRIPT}"
     )
+    if [[ "${PING_REQUIRED}" == "1" ]]; then
+        SMOKE_SCRIPTS+=("${PING_SMOKE_SCRIPT}")
+    fi
 else
     SMOKE_SCRIPTS=(
         "${MAIL_SMOKE_SCRIPT}"
+    )
+    if [[ "${PING_REQUIRED}" == "1" ]]; then
+        SMOKE_SCRIPTS+=("${PING_SMOKE_SCRIPT}")
+    fi
+    SMOKE_SCRIPTS+=(
         "${OMS_PROTOCOL_GATE_CONTACTS_SMOKE_SCRIPT:-${PROJECT_ROOT}/tests/integration/activesync_contacts_smoke.sh}"
         "${OMS_PROTOCOL_GATE_CALENDAR_SMOKE_SCRIPT:-${PROJECT_ROOT}/tests/integration/calendar_sync_smoke.sh}"
     )
@@ -317,6 +373,25 @@ OMS_SMOKE_CONTACT_RUN_ID=${OMS_SMOKE_DEVICE_ID,,}
 export OMS_SMOKE_CONTACT_RUN_ID
 OMS_SMOKE_CALENDAR_RUN_ID=${OMS_SMOKE_CONTACT_RUN_ID}
 export OMS_SMOKE_CALENDAR_RUN_ID
+PING_CANARY_DIGEST=$(
+    {
+        printf '%s\0' 'openmailstack-protocol-mail-canary'
+        LC_ALL=C printf '%s' "${OMS_SMOKE_USER,,}"
+        printf '\0%s' "${OMS_SMOKE_DEVICE_ID}"
+    } | openssl dgst -sha256 -binary | LC_ALL=C od -An -v -tx1 | tr -d '[:space:]'
+)
+[[ "${PING_CANARY_DIGEST}" =~ ^[0-9a-f]{64}$ ]] \
+    || fail "Could not derive the deterministic Ping cleanup identity"
+PING_CANARY_SUFFIX=${PING_CANARY_DIGEST:0:24}
+OMS_SMOKE_PING_CONTACT_UID="oms-ping-contact-${PING_CANARY_SUFFIX}"
+OMS_SMOKE_PING_CONTACT_EMAIL="oms-ping-${PING_CANARY_SUFFIX}@example.invalid"
+OMS_SMOKE_PING_CALENDAR_SLUG="oms-ping-${PING_CANARY_SUFFIX}"
+OMS_SMOKE_PING_CALENDAR_NAME="OMS Ping Calendar ${PING_CANARY_SUFFIX}"
+OMS_SMOKE_PING_CALENDAR_EVENT_UID="oms-ping-event-${PING_CANARY_SUFFIX}"
+OMS_SMOKE_PING_CALENDAR_SUBJECT="OMS Ping Event ${PING_CANARY_SUFFIX}"
+export OMS_SMOKE_PING_CONTACT_UID OMS_SMOKE_PING_CONTACT_EMAIL
+export OMS_SMOKE_PING_CALENDAR_SLUG OMS_SMOKE_PING_CALENDAR_NAME
+export OMS_SMOKE_PING_CALENDAR_EVENT_UID OMS_SMOKE_PING_CALENDAR_SUBJECT
 CONTACT_SEED_UID="oms-eas-seed-${OMS_SMOKE_CONTACT_RUN_ID}"
 CONTACT_SEED_EMAIL="oms-eas-seed-${OMS_SMOKE_CONTACT_RUN_ID}@example.invalid"
 CONTACT_ADDED_EMAIL="oms-eas-added-${OMS_SMOKE_CONTACT_RUN_ID}@example.invalid"
@@ -324,6 +399,10 @@ CONTACT_CHANGED_EMAIL="oms-eas-changed-${OMS_SMOKE_CONTACT_RUN_ID}@example.inval
 BIRTHDAY_CALENDAR_RUN_NAME="OMS Protocol Birthdays ${OMS_SMOKE_CONTACT_RUN_ID}"
 CALENDAR_RUN_SLUG="oms-eas-calendar-${OMS_SMOKE_CALENDAR_RUN_ID}"
 CALENDAR_RUN_NAME="OMS EAS Calendar ${OMS_SMOKE_CALENDAR_RUN_ID}"
+PING_CONTACT_UID_SQL_LITERAL=$(mysql_hex_literal "${OMS_SMOKE_PING_CONTACT_UID}")
+PING_CONTACT_EMAIL_SQL_LITERAL=$(mysql_hex_literal "${OMS_SMOKE_PING_CONTACT_EMAIL}")
+PING_CALENDAR_SLUG_SQL_LITERAL=$(mysql_hex_literal "${OMS_SMOKE_PING_CALENDAR_SLUG}")
+PING_CALENDAR_NAME_SQL_LITERAL=$(mysql_hex_literal "${OMS_SMOKE_PING_CALENDAR_NAME}")
 SMOKE_DEVICE_SQL_LITERAL=$(mysql_hex_literal "${OMS_SMOKE_DEVICE_ID}")
 CONTACT_SEED_UID_SQL_LITERAL=$(mysql_hex_literal "${CONTACT_SEED_UID}")
 CONTACT_SEED_EMAIL_SQL_LITERAL=$(mysql_hex_literal "${CONTACT_SEED_EMAIL}")
@@ -471,6 +550,31 @@ SET @oms_birthday_identity_proven = IF(
     1,
     0
 );
+SELECT COUNT(*),
+       COALESCE(SUM(
+           BINARY name=BINARY CONVERT(${PING_CALENDAR_NAME_SQL_LITERAL} USING utf8mb4)
+           AND BINARY dav_slug=BINARY CONVERT(${PING_CALENDAR_SLUG_SQL_LITERAL} USING utf8mb4)
+           AND calendars.subscribed_url IS NULL
+       ), 0)
+INTO @oms_ping_calendar_identity_rows, @oms_ping_calendar_exact_rows
+FROM calendars
+WHERE user_id=${SMOKE_USER_SQL_LITERAL}
+  AND (
+      BINARY name=BINARY CONVERT(${PING_CALENDAR_NAME_SQL_LITERAL} USING utf8mb4)
+      OR BINARY dav_slug=BINARY CONVERT(${PING_CALENDAR_SLUG_SQL_LITERAL} USING utf8mb4)
+  );
+SELECT COUNT(*),
+       COALESCE(SUM(
+           BINARY email=BINARY CONVERT(${PING_CONTACT_EMAIL_SQL_LITERAL} USING utf8mb4)
+           AND BINARY dav_uid=BINARY CONVERT(${PING_CONTACT_UID_SQL_LITERAL} USING utf8mb4)
+       ), 0)
+INTO @oms_ping_contact_identity_rows, @oms_ping_contact_exact_rows
+FROM contacts
+WHERE username=${SMOKE_USER_SQL_LITERAL}
+  AND (
+      BINARY email=BINARY CONVERT(${PING_CONTACT_EMAIL_SQL_LITERAL} USING utf8mb4)
+      OR BINARY dav_uid=BINARY CONVERT(${PING_CONTACT_UID_SQL_LITERAL} USING utf8mb4)
+  );
 CREATE TEMPORARY TABLE oms_protocol_calendar_targets (
     calendar_id BIGINT NOT NULL PRIMARY KEY
 ) ENGINE=MEMORY;
@@ -478,8 +582,15 @@ INSERT IGNORE INTO oms_protocol_calendar_targets (calendar_id)
 SELECT id
 FROM calendars
 WHERE user_id=${SMOKE_USER_SQL_LITERAL}
-  AND name=CONVERT(${CALENDAR_RUN_NAME_SQL_LITERAL} USING utf8mb4)
-  AND dav_slug=CONVERT(${CALENDAR_RUN_SLUG_SQL_LITERAL} USING utf8mb4)
+  AND (
+      (name=CONVERT(${CALENDAR_RUN_NAME_SQL_LITERAL} USING utf8mb4)
+       AND dav_slug=CONVERT(${CALENDAR_RUN_SLUG_SQL_LITERAL} USING utf8mb4))
+      OR
+      (BINARY name=BINARY CONVERT(${PING_CALENDAR_NAME_SQL_LITERAL} USING utf8mb4)
+       AND BINARY dav_slug=BINARY CONVERT(${PING_CALENDAR_SLUG_SQL_LITERAL} USING utf8mb4)
+       AND @oms_ping_calendar_identity_rows=1
+       AND @oms_ping_calendar_exact_rows=1)
+  )
   AND subscribed_url IS NULL;
 CREATE TEMPORARY TABLE oms_protocol_contact_targets (
     contact_id BIGINT NULL,
@@ -505,6 +616,10 @@ WHERE username=${SMOKE_USER_SQL_LITERAL}
       email IN (${CONTACT_SEED_EMAIL_SQL_LITERAL}, ${CONTACT_ADDED_EMAIL_SQL_LITERAL}, ${CONTACT_CHANGED_EMAIL_SQL_LITERAL})
       OR dav_uid=${CONTACT_SEED_UID_SQL_LITERAL}
       OR (${contact_added_dav_uid_sql_literal} IS NOT NULL AND dav_uid=${contact_added_dav_uid_sql_literal})
+      OR (BINARY email=BINARY CONVERT(${PING_CONTACT_EMAIL_SQL_LITERAL} USING utf8mb4)
+          AND BINARY dav_uid=BINARY CONVERT(${PING_CONTACT_UID_SQL_LITERAL} USING utf8mb4)
+          AND @oms_ping_contact_identity_rows=1
+          AND @oms_ping_contact_exact_rows=1)
   );
 INSERT IGNORE INTO oms_protocol_contact_targets (contact_id, dav_uid, birthday_uid)
 VALUES (
@@ -520,6 +635,20 @@ VALUES (
         '@openmailstack'
     )
 );
+INSERT IGNORE INTO oms_protocol_contact_targets (contact_id, dav_uid, birthday_uid)
+SELECT NULL,
+    CONVERT(${PING_CONTACT_UID_SQL_LITERAL} USING utf8mb4),
+    CONCAT(
+        'birthday-',
+        LEFT(SHA2(CONCAT(
+            LOWER(TRIM(CONVERT(${SMOKE_USER_SQL_LITERAL} USING utf8mb4))),
+            CHAR(0),
+            CONVERT(${PING_CONTACT_UID_SQL_LITERAL} USING utf8mb4)
+        ), 256), 48),
+        '@openmailstack'
+    )
+FROM DUAL
+WHERE @oms_ping_contact_identity_rows=0;
 INSERT IGNORE INTO oms_protocol_contact_targets (contact_id, dav_uid, birthday_uid)
 SELECT NULL,
        CONVERT(${contact_added_dav_uid_sql_literal} USING utf8mb4),
@@ -576,8 +705,15 @@ DELETE calendar_rows
 FROM calendars AS calendar_rows
 JOIN oms_protocol_calendar_targets AS targets ON targets.calendar_id=calendar_rows.id
 WHERE calendar_rows.user_id=${SMOKE_USER_SQL_LITERAL}
-  AND calendar_rows.name=CONVERT(${CALENDAR_RUN_NAME_SQL_LITERAL} USING utf8mb4)
-  AND calendar_rows.dav_slug=CONVERT(${CALENDAR_RUN_SLUG_SQL_LITERAL} USING utf8mb4)
+  AND (
+      (calendar_rows.name=CONVERT(${CALENDAR_RUN_NAME_SQL_LITERAL} USING utf8mb4)
+       AND calendar_rows.dav_slug=CONVERT(${CALENDAR_RUN_SLUG_SQL_LITERAL} USING utf8mb4))
+      OR
+      (BINARY calendar_rows.name=BINARY CONVERT(${PING_CALENDAR_NAME_SQL_LITERAL} USING utf8mb4)
+       AND BINARY calendar_rows.dav_slug=BINARY CONVERT(${PING_CALENDAR_SLUG_SQL_LITERAL} USING utf8mb4)
+       AND @oms_ping_calendar_identity_rows=1
+       AND @oms_ping_calendar_exact_rows=1)
+  )
   AND calendar_rows.subscribed_url IS NULL;
 SET @oms_cleanup_changes = @oms_cleanup_changes + ROW_COUNT();
 DELETE members
@@ -664,18 +800,26 @@ SET @oms_cleanup_changes = @oms_cleanup_changes + IF(@oms_has_webmail_sessions, 
 DEALLOCATE PREPARE oms_session_cleanup_statement;
 SELECT COUNT(*) INTO @oms_contact_active
 FROM contacts
-WHERE username=${SMOKE_USER_SQL_LITERAL}
-  AND deleted_at IS NULL
-  AND (email IN (${CONTACT_SEED_EMAIL_SQL_LITERAL}, ${CONTACT_ADDED_EMAIL_SQL_LITERAL}, ${CONTACT_CHANGED_EMAIL_SQL_LITERAL})
-       OR dav_uid=${CONTACT_SEED_UID_SQL_LITERAL}
-       OR (${contact_added_dav_uid_sql_literal} IS NOT NULL AND dav_uid=${contact_added_dav_uid_sql_literal}));
+WHERE contacts.username=${SMOKE_USER_SQL_LITERAL}
+  AND contacts.deleted_at IS NULL
+  AND (
+      contacts.email IN (${CONTACT_SEED_EMAIL_SQL_LITERAL}, ${CONTACT_ADDED_EMAIL_SQL_LITERAL}, ${CONTACT_CHANGED_EMAIL_SQL_LITERAL})
+      OR contacts.dav_uid=${CONTACT_SEED_UID_SQL_LITERAL}
+      OR (${contact_added_dav_uid_sql_literal} IS NOT NULL AND contacts.dav_uid=${contact_added_dav_uid_sql_literal})
+      OR BINARY contacts.email=BINARY CONVERT(${PING_CONTACT_EMAIL_SQL_LITERAL} USING utf8mb4)
+      OR BINARY contacts.dav_uid=BINARY CONVERT(${PING_CONTACT_UID_SQL_LITERAL} USING utf8mb4)
+  );
 SELECT COUNT(*) INTO @oms_contact_deleted
 FROM contacts
-WHERE username=${SMOKE_USER_SQL_LITERAL}
-  AND deleted_at IS NOT NULL
-  AND (email IN (${CONTACT_SEED_EMAIL_SQL_LITERAL}, ${CONTACT_ADDED_EMAIL_SQL_LITERAL}, ${CONTACT_CHANGED_EMAIL_SQL_LITERAL})
-       OR dav_uid=${CONTACT_SEED_UID_SQL_LITERAL}
-       OR (${contact_added_dav_uid_sql_literal} IS NOT NULL AND dav_uid=${contact_added_dav_uid_sql_literal}));
+WHERE contacts.username=${SMOKE_USER_SQL_LITERAL}
+  AND contacts.deleted_at IS NOT NULL
+  AND (
+      contacts.email IN (${CONTACT_SEED_EMAIL_SQL_LITERAL}, ${CONTACT_ADDED_EMAIL_SQL_LITERAL}, ${CONTACT_CHANGED_EMAIL_SQL_LITERAL})
+      OR contacts.dav_uid=${CONTACT_SEED_UID_SQL_LITERAL}
+      OR (${contact_added_dav_uid_sql_literal} IS NOT NULL AND contacts.dav_uid=${contact_added_dav_uid_sql_literal})
+      OR BINARY contacts.email=BINARY CONVERT(${PING_CONTACT_EMAIL_SQL_LITERAL} USING utf8mb4)
+      OR BINARY contacts.dav_uid=BINARY CONVERT(${PING_CONTACT_UID_SQL_LITERAL} USING utf8mb4)
+  );
 SELECT COUNT(*) INTO @oms_contact_tombstones
 FROM contact_tombstones AS tombstones
 JOIN oms_protocol_contact_targets AS targets
@@ -712,7 +856,14 @@ FROM calendar_shares AS gate_shares
 JOIN oms_protocol_calendar_targets AS targets ON targets.calendar_id=gate_shares.calendar_id;
 SELECT COUNT(*) INTO @oms_calendar_rows
 FROM calendars AS calendar_rows
-JOIN oms_protocol_calendar_targets AS targets ON targets.calendar_id=calendar_rows.id;
+WHERE calendar_rows.user_id=${SMOKE_USER_SQL_LITERAL}
+  AND (
+      (calendar_rows.subscribed_url IS NULL
+       AND calendar_rows.name=CONVERT(${CALENDAR_RUN_NAME_SQL_LITERAL} USING utf8mb4)
+       AND calendar_rows.dav_slug=CONVERT(${CALENDAR_RUN_SLUG_SQL_LITERAL} USING utf8mb4))
+      OR BINARY calendar_rows.name=BINARY CONVERT(${PING_CALENDAR_NAME_SQL_LITERAL} USING utf8mb4)
+      OR BINARY calendar_rows.dav_slug=BINARY CONVERT(${PING_CALENDAR_SLUG_SQL_LITERAL} USING utf8mb4)
+  );
 SELECT COUNT(*) INTO @oms_mail_states
 FROM eas_mail_sync_states
 WHERE username=${SMOKE_USER_SQL_LITERAL} AND device_id=${SMOKE_DEVICE_SQL_LITERAL};
@@ -1022,7 +1173,15 @@ if [[ -n "${smoke_without_pass}" ]]; then
     fail "Authenticated protocol smoke returned no PASS marker: ${smoke_without_pass}"
 fi
 if [[ "${GATE_PROFILE}" == "suite" ]]; then
-    echo "PASS: protocol release gate completed (public IMAPS and ActiveSync mail, contacts, and calendar)"
+    if [[ "${PING_REQUIRED}" == "1" ]]; then
+        echo "PASS: protocol release gate completed (public IMAPS and ActiveSync mail, Ping, contacts, and calendar)"
+    else
+        echo "PASS: protocol release gate completed (public IMAPS and ActiveSync mail, contacts, and calendar)"
+    fi
 else
-    echo "PASS: protocol release gate completed (public IMAPS and ActiveSync mail)"
+    if [[ "${PING_REQUIRED}" == "1" ]]; then
+        echo "PASS: protocol release gate completed (public IMAPS and ActiveSync mail and Ping)"
+    else
+        echo "PASS: protocol release gate completed (public IMAPS and ActiveSync mail)"
+    fi
 fi

@@ -81,7 +81,7 @@ export declare const effectiveMailSyncWindow: (options: Pick<MailSyncOptions, "w
 export declare const mailSyncReplayResponse: (state: StoredMailSyncState | null, syncKey: string, requestHash: string, now?: Date) => Buffer | null;
 export declare const ensureEasMailSyncSchema: () => Promise<void>;
 export declare const parseMailSyncKnownItems: (value: unknown) => MailSyncKnownItems;
-export declare const loadMailSyncState: (username: string, deviceId: string, collectionId: string) => Promise<StoredMailSyncState | null>;
+export declare const loadMailSyncState: (username: string, deviceId: string, collectionId: string, signal?: AbortSignal) => Promise<StoredMailSyncState | null>;
 export declare const deleteMailSyncState: (username: string, deviceId: string, collectionId: string) => Promise<void>;
 export declare const saveMailSyncState: (state: StoredMailSyncState) => Promise<void>;
 export declare function withMailSyncScopeLock<T>(scopeHash: string, operation: () => Promise<T>): Promise<T>;

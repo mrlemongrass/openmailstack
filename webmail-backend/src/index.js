@@ -38,6 +38,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.io = void 0;
 const http_1 = __importDefault(require("http"));
+const node_perf_hooks_1 = require("node:perf_hooks");
 const socket_io_1 = require("socket.io");
 const express_1 = __importDefault(require("express"));
 const body_parser_1 = __importDefault(require("body-parser"));
@@ -66,6 +67,7 @@ const eas_mail_sync_1 = require("./eas-mail-sync");
 const eas_pim_sync_1 = require("./eas-pim-sync");
 const eas_send_http_1 = require("./eas-send-http");
 const eas_protocol_1 = require("./eas-protocol");
+const eas_ping_1 = require("./eas-ping");
 const eas_item_operations_1 = require("./eas-item-operations");
 const search_worker_1 = require("./search-worker");
 const scheduled_send_1 = require("./scheduled-send");
@@ -80,6 +82,13 @@ const private_uploads_1 = require("./private-uploads");
 const outbound_mail_1 = require("./outbound-mail");
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
+const activeSyncPingConfigCache = new eas_ping_1.ActiveSyncPingConfigCache();
+const activeSyncPingWaitRegistry = new eas_ping_1.ActiveSyncPingWaitRegistry();
+const closeHttpServer = server.close.bind(server);
+server.close = ((callback) => {
+    activeSyncPingWaitRegistry.abortAll();
+    return closeHttpServer(callback);
+});
 exports.io = new socket_io_1.Server(server, {
     allowRequest: browser_origin_1.allowSameOriginSocketRequest,
 });
@@ -110,10 +119,20 @@ app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(security_1.securityHeaders);
 app.use('/api', browser_origin_1.requireSameOriginBrowserRequest);
-app.use('/Microsoft-Server-ActiveSync', body_parser_1.default.raw({
+const activeSyncRawParser = body_parser_1.default.raw({
     type: () => true,
     limit: `${eas_protocol_1.ACTIVE_SYNC_MAX_REQUEST_BYTES}b`,
-}));
+});
+const activeSyncPingRawParser = body_parser_1.default.raw({
+    type: () => true,
+    limit: `${eas_ping_1.ACTIVE_SYNC_PING_MAX_REQUEST_BYTES}b`,
+});
+app.use('/Microsoft-Server-ActiveSync', (req, res, next) => {
+    const parser = String(req.query.Cmd || '') === 'Ping'
+        ? activeSyncPingRawParser
+        : activeSyncRawParser;
+    return parser(req, res, next);
+});
 app.use(express_1.default.json({ limit: `${config_1.serverConfig.uploadLimitBytes}b` }));
 app.use(body_parser_1.default.raw({
     type: (req) => {
@@ -201,6 +220,265 @@ function boundedActiveSyncText(value, maxBytes = 8192) {
     while (end > 0 && (source[end] & 0xC0) === 0x80)
         end -= 1;
     return source.subarray(0, end).toString('utf8');
+}
+const throwIfActiveSyncPingAborted = (signal) => {
+    if (!signal?.aborted)
+        return;
+    throw signal.reason instanceof Error ? signal.reason : new eas_ping_1.ActiveSyncPingAbortedError();
+};
+async function loadActiveSyncPingFolderInventory(username, password, signal) {
+    const imap = new imap_1.ImapService(username, password);
+    let imapAborted = false;
+    const abortImap = () => {
+        imapAborted = true;
+        try {
+            imap.close();
+        }
+        catch { }
+    };
+    signal?.addEventListener('abort', abortImap, { once: true });
+    if (signal?.aborted)
+        abortImap();
+    let mailFolders;
+    try {
+        throwIfActiveSyncPingAborted(signal);
+        await imap.connect();
+        throwIfActiveSyncPingAborted(signal);
+        mailFolders = await imap.getFolders();
+    }
+    finally {
+        signal?.removeEventListener('abort', abortImap);
+        if (!imapAborted)
+            try {
+                await imap.logout();
+            }
+            catch { }
+    }
+    throwIfActiveSyncPingAborted(signal);
+    let calendarConnection;
+    let calendarConnectionDestroyed = false;
+    let calendarAbortRequested = signal?.aborted === true;
+    const abortCalendarInventory = () => {
+        calendarAbortRequested = true;
+        if (!calendarConnection || calendarConnectionDestroyed)
+            return;
+        calendarConnectionDestroyed = true;
+        try {
+            calendarConnection.destroy();
+        }
+        catch { }
+    };
+    signal?.addEventListener('abort', abortCalendarInventory, { once: true });
+    let calendarIds;
+    try {
+        throwIfActiveSyncPingAborted(signal);
+        calendarConnection = await db_1.pool.getConnection();
+        if (calendarAbortRequested || signal?.aborted)
+            abortCalendarInventory();
+        throwIfActiveSyncPingAborted(signal);
+        calendarIds = await (0, calendar_utils_1.getVisibleCalendarIdsOnConnection)(calendarConnection, username);
+        throwIfActiveSyncPingAborted(signal);
+    }
+    finally {
+        signal?.removeEventListener('abort', abortCalendarInventory);
+        if (calendarConnection && !calendarConnectionDestroyed)
+            calendarConnection.release();
+    }
+    return [
+        ...mailFolders.map((folder) => ({
+            id: (0, eas_protocol_1.activeSyncMailCollectionId)(folder.path),
+            className: 'Email',
+            kind: 'mail',
+            folderPath: folder.path,
+        })),
+        { id: 'contacts', className: 'Contacts', kind: 'contacts' },
+        ...calendarIds.map((calendarId) => ({
+            id: `cal-${calendarId}`,
+            className: 'Calendar',
+            kind: 'calendar',
+            calendarId,
+        })),
+    ];
+}
+function startActiveSyncPingFolderInventory(username, password, signal) {
+    const task = loadActiveSyncPingFolderInventory(username, password, signal);
+    const drained = task.then(() => undefined, () => undefined);
+    if (!signal)
+        return { result: task, drained };
+    let removeAbortListener = () => { };
+    const aborted = new Promise((_resolve, reject) => {
+        const onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new eas_ping_1.ActiveSyncPingAbortedError());
+        if (signal.aborted) {
+            onAbort();
+            return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+    });
+    const result = Promise.race([task, aborted]).finally(removeAbortListener);
+    return { result, drained };
+}
+async function loadActiveSyncPingSnapshots(username, password, deviceId, folders, lastProbedMailCursors, lastProbedPimCursors, signal) {
+    throwIfActiveSyncPingAborted(signal);
+    const snapshots = new Map();
+    const mailFolders = folders.filter(folder => folder.kind === 'mail');
+    if (mailFolders.length) {
+        const imap = new imap_1.ImapService(username, password);
+        let imapAborted = false;
+        const abortImap = () => {
+            imapAborted = true;
+            try {
+                imap.close();
+            }
+            catch { }
+        };
+        signal?.addEventListener('abort', abortImap, { once: true });
+        if (signal?.aborted)
+            abortImap();
+        try {
+            throwIfActiveSyncPingAborted(signal);
+            await imap.connect();
+            throwIfActiveSyncPingAborted(signal);
+            const currentMailIds = new Map((await imap.getFolders()).map((folder) => [
+                (0, eas_protocol_1.activeSyncMailCollectionId)(folder.path),
+                folder.path,
+            ]));
+            for (const folder of mailFolders) {
+                throwIfActiveSyncPingAborted(signal);
+                if (currentMailIds.get(folder.id) !== folder.folderPath) {
+                    snapshots.set(folder.id, {
+                        folderId: folder.id,
+                        exists: false,
+                        initialized: false,
+                        hasAdditions: false,
+                    });
+                    continue;
+                }
+                const state = await (0, eas_mail_sync_1.loadMailSyncState)(username, deviceId, folder.id, signal);
+                throwIfActiveSyncPingAborted(signal);
+                if (!state) {
+                    snapshots.set(folder.id, {
+                        folderId: folder.id,
+                        exists: true,
+                        initialized: false,
+                        hasAdditions: false,
+                    });
+                    continue;
+                }
+                const cursor = await imap.getActiveSyncMailboxCursor(folder.folderPath);
+                throwIfActiveSyncPingAborted(signal);
+                const initialized = state.uidValidity !== '0' && state.uidValidity === cursor.uidValidity;
+                if (!initialized || !(0, eas_ping_1.activeSyncPingMailCursorNeedsSnapshot)(state.highestModseq, cursor.highestModseq, lastProbedMailCursors.get(folder.id))) {
+                    snapshots.set(folder.id, {
+                        folderId: folder.id,
+                        exists: true,
+                        initialized,
+                        hasAdditions: false,
+                    });
+                    continue;
+                }
+                const knownIds = Object.keys(state.knownItems);
+                const current = await imap.getActiveSyncMailSnapshot(folder.folderPath, (0, eas_mail_sync_1.filterTypeCutoff)(state.filterType), state.highestModseq, knownIds.map(Number));
+                throwIfActiveSyncPingAborted(signal);
+                const snapshotInitialized = state.uidValidity !== '0' && state.uidValidity === current.uidValidity;
+                const hasAdditions = snapshotInitialized && (0, eas_ping_1.activeSyncPingHasAdditions)(knownIds, current.eligibleUids.map(String), eas_mail_sync_1.MAX_MAIL_SYNC_KNOWN_ITEMS);
+                if (snapshotInitialized && !hasAdditions && current.highestModseq !== '0') {
+                    lastProbedMailCursors.set(folder.id, current.highestModseq);
+                }
+                snapshots.set(folder.id, {
+                    folderId: folder.id,
+                    exists: true,
+                    initialized: snapshotInitialized,
+                    hasAdditions,
+                });
+            }
+        }
+        finally {
+            signal?.removeEventListener('abort', abortImap);
+            if (!imapAborted)
+                try {
+                    await imap.logout();
+                }
+                catch { }
+        }
+    }
+    const pimFolders = folders.filter(folder => folder.kind !== 'mail');
+    if (pimFolders.length) {
+        const calendarFolders = pimFolders.filter((folder) => folder.kind === 'calendar');
+        const connection = await db_1.pool.getConnection();
+        let connectionDestroyed = false;
+        const abortConnection = () => {
+            connectionDestroyed = true;
+            connection.destroy();
+        };
+        signal?.addEventListener('abort', abortConnection, { once: true });
+        if (signal?.aborted)
+            abortConnection();
+        try {
+            throwIfActiveSyncPingAborted(signal);
+            const calendarRevisions = new Map((await (0, calendar_utils_1.getVisibleCalendarRevisionsOnConnection)(connection, username, calendarFolders.map(folder => folder.calendarId))).map(revision => [revision.id, revision.syncToken]));
+            for (const folder of pimFolders) {
+                throwIfActiveSyncPingAborted(signal);
+                const collectionRevision = folder.kind === 'contacts'
+                    ? await (0, contact_utils_1.getContactCollectionRevisionOnConnection)(connection, username)
+                    : calendarRevisions.get(folder.calendarId);
+                const exists = folder.kind === 'contacts' || collectionRevision !== undefined;
+                if (!exists) {
+                    snapshots.set(folder.id, {
+                        folderId: folder.id,
+                        exists: false,
+                        initialized: false,
+                        hasAdditions: false,
+                    });
+                    continue;
+                }
+                const state = await (0, eas_pim_sync_1.loadPimSyncStateOnConnection)(connection, username, deviceId, folder.id);
+                throwIfActiveSyncPingAborted(signal);
+                if (!state) {
+                    snapshots.set(folder.id, {
+                        folderId: folder.id,
+                        exists: true,
+                        initialized: false,
+                        hasAdditions: false,
+                    });
+                    continue;
+                }
+                if (lastProbedPimCursors.get(folder.id) === collectionRevision) {
+                    snapshots.set(folder.id, {
+                        folderId: folder.id,
+                        exists: true,
+                        initialized: true,
+                        hasAdditions: false,
+                    });
+                    continue;
+                }
+                const current = folder.kind === 'contacts'
+                    ? await (0, eas_pim_sync_1.loadBoundedContactPimSnapshot)(connection, username, folder.id)
+                    : await (0, eas_pim_sync_1.loadBoundedCalendarPimSnapshot)(connection, folder.calendarId, folder.id);
+                throwIfActiveSyncPingAborted(signal);
+                const hasAdditions = (0, eas_ping_1.activeSyncPingHasAdditions)(Object.keys(state.knownItems), current.items.map(item => item.serverId), eas_pim_sync_1.MAX_PIM_KNOWN_ITEMS);
+                if (!hasAdditions)
+                    lastProbedPimCursors.set(folder.id, collectionRevision);
+                snapshots.set(folder.id, {
+                    folderId: folder.id,
+                    exists: true,
+                    initialized: true,
+                    hasAdditions,
+                });
+            }
+        }
+        finally {
+            signal?.removeEventListener('abort', abortConnection);
+            if (!connectionDestroyed)
+                connection.release();
+        }
+    }
+    return folders.map(folder => snapshots.get(folder.id) || {
+        folderId: folder.id,
+        exists: false,
+        initialized: false,
+        hasAdditions: false,
+    });
 }
 function isContactsCollection(collectionId) {
     return collectionId === CONTACTS_COLLECTION_ID;
@@ -296,6 +574,35 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     const requestBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     if (requestBody.length > eas_protocol_1.ACTIVE_SYNC_MAX_REQUEST_BYTES)
         return res.status(413).send();
+    const cmd = String(req.query.Cmd || '');
+    let validatedPingDeviceId = null;
+    let pingProtocolVersion = null;
+    let normalizedPingQueryUser = null;
+    if (cmd === 'Ping') {
+        if (req.method !== 'POST') {
+            res.set('Allow', 'OPTIONS, POST');
+            return res.status(405).send();
+        }
+        const protocolVersion = req.headers['ms-asprotocolversion'];
+        if (typeof protocolVersion !== 'string'
+            || !['2.5', '12.0', '12.1', '14.0', '14.1', '16.0', '16.1'].includes(protocolVersion)) {
+            return res.status(400).send();
+        }
+        const queryUser = req.query.User;
+        if (typeof queryUser !== 'string'
+            || Buffer.byteLength(queryUser, 'utf8') < 1
+            || Buffer.byteLength(queryUser, 'utf8') > 320
+            || !/^[\x21-\x7e]+$/.test(queryUser)) {
+            return res.status(400).send();
+        }
+        normalizedPingQueryUser = (0, config_1.normalizeMailboxUsername)(queryUser);
+        if (Buffer.byteLength(normalizedPingQueryUser, 'utf8') < 1
+            || Buffer.byteLength(normalizedPingQueryUser, 'utf8') > 320
+            || !/^[\x21-\x7e]+$/.test(normalizedPingQueryUser)) {
+            return res.status(400).send();
+        }
+        pingProtocolVersion = protocolVersion;
+    }
     // Helper to get auth from header
     function getAuthCredentials() {
         const authHeader = req.headers.authorization;
@@ -309,10 +616,15 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         }
         return null;
     }
-    // Check command and respond
-    const cmd = String(req.query.Cmd || '');
+    // SendMail owns its authentication, parsing, and durable-submission boundary.
     if (cmd === 'SendMail' && await activeSyncSendMailHttpHandler(req, res))
         return;
+    const sendPingProtocolStatus = (status) => {
+        const writer = new writer_1.WbxmlWriter();
+        writer.writeNode((0, eas_ping_1.activeSyncPingResponseNode)({ status }));
+        res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+        return res.status(200).send(writer.getBuffer());
+    };
     const requestCredentials = getAuthCredentials();
     if (!requestCredentials)
         return res.status(401).send();
@@ -329,6 +641,34 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         }
         catch { }
     }
+    if (cmd === 'Ping') {
+        if (pingProtocolVersion === '2.5'
+            || pingProtocolVersion === '12.0'
+            || pingProtocolVersion === '12.1') {
+            return res.status(400).send();
+        }
+        if (pingProtocolVersion !== '14.0' && pingProtocolVersion !== '14.1') {
+            return sendPingProtocolStatus('138');
+        }
+        if (normalizedPingQueryUser !== requestCredentials.user) {
+            return sendPingProtocolStatus('130');
+        }
+        validatedPingDeviceId = (0, eas_mail_sync_1.validateActiveSyncDeviceId)(req.query.DeviceId);
+        if (!validatedPingDeviceId)
+            return sendPingProtocolStatus('108');
+        const deviceType = req.query.DeviceType;
+        if (typeof deviceType !== 'string' || !/^[\x21-\x7e]+$/.test(deviceType)) {
+            return sendPingProtocolStatus('109');
+        }
+        if (requestBody.length > 0) {
+            const mediaType = String(req.headers['content-type'] || '')
+                .split(';', 1)[0].trim().toLowerCase();
+            const supportedMediaType = mediaType === 'application/vnd.ms-sync.wbxml'
+                || mediaType === 'application/vnd.ms-sync';
+            if (!supportedMediaType)
+                return sendPingProtocolStatus('101');
+        }
+    }
     let decodedForStructure = null;
     let requestParseFailed = false;
     if (requestBody.length > 0) {
@@ -341,7 +681,12 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     }
     console.log('[EAS] Request', JSON.stringify((0, eas_protocol_1.activeSyncRequestLogSummary)(req.method, cmd, requestBody.length, decodedForStructure, requestParseFailed)));
     if (requestParseFailed) {
+        if (cmd === 'Ping')
+            return sendPingProtocolStatus('102');
         return res.status(400).send();
+    }
+    if (cmd === 'Ping' && requestBody.length > 0 && decodedForStructure === null) {
+        return sendPingProtocolStatus('103');
     }
     if (eas_protocol_1.ACTIVE_SYNC_UNSUPPORTED_COMMANDS.includes(cmd)) {
         return res.status(501).send();
@@ -1701,42 +2046,145 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         });
     }
     if (cmd === 'Ping') {
-        let heartbeat = 60; // default 60s
-        if (req.body && req.body.length > 0) {
-            try {
-                const parser = new parser_1.WbxmlParser(req.body);
-                const decoded = parser.parse();
-                const hbNode = decoded?.children?.find((c) => c.tag === 'HeartbeatInterval');
-                if (hbNode && hbNode.content) {
-                    heartbeat = parseInt(hbNode.content.toString()) || 60;
-                }
-            }
-            catch (e) { }
-        }
-        // Cap heartbeat to prevent reverse proxy timeouts (nginx default is usually 60s)
-        heartbeat = Math.min(heartbeat, 55);
-        console.log(`Holding Ping for ${heartbeat} seconds...`);
-        req.on('close', () => {
-            // If client disconnects, we just log and do nothing
-            console.log("Client disconnected Ping early.");
-        });
-        setTimeout(() => {
-            if (res.writableEnded)
-                return; // Ignore if closed
-            const responseAst = {
-                tag: "Ping",
-                page: 13,
-                children: [
-                    { tag: "Status", page: 13, content: "1" }
-                ]
-            };
+        const deviceId = validatedPingDeviceId;
+        if (!deviceId)
+            return res.status(400).send();
+        const startedAt = node_perf_hooks_1.performance.now();
+        const scope = (0, eas_ping_1.activeSyncPingScopePrefix)(requestCredentials.user, deviceId);
+        let logged = false;
+        const logPing = (status, reason, folderCount) => {
+            if (logged)
+                return;
+            logged = true;
+            console.log('[EAS] Ping', JSON.stringify({
+                scope,
+                status,
+                folders: folderCount,
+                durationMs: Math.max(0, Math.round(node_perf_hooks_1.performance.now() - startedAt)),
+                reason,
+            }));
+        };
+        const responseReason = (response) => ({
+            '1': 'timeout',
+            '2': 'changed',
+            '3': 'missing-config',
+            '4': 'syntax',
+            '5': 'heartbeat-bounds',
+            '6': 'folder-bounds',
+            '7': 'hierarchy',
+            '8': 'server',
+            '101': 'content',
+            '102': 'wbxml',
+            '103': 'xml',
+            '108': 'device-id',
+            '109': 'device-type',
+            '130': 'user-mismatch',
+            '138': 'protocol-version',
+        })[response.status] || 'server';
+        const sendPing = (response, folderCount, reason = responseReason(response)) => {
             const writer = new writer_1.WbxmlWriter();
-            writer.writeNode(responseAst);
-            console.log("Sending Ping response (No Changes)!");
+            writer.writeNode((0, eas_ping_1.activeSyncPingResponseNode)(response));
+            logPing(response.status, reason, folderCount);
             res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
-            res.status(200).send(writer.getBuffer());
-        }, heartbeat * 1000);
-        return;
+            return res.status(200).send(writer.getBuffer());
+        };
+        const cached = activeSyncPingConfigCache.get(requestCredentials.user, deviceId);
+        const parsed = (0, eas_ping_1.parseActiveSyncPingRequest)(decodedForStructure, cached);
+        if (parsed.ok === false)
+            return sendPing(parsed.response, cached?.folders.length || 0);
+        const reservation = activeSyncPingWaitRegistry.reserve(requestCredentials.user, deviceId);
+        if (!reservation) {
+            logPing('none', 'capacity', parsed.config.folders.length);
+            res.set('Retry-After', '5');
+            return res.status(503).send();
+        }
+        const abortForDisconnect = () => {
+            if (!res.writableEnded) {
+                reservation.abort(new eas_ping_1.ActiveSyncPingAbortedError('ActiveSync Ping client disconnected'));
+            }
+        };
+        req.once('aborted', abortForDisconnect);
+        res.once('close', abortForDisconnect);
+        const removeDisconnectListeners = () => {
+            req.removeListener('aborted', abortForDisconnect);
+            res.removeListener('close', abortForDisconnect);
+        };
+        const releasePreflight = () => {
+            removeDisconnectListeners();
+            reservation.release();
+        };
+        const inventory = startActiveSyncPingFolderInventory(requestCredentials.user, requestCredentials.pass, reservation.signal);
+        let resolution;
+        try {
+            resolution = (0, eas_ping_1.resolveActiveSyncPingFolders)(parsed.config.folders, await inventory.result);
+            throwIfActiveSyncPingAborted(reservation.signal);
+        }
+        catch (error) {
+            removeDisconnectListeners();
+            void inventory.drained.then(() => reservation.release());
+            if (reservation.signal.aborted) {
+                if (!res.destroyed && !res.writableEnded) {
+                    return sendPing({ status: '8' }, parsed.config.folders.length, 'aborted');
+                }
+                logPing('none', 'disconnect', parsed.config.folders.length);
+                return;
+            }
+            logPing('none', 'inventory-unavailable', parsed.config.folders.length);
+            res.set('Retry-After', '5');
+            return res.status(503).send();
+        }
+        if (resolution.ok === false) {
+            releasePreflight();
+            return sendPing(resolution.response, parsed.config.folders.length);
+        }
+        const lease = reservation.activate();
+        if (!lease) {
+            releasePreflight();
+            if (res.destroyed || res.writableEnded) {
+                logPing('none', 'disconnect', parsed.config.folders.length);
+                return;
+            }
+            if (reservation.signal.aborted) {
+                return sendPing({ status: '8' }, parsed.config.folders.length, 'aborted');
+            }
+            logPing('none', 'capacity', parsed.config.folders.length);
+            res.set('Retry-After', '5');
+            return res.status(503).send();
+        }
+        if (!activeSyncPingConfigCache.set(requestCredentials.user, deviceId, parsed.config)) {
+            removeDisconnectListeners();
+            lease.abort(new eas_ping_1.ActiveSyncPingAbortedError('ActiveSync Ping cache update failed'));
+            lease.release();
+            return sendPing({ status: '8' }, parsed.config.folders.length);
+        }
+        const lastProbedMailCursors = new Map();
+        const lastProbedPimCursors = new Map();
+        const wait = (0, eas_ping_1.startActiveSyncPingWait)({
+            heartbeatSeconds: parsed.config.heartbeatSeconds,
+            folders: resolution.folders,
+            signal: lease.signal,
+            poll: (folders, signal) => (0, eas_ping_1.evaluateActiveSyncPingChanges)(folders, signal, (requested, snapshotSignal) => loadActiveSyncPingSnapshots(requestCredentials.user, requestCredentials.pass, deviceId, requested, lastProbedMailCursors, lastProbedPimCursors, snapshotSignal)),
+        });
+        void wait.drained.then(() => lease.release());
+        try {
+            const response = await wait.response;
+            removeDisconnectListeners();
+            return sendPing(response, parsed.config.folders.length);
+        }
+        catch (error) {
+            removeDisconnectListeners();
+            if (error instanceof eas_ping_1.ActiveSyncPingSupersededError) {
+                if (!res.destroyed && !res.writableEnded) {
+                    return sendPing({ status: '8' }, parsed.config.folders.length, 'superseded');
+                }
+                logPing('none', 'superseded', parsed.config.folders.length);
+                return;
+            }
+            logPing('none', res.destroyed ? 'disconnect' : 'aborted', parsed.config.folders.length);
+            if (!res.destroyed && !res.writableEnded)
+                return sendPing({ status: '8' }, parsed.config.folders.length);
+            return;
+        }
     }
     if (cmd === 'Settings') {
         const responseAst = {
@@ -1846,8 +2294,10 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         let remainingSourceBytes = eas_item_operations_1.ITEM_OPERATIONS_MAX_AGGREGATE_SOURCE_BYTES;
         let globalFailureStatus = null;
         const imap = new imap_1.ImapService(requestCredentials.user, requestCredentials.pass);
+        let mailFolders;
         try {
             await imap.connect();
+            mailFolders = await imap.getFolders();
         }
         catch {
             try {
@@ -1864,7 +2314,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                     continue;
                 }
                 const { collectionId, serverId } = fetchRequest;
-                const target = (0, eas_item_operations_1.itemOperationsMailboxTarget)(fetchRequest.store, collectionId, serverId);
+                const target = (0, eas_item_operations_1.itemOperationsMailboxTarget)(fetchRequest.store, collectionId, serverId, mailFolders);
                 if (target.ok === false) {
                     if (target.status === '9') {
                         globalFailureStatus = '9';

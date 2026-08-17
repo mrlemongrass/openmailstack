@@ -1,3 +1,4 @@
+import { type ActiveSyncMailFolder } from './eas-protocol';
 export declare const ITEM_OPERATIONS_MAX_SOURCE_BYTES: number;
 export declare const ITEM_OPERATIONS_MAX_BODY_BYTES: number;
 export declare const ITEM_OPERATIONS_MAX_FETCHES = 100;
@@ -44,7 +45,7 @@ export type ItemOperationsFetchRequest = {
 };
 export declare function itemOperationsRequestFetches(decoded: any): any[] | null;
 export declare function itemOperationsFetchRequest(fetchNode: any): ItemOperationsFetchRequest;
-export declare function itemOperationsMailboxTarget(store: string, collectionId: string, serverId: string): ItemOperationsMailboxTarget;
+export declare function itemOperationsMailboxTarget(store: string, collectionId: string, serverId: string, folders: ActiveSyncMailFolder[]): ItemOperationsMailboxTarget;
 export declare function itemOperationsSourceAllowance(remainingBytes: number): number;
 export declare function itemOperationsBodyAllowance(remainingBytes: number, requestedBytes: number): number;
 export declare function itemOperationsFetchBodyBytes(fetchNode: any): number;

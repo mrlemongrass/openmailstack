@@ -433,10 +433,12 @@ function startActiveSyncPingWait(options) {
                 finish({ status: '1' });
                 return;
             }
+            if (remaining <= pollIntervalMs)
+                return;
             pollTimer = scheduler.setTimeout(() => {
                 pollTimer = null;
                 void poll();
-            }, Math.min(pollIntervalMs, remaining));
+            }, pollIntervalMs);
         };
         if (options.signal?.aborted) {
             onAbort();

@@ -441,6 +441,37 @@ test('Ping wait returns changed folders or timeout status with a bounded fake sc
   assert.equal(timeoutScheduler.pending, 0);
 });
 
+test('Ping wait does not start a final probe inside one poll interval of the heartbeat', async () => {
+  const scheduler = new FakeScheduler();
+  let clockSkewMs = 0;
+  scheduler.now = () => scheduler.time + clockSkewMs;
+  let polls = 0;
+  const handle = startActiveSyncPingWait({
+    heartbeatSeconds: 60,
+    folders: resolvedContacts,
+    poll: async () => {
+      polls += 1;
+      if (polls === 4) clockSkewMs = 4;
+      if (polls === 5) {
+        return new Promise(resolve => scheduler.setTimeout(
+          () => resolve({ kind: 'none' }),
+          10,
+        ));
+      }
+      return { kind: 'none' };
+    },
+    scheduler,
+    pollIntervalMs: 15_000,
+  });
+
+  await scheduler.flush();
+  await scheduler.advance(60_000);
+  assert.deepEqual(await handle.response, { status: '1' });
+  assert.equal(polls, 4);
+  await handle.drained;
+  assert.equal(scheduler.pending, 0);
+});
+
 test('Ping wait maps hierarchy/probe failures and aborts without residual timers', async () => {
   const hierarchyScheduler = new FakeScheduler();
   assert.deepEqual(await waitForActiveSyncPing({

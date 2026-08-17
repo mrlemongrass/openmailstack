@@ -439,6 +439,26 @@ oms_br_health_check() {
     fi
 }
 
+oms_br_wait_for_health() {
+    local attempt
+    local max_attempts=15
+    local retry_delay=1
+
+    if [[ "${OMS_BACKUP_FIXTURE_MODE:-0}" == "1" ]]; then
+        retry_delay=0
+    fi
+    for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+        if oms_br_health_check; then
+            return 0
+        fi
+        if (( attempt < max_attempts )); then
+            sleep "${retry_delay}"
+        fi
+    done
+    oms_br_error "Service health did not recover after ${max_attempts} checks"
+    return 1
+}
+
 oms_br_symlink_manifest() {
     local snapshot_dir="$1"
     local output_file="$2"
@@ -864,7 +884,7 @@ oms_br_backup_cleanup() {
             oms_br_error "Failed to restore the exact pre-backup service state"
             resume_status=1
         fi
-        if ! oms_br_health_check; then
+        if ! oms_br_wait_for_health; then
             oms_br_error "Post-backup health check failed"
             resume_status=1
         fi
@@ -916,7 +936,7 @@ oms_br_create_backup_unlocked() {
                     "${staging_dir}" "${snapshot_kind}" "${timestamp}" || exit $?
                 oms_br_resume_services || exit $?
                 OMS_BR_SERVICES_QUIESCED=0
-                oms_br_health_check || exit $?
+                oms_br_wait_for_health || exit $?
                 trap - EXIT INT TERM HUP
             ); then
                 oms_br_error "Snapshot remains incomplete and was not promoted: ${staging_dir}"
@@ -1098,7 +1118,7 @@ oms_br_restore_cleanup() {
             resume_status=1
         fi
     fi
-    if ! oms_br_health_check; then
+    if ! oms_br_wait_for_health; then
         oms_br_error "Post-restore/recovery health check failed"
         health_status=1
     fi
@@ -1141,7 +1161,7 @@ oms_br_restore_locked() {
         oms_br_apply_snapshot "${OMS_BR_RESTORE_TARGET}" || exit $?
         oms_br_resume_services || exit $?
         OMS_BR_SERVICES_QUIESCED=0
-        oms_br_health_check || exit $?
+        oms_br_wait_for_health || exit $?
         OMS_BR_RESTORE_COMMITTED=1
         OMS_BR_RESTORE_MUTATION_STARTED=0
         trap - EXIT INT TERM HUP

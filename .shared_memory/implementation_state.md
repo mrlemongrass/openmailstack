@@ -1,5 +1,25 @@
 # Implementation State
 
+## 2026-08-17 Cycle 13 Durable-Row Rollback Evidence
+
+**Status: the current production active/bridge rollback pair has exact durable
+row evidence; physical Apple clients and full recovery remain open.** Fresh
+root-only backup `/var/backups/openmailstack/oms-backup-20260817T215021Z`
+passed the trusted validator. Approved inert immediate row ID 2 survived an
+active worker interval and active-to-bridge restore with byte-identical
+30-column digest and zero canary journal/mail/queue evidence. It was deleted
+exactly once under bridge, the automatically captured active preimage was
+restored, and active attestation plus the Ping-required public suite passed
+with zero outbox/canary residue and zero service restarts. Root-only evidence is
+at `/var/backups/openmailstack/outbound-rollback-canary-20260817T213124Z-1fc49e9b2c64`.
+
+The backup initially remained `.incomplete` because the backend listener needed
+six seconds after systemd activation. A bounded 15-check readiness loop is now
+regression-backed for backup and restore, while sustained failure still rolls
+back. The production-size run also exposed a long quiescence window while the
+mail tree is copied and repeatedly hashed; reducing that outage is the next
+operator-safety task.
+
 ## 2026-08-16 Cycle 12 Active Runtime And Final Integration
 
 **Status: the core universal outbox and bounded ActiveSync Ping are deployed
@@ -24,8 +44,9 @@ before the maximum protocol heartbeat.
 Merged `main` at `e5b25f74` passes 779/786 backend tests with seven opt-in
 skips, frontend 175/175 plus lint/build, four disposable MariaDB proofs, and the
 complete repository integration suite. No code-level P0/P1 remains in the
-scoped work. Release evidence still requires an exactly authorized production
-durable-row rollback canary, physical iOS SendMail and Direct Push behavior,
+scoped work. Cycle 13 closed the exactly authorized production durable-row
+rollback canary. Release evidence still requires physical iOS SendMail and
+Direct Push behavior,
 the physical macOS CardDAV identity edit/merge retry, the original physical
 macOS Notes lifecycle, and production-scale/off-host recovery. Compaction
 remains disabled.
@@ -83,7 +104,8 @@ zero DB claim/SMTP/IMAP/auth side effect; disposable MariaDB 1/1; full
 integration and affected shell/restore/release gates pass; independent Spec
 and Standards re-reviews report no P0-P3. The verified backup, exact repair,
 bridge, active deployment, and hotfix bridge/active cycle subsequently passed.
-Only the separately authorized live durable-row rollback canary remains open.
+At that checkpoint only the separately authorized live durable-row rollback
+canary remained open; Cycle 13 subsequently closed it.
 
 ## 2026-08-15 Eight-Cycle Hardening Closeout
 

@@ -1901,3 +1901,25 @@ Future entry template:
   authorized production durable-row rollback, physical iOS SendMail and Direct
   Push matrix, physical macOS CardDAV identity edit/merge and Notes lifecycle,
   and full off-host recovery. Do not infer those from scripted success.
+
+## 2026-08-17 — Cycle 13 Production Rollback Canary
+
+- Fixed the backup/restore post-start listener race with a bounded 15-check
+  readiness loop. TDD reproduced the `.incomplete` non-promotion after three
+  transient failures, then proved promotion; sustained failure still triggers
+  verified safety rollback.
+- Promoted fully validated root-only backup
+  `/var/backups/openmailstack/oms-backup-20260817T215021Z` after its first
+  creation correctly failed closed on the six-second backend listener delay.
+- With exact user approval, inserted inert immediate row ID 2, proved its
+  canonical 30-column digest unchanged through active-to-bridge and zero exact
+  delivery evidence, deleted exactly one fully matched row under bridge, and
+  restored the captured active preimage.
+- Final active runtime/environment attestation, readiness, six zero-restart
+  services, zero outbox/canary/log/queue residue, and the explicit
+  Ping-required public IMAPS/ActiveSync suite passed. Root-only evidence is at
+  `/var/backups/openmailstack/outbound-rollback-canary-20260817T213124Z-1fc49e9b2c64`.
+- Newly exposed operator blocker: production-size full backup holds services
+  quiesced while copying and repeatedly hashing the mail tree. Preserve the
+  fail-closed snapshot contract but move immutable finalization/verification
+  after service resume and measure the reduced outage.

@@ -2,7 +2,7 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-08-16
+Last updated: 2026-08-17
 
 ## Resolved Risks
 
@@ -118,10 +118,16 @@ Last updated: 2026-08-16
   on-screen Direct Push idle/wake/network/restart behavior, and the original
   macOS CardDAV identity edit/merge retry plus Notes edit/reopen/delete lifecycle
   remain unproven on the final runtime.
-- 🔴 Authorized durable-row rollback evidence: local and guarded bridge
-  regressions are green, but no synthetic production outbox row was inserted
-  because the user approved only the calendar repair. Require exact separate
-  authorization before the inert active-to-bridge row proof and cleanup.
+- ✅ Authorized durable-row rollback evidence: exact approval produced one inert
+  production immediate row. It survived active-to-bridge with a byte-identical
+  30-column digest and zero canary claim/SMTP/IMAP evidence, was deleted exactly
+  once under bridge, and active plus the Ping-required public suite were
+  restored with zero residue.
+- 🔴 Production backup availability: the logical snapshot is fail-closed and
+  fully checksummed, but a production-size run kept services quiesced while the
+  mail tree was copied and repeatedly hashed. Finalize and verify the immutable
+  staging tree after service resume, retain rollback tests, and measure the
+  reduced outage before calling backup operations release-ready.
 - 🟡 Clean-host recovery: a fresh Debian 13.6 guest proved backup, verify,
   exact service-state restore, injected rollback, and cleanup. Full mutating
   install, realistically sized off-host restore, DNS/TLS, and mail flow remain.

@@ -304,6 +304,7 @@ case "${FAKE_HEALTH_MODE:-ok}" in
     ok) ;;
     fail) exit 42 ;;
     fail-on:*) [[ "${count}" != "${FAKE_HEALTH_MODE#fail-on:}" ]] || exit 42 ;;
+    fail-first:*) [[ "${count}" -gt "${FAKE_HEALTH_MODE#fail-first:}" ]] || exit 42 ;;
     *) exit 64 ;;
 esac
 EOF
@@ -469,6 +470,19 @@ if grep -Fq 'START:openmailstack-scheduler-worker.service' "${EVENT_LOG}"; then
 fi
 
 echo 'PASS: complete snapshot is root-only, checksummed, explicit, and restores exact service activity'
+
+write_service_state
+reset_fake_counters
+: > "${EVENT_LOG}"
+run_backup_command 20260815T120050Z FAKE_HEALTH_MODE=fail-first:3
+TRANSIENT_HEALTH_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T120050Z"
+[[ -d "${TRANSIENT_HEALTH_SNAPSHOT}" ]] \
+    || fail "Backup did not tolerate transient post-resume health failures"
+assert_absent "${TRANSIENT_HEALTH_SNAPSHOT}.incomplete"
+assert_event_count 4 'HEALTH'
+assert_exact_service_state
+
+echo 'PASS: backup waits for transient service readiness before promotion'
 
 : > "${EVENT_LOG}"
 if run_backup_command 20260815T120100Z FAKE_DUMP_MODE=fail >"${TEST_ROOT}/dump-failure.out" 2>&1; then
@@ -761,7 +775,7 @@ printf '%s\n' 'recover after health-check failure' > "$(fixture_path /var/vmail)
 printf '%s\n' '-- health safety database' 'CREATE DATABASE health_recovery;' \
     > "${TEST_ROOT}/health-safety-database.sql"
 if run_restore_command 20260815T130500Z "${SNAPSHOT}" \
-    FAKE_HEALTH_MODE=fail-on:1 \
+    FAKE_HEALTH_MODE=fail-first:15 \
     FAKE_DUMP_SOURCE_FILE="${TEST_ROOT}/health-safety-database.sql" \
     >"${TEST_ROOT}/health-failure.out" 2>&1; then
     fail "Restore reported success after its requested-state health check failed"
@@ -775,7 +789,7 @@ assert_contains "${TEST_ROOT}/imported.sql" 'CREATE DATABASE health_recovery;'
 assert_equals 2 "$(<"${IMPORT_COUNT}")" "database imports after health-check recovery"
 assert_event_count 2 'STOP:openmailstack.service'
 assert_event_count 2 'START:openmailstack.service'
-assert_event_count 2 'HEALTH'
+assert_event_count 16 'HEALTH'
 assert_exact_service_state
 
 echo 'PASS: health-check failure triggers full safety rollback before returning failure'

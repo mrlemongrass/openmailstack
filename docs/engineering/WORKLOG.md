@@ -9120,3 +9120,61 @@ physical macOS CardDAV identity edit/merge and Notes lifecycle, and full
 production-scale/off-host recovery evidence are complete. Enterprise identity,
 compliance, migration, delegation, and offline scope remain multi-release
 product gaps.
+
+## 2026-08-17 — Cycle 13: Production Durable-Row Rollback Proof
+
+Agent/tool: Codex with exact user-approved production mutation, guarded
+bridge/active restores, public protocol gates, and focused backup TDD
+
+Branch: `main`
+
+### Changes made
+
+- Created the fresh root-only logical snapshot
+  `/var/backups/openmailstack/oms-backup-20260817T215021Z`. The initial backup
+  completed payload checksums but refused promotion because the backend needed
+  about six seconds after systemd activation before listening on port 20000.
+  Services recovered, the staging snapshot remained `.incomplete`, and the
+  outbox was still empty.
+- Added a bounded 15-check post-resume readiness loop to backup and restore
+  paths. The focused fixture first reproduced the failed promotion, then proved
+  three transient health failures succeed while sustained failure still
+  re-applies the safety snapshot and fails closed. The exact production staging
+  tree subsequently passed the normal trusted validator and was atomically
+  promoted without a second mail-tree copy.
+- Inserted exactly one approved inert `immediate` row as ID 2 with status
+  `claimed`, attempts 0, no Sent copy, `.invalid` identities, approved
+  fingerprint/Message-ID, identical 329-byte raw/Sent payload hashes, and a
+  `2099-12-31 23:59:59` lease. An active worker interval left it unchanged.
+- Restored bridge snapshot
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260817T003945Z`.
+  Runtime/environment attestation and the public IMAPS/ActiveSync suite passed.
+  The row's canonical 30-column digest remained
+  `d715e5d0cecdfbb8f5b3ad8327588dcb28c7ee899fdbea7e7b1947297c1df998`,
+  with zero exact journal, mail-log, and Postfix-queue matches.
+- Deleted only captured ID 2 under bridge with the full approved state,
+  identity, lease, payload hashes/lengths, and captured create/update times;
+  exactly one row was affected and the outbox returned to zero. The first
+  wrapper attempt matched zero because it split SQL timestamps on spaces; it
+  left the row intact and was corrected to compare exact UTC ISO values without
+  broadening any identity predicate.
+- Restored the automatically captured active preimage
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260817T232845Z`.
+  Active runtime/environment attestation, readiness, zero restarts, zero
+  canary/outbox residue, and the explicit Ping-required public IMAPS/
+  ActiveSync mail/Ping/contacts/calendar suite all passed.
+
+### Proof and limits
+
+- `tests/integration/backup_restore_test.sh` passes the new transient-readiness
+  regression and every existing backup/restore/recovery case.
+- Root-only checksummed canary evidence is retained at
+  `/var/backups/openmailstack/outbound-rollback-canary-20260817T213124Z-1fc49e9b2c64`.
+- The production-size backup exposed a substantial availability problem:
+  services remain quiesced while the copied mail tree is repeatedly hashed.
+  Snapshot integrity is correct, but immutable stage finalization/verification
+  should move after service resume and the reduced outage must be measured.
+- The durable-row rollback blocker is closed. Release remains **NO-GO** pending
+  physical iOS SendMail/ClientId and Direct Push behavior, physical macOS
+  CardDAV and Notes lifecycles, the backup-quiescence reduction, and a complete
+  mutating/off-host recovery exercise.

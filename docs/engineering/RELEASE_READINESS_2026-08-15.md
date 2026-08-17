@@ -1,8 +1,8 @@
-# OpenMailStack Release Readiness — Cycle 12 Addendum
+# OpenMailStack Release Readiness — Cycle 13 Addendum
 
 Original assessment: 2026-08-15
 
-Current addendum: 2026-08-16
+Current addendum: 2026-08-17
 
 Decision: **NO-GO for a paid-quality small-business or enterprise release.**
 
@@ -26,8 +26,8 @@ privacy-minimal replay registry, disabled-by-default verified compaction, exact
 mixed-time-basis ordering, a real authenticated ActiveSync SendMail
 HTTP-to-database-to-SMTP test, and the clean-host recovery drill. Physical iOS
 SendMail retry, the original macOS Notes lifecycle, the on-screen/network-
-transition Direct Push matrix, an authorized live durable-row rollback canary,
-the physical macOS CardDAV identity edit/merge retry, and a full off-host/
+transition Direct Push matrix, the physical macOS CardDAV identity edit/merge
+retry, and a full off-host/
 mutating-install recovery exercise remain open. “All tests green” is therefore
 still not being misreported as “shippable.”
 
@@ -43,11 +43,11 @@ still not being misreported as “shippable.”
 | Browser qualification | 240/240 across Chromium/WebKit desktop/mobile with zero unexpected diagnostics | Deterministic real-browser evidence, not physical Apple-client evidence |
 | Repository integration | Complete integration suite passes | Green locally |
 | Production dependencies | Backend and frontend report 0 production vulnerabilities | Green at audit time |
-| Deployment/rollback | Verified backup, exact repair, guarded bridge, active release, hotfix bridge/active round trip, and runtime attestation passed | Synthetic durable-row production rollback canary still requires separate authorization |
-| Small-business release | No-go | Reassess after the authorized durable-row rollback canary, physical Apple-client matrix, and full recovery exercise |
+| Deployment/rollback | Verified backup, exact repair, guarded bridge, active release, hotfix bridge/active round trip, runtime attestation, and an inert durable-row production rollback canary passed | Current active/bridge pair is proven; registry compaction still waits for a registry-compatible installed rollback pair |
+| Small-business release | No-go | Reassess after the physical Apple-client matrix and full recovery exercise |
 | Enterprise release | No-go | Product, governance, scale, and recovery gaps remain |
 
-## Cycles 9-12 addendum — bridge, repair, registry, and Direct Push
+## Cycles 9-13 addendum — bridge, repair, registry, Direct Push, and rollback
 
 - `webmail-bridge` is a total fail-closed outbound pause: new web/scheduled
   submissions receive `503`, ActiveSync SendMail returns
@@ -75,8 +75,8 @@ Cycle 10 guarded-deployed the bridge and active runtime after a root-only,
 checksummed backup and the exact approved calendar repair. The current live
 runtime is `active`, its code/environment attestation passes, the repair
 approval is absent, all relevant services report zero restarts, and the outbox
-was empty at final attestation. The unapproved synthetic durable-row production
-canary was deliberately not invented from broader permission.
+was empty at final attestation. Cycle 13 later completed the separately
+authorized synthetic durable-row production canary described below.
 
 Cycle 11 added the replay registry, bounded retention policy, exact mixed-basis
 ordering, real ActiveSync SendMail HTTP seam, and a clean Debian 13 recovery
@@ -92,7 +92,21 @@ timeout. Both were reproduced deterministically and fixed. The final public
 gate returned Status 1 after 900.080 seconds and completed with zero protocol
 canary residue.
 
-## Work completed across Cycles 1-12
+Cycle 13 completed the exactly approved production rollback proof. Fresh
+root-only backup `/var/backups/openmailstack/oms-backup-20260817T215021Z`
+passed the complete trusted validator. One inert immediate row with a
+far-future lease was inserted, captured as a canonical 30-column digest, and
+observed through an active worker interval. Restoring the exact bridge snapshot
+left that digest byte-identical and produced zero canary-specific journal,
+mail-log, or Postfix-queue matches. The row was then deleted exactly once under
+bridge using its captured ID and full approved state/payload predicate. The
+automatically captured active preimage was restored, runtime/environment
+attestation passed, the outbox returned to zero, all relevant services retained
+zero restarts, and the explicit Ping-required public suite passed. Root-only
+checksummed evidence is retained at
+`/var/backups/openmailstack/outbound-rollback-canary-20260817T213124Z-1fc49e9b2c64`.
+
+## Work completed across Cycles 1-13
 
 ### Cycle 1 — Notes identity and reconciliation
 
@@ -277,13 +291,14 @@ not folded into this outbound change.
 | Closed live | Legacy automatic rollback could mis-handle immediate rows/keyed retries | Bridge-first release is deployed and every later rollback target is universal-outbox-aware or total-quarantine; never restore unmarked legacy snapshots |
 | Closed live | Duplicate production calendar tombstone blocked startup | Verified backup plus approval-pinned repair retained 23, archived 22/23, removed only 22, and left zero duplicate groups |
 | P1 release evidence | Physical Direct Push matrix is incomplete | Confirm on-screen idle renewal, mail/contact/calendar wake+Sync, sleep/wake, Wi-Fi/cellular transition, and restart/reconnect on an owned iPhone/iPad |
-| P1 operator evidence | No authorized production durable-row rollback canary | Obtain exact approval for one inert row, prove active-to-bridge unchanged identity/zero delivery, remove it under bridge, and restore active |
+| Closed live | No production durable-row rollback evidence | An exactly approved inert immediate row survived active-to-bridge byte-for-byte with zero claim/SMTP/IMAP evidence, was deleted once under bridge, and active plus the Ping-required public suite were restored |
 | Release gate | Physical iOS ActiveSync SendMail/retry is unproven | Observe fresh acceptance, lost/retried ClientId behavior, Sent-copy choice, and zero duplicate SMTP |
 | Release gate | Original macOS Notes lifecycle is unproven | Repeat edit/close/reopen/delete and inspect one SQL/IMAP identity |
 | Release gate | macOS CardDAV identity edit/merge retry is unproven | Edit the UUID-backed contact, merge only the known legacy duplicate, and confirm one stable href/UID with no re-created row |
 | Rollout gate | Bounded universal-outbox retention is implemented and disposable-database verified | Keep compaction disabled until the installed rollback runtime is registry-compatible; then opt in only with `registry-verified-v1` |
 | Closed locally | Mixed legacy/local and keyed/UTC Scheduled ordering | Project both bases to real instants for list and global worker claim order; do not rewrite historical DATETIME values |
 | P2 recovery | Clean-host recovery semantics are proven, but not a full production-scale rebuild | Add a full mutating install plus realistically sized second-host/off-host restore, DNS/TLS, and mail-flow exercise |
+| P2 availability | Full logical backup keeps services quiesced while copying and hashing the production mail tree | Split immutable snapshot finalization/verification from the quiesced capture window, then measure the reduced outage and preserve the existing fail-closed recovery contract |
 | P2 protocol | A pre-network process crash after `smtp_inflight` is conservatively uncertain | Deepen the SMTP transaction boundary only with evidence that cannot cause resend after DATA |
 | Closed locally | No authenticated HTTP-to-database-to-SMTP ActiveSync harness | Disposable WBXML/Basic-auth/MariaDB/SMTP/Sent-copy proof now covers first send, replay, changed MIME, auth, malformed input, and bridge quarantine |
 | Feature gap | True conversations, shared/delegated mailboxes, cross-account Notes ACLs, Tasks UI, rooms/resources | Deliver as bounded product slices after release correctness gates |
@@ -330,15 +345,23 @@ not folded into this outbound change.
 - The next 900-second gate failure was not the server: Node's global Fetch
   client had a separate 300-second response-header timeout. The test harness
   now owns explicit finite header/body ceilings above its AbortSignal deadline.
+- The Cycle 13 production backup finished its checksums but initially refused
+  promotion because the backend needed six seconds to listen after systemd
+  reported it active. The snapshot stayed visibly incomplete, services
+  recovered, and no canary row existed. A bounded readiness loop is now
+  regression-backed; the exact staging tree then passed the full trusted
+  validator and was atomically promoted. The run also exposed an unacceptably
+  long service-quiescence window while the large mail tree is copied and
+  repeatedly hashed.
 
 ## Recommended next release sequence
 
-1. Obtain exact authorization for one inert production outbox row, then prove a
-   controlled active-to-bridge rollback leaves it unchanged and causes zero
-   SMTP/IMAP/claim work before exact cleanup and active restoration.
-2. Complete physical iOS SendMail/ClientId retry, Direct Push idle/wake/network/
+1. Complete physical iOS SendMail/ClientId retry, Direct Push idle/wake/network/
    restart behavior, the macOS CardDAV identity edit/merge retry, and the
    original macOS Notes edit/reopen/delete lifecycle.
+2. Reduce the full-backup quiescence window by finalizing and verifying the
+   immutable staging tree after services resume; preserve exact-state recovery
+   tests and remeasure production-scale outage.
 3. Deploy the integrated registry expansion through the already-proven bridge
    sequence. Keep compaction disabled until that installed rollback pair reads
    registry tombstones, then enable only `registry-verified-v1` under a bounded
@@ -354,8 +377,9 @@ OpenMailStack is now a serious FOSS suite with a much stronger Notes, Draft,
 mail-delivery, privacy, and recovery foundation than at the start. The
 repository's largest known duplicate-send defect is closed and its bridge-first
 delivery runtime is active. It is not yet responsible to call the release
-small-business ready because the authorized durable-row rollback, physical
-Apple-client, and full off-host recovery evidence is incomplete. It remains
+small-business ready because the physical Apple-client and full off-host
+recovery evidence is incomplete, and the production-size backup still has an
+excessive quiescence window. It remains
 substantially short of enterprise procurement requirements. Keep the attested
 active/bridge snapshots and compaction disabled until the ordered sequence above
 is complete.

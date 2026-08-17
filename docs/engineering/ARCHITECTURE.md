@@ -1157,7 +1157,7 @@ Evidence: `webmail-backend/src/scheduler/`, versioned migrations `001` through `
 
 Status: `Partial`
 
-Last verified: 2026-08-16 in the guarded active production runtime, source
+Last verified: 2026-08-17 in the guarded active production runtime, source
 tests, deterministic browser fixtures, and isolated disposable MariaDB.
 
 Web immediate mail, delayed/Undo mail, and ActiveSync SendMail now enter one
@@ -1239,8 +1239,12 @@ sequence completed legacy-to-bridge, bridge-to-active, hotfix bridge/active,
 runtime/environment attestation, and complete public protocol gates. The
 registry/compaction expansion in integrated `main` is newer than the active
 runtime and remains disabled by default until a registry-compatible rollback
-pair is installed. An exact authorized production durable-row rollback canary
-and physical iOS SendMail retry remain release evidence gates.
+pair is installed. An exactly authorized production durable-row rollback
+canary proved the current active-to-bridge path: the canonical 30-column row
+digest remained byte-identical, canary-specific claim/SMTP/IMAP evidence stayed
+zero, exact cleanup removed one row under bridge, and active attestation plus
+the Ping-required public suite passed after forward restore. Physical iOS
+SendMail retry remains a release evidence gate.
 
 ---
 
@@ -1502,6 +1506,15 @@ Agents should verify and document:
 - config file locations
 - generated secret locations
 - migration strategy
+
+The logical backup transaction records and restores the exact active/inactive
+service set, keeps failed snapshots visibly `.incomplete`, and now waits through
+bounded post-start readiness checks before promotion. A production-size Cycle
+13 run proved fail-closed recovery from a six-second backend listener delay and
+then passed full trusted snapshot validation. The same run showed that copying
+and repeatedly hashing the mail tree keeps services quiesced too long; moving
+immutable staging finalization/verification after service resume is required
+before the backup path is considered availability-ready.
 
 Previously documented allowed firewall ports:
 

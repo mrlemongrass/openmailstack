@@ -1172,17 +1172,30 @@ pool's legacy timezone behavior. Historical null-key rows still in
 claim and projection use a raw JavaScript `Date`. Once a legacy row enters
 `retry_wait` (and for all leases/Sent-copy states), its database-generated time
 is UTC again. Do not collapse these bases or mass-convert ambiguous rows. The
-Scheduled-folder SQL order is still the raw mixed-basis `send_at` order, so an
-upgraded installation can display an old row out of true-instant order even
-though eligibility and displayed timestamps are correct; a future normalized
-sort key must preserve this compatibility rule.
+worker locks at most the first `N` eligible rows from each time basis, projects
+both sets to real instants, and claims the global first `N`. Scheduled-folder
+reads use the same projection before sorting. This avoids comparing
+incomparable DATETIME literals while preserving every legacy stored value.
 
-Terminal immediate rows scrub MIME, envelope, and message content while
-retaining the owner/key/fingerprint/outcome tombstone needed to prevent a later
-duplicate. Scheduled rows retain recovery content until owner Undo/removal;
-removal soft-hides and scrubs the payload without deleting its idempotency
-tombstone. A bounded archival/retention policy for these metadata tombstones is
-not yet defined, so hot-table growth remains an operational follow-up.
+An additive `outbound_submission_registry` is the compact authoritative replay
+identity. The hot payload row and owner/key/fingerprint/origin registry row are
+reserved in one transaction. The registry stores no MIME, envelope, body,
+attachment, recipient, or credential fields. While a hot row exists it remains
+authoritative for live status; compaction copies the terminal outcome and
+deletes the hot row in one transaction, so a crash cannot reopen delivery.
+Same-key replay and fingerprint conflict continue to work from the compact row.
+Bounded backfill is additive and idempotent, and compaction first verifies that
+every keyed hot row has an exact registry identity.
+
+Terminal payloads are scrubbed after seven days. Scheduled rows retain a
+separate body-free display projection for 90 days before leaving the hot table.
+Compact web replay tombstones expire after 120 days and ActiveSync tombstones
+after 400 days. `delivery_uncertain`, active/nonterminal rows, future scheduled
+rows, and historical null-key rows never auto-expire. Maintenance is fail-closed
+and disabled by default; it runs only with the exact
+`OMS_OUTBOUND_COMPACTION_MODE=registry-verified-v1` opt-in after the installed
+rollback runtime is proven registry-compatible. The current active rollout
+keeps this setting disabled.
 
 The browser stores only UUIDs and privacy-safe scope/content digests in
 IndexedDB, coordinates concurrent tabs transactionally, and recovers attempts

@@ -64,12 +64,14 @@ import {
     completeScheduledCancellation,
     ensureScheduledEmailsSchema,
     getOutboundSubmission,
+    listScheduledOutboundRows,
     OutboundIdempotencyConflictError,
     OutboundIdempotencyKeyError,
     OutboundReleaseBridgeError,
     OutboundSubmissionUnavailableError,
     releaseScheduledCancellation,
     removeTerminalScheduledEmail,
+    projectScheduledOutboundInstant,
     submitOutbound,
     type OutboundSubmissionStatus,
 } from './scheduled-send';
@@ -1712,21 +1714,13 @@ apiRouter.get('/folders/*folder/messages', requireAuth, async (req: any, res) =>
     
     if (folder === 'SCHEDULED') {
         try {
-            const [rows]: any = await pool.query(
-                `SELECT id, idempotency_key, send_at,
-                        DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
-                        mail_options, sender_address, status, last_error_code,
-                        rejected_recipients_json
-                 FROM scheduled_emails
-                 WHERE username = ? AND submission_kind = 'scheduled'
-                   AND removed_at IS NULL
-                   AND status NOT IN ('completed', 'cancelled')
-                 ORDER BY send_at ASC`,
-                [user],
-            );
+            const rows = await listScheduledOutboundRows(pool, user);
             const messages = rows.map((r: any) => {
                 let opts: any = {};
                 try { opts = JSON.parse(r.mail_options); } catch (e) {}
+                if (Object.keys(opts).length === 0 && r.display_metadata_json) {
+                    try { opts = JSON.parse(r.display_metadata_json); } catch (e) {}
+                }
                 return {
                     uid: r.id + 100000000, // fake high UID to avoid collisions
                     id: r.id,
@@ -1735,7 +1729,7 @@ apiRouter.get('/folders/*folder/messages', requireAuth, async (req: any, res) =>
                     to: scheduledAddressText(opts.to),
                     cc: scheduledAddressText(opts.cc),
                     bcc: scheduledAddressText(opts.bcc),
-                    date: r.idempotency_key === null ? r.send_at : (r.send_at_utc || r.send_at),
+                    date: r.projected_send_at,
                     flags: [],
                     unseen: false,
                     is_scheduled: true,
@@ -2950,6 +2944,9 @@ apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req: any, re
             
             let opts: any = {};
             try { opts = JSON.parse(rows[0].mail_options); } catch (e) {}
+            if (Object.keys(opts).length === 0 && rows[0].display_metadata_json) {
+                try { opts = JSON.parse(rows[0].display_metadata_json); } catch (e) {}
+            }
             
             return res.json({
                 success: true,
@@ -2960,9 +2957,7 @@ apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req: any, re
                     to: scheduledAddressText(opts.to),
                     cc: scheduledAddressText(opts.cc),
                     bcc: scheduledAddressText(opts.bcc),
-                    date: rows[0].idempotency_key === null
-                        ? rows[0].send_at
-                        : (rows[0].send_at_utc || rows[0].send_at),
+                    date: projectScheduledOutboundInstant(rows[0]),
                     html: opts.html || '',
                     text: opts.text || '',
                     attachments: [], // We won't try to parse attachments for scheduled messages for now

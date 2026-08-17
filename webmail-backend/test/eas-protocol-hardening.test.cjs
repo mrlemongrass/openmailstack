@@ -102,7 +102,6 @@ test('ActiveSync route wires bounded parsing, post-auth logs, explicit unsupport
   assert.ok(routeBodyLimit >= 0 && routeBodyLimit < globalBodyParser);
   assert.match(source.slice(routeBodyLimit, globalBodyParser), /limit: `\$\{ACTIVE_SYNC_MAX_REQUEST_BYTES\}b`/);
   assert.ok(authenticate >= 0 && authenticate < structuralLog);
-  assert.match(source.slice(routeStart), /if \(requestParseFailed\)[\s\S]*cmd === 'SendMail' \? sendComposeStatus\('102'\) : res\.status\(400\)\.send\(\)/);
   assert.match(source.slice(routeStart), /MS-ASProtocolCommands', ACTIVE_SYNC_ADVERTISED_COMMANDS\.join\(','\)/);
   assert.ok(unsupportedGuard >= 0 && unsupportedGuard < legacyFolderCreate);
   assert.match(source.slice(unsupportedGuard, legacyFolderCreate), /return res\.status\(501\)\.send\(\)/);

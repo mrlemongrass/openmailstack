@@ -1003,6 +1003,23 @@ test('scheduled folder discovery and messages preserve legacy and keyed UTC date
       to: 'keyed@example.net',
       text: 'Keyed body',
     }),
+  }, {
+    id: 44,
+    idempotency_key: 'compacted-scheduled-row',
+    send_at: new Date('2037-01-02T12:04:05.000Z'),
+    send_at_utc: '2037-01-03T02:04:05.000Z',
+    sender_address: null,
+    status: 'failed',
+    last_error_code: 'permanent_failure',
+    rejected_recipients_json: null,
+    mail_options: '{}',
+    display_metadata_json: JSON.stringify({
+      from: 'retained-sender@example.test',
+      to: 'retained-recipient@example.net',
+      cc: 'retained-copy@example.net',
+      bcc: 'retained-blind@example.net',
+      subject: 'Retained body-free metadata',
+    }),
   }];
   const express = require('express');
   const app = express();
@@ -1036,6 +1053,9 @@ test('scheduled folder discovery and messages preserve legacy and keyed UTC date
     '2037-01-01T12:04:05.000Z',
     'keyed rows must use the explicit UTC projection',
   );
+  const compactedListRow = list.json.messages.find(message => message.id === 44);
+  assert.equal(compactedListRow.subject, 'Retained body-free metadata');
+  assert.equal(compactedListRow.to, 'retained-recipient@example.net');
 
   const detail = await getJson(server.address().port, '/api/folders/SCHEDULED/messages/100000042');
   assert.equal(detail.status, 200);
@@ -1052,6 +1072,16 @@ test('scheduled folder discovery and messages preserve legacy and keyed UTC date
   const keyedDetail = await getJson(server.address().port, '/api/folders/SCHEDULED/messages/100000043');
   assert.equal(keyedDetail.status, 200);
   assert.equal(keyedDetail.json.message.date, '2037-01-01T12:04:05.000Z');
+
+  const compactedDetail = await getJson(server.address().port, '/api/folders/SCHEDULED/messages/100000044');
+  assert.equal(compactedDetail.status, 200);
+  assert.equal(compactedDetail.json.message.subject, 'Retained body-free metadata');
+  assert.equal(compactedDetail.json.message.from, 'retained-sender@example.test');
+  assert.equal(compactedDetail.json.message.to, 'retained-recipient@example.net');
+  assert.equal(compactedDetail.json.message.cc, 'retained-copy@example.net');
+  assert.equal(compactedDetail.json.message.bcc, 'retained-blind@example.net');
+  assert.equal(compactedDetail.json.message.text, '');
+  assert.equal(compactedDetail.json.message.html, '');
 
   assert.ok(scheduledQueries.length >= 3);
   for (const query of scheduledQueries) {

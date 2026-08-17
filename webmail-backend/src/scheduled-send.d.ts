@@ -1,5 +1,6 @@
 import { type OutboundReleaseMode } from './config';
 import { type OwnedSenderIdentity } from './outbound-mail';
+import { type OutboundSubmissionOrigin } from './universal-outbox';
 export type ScheduledEmailStatus = 'scheduled' | 'retry_wait' | 'claimed' | 'smtp_inflight' | 'sent_copy_pending' | 'cancel_restore_pending' | 'completed' | 'failed' | 'delivery_uncertain' | 'partial_delivery' | 'cancelled';
 export type OutboundSubmissionKind = 'immediate' | 'scheduled';
 export declare class OutboundReleaseBridgeError extends Error {
@@ -24,9 +25,11 @@ export interface ScheduledEmailRow {
     username: string;
     send_at: Date;
     mail_options: string;
+    display_metadata_json?: string | null;
     draft_uid: number | null;
     payload_version?: number;
     submission_kind?: OutboundSubmissionKind;
+    submission_origin?: OutboundSubmissionOrigin;
     idempotency_key?: string | null;
     request_fingerprint?: string | null;
     save_in_sent_items?: number | boolean;
@@ -110,6 +113,7 @@ export interface PersistedOutboundMessage {
 }
 export interface OutboundSubmissionInput {
     submissionKind: OutboundSubmissionKind;
+    origin?: OutboundSubmissionOrigin;
     idempotencyKey: string;
     fingerprintSource: CanonicalFingerprintValue;
     message: PersistedOutboundMessage;
@@ -154,6 +158,8 @@ export declare class OutboundSubmissionUnavailableError extends Error {
     constructor(cause?: unknown);
 }
 export declare const getOutboundSubmission: (db: any, username: string, lookup: OutboundSubmissionLookup) => Promise<OutboundSubmissionStatus | null>;
+export declare const listScheduledOutboundRows: (db: any, username: string) => Promise<any[]>;
+export declare const projectScheduledOutboundInstant: (row: any) => Date;
 export declare const submitOutbound: (db: any, input: OutboundSubmissionInput, runtime?: SubmitOutboundRuntime) => Promise<OutboundSubmissionResult>;
 export declare const runScheduledSender: (dependencies?: ScheduledEmailDependencies, db?: any, workerId?: string) => Promise<number>;
 export declare const startScheduledSender: () => void;

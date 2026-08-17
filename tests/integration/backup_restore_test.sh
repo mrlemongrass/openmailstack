@@ -140,6 +140,24 @@ prepare_live_inventory() {
     ln -s -- /etc/nginx/sites-available/mailserver.conf \
         "$(fixture_path /etc/nginx)/sites-enabled/mailserver.conf"
 
+    mkdir -p \
+        "$(fixture_path /etc/ssl/certs)" \
+        "$(fixture_path /etc/ssl/private)" \
+        "$(fixture_path /etc/dovecot/private)"
+    printf '%s\n' 'fixture Dovecot fallback certificate' \
+        > "$(fixture_path /etc/ssl/certs/ssl-cert-snakeoil.pem)"
+    printf '%s\n' 'fixture Dovecot fallback key' \
+        > "$(fixture_path /etc/ssl/private/ssl-cert-snakeoil.key)"
+    ln -s -- /etc/ssl/certs/ssl-cert-snakeoil.pem \
+        "$(fixture_path /etc/dovecot/private/dovecot.pem)"
+    ln -s -- /etc/ssl/private/ssl-cert-snakeoil.key \
+        "$(fixture_path /etc/dovecot/private/dovecot.key)"
+
+    # Runtime IPC objects can remain in a quiesced Postfix spool. They are
+    # recreated by the service and must never make a portable snapshot fail
+    # validation or be restored as live endpoints.
+    mkfifo "$(fixture_path /var/spool/postfix)/runtime.pipe"
+
     printf '%s\n' 'FIRST_DOMAIN=example.test' > "${INSTALL_CONFIG}"
 }
 
@@ -411,12 +429,19 @@ assert_contains "${SNAPSHOT}/inventory.tsv" \
 assert_contains "${SNAPSHOT}/inventory.tsv" $'mail-store\t/var/vmail\tpresent\tdirectory'
 assert_contains "${SNAPSHOT}/inventory.tsv" \
     $'postfix-spool\t/var/spool/postfix\tpresent\tdirectory'
+assert_absent "${SNAPSHOT}/payload/postfix-spool/runtime.pipe"
+assert_contains "${SNAPSHOT}/payload/postfix-spool/fixture.txt" \
+    'fixture:/var/spool/postfix'
 assert_contains "${SNAPSHOT}/inventory.tsv" $'oms-config\t/etc/openmailstack\tpresent\tdirectory'
 if grep -Fq $'mysql-config\t/etc/mysql\t' "${SNAPSHOT}/inventory.tsv"; then
     fail "Snapshot unexpectedly captured package-managed MariaDB configuration"
 fi
 assert_absent "${SNAPSHOT}/payload/mysql-config"
 assert_contains "${SNAPSHOT}/inventory.tsv" $'dkim-keys\t/var/lib/rspamd/dkim\tpresent\tdirectory'
+assert_contains "${SNAPSHOT}/inventory.tsv" \
+    $'dovecot-fallback-cert\t/etc/ssl/certs/ssl-cert-snakeoil.pem\tpresent\tfile'
+assert_contains "${SNAPSHOT}/inventory.tsv" \
+    $'dovecot-fallback-key\t/etc/ssl/private/ssl-cert-snakeoil.key\tpresent\tfile'
 assert_contains "${SNAPSHOT}/inventory.tsv" $'tls-letsencrypt\t/etc/letsencrypt\tpresent\tdirectory'
 assert_contains "${SNAPSHOT}/inventory.tsv" $'modern-backend\t/opt/openmailstack-backend\tpresent\tdirectory'
 assert_contains "${SNAPSHOT}/inventory.tsv" $'modern-frontend\t/var/www/openmailstack\tpresent\tdirectory'

@@ -3,13 +3,25 @@ const test = require('node:test');
 
 process.env.OMS_DB_PASSWORD ||= 'scheduled-send-store-test';
 
+const transactionCapable = db => {
+  db.getConnection = async () => ({
+    async beginTransaction() {},
+    async commit() {},
+    async rollback() {},
+    release() {},
+    query: db.query.bind(db),
+  });
+  return db;
+};
+
 test('scheduled send schema upgrades legacy rows additively and installs claim indexes', async () => {
   const statements = [];
   const legacyColumns = ['id', 'username', 'send_at', 'mail_options', 'draft_uid', 'created_at'];
-  const db = {
+  const db = transactionCapable({
     async query(sql, params = []) {
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
+      if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
       statements.push({ sql: compact, params });
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) {
         return [legacyColumns.map(COLUMN_NAME => ({ COLUMN_NAME })), []];
@@ -33,7 +45,7 @@ test('scheduled send schema upgrades legacy rows additively and installs claim i
       }
       return [[], []];
     },
-  };
+  });
   const { submitOutbound } = require('../src/scheduled-send.js');
 
   const transportRaw = Buffer.from('Message-ID: <persist@example.test>\r\n\r\nBody');
@@ -59,7 +71,8 @@ test('scheduled send schema upgrades legacy rows additively and installs claim i
 
   const sql = statements.map(item => item.sql).join('\n');
   for (const column of [
-    'payload_version', 'submission_kind', 'idempotency_key', 'request_fingerprint', 'save_in_sent_items',
+    'display_metadata_json', 'payload_version', 'submission_kind', 'submission_origin',
+    'idempotency_key', 'request_fingerprint', 'save_in_sent_items',
     'status', 'available_at', 'attempts', 'lease_owner', 'lease_expires_at',
     'sender_address', 'message_id', 'envelope_json', 'rejected_recipients_json', 'raw_message',
     'sent_raw_message', 'smtp_accepted_at',
@@ -78,12 +91,13 @@ test('scheduled send schema upgrades legacy rows additively and installs claim i
     'the additive bridge should need one column DDL and one index DDL',
   );
   const insert = statements.find(item => item.sql.startsWith('INSERT INTO scheduled_emails'));
-  assert.match(insert.sql, /submission_kind, idempotency_key, request_fingerprint/);
+  assert.match(insert.sql, /submission_kind, submission_origin, idempotency_key, request_fingerprint/);
   assert.match(insert.sql, /raw_message, sent_raw_message/);
-  assert.equal(insert.params[4], 'scheduled');
-  assert.equal(insert.params[5], 'scheduled-persistence-key');
+  assert.equal(insert.params[5], 'scheduled');
+  assert.equal(insert.params[6], 'web');
+  assert.equal(insert.params[7], 'scheduled-persistence-key');
   assert.equal(insert.params[1], '2026-08-15 12:00:00');
-  assert.equal(insert.params[8], '2026-08-15 12:00:00');
+  assert.equal(insert.params[10], '2026-08-15 12:00:00');
   assert.deepEqual(insert.params.slice(-2), [transportRaw, sentRaw]);
 });
 
@@ -133,7 +147,8 @@ test('outbound request fingerprints are canonical and attachment-byte sensitive'
 
 test('same-key replay is a no-send projection and changed content conflicts', async () => {
   const allColumns = [
-    'id', 'username', 'send_at', 'mail_options', 'draft_uid', 'payload_version', 'submission_kind',
+    'id', 'username', 'send_at', 'mail_options', 'display_metadata_json', 'draft_uid', 'payload_version', 'submission_kind',
+    'submission_origin',
     'idempotency_key', 'request_fingerprint', 'save_in_sent_items', 'status', 'available_at',
     'attempts', 'lease_owner', 'lease_expires_at', 'sender_address', 'message_id', 'envelope_json',
     'rejected_recipients_json', 'raw_message', 'sent_raw_message', 'smtp_accepted_at',
@@ -143,10 +158,11 @@ test('same-key replay is a no-send projection and changed content conflicts', as
   let persistedFingerprint = '';
   let insertAttempts = 0;
   let firstInsertParams;
-  const db = {
+  const db = transactionCapable({
     async query(sql, params = []) {
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
+      if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) {
         return [allColumns.map(COLUMN_NAME => ({
           COLUMN_NAME,
@@ -164,7 +180,7 @@ test('same-key replay is a no-send projection and changed content conflicts', as
       if (compact.startsWith('INSERT INTO scheduled_emails')) {
         insertAttempts += 1;
         firstInsertParams ||= params;
-        persistedFingerprint ||= params[6];
+        persistedFingerprint ||= params[8];
         const error = new Error('duplicate');
         error.code = 'ER_DUP_ENTRY';
         throw error;
@@ -185,7 +201,7 @@ test('same-key replay is a no-send projection and changed content conflicts', as
       }
       throw new Error(`Unexpected query: ${compact}`);
     },
-  };
+  });
   const message = {
     username: 'owner@example.test',
     sendAt: new Date('2026-08-15T12:00:00.000Z'),
@@ -216,16 +232,17 @@ test('same-key replay is a no-send projection and changed content conflicts', as
   }, { dependencies });
   assert.equal(replay.replayed, true);
   assert.equal(replay.status, 'completed');
-  assert.equal(firstInsertParams[4], 'immediate');
-  assert.equal(firstInsertParams[5], 'same-key');
-  assert.match(firstInsertParams[6], /^[0-9a-f]{64}$/);
-  assert.equal(firstInsertParams[7], 1);
-  assert.match(firstInsertParams[8], /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
-  assert.equal(firstInsertParams[9], 'owner@example.test');
-  assert.equal(firstInsertParams[10], '<same@example.test>');
-  assert.deepEqual(JSON.parse(firstInsertParams[11]), message.envelope);
-  assert.equal(firstInsertParams[12], message.raw);
-  assert.equal(firstInsertParams[13], message.raw);
+  assert.equal(firstInsertParams[5], 'immediate');
+  assert.equal(firstInsertParams[6], 'web');
+  assert.equal(firstInsertParams[7], 'same-key');
+  assert.match(firstInsertParams[8], /^[0-9a-f]{64}$/);
+  assert.equal(firstInsertParams[9], 1);
+  assert.match(firstInsertParams[10], /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  assert.equal(firstInsertParams[11], 'owner@example.test');
+  assert.equal(firstInsertParams[12], '<same@example.test>');
+  assert.deepEqual(JSON.parse(firstInsertParams[13]), message.envelope);
+  assert.equal(firstInsertParams[14], message.raw);
+  assert.equal(firstInsertParams[15], message.raw);
 
   await assert.rejects(
     submitOutbound(db, {
@@ -244,7 +261,8 @@ test('same-key replay is a no-send projection and changed content conflicts', as
 
 test('scheduled same-key replay survives a soft hide and changed content conflicts', async () => {
   const allColumns = [
-    'id', 'username', 'send_at', 'mail_options', 'draft_uid', 'payload_version', 'submission_kind',
+    'id', 'username', 'send_at', 'mail_options', 'display_metadata_json', 'draft_uid', 'payload_version', 'submission_kind',
+    'submission_origin',
     'idempotency_key', 'request_fingerprint', 'save_in_sent_items', 'status', 'available_at',
     'attempts', 'lease_owner', 'lease_expires_at', 'sender_address', 'message_id', 'envelope_json',
     'rejected_recipients_json', 'raw_message', 'sent_raw_message', 'smtp_accepted_at',
@@ -253,10 +271,11 @@ test('scheduled same-key replay survives a soft hide and changed content conflic
   ];
   let persistedFingerprint = '';
   let insertAttempts = 0;
-  const db = {
+  const db = transactionCapable({
     async query(sql, params = []) {
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
+      if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) return [allColumns.map(COLUMN_NAME => ({
         COLUMN_NAME,
         COLUMN_TYPE: COLUMN_NAME === 'attempts' ? 'int unsigned' : '',
@@ -269,7 +288,7 @@ test('scheduled same-key replay survives a soft hide and changed content conflic
       if (compact.startsWith('UPDATE scheduled_emails')) return [{ affectedRows: 0 }, []];
       if (compact.startsWith('INSERT INTO scheduled_emails')) {
         insertAttempts += 1;
-        persistedFingerprint ||= params[6];
+        persistedFingerprint ||= params[8];
         const error = new Error('duplicate');
         error.code = 'ER_DUP_ENTRY';
         throw error;
@@ -291,7 +310,7 @@ test('scheduled same-key replay survives a soft hide and changed content conflic
       }
       throw new Error(`Unexpected query: ${compact}`);
     },
-  };
+  });
   const message = {
     username: 'owner@example.test',
     sendAt: new Date('2026-08-16T12:00:00.000Z'),
@@ -332,7 +351,8 @@ test('scheduled same-key replay survives a soft hide and changed content conflic
 
 test('immediate and scheduled submission keys fail closed before persistence or delivery', async () => {
   const allColumns = [
-    'id', 'username', 'send_at', 'mail_options', 'draft_uid', 'payload_version', 'submission_kind',
+    'id', 'username', 'send_at', 'mail_options', 'display_metadata_json', 'draft_uid', 'payload_version', 'submission_kind',
+    'submission_origin',
     'idempotency_key', 'request_fingerprint', 'save_in_sent_items', 'status', 'available_at',
     'attempts', 'lease_owner', 'lease_expires_at', 'sender_address', 'message_id', 'envelope_json',
     'rejected_recipients_json', 'raw_message', 'sent_raw_message', 'smtp_accepted_at',
@@ -344,6 +364,7 @@ test('immediate and scheduled submission keys fail closed before persistence or 
     async query(sql) {
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
+      if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) return [allColumns.map(COLUMN_NAME => ({
         COLUMN_NAME,
         COLUMN_TYPE: COLUMN_NAME === 'attempts' ? 'int unsigned' : '',
@@ -402,7 +423,8 @@ test('scheduled send claims are transactional and owner cancellation cannot race
     async query(sql, params = []) {
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       statements.push({ sql: compact, params });
-      if (compact.startsWith('SELECT * FROM scheduled_emails')) return [rows, []];
+      if (compact.includes("WHERE idempotency_key IS NULL AND status = 'scheduled'")) return [rows, []];
+      if (compact.includes("WHERE (idempotency_key IS NOT NULL OR status <> 'scheduled')")) return [[], []];
       return [{ affectedRows: 1 }, []];
     },
   };
@@ -526,7 +548,9 @@ test('worker cycles do not overlap in-process and use a fresh claim token on eac
   const firstSelectReady = new Promise(resolve => { firstSelectStarted = resolve; });
   const firstSelectGate = new Promise(resolve => { releaseFirstSelect = resolve; });
   const allColumns = [
-    'id', 'username', 'send_at', 'mail_options', 'draft_uid', 'payload_version', 'status', 'available_at',
+    'id', 'username', 'send_at', 'mail_options', 'display_metadata_json', 'draft_uid', 'payload_version',
+    'submission_kind', 'submission_origin', 'idempotency_key', 'request_fingerprint',
+    'save_in_sent_items', 'status', 'available_at',
     'attempts', 'lease_owner', 'lease_expires_at', 'sender_address', 'message_id', 'envelope_json',
     'rejected_recipients_json', 'raw_message', 'sent_raw_message', 'smtp_accepted_at',
     'sent_copy_completed_at', 'completed_at', 'cancelled_at', 'removed_at',
@@ -564,7 +588,10 @@ test('worker cycles do not overlap in-process and use a fresh claim token on eac
         async beginTransaction() {}, async commit() {}, async rollback() {}, release() {},
         async query(sql, params = []) {
           const compact = String(sql).replace(/\s+/g, ' ').trim();
-          if (compact.startsWith('SELECT * FROM scheduled_emails')) {
+          if (compact.includes("WHERE idempotency_key IS NULL AND status = 'scheduled'")) {
+            return [[], []];
+          }
+          if (compact.includes("WHERE (idempotency_key IS NOT NULL OR status <> 'scheduled')")) {
             if (number === 1) {
               firstSelectStarted();
               await firstSelectGate;
@@ -609,8 +636,9 @@ test('worker claims each queued row only after the previous row finishes', async
   const firstProcessReady = new Promise(resolve => { firstProcessStarted = resolve; });
   const firstProcessGate = new Promise(resolve => { releaseFirstProcess = resolve; });
   const allColumns = [
-    'id', 'username', 'send_at', 'mail_options', 'draft_uid', 'payload_version', 'submission_kind',
-    'idempotency_key', 'request_fingerprint', 'save_in_sent_items', 'status', 'available_at',
+    'id', 'username', 'send_at', 'mail_options', 'display_metadata_json', 'draft_uid', 'payload_version',
+    'submission_kind', 'submission_origin', 'idempotency_key', 'request_fingerprint',
+    'save_in_sent_items', 'status', 'available_at',
     'attempts', 'lease_owner', 'lease_expires_at', 'sender_address', 'message_id', 'envelope_json',
     'rejected_recipients_json', 'raw_message', 'sent_raw_message', 'smtp_accepted_at',
     'sent_copy_completed_at', 'completed_at', 'cancelled_at', 'removed_at',
@@ -652,10 +680,12 @@ test('worker claims each queued row only after the previous row finishes', async
         async beginTransaction() {}, async commit() {}, async rollback() {}, release() {},
         async query(sql, params = []) {
           const compact = String(sql).replace(/\s+/g, ' ').trim();
-          if (compact.startsWith('SELECT * FROM scheduled_emails')) {
+          if (compact.includes("WHERE idempotency_key IS NULL AND status = 'scheduled'")) {
+            return [[], []];
+          }
+          if (compact.includes("WHERE (idempotency_key IS NOT NULL OR status <> 'scheduled')")) {
             selectCount += 1;
-            assert.ok(params[0] instanceof Date, 'legacy scheduled claims need a local-wall cutoff');
-            assert.equal(params[1], 1, 'each claim must be bounded to one row');
+            assert.equal(params[0], 1, 'each UTC-basis claim must be bounded to one row');
             return [selectCount <= 2 ? [acceptedRow(selectCount)] : [], []];
           }
           if (compact.includes('SET attempts = attempts + 1')) claimedIds.push(Number(params[1]));

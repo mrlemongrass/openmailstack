@@ -25,12 +25,20 @@ const required = (name: string): string => {
 const optional = (name: string, fallback = ''): string => process.env[name] || fallback;
 
 export type OutboundReleaseMode = 'bridge' | 'active';
+export type OutboundCompactionMode = 'disabled' | 'registry-verified-v1';
 
 const configuredOutboundReleaseMode = optional('OMS_OUTBOUND_RELEASE_MODE', 'active');
 if (configuredOutboundReleaseMode !== 'bridge' && configuredOutboundReleaseMode !== 'active') {
     throw new Error('OMS_OUTBOUND_RELEASE_MODE must be bridge or active');
 }
 export const outboundReleaseMode: OutboundReleaseMode = configuredOutboundReleaseMode;
+
+const configuredOutboundCompactionMode = optional('OMS_OUTBOUND_COMPACTION_MODE', 'disabled');
+if (configuredOutboundCompactionMode !== 'disabled'
+    && configuredOutboundCompactionMode !== 'registry-verified-v1') {
+    throw new Error('OMS_OUTBOUND_COMPACTION_MODE must be disabled or registry-verified-v1');
+}
+export const outboundCompactionMode: OutboundCompactionMode = configuredOutboundCompactionMode;
 
 const explicitSessionSecret = optional('OMS_SESSION_SECRET');
 const sessionSecret = explicitSessionSecret || (

@@ -76,6 +76,14 @@ existing_env_value() {
     openmailstack_read_env_value "${ENV_FILE}" "${key}"
 }
 
+OUTBOUND_COMPACTION_MODE="${OMS_OUTBOUND_COMPACTION_MODE:-$(existing_env_value OMS_OUTBOUND_COMPACTION_MODE)}"
+OUTBOUND_COMPACTION_MODE="${OUTBOUND_COMPACTION_MODE:-disabled}"
+if [[ "${OUTBOUND_COMPACTION_MODE}" != "disabled" \
+    && "${OUTBOUND_COMPACTION_MODE}" != "registry-verified-v1" ]]; then
+    echo -e "${RED}Error: OMS_OUTBOUND_COMPACTION_MODE must be disabled or registry-verified-v1.${NC}" >&2
+    exit 1
+fi
+
 NOTES_COLLABORATION_ENABLED="${ENABLE_OMS_NOTES_COLLABORATION:-$(existing_env_value ENABLE_OMS_NOTES_COLLABORATION)}"
 NOTES_COLLABORATION_ENABLED="${NOTES_COLLABORATION_ENABLED:-false}"
 if [[ ! "${NOTES_COLLABORATION_ENABLED}" =~ ^(true|false)$ ]]; then
@@ -227,6 +235,7 @@ render_backend_env() {
             write_env_line "OMS_COOKIE_SECURE" "${OMS_COOKIE_SECURE:-true}"
             write_env_line "OMS_UPLOAD_LIMIT_BYTES" "${OMS_UPLOAD_LIMIT_BYTES:-26214400}"
             write_env_line "OMS_OUTBOUND_RELEASE_MODE" "${OUTBOUND_RELEASE_MODE}"
+            write_env_line "OMS_OUTBOUND_COMPACTION_MODE" "${OUTBOUND_COMPACTION_MODE}"
             write_env_line "ENABLE_OMS_NOTES_COLLABORATION" "${NOTES_COLLABORATION_ENABLED}"
             write_env_line "ENABLE_OMS_SCHEDULER" "${SCHEDULER_ENABLED}"
             write_env_line "OMS_SCHEDULER_PUBLIC_BASE_URL" "${SCHEDULER_PUBLIC_BASE_URL}"

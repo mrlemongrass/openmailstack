@@ -1,5 +1,7 @@
 export type OutboundReleaseMode = 'bridge' | 'active';
+export type OutboundCompactionMode = 'disabled' | 'registry-verified-v1';
 export declare const outboundReleaseMode: OutboundReleaseMode;
+export declare const outboundCompactionMode: OutboundCompactionMode;
 export declare const serverConfig: {
     host: string;
     port: number;

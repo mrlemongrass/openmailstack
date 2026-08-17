@@ -64,7 +64,7 @@ const eas_calendar_persistence_1 = require("./eas-calendar-persistence");
 const eas_sync_1 = require("./eas-sync");
 const eas_mail_sync_1 = require("./eas-mail-sync");
 const eas_pim_sync_1 = require("./eas-pim-sync");
-const eas_send_1 = require("./eas-send");
+const eas_send_http_1 = require("./eas-send-http");
 const eas_protocol_1 = require("./eas-protocol");
 const eas_item_operations_1 = require("./eas-item-operations");
 const search_worker_1 = require("./search-worker");
@@ -263,6 +263,28 @@ app.all(['/autodiscover/autodiscover.xml', '/Autodiscover/Autodiscover.xml'], (r
     res.set('Content-Type', 'text/xml');
     res.status(200).send(xml);
 });
+const activeSyncSendMailHttpHandler = (0, eas_send_http_1.createActiveSyncSendMailHttpHandler)({
+    normalizeUsername: config_1.normalizeMailboxUsername,
+    validateDeviceId: eas_mail_sync_1.validateActiveSyncDeviceId,
+    isAuthenticationFailure: eas_protocol_1.isActiveSyncAuthenticationFailure,
+    authenticate: async (username, password) => {
+        const imap = new imap_1.ImapService(username, password, false);
+        try {
+            await imap.connect();
+            return true;
+        }
+        finally {
+            try {
+                await imap.logout();
+            }
+            catch { }
+        }
+    },
+    submissionAvailable: () => config_1.outboundReleaseMode === 'active',
+    authorizeSender: (username, requestedFrom) => (0, outbound_mail_1.authorizeOutboundSender)(db_1.pool, username, requestedFrom),
+    submit: input => (0, scheduled_send_1.submitOutbound)(db_1.pool, input),
+    logRequest: summary => console.log('[EAS] Request', JSON.stringify(summary)),
+});
 app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     if (req.method === 'OPTIONS') {
         res.set('MS-Server-ActiveSync', '14.1');
@@ -289,14 +311,8 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     }
     // Check command and respond
     const cmd = String(req.query.Cmd || '');
-    const sendComposeStatus = (status) => {
-        const writer = new writer_1.WbxmlWriter();
-        writer.writeNode({
-            tag: 'SendMail', page: 21, children: [{ tag: 'Status', page: 21, content: status }],
-        });
-        res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
-        return res.status(200).send(writer.getBuffer());
-    };
+    if (cmd === 'SendMail' && await activeSyncSendMailHttpHandler(req, res))
+        return;
     const requestCredentials = getAuthCredentials();
     if (!requestCredentials)
         return res.status(401).send();
@@ -325,7 +341,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     }
     console.log('[EAS] Request', JSON.stringify((0, eas_protocol_1.activeSyncRequestLogSummary)(req.method, cmd, requestBody.length, decodedForStructure, requestParseFailed)));
     if (requestParseFailed) {
-        return cmd === 'SendMail' ? sendComposeStatus('102') : res.status(400).send();
+        return res.status(400).send();
     }
     if (eas_protocol_1.ACTIVE_SYNC_UNSUPPORTED_COMMANDS.includes(cmd)) {
         return res.status(501).send();
@@ -1735,68 +1751,6 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         console.log("Sending mocked Settings response!");
         res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
         return res.status(200).send(writer.getBuffer());
-    }
-    if (cmd === 'SendMail') {
-        const creds = requestCredentials;
-        const deviceId = (0, eas_mail_sync_1.validateActiveSyncDeviceId)(req.query.DeviceId);
-        if (!deviceId)
-            return sendComposeStatus('108');
-        let parsedRequest;
-        try {
-            parsedRequest = (0, eas_send_1.parseActiveSyncSendMailRequest)(decodedForStructure);
-        }
-        catch (error) {
-            const status = error instanceof eas_send_1.ActiveSyncSendMailRequestError ? error.status : '101';
-            return sendComposeStatus(status);
-        }
-        if (parsedRequest.accountId)
-            return sendComposeStatus('166');
-        let prepared;
-        try {
-            prepared = await (0, eas_send_1.prepareActiveSyncSendMailSubmission)(parsedRequest.mime, creds.user, deviceId, parsedRequest.clientId);
-        }
-        catch (error) {
-            const status = error instanceof eas_send_1.ActiveSyncSendMailRequestError ? error.status : '107';
-            return sendComposeStatus(status);
-        }
-        let sender;
-        try {
-            sender = await (0, outbound_mail_1.authorizeOutboundSender)(db_1.pool, creds.user, prepared.envelope.from);
-        }
-        catch {
-            console.warn('[EAS] SendMail rejected an unauthorized From identity');
-            return sendComposeStatus('120');
-        }
-        try {
-            const submission = await (0, scheduled_send_1.submitOutbound)(db_1.pool, {
-                submissionKind: 'immediate',
-                idempotencyKey: (0, eas_send_1.activeSyncSendMailIdempotencyKey)(creds.user, deviceId, parsedRequest.clientId),
-                fingerprintSource: {
-                    ...prepared.fingerprintSource,
-                    saveSentCopy: parsedRequest.saveInSentItems,
-                },
-                message: {
-                    username: creds.user,
-                    sendAt: new Date(),
-                    senderAddress: sender.address,
-                    messageId: prepared.messageId,
-                    envelope: { ...prepared.envelope, from: sender.address },
-                    raw: prepared.raw,
-                    sentRaw: prepared.sentRaw,
-                    metadata: prepared.metadata,
-                    saveSentCopy: parsedRequest.saveInSentItems,
-                },
-                requestCredential: creds.pass,
-            });
-            const status = (0, eas_send_1.activeSyncSendMailResultStatus)(submission);
-            return status ? sendComposeStatus(status) : res.status(200).send();
-        }
-        catch (error) {
-            if (error instanceof scheduled_send_1.OutboundIdempotencyConflictError)
-                return sendComposeStatus('118');
-            console.error('[EAS] SendMail durable submission failed');
-            return sendComposeStatus('120');
-        }
     }
     if (cmd === 'MoveItems') {
         const creds = getAuthCredentials();

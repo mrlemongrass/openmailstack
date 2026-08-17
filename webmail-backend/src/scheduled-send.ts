@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { decryptPassword } from './auth';
 import {
     delegatedAuthEnabled,
+    outboundCompactionMode,
     outboundReleaseMode,
     smtpTransportOptions,
     type OutboundReleaseMode,
@@ -19,6 +20,18 @@ import {
     SenderAuthorizationError,
     type OwnedSenderIdentity,
 } from './outbound-mail';
+import {
+    UniversalOutboundFingerprintConflictError,
+    abortUniversalOutboundReservation,
+    backfillOutboundRegistry,
+    compactUniversalOutbox,
+    ensureOutboundRegistrySchema,
+    findUniversalOutboundIdentity,
+    projectMixedBasisInstant,
+    reserveUniversalOutbound,
+    selectMixedBasisDueRows,
+    type OutboundSubmissionOrigin,
+} from './universal-outbox';
 
 export type ScheduledEmailStatus = 'scheduled' | 'retry_wait' | 'claimed' | 'smtp_inflight'
     | 'sent_copy_pending' | 'cancel_restore_pending' | 'completed' | 'failed'
@@ -112,9 +125,11 @@ export interface ScheduledEmailRow {
     username: string;
     send_at: Date;
     mail_options: string;
+    display_metadata_json?: string | null;
     draft_uid: number | null;
     payload_version?: number;
     submission_kind?: OutboundSubmissionKind;
+    submission_origin?: OutboundSubmissionOrigin;
     idempotency_key?: string | null;
     request_fingerprint?: string | null;
     save_in_sent_items?: number | boolean;
@@ -456,9 +471,11 @@ export const processScheduledEmail = async (
 const schemaPromises = new WeakMap<object, Promise<void>>();
 
 const scheduledColumnDefinitions: Record<string, string> = {
+    display_metadata_json: 'MEDIUMTEXT NULL AFTER mail_options',
     payload_version: 'TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER draft_uid',
     submission_kind: "VARCHAR(16) NOT NULL DEFAULT 'scheduled' AFTER payload_version",
-    idempotency_key: 'VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER submission_kind',
+    submission_origin: "VARCHAR(16) NOT NULL DEFAULT 'web' AFTER submission_kind",
+    idempotency_key: 'VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER submission_origin',
     request_fingerprint: 'CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER idempotency_key',
     save_in_sent_items: 'TINYINT(1) NOT NULL DEFAULT 1 AFTER request_fingerprint',
     status: "VARCHAR(32) NOT NULL DEFAULT 'scheduled' AFTER save_in_sent_items",
@@ -492,9 +509,11 @@ export const ensureScheduledEmailsSchema = async (db: any = pool) => {
                 username VARCHAR(255) NOT NULL,
                 send_at DATETIME NOT NULL,
                 mail_options MEDIUMTEXT NOT NULL,
+                display_metadata_json MEDIUMTEXT NULL,
                 draft_uid BIGINT NULL,
                 payload_version TINYINT UNSIGNED NOT NULL DEFAULT 1,
                 submission_kind VARCHAR(16) NOT NULL DEFAULT 'scheduled',
+                submission_origin VARCHAR(16) NOT NULL DEFAULT 'web',
                 idempotency_key VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL,
                 request_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
                 save_in_sent_items TINYINT(1) NOT NULL DEFAULT 1,
@@ -545,9 +564,14 @@ export const ensureScheduledEmailsSchema = async (db: any = pool) => {
                  available_at = COALESCE(available_at, send_at),
                  sender_address = COALESCE(NULLIF(sender_address, ''), username),
                  payload_version = COALESCE(payload_version, 1),
-                 submission_kind = COALESCE(NULLIF(submission_kind, ''), 'scheduled')
+                 submission_kind = COALESCE(NULLIF(submission_kind, ''), 'scheduled'),
+                 submission_origin = CASE
+                     WHEN idempotency_key LIKE 'eas:%' THEN 'activesync'
+                     ELSE COALESCE(NULLIF(submission_origin, ''), 'web')
+                 END
              WHERE available_at IS NULL OR sender_address IS NULL OR sender_address = ''
-                OR status = '' OR submission_kind = ''`,
+                OR status = '' OR submission_kind = '' OR submission_origin = ''
+                OR (idempotency_key LIKE 'eas:%' AND submission_origin <> 'activesync')`,
         );
         const [indexRows]: any = await db.query(
             `SELECT DISTINCT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
@@ -567,6 +591,7 @@ export const ensureScheduledEmailsSchema = async (db: any = pool) => {
         if (indexAlterations.length > 0) {
             await db.query(`ALTER TABLE scheduled_emails ${indexAlterations.join(', ')}`);
         }
+        await ensureOutboundRegistrySchema(db);
     })();
     schemaPromises.set(db, promise);
     try {
@@ -685,20 +710,7 @@ export class MySqlScheduledEmailStore implements ScheduledEmailStore {
                      lease_owner = NULL, lease_expires_at = NULL
                  WHERE status = 'claimed' AND lease_expires_at <= UTC_TIMESTAMP()`,
             );
-            const [rows]: any = await connection.query(
-                `SELECT * FROM scheduled_emails
-                 WHERE status IN ('scheduled', 'retry_wait', 'sent_copy_pending')
-                   AND (
-                       (idempotency_key IS NULL AND status = 'scheduled'
-                        AND COALESCE(available_at, send_at) <= ?)
-                       OR ((idempotency_key IS NOT NULL OR status <> 'scheduled')
-                           AND COALESCE(available_at, send_at) <= UTC_TIMESTAMP())
-                   )
-                   AND (lease_expires_at IS NULL OR lease_expires_at <= UTC_TIMESTAMP())
-                 ORDER BY COALESCE(available_at, send_at), id
-                 LIMIT ? FOR UPDATE SKIP LOCKED`,
-                [new Date(), Math.max(1, Math.min(100, Math.trunc(limit)))],
-            );
+            const rows = await selectMixedBasisDueRows(connection, limit, new Date());
             for (const row of rows || []) {
                 const previousStatus = String(row.status || 'scheduled') as ScheduledEmailStatus;
                 if (previousStatus === 'sent_copy_pending') {
@@ -974,14 +986,7 @@ export const abortScheduledEmailBeforeDelivery = async (
     username: string,
 ): Promise<boolean> => {
     requireActiveOutboundRelease();
-    const [result]: any = await db.query(
-        `DELETE FROM scheduled_emails
-         WHERE id = ? AND username = ? AND status = 'scheduled'
-           AND submission_kind = 'scheduled'
-           AND smtp_accepted_at IS NULL`,
-        [id, username],
-    );
-    return Number(result?.affectedRows) === 1;
+    return abortUniversalOutboundReservation(db, id, username);
 };
 
 export interface PersistedOutboundMessage {
@@ -999,6 +1004,7 @@ export interface PersistedOutboundMessage {
 
 export interface OutboundSubmissionInput {
     submissionKind: OutboundSubmissionKind;
+    origin?: OutboundSubmissionOrigin;
     idempotencyKey: string;
     fingerprintSource: CanonicalFingerprintValue;
     message: PersistedOutboundMessage;
@@ -1069,10 +1075,6 @@ const outboundSqlUtcDate = (value: Date): string => (
     value.toISOString().slice(0, 19).replace('T', ' ')
 );
 
-const isDuplicateKeyError = (error: any): boolean => (
-    String(error?.code || '') === 'ER_DUP_ENTRY' || Number(error?.errno) === 1062
-);
-
 const rowRejectedRecipients = (row: any): string[] => {
     try {
         const values = JSON.parse(String(row?.rejected_recipients_json || '[]'));
@@ -1107,28 +1109,49 @@ export const getOutboundSubmission = async (
     lookup: OutboundSubmissionLookup,
 ): Promise<OutboundSubmissionStatus | null> => {
     await ensureScheduledEmailsSchema(db);
-    let sql = '';
-    let params: any[] = [];
     if ('id' in lookup) {
         if (!Number.isSafeInteger(lookup.id) || lookup.id <= 0) return null;
-        sql = `SELECT id, submission_kind, idempotency_key, status, message_id, send_at,
-                      DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
-                      smtp_accepted_at,
-                      save_in_sent_items, rejected_recipients_json, last_error_code
-               FROM scheduled_emails WHERE id = ? AND username = ? LIMIT 1`;
-        params = [lookup.id, username];
-    } else {
-        const key = normalizeOutboundIdempotencyKey(lookup.idempotencyKey);
-        sql = `SELECT id, submission_kind, idempotency_key, status, message_id, send_at,
-                      DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
-                      smtp_accepted_at,
-                      save_in_sent_items, rejected_recipients_json, last_error_code
-               FROM scheduled_emails WHERE username = ? AND idempotency_key = ? LIMIT 1`;
-        params = [username, key];
     }
-    const [rows]: any = await db.query(sql, params);
-    return rows?.[0] ? projectOutboundSubmission(rows[0]) : null;
+    const normalizedLookup = 'id' in lookup
+        ? lookup
+        : { idempotencyKey: normalizeOutboundIdempotencyKey(lookup.idempotencyKey) };
+    const row = await findUniversalOutboundIdentity(db, username, normalizedLookup);
+    return row ? projectOutboundSubmission(row) : null;
 };
+
+export const listScheduledOutboundRows = async (db: any, username: string): Promise<any[]> => {
+    await ensureScheduledEmailsSchema(db);
+    const [rows]: any = await db.query(
+        `SELECT id, idempotency_key, send_at,
+                DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
+                mail_options, display_metadata_json, sender_address, status, last_error_code,
+                rejected_recipients_json
+         FROM scheduled_emails
+         WHERE username = ? AND submission_kind = 'scheduled'
+           AND removed_at IS NULL
+           AND status NOT IN ('completed', 'cancelled')`,
+        [username],
+    );
+    return (rows || [])
+        .map((row: any) => ({
+            ...row,
+            projected_send_at: projectMixedBasisInstant(row),
+        }))
+        .sort((left: any, right: any) => (
+            left.projected_send_at.getTime() - right.projected_send_at.getTime()
+            || Number(left.id) - Number(right.id)
+        ));
+};
+
+export const projectScheduledOutboundInstant = (row: any): Date => projectMixedBasisInstant(row);
+
+const outboundDisplayMetadata = (metadata: Record<string, any>, senderAddress: string): string => JSON.stringify({
+    from: String(metadata.from || senderAddress || ''),
+    to: String(metadata.to || ''),
+    cc: String(metadata.cc || ''),
+    bcc: String(metadata.bcc || ''),
+    subject: String(metadata.subject || ''),
+});
 
 const getScheduledCredential = async (username: string): Promise<string> => {
     if (delegatedAuthEnabled) return '';
@@ -1220,45 +1243,39 @@ export const submitOutbound = async (
             saveSentCopy,
         },
     });
-    let id = 0;
+    if (input.origin !== undefined && input.origin !== 'web' && input.origin !== 'activesync') {
+        throw new Error('Outbound submission origin is invalid');
+    }
+    const submissionOrigin: OutboundSubmissionOrigin = input.origin || 'web';
+    let reservation;
     try {
-        const [result]: any = await db.query(
-            `INSERT INTO scheduled_emails
-                (username, send_at, mail_options, draft_uid, payload_version,
-                 submission_kind, idempotency_key, request_fingerprint, save_in_sent_items,
-                 status, available_at, attempts, sender_address, message_id, envelope_json,
-                 raw_message, sent_raw_message)
-             VALUES (?, ?, ?, ?, 2, ?, ?, ?, ?, 'scheduled', ?, 0, ?, ?, ?, ?, ?)`,
-            [message.username, sendAtSql, JSON.stringify(message.metadata), message.draftUid || null,
-                input.submissionKind, idempotencyKey, requestFingerprint, saveSentCopy ? 1 : 0,
-                sendAtSql, message.senderAddress, message.messageId, JSON.stringify(message.envelope),
-                message.raw, message.sentRaw || message.raw],
-        );
-        id = Number(result?.insertId);
-        if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Outbound submission was not persisted');
+        reservation = await reserveUniversalOutbound(db, {
+            username: message.username,
+            sendAtSql,
+            mailOptions: JSON.stringify(message.metadata),
+            displayMetadata: outboundDisplayMetadata(message.metadata, message.senderAddress),
+            draftUid: message.draftUid || null,
+            submissionKind: input.submissionKind,
+            submissionOrigin,
+            idempotencyKey,
+            requestFingerprint,
+            saveSentCopy,
+            senderAddress: message.senderAddress,
+            messageId: message.messageId,
+            envelopeJson: JSON.stringify(message.envelope),
+            rawMessage: message.raw,
+            sentRawMessage: message.sentRaw || message.raw,
+        });
     } catch (error) {
-        if (!isDuplicateKeyError(error)) {
-            throw new OutboundSubmissionUnavailableError(error);
-        }
-        let rows: any;
-        try {
-            [rows] = await db.query(
-                `SELECT id, submission_kind, idempotency_key, status, message_id, send_at,
-                        DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
-                        smtp_accepted_at,
-                        save_in_sent_items, rejected_recipients_json, last_error_code, request_fingerprint
-                 FROM scheduled_emails WHERE username = ? AND idempotency_key = ? LIMIT 1`,
-                [message.username, idempotencyKey],
-            );
-        } catch (lookupError) {
-            throw new OutboundSubmissionUnavailableError(lookupError);
-        }
-        const existing = rows?.[0];
-        if (!existing) throw new OutboundSubmissionUnavailableError(error);
-        if (String(existing.request_fingerprint || '') !== requestFingerprint) {
+        if (error instanceof UniversalOutboundFingerprintConflictError) {
             throw new OutboundIdempotencyConflictError();
         }
-        return { ...projectOutboundSubmission(existing), replayed: true };
+        throw new OutboundSubmissionUnavailableError(error);
+    }
+    const id = reservation.id;
+    if (reservation.replayed) {
+        if (!reservation.existing) throw new OutboundSubmissionUnavailableError();
+        return { ...projectOutboundSubmission(reservation.existing), replayed: true };
     }
 
     if (input.submissionKind === 'immediate') {
@@ -1313,6 +1330,10 @@ export const runScheduledSender = async (
     const claimToken = workerId || `webmail-${process.pid}-${crypto.randomUUID()}`;
     try {
         await ensureScheduledEmailsSchema(db);
+        await backfillOutboundRegistry(db, 100);
+        if (outboundCompactionMode === 'registry-verified-v1') {
+            await compactUniversalOutbox(db, { mode: outboundCompactionMode, batchSize: 100 });
+        }
         const store = new MySqlScheduledEmailStore(db);
         let processed = 0;
         while (processed < 25) {

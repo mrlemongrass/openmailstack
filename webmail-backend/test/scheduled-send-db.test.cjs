@@ -25,6 +25,7 @@ test('universal outbox migration, reservation, and claim races on disposable Mar
   } = require('../src/scheduled-send.js');
   t.after(async () => {
     try {
+      await pool.query('DROP TABLE IF EXISTS outbound_submission_registry');
       await pool.query('DROP TABLE IF EXISTS scheduled_emails');
       await pool.end();
     } finally {
@@ -33,6 +34,7 @@ test('universal outbox migration, reservation, and claim races on disposable Mar
     }
   });
 
+  await pool.query('DROP TABLE IF EXISTS outbound_submission_registry');
   await pool.query('DROP TABLE IF EXISTS scheduled_emails');
   await pool.query(`
     CREATE TABLE scheduled_emails (

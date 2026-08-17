@@ -1,5 +1,33 @@
 # Implementation State
 
+## 2026-08-16 Cycle 11 Universal Outbox Registry And Ordering
+
+**Status: implemented and disposable-database verified; compaction remains
+disabled for rollout.** `outbound_submission_registry` now atomically reserves
+the owner/key/fingerprint/origin identity with each keyed hot payload row. It
+contains no MIME, envelope, body, attachment, recipient, or credential fields.
+Hot-row removal copies terminal outcome into the registry in the same
+transaction, so replay/conflict remains authoritative after payload deletion.
+Bounded backfill is additive/idempotent and compaction fails closed unless every
+keyed hot row exactly matches the registry.
+
+Retention policy is seven days for terminal payload, 90 days for body-free
+scheduled display metadata, 120 days for web replay tombstones, and 400 days
+for ActiveSync replay tombstones. Delivery-uncertain, active/nonterminal,
+future-scheduled, and historical null-key rows never auto-expire. The exact
+`OMS_OUTBOUND_COMPACTION_MODE=registry-verified-v1` opt-in is required; default
+and the Cycle 10 active rollout remain `disabled` until rollback compatibility
+with the registry is separately proven.
+
+Mixed legacy local-wall and keyed UTC rows are now selected independently,
+projected to real instants, and globally sorted for both Scheduled-folder reads
+and bounded worker claims. A `Pacific/Kiritimati` disposable MariaDB fixture
+proves the old raw-DATETIME order is wrong and the projected order/claim is
+correct. The same proof covers atomic rollback, concurrent reservation,
+same-key replay/conflict after hot deletion, owner isolation, abort replay,
+apply-twice migration/backfill, bounded concurrent compaction, privacy, and
+retention exceptions.
+
 ## 2026-08-16 Cycle 9 Rollback Bridge
 
 **Status: rollback-compatible outbound quarantine is implemented and locally

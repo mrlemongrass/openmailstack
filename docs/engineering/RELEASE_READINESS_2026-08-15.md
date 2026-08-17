@@ -242,8 +242,8 @@ not folded into this outbound change.
 | P1 release gate | Existing duplicate production calendar tombstone blocks startup/deploy | Obtain explicit approval for the exact repair, snapshot, repair only the proven row, and rerun guarded forward/rollback gates |
 | Release gate | Physical iOS ActiveSync SendMail/retry is unproven | Observe fresh acceptance, lost/retried ClientId behavior, Sent-copy choice, and zero duplicate SMTP |
 | Release gate | Original macOS Notes lifecycle is unproven | Repeat edit/close/reopen/delete and inspect one SQL/IMAP identity |
-| P2 operations | Universal-outbox tombstone metadata has no bounded archival policy | Define a web/EAS-safe retry horizon and archive/cleanup design without reopening duplicate risk |
-| P2 legacy UX | Mixed legacy/local and keyed/UTC rows can sort out of true instant order in the Scheduled folder | Sort on projected instants or add an explicit normalized sort key; delivery eligibility is already correct |
+| Rollout gate | Bounded universal-outbox retention is implemented and disposable-database verified | Keep compaction disabled until the installed rollback runtime is registry-compatible; then opt in only with `registry-verified-v1` |
+| Closed locally | Mixed legacy/local and keyed/UTC Scheduled ordering | Project both bases to real instants for list and global worker claim order; do not rewrite historical DATETIME values |
 | P2 recovery | No clean-host install/restore drill | Prove packages, service state, restore, RPO/RTO, off-host retention, and rollback on a disposable host |
 | P2 protocol | A pre-network process crash after `smtp_inflight` is conservatively uncertain | Deepen the SMTP transaction boundary only with evidence that cannot cause resend after DATA |
 | P2 protocol | No authenticated HTTP-to-database-to-SMTP ActiveSync canary yet | Add a disposable end-to-end EAS SendMail harness, then physical client proof |

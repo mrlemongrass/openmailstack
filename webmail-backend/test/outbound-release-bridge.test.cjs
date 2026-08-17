@@ -122,8 +122,9 @@ test('bridge mode blocks every scheduled cancellation and removal mutation at th
 
 test('bridge mode keeps owner-scoped status reads available', async () => {
   const allColumns = [
-    'id', 'username', 'send_at', 'mail_options', 'draft_uid', 'payload_version', 'submission_kind',
-    'idempotency_key', 'request_fingerprint', 'save_in_sent_items', 'status', 'available_at',
+    'id', 'username', 'send_at', 'mail_options', 'display_metadata_json', 'draft_uid', 'payload_version',
+    'submission_kind', 'submission_origin', 'idempotency_key', 'request_fingerprint',
+    'save_in_sent_items', 'status', 'available_at',
     'attempts', 'lease_owner', 'lease_expires_at', 'sender_address', 'message_id', 'envelope_json',
     'rejected_recipients_json', 'raw_message', 'sent_raw_message', 'smtp_accepted_at',
     'sent_copy_completed_at', 'completed_at', 'cancelled_at', 'removed_at', 'last_error_code', 'last_error_at',
@@ -133,6 +134,7 @@ test('bridge mode keeps owner-scoped status reads available', async () => {
     async query(sql) {
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
+      if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) return [allColumns.map(COLUMN_NAME => ({
         COLUMN_NAME,
         COLUMN_TYPE: COLUMN_NAME === 'attempts' ? 'int unsigned' : '',

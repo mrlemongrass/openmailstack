@@ -5,8 +5,9 @@ process.env.OMS_DB_PASSWORD ||= 'outbound-release-rollback-test';
 process.env.OMS_OUTBOUND_RELEASE_MODE = 'active';
 
 const allColumns = [
-  'id', 'username', 'send_at', 'mail_options', 'draft_uid', 'payload_version', 'submission_kind',
-  'idempotency_key', 'request_fingerprint', 'save_in_sent_items', 'status', 'available_at',
+  'id', 'username', 'send_at', 'mail_options', 'display_metadata_json', 'draft_uid', 'payload_version',
+  'submission_kind', 'submission_origin', 'idempotency_key', 'request_fingerprint',
+  'save_in_sent_items', 'status', 'available_at',
   'attempts', 'lease_owner', 'lease_expires_at', 'sender_address', 'message_id', 'envelope_json',
   'rejected_recipients_json', 'raw_message', 'sent_raw_message', 'smtp_accepted_at',
   'sent_copy_completed_at', 'completed_at', 'cancelled_at', 'removed_at', 'last_error_code', 'last_error_at',
@@ -39,10 +40,14 @@ test('active durable immediate row survives bridge retry and worker rollback qua
     async commit() {},
     async rollback() {},
     release() {},
-    async query(sql) {
+    async query(sql, params = []) {
       if (phase === 'bridge') bridgeDatabaseCalls += 1;
       const compact = String(sql).replace(/\s+/g, ' ').trim();
-      if (compact.startsWith('SELECT * FROM scheduled_emails')) return [[], []];
+      if (compact.startsWith('INSERT INTO scheduled_emails')
+        || compact.startsWith('INSERT INTO outbound_submission_registry')) {
+        return db.query(sql, params);
+      }
+      if (compact.includes('FROM scheduled_emails')) return [[], []];
       if (compact.startsWith('UPDATE scheduled_emails')) {
         if (phase === 'bridge') bridgeClaimMutations += 1;
         return [{ affectedRows: 0 }, []];
@@ -59,6 +64,7 @@ test('active durable immediate row survives bridge retry and worker rollback qua
       if (phase === 'bridge') bridgeDatabaseCalls += 1;
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
+      if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) return [allColumns.map(COLUMN_NAME => ({
         COLUMN_NAME,
         COLUMN_TYPE: COLUMN_NAME === 'attempts' ? 'int unsigned' : '',
@@ -75,23 +81,25 @@ test('active durable immediate row survives bridge retry and worker rollback qua
           username: params[0],
           send_at: new Date(`${params[1]}Z`),
           mail_options: params[2],
-          draft_uid: params[3],
+          display_metadata_json: params[3],
+          draft_uid: params[4],
           payload_version: 2,
-          submission_kind: params[4],
-          idempotency_key: params[5],
-          request_fingerprint: params[6],
-          save_in_sent_items: params[7],
+          submission_kind: params[5],
+          submission_origin: params[6],
+          idempotency_key: params[7],
+          request_fingerprint: params[8],
+          save_in_sent_items: params[9],
           status: 'scheduled',
-          available_at: new Date(`${params[8]}Z`),
+          available_at: new Date(`${params[10]}Z`),
           attempts: 0,
           lease_owner: null,
           lease_expires_at: null,
-          sender_address: params[9],
-          message_id: params[10],
-          envelope_json: params[11],
+          sender_address: params[11],
+          message_id: params[12],
+          envelope_json: params[13],
           rejected_recipients_json: null,
-          raw_message: Buffer.from(params[12]),
-          sent_raw_message: Buffer.from(params[13]),
+          raw_message: Buffer.from(params[14]),
+          sent_raw_message: Buffer.from(params[15]),
           smtp_accepted_at: null,
           sent_copy_completed_at: null,
           completed_at: null,
@@ -101,6 +109,9 @@ test('active durable immediate row survives bridge retry and worker rollback qua
           last_error_at: null,
         };
         return [{ insertId: row.id }, []];
+      }
+      if (compact.startsWith('INSERT INTO outbound_submission_registry')) {
+        return [{ affectedRows: 1 }, []];
       }
       if (compact.includes('FROM scheduled_emails WHERE id = ? AND username = ?')) {
         return [[{ ...row, send_at_utc: row.send_at.toISOString() }], []];

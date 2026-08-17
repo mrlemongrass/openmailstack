@@ -139,6 +139,8 @@ postfix-spool	/var/spool/postfix	directory
 oms-config	/etc/openmailstack	directory
 postfix-config	/etc/postfix	directory
 dovecot-config	/etc/dovecot	directory
+dovecot-fallback-cert	/etc/ssl/certs/ssl-cert-snakeoil.pem	file
+dovecot-fallback-key	/etc/ssl/private/ssl-cert-snakeoil.key	file
 nginx-config	/etc/nginx	directory
 rspamd-config	/etc/rspamd	directory
 dkim-keys	/var/lib/rspamd/dkim	directory
@@ -803,7 +805,11 @@ oms_br_copy_inventory() {
             if [[ "${kind}" == "directory" ]]; then
                 [[ -d "${source_path}" ]] || return 1
                 install -d -o root -g root -m 0700 -- "${staging_dir}/payload/${key}" || return 1
-                "${rsync_bin}" -aHAX --numeric-ids -- "${source_path}/" "${staging_dir}/payload/${key}/" \
+                # Quiesced service trees can still contain stale Unix sockets,
+                # FIFOs, or device nodes. They are runtime endpoints, not
+                # restorable data; the service recreates them after restart.
+                "${rsync_bin}" -aHAX --numeric-ids --no-specials --no-devices --quiet -- \
+                    "${source_path}/" "${staging_dir}/payload/${key}/" \
                     || return 1
             else
                 [[ -f "${source_path}" ]] || return 1

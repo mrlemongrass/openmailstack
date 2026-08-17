@@ -112,17 +112,16 @@ Last updated: 2026-08-15
 - 🔴 Guarded rollout still stops on one exact duplicate production calendar
   tombstone pair. Read-only evidence identified the newer retention candidate,
   but no production row may be changed without separate explicit approval.
-- 🟡 Universal-outbox terminal tombstones preserve dedupe metadata indefinitely.
-  Payloads are scrubbed, but owner, sender/Message-ID, rejected-recipient JSON,
-  hashes, and indexes can grow without bound. Define an archival/retention
-  horizon that does not reopen web or ActiveSync duplicate-delivery risk, then
-  add cleanup and scale tests before enterprise-volume enablement.
-- 🟡 Mixed-generation Scheduled-folder ordering compares raw SQL `send_at`
-  values even though old null-key scheduled rows are local-wall-clock and new
-  keyed rows are UTC. Projection and delivery timing are correct, but a legacy
-  row can be displayed after a later keyed row. Normalize ordering on projected
-  instants or introduce a migration-safe sort key before claiming exact order
-  on upgraded installations.
+- 🟡 Universal-outbox bounded retention is implemented but deliberately off by
+  default. Do not set `OMS_OUTBOUND_COMPACTION_MODE=registry-verified-v1` until
+  the installed rollback runtime is proven registry-compatible. The verified
+  policy is 7-day terminal payload, 90-day scheduled display, 120-day web
+  replay, and 400-day ActiveSync replay retention; uncertain, active/future,
+  and null-key legacy rows do not auto-expire.
+- ✅ Mixed-generation Scheduled-folder ordering no longer compares raw local-
+  wall and UTC DATETIME literals. List and worker claim paths project both bases
+  to real instants, with the global limit selected after per-basis bounded
+  locking. Historical values remain untouched.
 - The bounded findings from the 2026-07-29 desktop/mobile Playwright audit are resolved. This is not proof that the suite has no other UX defects; keep `docs/engineering/UX_AUDIT.md` current as additional authenticated workflows are reviewed.
 - Notes collaboration is production-bounded to same-owner sessions behind an operator opt-in. Preserve the same-origin signaling route, short-lived owner/session/room capability, expiry and size/connection limits, query-string-free access logging, atomic persistence, and local fallback. Cross-account invitations, membership, and sharing ACLs are not shipped and must not be inferred from the owner-only foundation. Direct clipboard-image paste must continue to use the authenticated bounded upload path, distinguish image-only HTML from genuinely mixed rich content, retain a Yjs-relative insertion anchor, and cancel stale note/editor work rather than storing base64 document images or inserting into the wrong note.
 - 🟡 Notes IMAP duplicate/delete race is code-closed at `bfbe1d7` and deployed through the guarded release path. The deterministic fake SQL/IMAP seam now proves same-owner and independent-runtime serialization, different-owner progress, complete mailboxes beyond 25 messages, exact revision acknowledgement, conditional missing-IMAP deletion, edit/import/delete interleavings, duplicate Message-ID cleanup, failed replacement delete, and uncertain accepted append. Focused, complete, independent-review, artifact, staging, and public protocol gates pass. Keep this risk yellow until the owner repeats the original edit/delete sequence in physical macOS Notes; do not use real Notes data for automated closure.

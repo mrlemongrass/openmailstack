@@ -3,7 +3,9 @@
 
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
+const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const http = require('node:http');
+const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { WbxmlParser } = require('../../webmail-backend/src/wbxml/parser.js');
@@ -469,6 +471,74 @@ async function exercise(mode, {
   }
 }
 
+async function exerciseLongPollBeyondTheGlobalHeadersTimeout() {
+  const temporaryDirectory = mkdtempSync(path.join(tmpdir(), 'oms-ping-transport-'));
+  const closeMarker = path.join(temporaryDirectory, 'dispatcher-closed');
+  const preloadPath = path.join(temporaryDirectory, 'short-global-headers-timeout.cjs');
+  const undiciPath = require.resolve('undici', {
+    paths: [path.join(projectRoot, 'webmail-backend')],
+  });
+  writeFileSync(preloadPath, `'use strict';
+const { writeFileSync } = require('node:fs');
+const undici = require(${JSON.stringify(undiciPath)});
+const NativeAgent = undici.Agent;
+undici.Agent = class TrackedAgent extends NativeAgent {
+  constructor(options) {
+    assertTransportTimeouts(options);
+    super(process.env.OMS_TEST_PING_FORCE_HEADERS_TIMEOUT === '1'
+      ? { ...options, headersTimeout: 100 }
+      : options);
+  }
+  async close(...args) {
+    try {
+      return await super.close(...args);
+    } finally {
+      writeFileSync(process.env.OMS_TEST_PING_DISPATCHER_CLOSE_MARKER, 'closed\\n', { mode: 0o600 });
+    }
+  }
+};
+function assertTransportTimeouts(options) {
+  if (!Number.isInteger(options?.headersTimeout) || options.headersTimeout <= 990000) {
+    throw new Error('Ping dispatcher headers timeout must exceed the maximum request deadline');
+  }
+  if (!Number.isInteger(options?.bodyTimeout) || options.bodyTimeout <= 990000) {
+    throw new Error('Ping dispatcher body timeout must exceed the maximum request deadline');
+  }
+}
+undici.setGlobalDispatcher(new NativeAgent({ headersTimeout: 100, bodyTimeout: 100 }));
+`, { mode: 0o600 });
+
+  try {
+    const result = await exercise('happy', {
+      longMode: true,
+      expectSuccess: true,
+      extraEnv: {
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${preloadPath}`].filter(Boolean).join(' '),
+        OMS_TEST_PING_DISPATCHER_CLOSE_MARKER: closeMarker,
+      },
+    });
+    assert.equal(readFileSync(closeMarker, 'utf8'), 'closed\n', 'Ping transport dispatcher was not closed');
+    rmSync(closeMarker, { force: true });
+    await exercise('happy', {
+      longMode: true,
+      expectedError: 'response headers timed out',
+      extraEnv: {
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${preloadPath}`].filter(Boolean).join(' '),
+        OMS_TEST_PING_DISPATCHER_CLOSE_MARKER: closeMarker,
+        OMS_TEST_PING_FORCE_HEADERS_TIMEOUT: '1',
+      },
+    });
+    assert.equal(
+      readFileSync(closeMarker, 'utf8'),
+      'closed\n',
+      'Ping transport dispatcher was not closed after a transport failure',
+    );
+    return result;
+  } finally {
+    rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 (async () => {
   const routine = await exercise('happy', { expectSuccess: true });
   assert.equal(routine.pingIndex, 8, 'routine gate unexpectedly ran the 900-second hold');
@@ -488,7 +558,7 @@ async function exercise(mode, {
     `DELETE ${calendarPath}`,
   ]);
 
-  const long = await exercise('happy', { longMode: true, expectSuccess: true });
+  const long = await exerciseLongPollBeyondTheGlobalHeadersTimeout();
   assert.equal(long.pingIndex, 9);
   assert.equal(long.syncIndex, 12);
   assert.equal(long.optionsCount, 2);

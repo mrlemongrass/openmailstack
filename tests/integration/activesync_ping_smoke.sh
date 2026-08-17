@@ -95,6 +95,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const nodemailer = require(path.join(process.env.PROJECT_ROOT, 'webmail-backend/node_modules/nodemailer'));
 const { ImapFlow } = require(path.join(process.env.PROJECT_ROOT, 'webmail-backend/node_modules/imapflow'));
+const { Agent, fetch } = require(path.join(process.env.PROJECT_ROOT, 'webmail-backend/node_modules/undici'));
 
 const projectRoot = process.env.PROJECT_ROOT;
 const { WbxmlParser } = require(path.join(projectRoot, 'webmail-backend/src/wbxml/parser.js'));
@@ -114,6 +115,7 @@ const MAX_SYNC_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_SELECTABLE_MAILBOXES = 512;
 const MAX_MAILBOX_PATH_BYTES = 1024;
 const MAX_MAILBOX_PATHS_BYTES = 256 * 1024;
+const TRANSPORT_TIMEOUT_MS = 1020 * 1000;
 const smtpHost = process.env.SMTP_HOST || '127.0.0.1';
 const smtpPort = Number(process.env.SMTP_PORT || 587);
 const smtpServerName = process.env.SMTP_SERVER_NAME || '';
@@ -259,14 +261,32 @@ async function fetchBounded(url, options, timeoutMs, operation, maxResponseBytes
   try {
     response = await fetch(url, {
       ...options,
+      dispatcher: transportDispatcher,
       headers: { Connection: 'close', ...(options.headers || {}) },
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     if (error?.name === 'TimeoutError') throw new Error(`${operation} exceeded its timeout`);
+    if (error?.cause?.code === 'UND_ERR_HEADERS_TIMEOUT') {
+      throw new Error(`${operation} response headers timed out`);
+    }
+    if (error?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT') {
+      throw new Error(`${operation} connection timed out`);
+    }
     throw new Error(`${operation} transport failed`);
   }
-  const body = await readBoundedBody(response, operation, maxResponseBytes);
+  let body;
+  try {
+    body = await readBoundedBody(response, operation, maxResponseBytes);
+  } catch (error) {
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+      throw new Error(`${operation} exceeded its timeout`);
+    }
+    if (error?.cause?.code === 'UND_ERR_BODY_TIMEOUT') {
+      throw new Error(`${operation} response body timed out`);
+    }
+    throw error;
+  }
   return { response, body };
 }
 
@@ -820,6 +840,11 @@ async function expectPimWake({
   return syncPimCollection(collectionId, syncKey, { label, expectedTag, expectedValue });
 }
 
+const transportDispatcher = new Agent({
+  headersTimeout: TRANSPORT_TIMEOUT_MS,
+  bodyTimeout: TRANSPORT_TIMEOUT_MS,
+});
+
 (async () => {
   let failure;
   try {
@@ -893,6 +918,13 @@ async function expectPimWake({
       const message = error instanceof Error ? error.message : String(error);
       failure = new Error(failure ? `${failure.message}; cleanup failed: ${message}` : `cleanup failed: ${message}`);
     }
+  }
+  try {
+    await transportDispatcher.close();
+  } catch {
+    failure = new Error(failure
+      ? `${failure.message}; cleanup failed: Ping transport dispatcher close failed`
+      : 'cleanup failed: Ping transport dispatcher close failed');
   }
   if (failure) throw failure;
   console.log(`ActiveSync Ping protocol checks passed (${longMode ? 'routine plus 900-second hold' : 'routine 60-second gate'})`);

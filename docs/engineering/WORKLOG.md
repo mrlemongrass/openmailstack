@@ -8969,3 +8969,154 @@ runtime an unsafe automatic rollback target after universal-outbox traffic.
 - Authenticated HTTP/WBXML ActiveSync integration, physical iOS retry, physical
   macOS Notes lifecycle, mixed-basis ordering, bounded outbox archival, and a
   clean-host restore drill remain assigned to later cycles.
+
+## 2026-08-16 — Cycle 10: Approval-Pinned Repair And Guarded Active Release
+
+Agent/tool: Codex with delegated implementation, read-only live preflight,
+disposable MariaDB, official ActiveSync references, and independent review
+
+Branch: `main` plus an isolated clean release worktree
+
+### Selected task
+
+Turn the locally safe rollback bridge into a production-safe release without
+exceeding the user's exact calendar-data approval, then close the concrete
+ActiveSync ItemOperations and DAV release-gate failures found during rollout.
+
+### Changes and production work
+
+- Replaced the generic duplicate-tombstone migration authorization with a
+  one-time base64url manifest pinned to calendar 1, IDs 22/23, retained ID 23,
+  exact binary UID/resource SHA-256 and lengths, sync tokens, timestamps, and
+  zero live-event matches. The repair rejects non-bridge use before its first
+  query and runs SERIALIZABLE with full tombstone/event locking so a concurrent
+  mismatch cannot cross the approval boundary.
+- Created and verified root-only logical backup
+  `/var/backups/openmailstack/oms-backup-20260816T181350Z` plus a checksummed
+  forensic export. The guarded repair archived both approved rows, retained 23,
+  deleted only 22, created the unique resource invariant, preserved calendar
+  token 1440, and left zero duplicate groups or matching live events.
+- Fixed ItemOperations to consume the opaque message IDs produced by Sync and
+  resolve the requested collection only through the authenticated user's
+  FolderSync inventory. Cross-folder replay and missing/unlisted folders fail
+  before IMAP message fetch.
+- Corrected the CardDAV release assertion to understand the intentional
+  `X-OMS-EAS-SLOT` EMAIL parameter. Corrected the CalDAV assertion to bind the
+  exact raw same-origin href to the disposable slug or exact numeric FolderSync
+  ID and the deterministically derived Add resource, rejecting URL aliases,
+  traversal, credentials, query/fragment, ambiguity, and near matches.
+- Guarded-deployed `webmail-bridge`, then activated `webmail` only from that
+  attested bridge. Root-owned runtime/environment checks, public protocol gates,
+  readiness, zero restarts, and the repaired calendar invariant passed.
+
+### Proof and limits
+
+- Focused ActiveSync, DAV, bridge, generated-runtime, disposable MariaDB, shell,
+  and full integration suites passed at each release fixed point.
+- No synthetic production outbox row was inserted because the exact approval
+  covered only the backup and tombstone repair. The durable-row active-to-bridge
+  canary remains a separately authorized release-evidence gate.
+
+## 2026-08-16 — Cycle 11: Registry, Real EAS HTTP, And Clean-Host Recovery
+
+Agent/tool: Codex with delegated storage/EAS/clean-host work, disposable
+MariaDB, generated-runtime verification, and a fresh Debian 13.6 guest
+
+Branch: `main`
+
+### Changes made
+
+- Added `outbound_submission_registry`, an atomic privacy-minimal replay
+  identity for owner/key/fingerprint/origin/outcome. It contains no MIME,
+  envelope, body, attachment, recipient, or credential fields. Hot terminal
+  rows compact only after an exact locked registry match, so payload deletion
+  cannot reopen delivery.
+- Defined 7-day terminal-payload, 90-day scheduled-display, 120-day web replay,
+  and 400-day ActiveSync replay horizons. Active/future, uncertain, and legacy
+  null-key rows never auto-expire. Compaction is disabled unless the exact
+  `OMS_OUTBOUND_COMPACTION_MODE=registry-verified-v1` opt-in is present.
+- Fixed mixed local-wall legacy and UTC keyed ordering by selecting each basis
+  independently, projecting real instants, and globally sorting both Scheduled
+  reads and bounded worker claims without rewriting historical DATETIME values.
+- Replaced the SendMail source-regex proof with an authenticated HTTP/WBXML
+  handler and disposable MariaDB/SMTP/Sent-copy integration. First send,
+  lost-response replay, changed-MIME conflict, durable `smtp_inflight`, sender
+  ownership, DeviceId/AccountId, SaveInSentItems, malformed input, auth, bridge
+  quarantine, and unsupported Smart operations are exercised behaviorally.
+- Ran a fresh Debian 13.6 guest with private loopback-only networking. Real
+  systemd/MariaDB/rsync backup+verify completed in 4.798 seconds; exact file and
+  three-database restore in 11.650 seconds; injected post-apply failure recovered
+  the verified safety snapshot in 13.417 seconds with zero controlled fixture
+  transactions lost and exact active/inactive service state. The guest was
+  shut down and its exact temporary root removed.
+
+### Proof and limits
+
+- Four isolated MariaDB proofs cover migration/order/races, registry retention,
+  real EAS HTTP delivery, and strict approval-pinned calendar repair; every
+  temporary server/tree was removed.
+- The clean-host drill proves recovery transaction semantics, not a full
+  mutating install, production-scale off-host restore, DNS/TLS, or mail flow.
+- Integrated registry/EAS HTTP work is locally complete but newer than the
+  active production runtime; compaction remains disabled.
+
+## 2026-08-16 — Cycle 12: ActiveSync Direct Push And Final Integration
+
+Agent/tool: Codex with official Microsoft/Apple protocol research, delegated
+TDD/review, live guarded canaries, and final fixed-point review
+
+Branch: `main`
+
+### Changes made
+
+- Implemented bounded ActiveSync Ping with strict page-13 parsing, 60-900 second
+  negotiation, required first-request configuration, atomic per-owner/device
+  cache, exact FolderSync inventory/class authorization, add-only wake semantics,
+  no Sync-state advancement, bounded polling/admission, supersession, deadline,
+  disconnect, and shutdown cleanup.
+- Ping uses a 32 KiB command parser before the 16 MiB generic EAS parser,
+  validates protocol version/User/DeviceId/DeviceType/media type, and returns
+  exact HTTP/common/Ping statuses. SQL calendar inventory is SELECT-only on an
+  owned abort-destroyed connection; mail/contacts/calendar probes are bounded.
+- The public gate now proves Email, Contacts, and Calendar Status-2 wake plus
+  exact Sync retrieval, deletion-only non-wake, 60-second full/bodyless renewals,
+  deterministic collision-safe cleanup, and opt-in 900-second proxy survival.
+- The first active gate exposed a deadline race: a fresh poll could start just
+  before heartbeat expiry and turn the expected Status 1 into Status 8. The
+  scheduler now avoids a new boundary poll while preserving Status 8 for a
+  genuinely unresolved earlier probe.
+- The next 900-second attempt exposed a gate-client defect, not a server defect:
+  Node's ambient Undici response-header timeout closed at about 300 seconds.
+  The smoke now owns finite 1,020-second header/body ceilings above its maximum
+  990-second AbortSignal deadline and closes the dispatcher on every exit.
+- Merged the proven release work with the Cycle 11 universal-outbox changes at
+  `e5b25f74`. The only source overlaps retained the dedicated durable SendMail
+  HTTP handler alongside Ping and independently preserved one-time repair
+  authorization plus disabled-by-default outbox compaction.
+
+### Final evidence
+
+- Public production gate returned Ping Status 1 after 900.080 seconds. Mail,
+  contacts, calendar, three-class wake/Sync, deletion non-wake, cleanup, runtime
+  and environment attestation, readiness, zero restarts, empty outbox, and the
+  repaired tombstone invariant passed.
+- Complete backend: 786 tests, 779 pass, 7 documented opt-in skips, 0 fail.
+- Complete frontend: 175/175; ESLint and production build pass.
+- Full repository integration passes every protocol, guarded deployment,
+  restore, backup, scheduler, security, and local dry-run gate.
+- Browser evidence remains the prior final-source 240/240 Chromium/WebKit
+  desktop/mobile matrix; frontend source did not change in Cycles 9-12.
+- Final Spec review found no code blocker. Standards review found stale release
+  records as the only hard issue; this Worklog/readiness/architecture update
+  closes it. The suggested Ping HTTP/module and outbox-module deepening plus
+  shared credential/status classifiers remain nonblocking design debt.
+
+### Release decision
+
+No known code-level P0/P1 remains in the scoped work. Release remains **NO-GO**
+for paid-quality small-business claims until the separately authorized live
+durable-row rollback canary, physical iOS SendMail and Direct Push matrix,
+physical macOS CardDAV identity edit/merge and Notes lifecycle, and full
+production-scale/off-host recovery evidence are complete. Enterprise identity,
+compliance, migration, delegation, and offline scope remain multi-release
+product gaps.

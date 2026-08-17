@@ -1155,10 +1155,10 @@ Evidence: `webmail-backend/src/scheduler/`, versioned migrations `001` through `
 
 ### 8.9 Universal Outbound Delivery
 
-Status: `Implemented And Locally Verified - Not Deployed`
+Status: `Partial`
 
-Last verified: 2026-08-16 in source tests, deterministic browser fixtures, and
-an isolated disposable MariaDB 11.8.6 instance.
+Last verified: 2026-08-16 in the guarded active production runtime, source
+tests, deterministic browser fixtures, and isolated disposable MariaDB.
 
 Web immediate mail, delayed/Undo mail, and ActiveSync SendMail now enter one
 durable outbox implemented on the core `scheduled_emails` table. The server
@@ -1183,21 +1183,23 @@ pool's legacy timezone behavior. Historical null-key rows still in
 `available_at` values were written by mysql2 as process-local wall time, so
 claim and projection use a raw JavaScript `Date`. Once a legacy row enters
 `retry_wait` (and for all leases/Sent-copy states), its database-generated time
-is UTC again. Do not collapse these bases or mass-convert ambiguous rows. The
-worker locks at most the first `N` eligible rows from each time basis, projects
-both sets to real instants, and claims the global first `N`. Scheduled-folder
-reads use the same projection before sorting. This avoids comparing
-incomparable DATETIME literals while preserving every legacy stored value.
+is UTC again. Do not collapse these bases or mass-convert ambiguous rows. In
+integrated `main`, which is newer than the installed active runtime, the worker
+locks at most the first `N` eligible rows from each time basis, projects both
+sets to real instants, and claims the global first `N`. Scheduled-folder reads
+use the same projection before sorting. This avoids comparing incomparable
+DATETIME literals while preserving every legacy stored value.
 
-An additive `outbound_submission_registry` is the compact authoritative replay
-identity. The hot payload row and owner/key/fingerprint/origin registry row are
-reserved in one transaction. The registry stores no MIME, envelope, body,
-attachment, recipient, or credential fields. While a hot row exists it remains
-authoritative for live status; compaction copies the terminal outcome and
-deletes the hot row in one transaction, so a crash cannot reopen delivery.
-Same-key replay and fingerprint conflict continue to work from the compact row.
-Bounded backfill is additive and idempotent, and compaction first verifies that
-every keyed hot row has an exact registry identity.
+Also in integrated `main`, an additive `outbound_submission_registry` is the
+compact authoritative replay identity. The hot payload row and owner/key/
+fingerprint/origin registry row are reserved in one transaction. The registry
+stores no MIME, envelope, body, attachment, recipient, or credential fields.
+While a hot row exists it remains authoritative for live status; compaction
+copies the terminal outcome and deletes the hot row in one transaction, so a
+crash cannot reopen delivery. Same-key replay and fingerprint conflict continue
+to work from the compact row. Bounded backfill is additive and idempotent, and
+compaction first verifies that every keyed hot row has an exact registry
+identity.
 
 Terminal payloads are scrubbed after seven days. Scheduled rows retain a
 separate body-free display projection for 90 days before leaving the hot table.
@@ -1207,7 +1209,7 @@ rows, and historical null-key rows never auto-expire. Maintenance is fail-closed
 and disabled by default; it runs only with the exact
 `OMS_OUTBOUND_COMPACTION_MODE=registry-verified-v1` opt-in after the installed
 rollback runtime is proven registry-compatible. The current active rollout
-keeps this setting disabled.
+remains on the core outbox and has no compaction enabled.
 
 The browser stores only UUIDs and privacy-safe scope/content digests in
 IndexedDB, coordinates concurrent tabs transactionally, and recovers attempts
@@ -1224,7 +1226,7 @@ honors SaveInSentItems. SmartReply and SmartForward remain unadvertised and
 fail closed; AccountId fails closed until Settings account identities exist.
 
 The additive schema and full crash/concurrency matrix pass on disposable
-MariaDB. A rollback-compatible expand/contract bridge is implemented locally.
+MariaDB. A rollback-compatible expand/contract bridge is deployed.
 Its quarantine accepts no new outbound submission or scheduled mutation and
 performs no worker claim, lease recovery, SMTP, IMAP, or authorization work.
 The guarded release sequence requires bridge first and active second; active
@@ -1232,17 +1234,24 @@ cannot deploy over another active runtime. Compatible runtime attestation binds
 the marker and exact mode to root-owned, non-writable code beneath trusted
 ancestors and a root-only environment file. A durable immediate-row regression
 proves that bridge recovery plus a same-key retry and worker cycle leaves the
-row byte-for-byte unchanged with zero delivery side effects. Live bridge/active
-deployment, public guarded rollback proof, and physical iOS retry observation
-remain required before changing this section's not-deployed status.
+row byte-for-byte unchanged with zero delivery side effects. The guarded live
+sequence completed legacy-to-bridge, bridge-to-active, hotfix bridge/active,
+runtime/environment attestation, and complete public protocol gates. The
+registry/compaction expansion in integrated `main` is newer than the active
+runtime and remains disabled by default until a registry-compatible rollback
+pair is installed. An exact authorized production durable-row rollback canary
+and physical iOS SendMail retry remain release evidence gates.
 
 ---
 
 ## 9. ActiveSync, CalDAV, CardDAV, JMAP, and Sync Services
 
-Status: `Needs Verification`
+Status: `Partial`
 
-The project goal includes SOGo ActiveSync support and modern sync behavior. The older technical document mentions:
+OpenMailStack serves ActiveSync, CalDAV, and CardDAV from its native Node
+backend. It does not proxy SOGo and does not currently implement JMAP.
+Autodiscover directs compatible Apple/Microsoft clients to the embedded
+`/Microsoft-Server-ActiveSync` route. The older technical document mentions:
 
 - ActiveSync / EAS
 - SOGo ActiveSync work
@@ -1252,7 +1261,9 @@ The project goal includes SOGo ActiveSync support and modern sync behavior. The 
 - autodiscover
 - mobile/device sync
 
-This is a high-importance area and must not be assumed complete.
+The server-side protocol paths are deployed and script-verified. Physical
+client evidence remains feature-specific and must not be inferred from route
+health alone.
 
 Current Calendar interoperability seam, verified locally 2026-07-20:
 
@@ -1267,7 +1278,36 @@ Current ActiveSync Mail interoperability seam, deployed and script-verified 2026
 - `webmail-backend/src/eas-mail-sync.ts` owns persistent mail delta state. State is isolated by normalized mailbox, EAS `DeviceId`, and folder `CollectionId`; opaque sync keys bind the client to one stored snapshot, and exact WBXML retry responses are replayed only after the request has passed direct IMAP credential verification.
 - Each folder snapshot stores `UIDVALIDITY`, `HIGHESTMODSEQ`, a filter-specific UID floor, cached Sync options, and known UID/read state. Previously known UIDs that leave the source folder emit EAS `Delete`; messages moved into Junk or Trash arrive as normal `Add` commands when those destination collections synchronize.
 - Email `FilterType`, `WindowSize`, and AirSyncBase body preferences are honored with UTF-8-safe truncation, protocol window bounds, and a 16 MiB aggregate source-fetch budget. FilterType `0` or an omitted FilterType paginates every eligible item through `MoreAvailable`; once the initial catch-up is complete, unchanged `HIGHESTMODSEQ` polls avoid `SEARCH ALL`.
-- `tests/integration/activesync_mail_smoke.sh` uses the real web message-action API to prove Inbox-to-Junk and Junk-to-Trash deltas, body truncation, read/unread changes, and an empty no-change Sync. The production smoke passed under isolated synthetic-device state. Physical iOS 26.5.2 passed the stale-key reset and continuous all-mail paging after hotfix `bc4f7387`; exhaustion/no-change remains open. Do not repeat a spam move based on subject alone while the IMAP clients and current server UIDs disagree about the two historical examples.
+- `tests/integration/activesync_mail_smoke.sh` uses the real web message-action API to prove Inbox-to-Junk and Junk-to-Trash deltas, body truncation, read/unread changes, and an empty no-change Sync. The production smoke passed under isolated synthetic-device state. Physical iOS 26.5.2 passed the stale-key reset, continuous all-mail paging, catch-up exhaustion, reconciliation, and sustained empty no-change polling after hotfix `bc4f7387`; the owner then confirmed the iOS Exchange, iOS IMAP, and macOS Mail views looked correct. This closes mail paging, not the separate final-runtime Direct Push and SendMail-retry gates. Do not repeat a spam move based on subject alone while the IMAP clients and current server UIDs disagree about the two historical examples.
+
+Current ActiveSync Ping / Direct Push seam, deployed and public-gate verified
+2026-08-16:
+
+- `webmail-backend/src/eas-ping.ts` owns strict page-13 parsing, per-owner/device
+  cached configuration, authenticated FolderSync inventory binding, bounded
+  wait admission, generation-based supersession, and add-only wake evaluation.
+  Ping never advances Sync state; it continues returning Status 2 until the
+  client performs Sync against every reported collection.
+- Initial requests require heartbeat plus folders. Cached partial/bodyless
+  renewal is isolated by normalized owner and validated DeviceId. Heartbeats
+  negotiate within 60-900 seconds, folders are capped at 32, the command has a
+  32 KiB pre-auth ingress parser, and wait/cache/global/per-owner resources are
+  bounded. Mail uses IMAP cursors/snapshots; contacts and calendars use
+  read-only, abort-destroyed SQL connections.
+- `tests/integration/activesync_ping_smoke.sh` proves exact Email, Contacts, and
+  Calendar Status-2 wake followed by Sync retrieval, three-class deletion
+  non-wake, full/bodyless renewal, deterministic cleanup, and an explicit
+  900-second mode. The public gate returned Status 1 after 900.080 seconds with
+  zero service restart and zero canary residue.
+- A deadline-edge race originally launched a fresh probe just before expiry and
+  returned Status 8. The scheduler now leaves the existing deadline to return
+  Status 1 when less than one polling interval remains, while a genuinely hung
+  earlier probe still fails closed with Status 8. The gate uses an explicit
+  finite Undici dispatcher because Node's ambient 300-second response-header
+  timeout is shorter than the protocol's maximum heartbeat.
+- Physical iPhone traffic has reached the Ping route and retried transient
+  Status 8, but on-screen idle/wake, Wi-Fi/cellular transition, sleep/wake, and
+  restart/reconnect evidence for the final runtime remains a release gate.
 
 Current CardDAV interoperability seam, deployed and verified 2026-08-03:
 
@@ -1318,29 +1358,9 @@ confirmation:
   validation, and complete staging smoke pass. Rollback is
   `/var/backups/openmailstack/protocol-guarded-webmail-20260807T224814Z/`.
 
-Agents should locate and document:
-
-- where the SOGo ActiveSync integration lives
-- whether ActiveSync is proxied, embedded, adapted, or configured externally
-- which URL paths serve ActiveSync
-- whether autodiscover is implemented for Apple/Microsoft clients
-- whether TLS and auth expectations match client requirements
-- whether CalDAV/CardDAV are native, proxied, or planned
-- whether JMAP is implemented or aspirational
-- what tests exist for sync behavior
-- what known client compatibility issues exist
-
-Suggested future subsection structure after verification:
-
-```text
-9.1 ActiveSync / EAS
-9.2 SOGo integration model
-9.3 Autodiscover
-9.4 CalDAV
-9.5 CardDAV
-9.6 JMAP
-9.7 Client compatibility matrix
-```
+JMAP remains aspirational. Do not advertise it until a native authenticated
+implementation, capability document, state model, and interoperability suite
+exist.
 
 ---
 

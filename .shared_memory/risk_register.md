@@ -2,7 +2,7 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-08-15
+Last updated: 2026-08-16
 
 ## Resolved Risks
 
@@ -12,8 +12,20 @@ Last updated: 2026-08-15
   SMTP; same-key replay never resends; post-DATA ambiguity becomes terminal;
   browser attempts survive tabs/reload; and disposable MariaDB proves the
   additive bridge, races, crash states, UTC boundary, and payload scrubbing.
-  This is code-closed locally but is not deployment-closed; see the rollback
-  compatibility risk below.
+  The bridge-first delivery runtime is now deployed active; compaction remains
+  disabled until the integrated registry expansion has a compatible installed
+  rollback pair.
+- ✅ Universal-outbox rollback compatibility: production completed the
+  attested total-quarantine bridge followed by active delivery, and guarded
+  hotfix deployment repeated the bridge/active boundary. Unmarked legacy
+  snapshots are no longer valid rollback targets.
+- ✅ Exact duplicate calendar tombstone: a verified logical backup and
+  approval-pinned SERIALIZABLE repair retained ID 23, archived 22/23, deleted
+  only 22, and left zero duplicate groups or matching live events.
+- ✅ ActiveSync Ping server/proxy heartbeat: deployed Ping proves exact Email,
+  Contacts, and Calendar wake+Sync, deletion non-wake, 60-second renewals, and
+  one public 900.080-second Status-1 hold. Physical on-screen/network-transition
+  validation remains separate release evidence.
 - ✅ IMAP/ActiveSync release regressions escaping route-only checks: the
   installed-host gate now fails closed on missing credentials or skipped
   smokes and authenticates through strict public IMAPS plus ActiveSync against
@@ -102,26 +114,28 @@ Last updated: 2026-08-15
 
 ## Remaining High-Priority Risks
 
-- 🔴 Universal-outbox rollback compatibility: Cycle 9 implements and
-  independently reviews a bridge-first total outbound quarantine, exact-mode
-  recovery attestation, and a durable-row zero-side-effect rollback regression.
-  The installed production runtime is still the incompatible legacy build,
-  however, so this remains a live release blocker until `webmail-bridge` is
-  guarded-deployed, `webmail` is activated from that exact bridge, and a
-  controlled active-to-bridge rollback proves the durable row/key unchanged.
-- 🔴 Guarded rollout still stops on one exact duplicate production calendar
-  tombstone pair. Read-only evidence identified the newer retention candidate,
-  but no production row may be changed without separate explicit approval.
+- 🔴 Physical Apple release evidence: complete iOS SendMail/ClientId retry,
+  on-screen Direct Push idle/wake/network/restart behavior, and the original
+  macOS CardDAV identity edit/merge retry plus Notes edit/reopen/delete lifecycle
+  remain unproven on the final runtime.
+- 🔴 Authorized durable-row rollback evidence: local and guarded bridge
+  regressions are green, but no synthetic production outbox row was inserted
+  because the user approved only the calendar repair. Require exact separate
+  authorization before the inert active-to-bridge row proof and cleanup.
+- 🟡 Clean-host recovery: a fresh Debian 13.6 guest proved backup, verify,
+  exact service-state restore, injected rollback, and cleanup. Full mutating
+  install, realistically sized off-host restore, DNS/TLS, and mail flow remain.
 - 🟡 Universal-outbox bounded retention is implemented but deliberately off by
   default. Do not set `OMS_OUTBOUND_COMPACTION_MODE=registry-verified-v1` until
   the installed rollback runtime is proven registry-compatible. The verified
   policy is 7-day terminal payload, 90-day scheduled display, 120-day web
   replay, and 400-day ActiveSync replay retention; uncertain, active/future,
   and null-key legacy rows do not auto-expire.
-- ✅ Mixed-generation Scheduled-folder ordering no longer compares raw local-
-  wall and UTC DATETIME literals. List and worker claim paths project both bases
-  to real instants, with the global limit selected after per-basis bounded
-  locking. Historical values remain untouched.
+- ✅ Code-local mixed-generation Scheduled-folder ordering no longer compares
+  raw local-wall and UTC DATETIME literals. Integrated-main list and worker
+  claim paths project both bases to real instants, with the global limit
+  selected after per-basis bounded locking. Historical values remain untouched;
+  this expansion is newer than the installed active runtime.
 - The bounded findings from the 2026-07-29 desktop/mobile Playwright audit are resolved. This is not proof that the suite has no other UX defects; keep `docs/engineering/UX_AUDIT.md` current as additional authenticated workflows are reviewed.
 - Notes collaboration is production-bounded to same-owner sessions behind an operator opt-in. Preserve the same-origin signaling route, short-lived owner/session/room capability, expiry and size/connection limits, query-string-free access logging, atomic persistence, and local fallback. Cross-account invitations, membership, and sharing ACLs are not shipped and must not be inferred from the owner-only foundation. Direct clipboard-image paste must continue to use the authenticated bounded upload path, distinguish image-only HTML from genuinely mixed rich content, retain a Yjs-relative insertion anchor, and cancel stale note/editor work rather than storing base64 document images or inserting into the wrong note.
 - 🟡 Notes IMAP duplicate/delete race is code-closed at `bfbe1d7` and deployed through the guarded release path. The deterministic fake SQL/IMAP seam now proves same-owner and independent-runtime serialization, different-owner progress, complete mailboxes beyond 25 messages, exact revision acknowledgement, conditional missing-IMAP deletion, edit/import/delete interleavings, duplicate Message-ID cleanup, failed replacement delete, and uncertain accepted append. Focused, complete, independent-review, artifact, staging, and public protocol gates pass. Keep this risk yellow until the owner repeats the original edit/delete sequence in physical macOS Notes; do not use real Notes data for automated closure.

@@ -1,5 +1,35 @@
 # Implementation State
 
+## 2026-08-16 Cycle 12 Active Runtime And Final Integration
+
+**Status: the core universal outbox and bounded ActiveSync Ping are deployed
+active; integrated registry/EAS HTTP expansion is locally verified but not yet
+deployed.** Production completed legacy-to-bridge, bridge-to-active, hotfix
+bridge/active, runtime/environment attestation, and public protocol gates. The
+exact approved calendar repair retained tombstone 23, archived both approved
+rows, removed only 22, and left zero duplicate groups. The active runtime has
+zero restarts, the outbox was empty at final attestation, and the one-time
+repair approval is absent.
+
+Ping is advertised with strict 60-900 second negotiation, authenticated
+FolderSync ownership, add-only Email/Contacts/Calendar wake semantics, bounded
+cache/wait resources, and cancellation/drain handling. The final public gate
+proved three-class wake plus Sync, deletion non-wake, full/bodyless 60-second
+renewals, and Status 1 after a 900.080-second hold with zero canary residue.
+The scheduler deliberately avoids a fresh poll within the last poll interval;
+a genuinely unresolved earlier probe still returns Status 8. The smoke owns an
+explicit finite Undici dispatcher because ambient Node Fetch headers time out
+before the maximum protocol heartbeat.
+
+Merged `main` at `e5b25f74` passes 779/786 backend tests with seven opt-in
+skips, frontend 175/175 plus lint/build, four disposable MariaDB proofs, and the
+complete repository integration suite. No code-level P0/P1 remains in the
+scoped work. Release evidence still requires an exactly authorized production
+durable-row rollback canary, physical iOS SendMail and Direct Push behavior,
+the physical macOS CardDAV identity edit/merge retry, the original physical
+macOS Notes lifecycle, and production-scale/off-host recovery. Compaction
+remains disabled.
+
 ## 2026-08-16 Cycle 11 Universal Outbox Registry And Ordering
 
 **Status: implemented and disposable-database verified; compaction remains
@@ -30,8 +60,8 @@ retention exceptions.
 
 ## 2026-08-16 Cycle 9 Rollback Bridge
 
-**Status: rollback-compatible outbound quarantine is implemented and locally
-review-clean, but not deployed; release remains NO-GO.** Guarded webmail
+**Status: rollback-compatible outbound quarantine is implemented, reviewed,
+and deployed as the mandatory transition/rollback boundary.** Guarded webmail
 releases now require two stages: `webmail-bridge` installs a total outbound
 quarantine, then `webmail` may activate only when the live rollback target is
 the exact attested bridge. Bridge mode rejects new web/scheduled/ActiveSync
@@ -51,13 +81,13 @@ Local proof is green: backend 737 total / 732 pass / 5 documented skips / 0
 fail; focused rollback preserves a durable immediate row byte-for-byte with
 zero DB claim/SMTP/IMAP/auth side effect; disposable MariaDB 1/1; full
 integration and affected shell/restore/release gates pass; independent Spec
-and Standards re-reviews report no P0-P3. Do not deploy until the separately
-approved full snapshot and exact calendar-tombstone repair can precede the live
-bridge/active/rollback canary. Physical iOS SendMail retry, macOS Notes,
-authenticated EAS HTTP integration, clean-host restore, ordering, and outbox
-retention remain open.
+and Standards re-reviews report no P0-P3. The verified backup, exact repair,
+bridge, active deployment, and hotfix bridge/active cycle subsequently passed.
+Only the separately authorized live durable-row rollback canary remains open.
 
 ## 2026-08-15 Eight-Cycle Hardening Closeout
+
+**Historical snapshot; superseded by the Cycle 12 state above.**
 
 **Status: universal outbound delivery is locally verified, not deployed, and
 the release remains NO-GO.** Cycles 6-8 replace direct web and ActiveSync SMTP
@@ -88,15 +118,13 @@ soft removal, replay, and conflict behavior. The disposable schema/user were
 removed after the proof. Chromium/WebKit desktop/mobile browser qualification
 passes 240/240 with zero unexpected diagnostics.
 
-Do not deploy this tree through the current automatic rollback target. The
-installed older runtime does not understand the new immediate-row and keyed
-retry contract, so rollback after accepting new traffic can duplicate delivery
-or expose immediate rows as scheduled mail. Close this with an expand/contract
-bridge or an outbound maintenance/quarantine rollback barrier. The existing
-duplicate production calendar tombstone still blocks the guarded rollout and
-requires separate explicit data-repair approval. Physical iOS SendMail retry,
-physical macOS Notes lifecycle, and a clean-host recovery drill also remain.
-Universal-outbox metadata tombstones currently have no bounded archival policy.
+At this checkpoint, deploying through the then-current automatic rollback
+target was unsafe: the installed older runtime did not understand immediate
+rows or keyed retries, and one duplicate calendar tombstone blocked startup.
+Cycles 9-12 subsequently installed the bridge boundary, completed the exact
+approved repair and clean-host drill, and added bounded registry retention; see
+the current state above. Physical final-runtime evidence remains separately
+tracked.
 
 ## 2026-08-15 Five-Cycle Hardening Closeout
 

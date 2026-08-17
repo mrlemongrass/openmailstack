@@ -1869,3 +1869,35 @@ Future entry template:
 - No live deploy or database mutation occurred. Exact approved calendar repair,
   guarded bridge/active/rollback, physical Apple clients, EAS HTTP integration,
   clean-host recovery, ordering, and bounded retention remain open.
+
+## 2026-08-16 — Cycles 10-12 Release Blocker Closure
+
+- Created and verified root-only backup
+  `/var/backups/openmailstack/oms-backup-20260816T181350Z`, then executed only
+  the approval-pinned calendar repair: archive 22/23, retain 23, remove 22,
+  preserve token 1440, and leave zero duplicate groups/live-event matches.
+- Guarded-deployed total-quarantine `webmail-bridge`, activated only from that
+  attested bridge, and repeated bridge/active for the Ping hotfix. Runtime and
+  environment trust, readiness, zero restarts, empty outbox, approval absence,
+  and public protocol cleanup passed.
+- Fixed Sync-to-ItemOperations opaque identity resolution and made CardDAV/
+  CalDAV release assertions semantic, exact-resource-bound, and alias-safe.
+- Added a privacy-minimal replay registry, bounded 7/90/120/400-day policy,
+  fail-closed compaction opt-in, global mixed-time-basis ordering, and a real
+  ActiveSync SendMail HTTP/MariaDB/SMTP/Sent-copy integration. These integrated
+  `main` additions are locally verified and newer than the active runtime;
+  compaction remains disabled.
+- Completed a fresh Debian 13.6 backup/verify/restore/injected-rollback drill.
+  Full mutating install, production-scale off-host restore, DNS/TLS, and mail
+  flow remain separate recovery evidence.
+- Implemented bounded ActiveSync Ping for Email/Contacts/Calendar. A poll-at-
+  deadline race and the smoke client's independent 300-second Undici header
+  timeout were reproduced and fixed. The final public gate returned Status 1
+  after 900.080 seconds with zero canary residue.
+- Integrated at `e5b25f74`; backend passes 779/786 with seven opt-in skips,
+  frontend 175/175 plus lint/build, four disposable MariaDB proofs, and the
+  complete integration suite. Final Spec review found no code blocker.
+- Remaining release gates require separate user/device/operator evidence:
+  authorized production durable-row rollback, physical iOS SendMail and Direct
+  Push matrix, physical macOS CardDAV identity edit/merge and Notes lifecycle,
+  and full off-host recovery. Do not infer those from scripted success.

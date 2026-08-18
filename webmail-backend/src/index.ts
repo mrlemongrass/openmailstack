@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { Server as SocketIOServer } from 'socket.io';
 import express from 'express';
 import bodyParser from 'body-parser';
-import { WbxmlParser } from './wbxml/parser';
+import { WbxmlParser, type WbxmlNode } from './wbxml/parser';
 import { WbxmlWriter } from './wbxml/writer';
 import { ImapService } from './imap';
 import { apiRouter } from './api';
@@ -109,6 +109,7 @@ import {
     type StoredPimSyncState,
 } from './eas-pim-sync';
 import { createActiveSyncSendMailHttpHandler } from './eas-send-http';
+import { activeSyncSettingsResponseNode } from './eas-settings';
 import {
     ACTIVE_SYNC_ADVERTISED_COMMANDS,
     ACTIVE_SYNC_MAX_REQUEST_BYTES,
@@ -773,6 +774,12 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
         return res.status(200).send(writer.getBuffer());
     };
+    const sendSettings = (request: WbxmlNode | null) => {
+        const writer = new WbxmlWriter();
+        writer.writeNode(activeSyncSettingsResponseNode(request));
+        res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+        return res.status(200).send(writer.getBuffer());
+    };
     const requestCredentials = getAuthCredentials();
     if (!requestCredentials) return res.status(401).send();
     const authenticationImap = new ImapService(requestCredentials.user, requestCredentials.pass, false);
@@ -827,11 +834,13 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     )));
     if (requestParseFailed) {
         if (cmd === 'Ping') return sendPingProtocolStatus('102');
+        if (cmd === 'Settings') return sendSettings(null);
         return res.status(400).send();
     }
     if (cmd === 'Ping' && requestBody.length > 0 && decodedForStructure === null) {
         return sendPingProtocolStatus('103');
     }
+    if (cmd === 'Settings') return sendSettings(decodedForStructure);
     if ((ACTIVE_SYNC_UNSUPPORTED_COMMANDS as readonly string[]).includes(cmd)) {
         return res.status(501).send();
     }
@@ -2396,21 +2405,6 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
             if (!res.destroyed && !res.writableEnded) return sendPing({ status: '8' }, parsed.config.folders.length);
             return;
         }
-    }
-
-    if (cmd === 'Settings') {
-        const responseAst = {
-            tag: "Settings",
-            page: 18,
-            children: [
-                { tag: "Status", page: 18, content: "1" }
-            ]
-        };
-        const writer = new WbxmlWriter();
-        writer.writeNode(responseAst);
-        console.log("Sending mocked Settings response!");
-        res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
-        return res.status(200).send(writer.getBuffer());
     }
 
     if (cmd === 'MoveItems') {

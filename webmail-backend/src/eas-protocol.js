@@ -29,7 +29,6 @@ exports.ACTIVE_SYNC_UNSUPPORTED_COMMANDS = [
     'GetItemEstimate',
     'MoveItems',
     'Provision',
-    'Settings',
     'SmartForward',
     'SmartReply',
 ];

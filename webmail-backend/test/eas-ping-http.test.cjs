@@ -218,6 +218,7 @@ const heartbeatOnlyBody = heartbeat => {
 
 const startPing = ({
   body = pingBody(),
+  command = 'Ping',
   password = 'test-password',
   authorization = true,
   deviceId = 'PINGDEVICE0123456789ABCDEF',
@@ -239,7 +240,7 @@ const startPing = ({
       headers.Authorization = `Basic ${Buffer.from(`ping-user@example.test:${password}`).toString('base64')}`;
     }
     const parameters = new URLSearchParams({
-      Cmd: 'Ping',
+      Cmd: command,
       DeviceId: deviceId,
     });
     if (queryUser !== undefined && queryUser !== null) parameters.set('User', queryUser);
@@ -268,6 +269,24 @@ const startPing = ({
 const postPing = options => startPing(options).response;
 
 const decodePing = response => new WbxmlParser(response.body).parse();
+
+const oofSettingsBody = bodyType => {
+  const writer = new WbxmlWriter();
+  writer.writeNode({
+    tag: 'Settings',
+    page: 18,
+    children: [{
+      tag: 'Oof',
+      page: 18,
+      children: [{
+        tag: 'Get',
+        page: 18,
+        children: [{ tag: 'BodyType', page: 18, content: bodyType }],
+      }],
+    }],
+  });
+  return writer.getBuffer();
+};
 
 const waitUntil = async (predicate, message) => {
   const deadline = Date.now() + 2_000;
@@ -303,6 +322,34 @@ test('authenticated iOS Ping reaches protocol negotiation instead of HTTP 501', 
     { tag: 'Status', page: 13, content: '5', children: [] },
     { tag: 'HeartbeatInterval', page: 13, content: '60', children: [] },
   ]);
+});
+
+test('authenticated iPad OOF Settings Get returns a protocol response instead of HTTP 501', async () => {
+  const body = oofSettingsBody('HTML');
+  assert.equal(body.length, 20, 'fixture no longer matches the observed iPad request shape');
+
+  const response = await postPing({ command: 'Settings', body });
+  assert.equal(response.status, 200);
+  assert.match(String(response.headers['content-type']), /^application\/vnd\.ms-sync\.wbxml/);
+  assert.deepEqual(new WbxmlParser(response.body).parse(), {
+    tag: 'Settings',
+    page: 18,
+    children: [
+      { tag: 'Status', page: 18, content: '1', children: [] },
+      {
+        tag: 'Oof',
+        page: 18,
+        children: [
+          { tag: 'Status', page: 18, content: '1', children: [] },
+          {
+            tag: 'Get',
+            page: 18,
+            children: [{ tag: 'OofState', page: 18, content: '0', children: [] }],
+          },
+        ],
+      },
+    ],
+  });
 });
 
 test('Ping HTTP boundary enforces auth, device, syntax, ownership, limits, and cache atomicity', async () => {

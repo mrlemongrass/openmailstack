@@ -66,6 +66,7 @@ const eas_sync_1 = require("./eas-sync");
 const eas_mail_sync_1 = require("./eas-mail-sync");
 const eas_pim_sync_1 = require("./eas-pim-sync");
 const eas_send_http_1 = require("./eas-send-http");
+const eas_settings_1 = require("./eas-settings");
 const eas_protocol_1 = require("./eas-protocol");
 const eas_ping_1 = require("./eas-ping");
 const eas_item_operations_1 = require("./eas-item-operations");
@@ -625,6 +626,12 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
         res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
         return res.status(200).send(writer.getBuffer());
     };
+    const sendSettings = (request) => {
+        const writer = new writer_1.WbxmlWriter();
+        writer.writeNode((0, eas_settings_1.activeSyncSettingsResponseNode)(request));
+        res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+        return res.status(200).send(writer.getBuffer());
+    };
     const requestCredentials = getAuthCredentials();
     if (!requestCredentials)
         return res.status(401).send();
@@ -683,11 +690,15 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
     if (requestParseFailed) {
         if (cmd === 'Ping')
             return sendPingProtocolStatus('102');
+        if (cmd === 'Settings')
+            return sendSettings(null);
         return res.status(400).send();
     }
     if (cmd === 'Ping' && requestBody.length > 0 && decodedForStructure === null) {
         return sendPingProtocolStatus('103');
     }
+    if (cmd === 'Settings')
+        return sendSettings(decodedForStructure);
     if (eas_protocol_1.ACTIVE_SYNC_UNSUPPORTED_COMMANDS.includes(cmd)) {
         return res.status(501).send();
     }
@@ -2185,20 +2196,6 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 return sendPing({ status: '8' }, parsed.config.folders.length);
             return;
         }
-    }
-    if (cmd === 'Settings') {
-        const responseAst = {
-            tag: "Settings",
-            page: 18,
-            children: [
-                { tag: "Status", page: 18, content: "1" }
-            ]
-        };
-        const writer = new writer_1.WbxmlWriter();
-        writer.writeNode(responseAst);
-        console.log("Sending mocked Settings response!");
-        res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
-        return res.status(200).send(writer.getBuffer());
     }
     if (cmd === 'MoveItems') {
         const creds = getAuthCredentials();

@@ -80,7 +80,6 @@ test('ActiveSync OPTIONS advertises only commands with reachable implementations
     'GetItemEstimate',
     'MoveItems',
     'Provision',
-    'Settings',
     'SmartForward',
     'SmartReply',
   ]);
@@ -99,6 +98,7 @@ test('ActiveSync route wires bounded parsing, post-auth logs, explicit unsupport
   const authenticate = source.indexOf('await authenticationImap.connect()', routeStart);
   const structuralLog = source.indexOf('activeSyncRequestLogSummary(', routeStart);
   const sendMailDelegation = source.indexOf('await activeSyncSendMailHttpHandler(req, res)', routeStart);
+  const settingsDelegation = source.indexOf("if (cmd === 'Settings') return sendSettings(decodedForStructure)", routeStart);
   const unsupportedGuard = source.indexOf('ACTIVE_SYNC_UNSUPPORTED_COMMANDS as readonly string[]', routeStart);
   const legacyFolderCreate = source.indexOf("if (cmd === 'FolderCreate')", routeStart);
 
@@ -110,6 +110,7 @@ test('ActiveSync route wires bounded parsing, post-auth logs, explicit unsupport
     /String\(req\.query\.Cmd \|\| ''\) === 'Ping'[\s\S]*activeSyncPingRawParser[\s\S]*activeSyncRawParser/);
   assert.ok(sendMailDelegation >= 0 && sendMailDelegation < authenticate);
   assert.ok(authenticate >= 0 && authenticate < structuralLog);
+  assert.ok(settingsDelegation > structuralLog && settingsDelegation < unsupportedGuard);
   assert.match(source.slice(routeStart), /if \(requestParseFailed\)[\s\S]*cmd === 'Ping'[\s\S]*sendPingProtocolStatus\('102'\)[\s\S]*res\.status\(400\)\.send\(\)/);
   assert.match(source.slice(routeStart), /MS-ASProtocolCommands', ACTIVE_SYNC_ADVERTISED_COMMANDS\.join\(','\)/);
   assert.ok(unsupportedGuard >= 0 && unsupportedGuard < legacyFolderCreate);

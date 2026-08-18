@@ -173,6 +173,35 @@ test('Collection request validation enforces the 14.1 child schema', () => {
   }), { ok: false });
 });
 
+test('Collection request validation accepts the physical iPad Conflict option', () => {
+  const collection = {
+    tag: 'Collection', page: 0, children: [
+      { tag: 'SyncKey', page: 0, content: '0' },
+      { tag: 'CollectionId', page: 0, content: `m-${'a'.repeat(62)}` },
+      { tag: 'Options', page: 0, children: [
+        { tag: 'MIMETruncation', page: 0, content: '1' },
+        { tag: 'Conflict', page: 0, content: '0' },
+        { tag: 'MIMESupport', page: 0, content: '0' },
+        { tag: 'BodyPreference', page: 17, children: [
+          { tag: 'Type', page: 17, content: '1' },
+          { tag: 'TruncationSize', page: 17, content: '500' },
+        ] },
+      ] },
+    ],
+  };
+
+  assert.deepEqual(validateActiveSyncCollectionRequest(collection), { ok: true });
+  assert.deepEqual(validateActiveSyncCollectionRequest({
+    ...collection,
+    children: collection.children.map(node => node.tag === 'Options' ? {
+      ...node,
+      children: node.children.map(option => option.tag === 'Conflict'
+        ? { ...option, content: '2' }
+        : option),
+    } : node),
+  }), { ok: false });
+});
+
 test('Supported declarations are exact, bounded class properties', () => {
   const collection = children => ({
     tag: 'Collection', page: 0, children: [

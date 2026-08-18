@@ -9,6 +9,7 @@ process.env.OMS_WEBMAIL_PORT = '0';
 
 const { WbxmlParser } = require('../src/wbxml/parser.js');
 const { WbxmlWriter } = require('../src/wbxml/writer.js');
+const { activeSyncMailCollectionId } = require('../src/eas-protocol.js');
 const {
   ACTIVE_SYNC_PING_MAX_FOLDERS,
   ACTIVE_SYNC_PING_MAX_REQUEST_BYTES,
@@ -23,6 +24,10 @@ class FakeImapService {
     this.user = user;
     this.password = password;
     this.authenticationOnly = useMasterCredentials === false;
+    this.client = {
+      mailboxOpen: async () => ({ uidValidity: 1n }),
+      mailboxClose: async () => {},
+    };
   }
 
   async connect() {
@@ -41,7 +46,7 @@ class FakeImapService {
   }
 
   async getFolders() {
-    return [];
+    return [{ path: 'Sent', delimiter: '/', specialUse: '\\Sent' }];
   }
 }
 
@@ -151,6 +156,22 @@ require.cache[contactsPath] = {
   exports: {
     ...realContacts,
     getContactCollectionRevisionOnConnection: async () => '1',
+  },
+};
+
+let savedMailSyncState;
+const mailSyncPath = require.resolve('../src/eas-mail-sync.js');
+const realMailSync = require(mailSyncPath);
+require.cache[mailSyncPath] = {
+  id: mailSyncPath,
+  filename: mailSyncPath,
+  loaded: true,
+  exports: {
+    ...realMailSync,
+    withMailSyncScopeLock: async (_scopeHash, operation) => operation(),
+    loadMailSyncState: async () => null,
+    saveMailSyncState: async state => { savedMailSyncState = state; },
+    deleteMailSyncState: async () => {},
   },
 };
 
@@ -288,6 +309,44 @@ const oofSettingsBody = bodyType => {
   return writer.getBuffer();
 };
 
+const ipadInitialMailSyncBody = collectionId => {
+  const writer = new WbxmlWriter();
+  writer.writeNode({
+    tag: 'Sync',
+    page: 0,
+    children: [{
+      tag: 'Collections',
+      page: 0,
+      children: [{
+        tag: 'Collection',
+        page: 0,
+        children: [
+          { tag: 'SyncKey', page: 0, content: '0' },
+          { tag: 'CollectionId', page: 0, content: collectionId },
+          {
+            tag: 'Options',
+            page: 0,
+            children: [
+              { tag: 'MIMETruncation', page: 0, content: '1' },
+              { tag: 'Conflict', page: 0, content: '0' },
+              { tag: 'MIMESupport', page: 0, content: '0' },
+              {
+                tag: 'BodyPreference',
+                page: 17,
+                children: [
+                  { tag: 'Type', page: 17, content: '1' },
+                  { tag: 'TruncationSize', page: 17, content: '500' },
+                ],
+              },
+            ],
+          },
+        ],
+      }],
+    }],
+  });
+  return writer.getBuffer();
+};
+
 const waitUntil = async (predicate, message) => {
   const deadline = Date.now() + 2_000;
   while (!predicate()) {
@@ -350,6 +409,27 @@ test('authenticated iPad OOF Settings Get returns a protocol response instead of
       },
     ],
   });
+});
+
+test('physical iPad initial mail Sync accepts Conflict and returns a collection key', async () => {
+  const collectionId = activeSyncMailCollectionId('Sent');
+  const body = ipadInitialMailSyncBody(collectionId);
+  assert.equal(body.length, 116, 'fixture no longer matches the captured iPad Sync request');
+
+  savedMailSyncState = undefined;
+  const response = await postPing({ command: 'Sync', body, deviceType: 'iPad' });
+  assert.equal(response.status, 200);
+  assert.match(String(response.headers['content-type']), /^application\/vnd\.ms-sync\.wbxml/);
+
+  const decoded = new WbxmlParser(response.body).parse();
+  assert.equal(decoded.tag, 'Sync');
+  const collection = decoded.children?.find(node => node.tag === 'Collections')
+    ?.children?.find(node => node.tag === 'Collection');
+  assert.ok(collection, 'response must contain the initialized collection');
+  assert.equal(collection.children.find(node => node.tag === 'Status')?.content, '1');
+  assert.equal(collection.children.find(node => node.tag === 'CollectionId')?.content, collectionId);
+  assert.match(collection.children.find(node => node.tag === 'SyncKey')?.content || '', /^oms-mail-[0-9a-f]{48}$/);
+  assert.equal(savedMailSyncState?.collectionId, collectionId);
 });
 
 test('Ping HTTP boundary enforces auth, device, syntax, ownership, limits, and cache atomicity', async () => {

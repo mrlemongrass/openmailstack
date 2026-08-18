@@ -40,6 +40,11 @@ const validOptions = (node) => {
                 return false;
             continue;
         }
+        if (option?.page === 0 && option.tag === 'Conflict') {
+            if (!boundedStringScalar(option, 1) || !/^[01]$/.test(option.content))
+                return false;
+            continue;
+        }
         if (option?.page === 17 && ['BodyPreference', 'BodyPartPreference'].includes(option.tag)) {
             if (option.content !== undefined && option.content !== null || !Array.isArray(option.children) || option.children.length > 8)
                 return false;

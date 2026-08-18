@@ -33,6 +33,12 @@ Last updated: 2026-08-17
   success with disabled OOF state, rejects writes/unknown shapes, and passed an
   exact public authenticated WBXML canary. Physical Sent refresh/account-error
   confirmation remains in the Apple evidence gate below.
+- ✅ Newly published deepmerge recursion advisory: the Settings rollout audit
+  exposed `GHSA-ggr8-5vv4-36mx` through `mailparser`/`html-to-text` and
+  `deepmerge-ts@7.1.5`. Main and the surgical installed-baseline release pin
+  `deepmerge-ts@8.0.0`, enforce the floor in the dependency security guard, and
+  passed complete local plus guarded bridge/active public validation. The live
+  backend audit now reports zero findings.
 - ✅ IMAP/ActiveSync release regressions escaping route-only checks: the
   installed-host gate now fails closed on missing credentials or skipped
   smokes and authenticates through strict public IMAPS plus ActiveSync against

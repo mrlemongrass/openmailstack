@@ -9227,6 +9227,29 @@ Branch: `main`; surgical live release built from installed baseline
   and received HTTP `200`, 27 WBXML bytes, Settings/Oof status `1`, and
   `OofState=0`.
 
+### Post-rollout dependency advisory hardening
+
+- The deployment audit surfaced newly published `GHSA-ggr8-5vv4-36mx` through
+  `mailparser@3.9.14` -> `html-to-text@10.0.0` ->
+  `deepmerge-ts@7.1.5`. The raw-MIME call path was not shown to create the
+  recursive JavaScript object graph required by the advisory, but the installed
+  nonzero audit was treated as a release defect.
+- Main commit `4f1b336` pins `deepmerge-ts@8.0.0` with an npm override and adds
+  a dependency-security regression. Surgical release commit `df88cc8c` applies
+  only that three-file dependency change to the deployed Settings baseline;
+  none of the newer registry code entered the hotfix.
+- Main passed 789 total / 782 pass / 7 documented skips / 0 fail and the full
+  repository integration suite. The surgical release passed 113 focused parser
+  checks, 777 total / 772 pass / 5 documented skips / 0 fail, frontend 175/175,
+  lint/build, both zero-vulnerability audits, and complete integration.
+- Guarded bridge and active deployments passed their pre/post public IMAPS and
+  ActiveSync Mail/Ping/Contacts/Calendar gates and exact cleanup. Production is
+  active; all 541 tracked release files match, the installed audit is zero,
+  readiness is `401`, `NRestarts=0`, and the warning journal is empty.
+- No physical iPad Settings request has arrived after the fix yet. The access
+  log contains only the earlier iPad `501` attempts and the successful scripted
+  `200`, so the pull-to-refresh check below remains open.
+
 ### Remaining physical check
 
 - Do not resend the delivered message. The owner must dismiss the iPad account

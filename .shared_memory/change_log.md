@@ -1945,3 +1945,18 @@ Future entry template:
 - Physical closure is limited to refreshing the already delivered item in iPad
   Sent and confirming the account error stays gone. Do not resend; ClientId
   retry remains a separate physical test.
+
+## 2026-08-17 — Cycle 14 Dependency Advisory Hotfix
+
+- Fixed: Pinned transitive `deepmerge-ts` to patched `8.0.0` after the Settings
+  rollout exposed newly published `GHSA-ggr8-5vv4-36mx`; added an exact
+  dependency-security floor so a future lockfile cannot silently regress.
+- Verified: Integrated main passed 789 total / 782 pass / 7 skips / 0 fail and
+  complete integration. The surgical release passed 113 focused parser tests,
+  777 total / 772 pass / 5 skips / 0 fail, frontend 175/175, lint/build,
+  complete integration, and backend/frontend production audits with zero
+  findings.
+- Deployed: Surgical commit `df88cc8c` passed guarded bridge then active public
+  IMAPS and ActiveSync Mail/Ping/Contacts/Calendar gates. Live mode is active,
+  541/541 tracked files match, readiness is `401`, `NRestarts=0`, the warning
+  journal is empty, and the installed dependency audit is zero.

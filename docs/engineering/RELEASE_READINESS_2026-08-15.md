@@ -30,6 +30,17 @@ exact public authenticated WBXML canary. The owner still needs to refresh the
 existing Sent item and confirm the account error stays gone; no resend is
 required, and same-ClientId lost-response retry remains open.
 
+The Settings rollout's production audit then surfaced newly published
+`GHSA-ggr8-5vv4-36mx` through `mailparser` -> `html-to-text` ->
+`deepmerge-ts@7.1.5`. No raw-MIME path was shown to construct the recursive
+JavaScript object graph required by the advisory, but the nonzero audit was
+treated as a release defect rather than a reachability exemption. Main commit
+`4f1b336` and surgical release `df88cc8c` pin `deepmerge-ts@8.0.0`, add a
+regression floor, and restore zero production advisories. The narrow release
+passed complete local validation and guarded bridge/active public gates; live
+mode is active, all 541 tracked release files match, readiness is `401`, and
+restart/warning counts remain zero.
+
 The integrated `main` branch goes further than the installed runtime: it adds a
 privacy-minimal replay registry, disabled-by-default verified compaction, exact
 mixed-time-basis ordering, a real authenticated ActiveSync SendMail
@@ -51,7 +62,7 @@ still not being misreported as “shippable.”
 | Database proof | Four isolated MariaDB proofs cover migration, ordering, registry retention, real EAS HTTP durability, and exact tombstone repair | Green; temporary servers and trees removed |
 | Browser qualification | 240/240 across Chromium/WebKit desktop/mobile with zero unexpected diagnostics | Deterministic real-browser evidence, not physical Apple-client evidence |
 | Repository integration | Complete integration suite passes | Green locally |
-| Production dependencies | Backend and frontend report 0 production vulnerabilities | Green at audit time |
+| Production dependencies | Backend and frontend report 0 production vulnerabilities after the newly published deepmerge advisory was pinned to 8.0.0 | Green and guarded-deployed |
 | Deployment/rollback | Verified backup, exact repair, guarded bridge, active release, hotfix bridge/active round trip, runtime attestation, and an inert durable-row production rollback canary passed | Current active/bridge pair is proven; registry compaction still waits for a registry-compatible installed rollback pair |
 | Small-business release | No-go | Reassess after the physical Apple-client matrix and full recovery exercise |
 | Enterprise release | No-go | Product, governance, scale, and recovery gaps remain |
@@ -262,11 +273,13 @@ Important invariants:
 
 ## Verification ledger
 
-Final evidence after the Cycle 12 integration:
+Final evidence through the Cycle 14 Settings and dependency hotfixes:
 
 - Backend build and generated TypeScript/runtime parity: passed.
-- Backend complete suite: 786 tests, 779 passed, 7 documented opt-in skips,
+- Integrated-main backend complete suite: 789 tests, 782 passed, 7 documented opt-in skips,
   0 failed.
+- Surgical installed-baseline backend complete suite: 777 tests, 772 passed,
+  5 documented opt-in skips, 0 failed.
 - Frontend complete suite: 175/175 passed; ESLint and TypeScript/Vite
   production build passed with 3,557 modules transformed.
 - Repository integration suite: passed after the final merge, including every
@@ -285,7 +298,8 @@ Final evidence after the Cycle 12 integration:
   WebKit desktop 59/59, and WebKit mobile 61/61: 240/240 total, with zero
   unexpected console errors/warnings, page errors, failed requests, API
   requests, or external requests. See `output/playwright/cycle8/REPORT.md`.
-- Backend and frontend `npm audit --omit=dev`: 0 vulnerabilities.
+- Backend and frontend `npm audit --omit=dev`: 0 vulnerabilities after
+  `deepmerge-ts@8.0.0` was pinned and guarded-deployed.
 - `git diff --check`: passed.
 
 The root historical lint wrapper still reports pre-existing ShellCheck findings
@@ -301,6 +315,7 @@ not folded into this outbound change.
 | Closed live | Duplicate production calendar tombstone blocked startup | Verified backup plus approval-pinned repair retained 23, archived 22/23, removed only 22, and left zero duplicate groups |
 | P1 release evidence | Physical Direct Push matrix is incomplete | Confirm on-screen idle renewal, mail/contact/calendar wake+Sync, sleep/wake, Wi-Fi/cellular transition, and restart/reconnect on an owned iPhone/iPad |
 | Closed live | No production durable-row rollback evidence | An exactly approved inert immediate row survived active-to-bridge byte-for-byte with zero claim/SMTP/IMAP evidence, was deleted once under bridge, and active plus the Ping-required public suite were restored |
+| Closed live | Newly published `GHSA-ggr8-5vv4-36mx` made the installed backend production audit nonzero | Patched dependency override, lockfile floor, complete local suites, guarded bridge/active rollout, and installed audit all pass with zero findings |
 | Release gate | Physical iOS ActiveSync SendMail/retry is unproven | Observe fresh acceptance, lost/retried ClientId behavior, Sent-copy choice, and zero duplicate SMTP |
 | Release gate | Original macOS Notes lifecycle is unproven | Repeat edit/close/reopen/delete and inspect one SQL/IMAP identity |
 | Release gate | macOS CardDAV identity edit/merge retry is unproven | Edit the UUID-backed contact, merge only the known legacy duplicate, and confirm one stable href/UID with no re-created row |

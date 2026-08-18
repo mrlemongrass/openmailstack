@@ -24,6 +24,14 @@ success response. Do not resend the already delivered mail; physical closure
 is an iPad Sent pull-to-refresh plus confirmation that the account error does
 not return. ClientId retry remains separately open.
 
+The Settings deployment audit subsequently found newly published
+`GHSA-ggr8-5vv4-36mx` in transitive `deepmerge-ts@7.1.5`. Main commit `4f1b336`
+and surgical release `df88cc8c` pin `8.0.0` and regression-enforce that floor.
+Both production audits are zero; complete main/release validation and a second
+guarded bridge/active rollout passed. Production remains active with 541/541
+tracked files exact, readiness `401`, `NRestarts=0`, and zero warning journal
+entries. No post-fix physical iPad Settings request has been observed yet.
+
 ## 2026-08-17 Cycle 13 Durable-Row Rollback Evidence
 
 **Status: the current production active/bridge rollback pair has exact durable

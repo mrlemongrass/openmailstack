@@ -1923,3 +1923,25 @@ Future entry template:
   quiesced while copying and repeatedly hashing the mail tree. Preserve the
   fail-closed snapshot contract but move immutable finalization/verification
   after service resume and measure the reduced outage.
+
+## 2026-08-17 — Cycle 14 Physical iPad Settings Repair
+
+- Correlated one physical iPad Exchange send across ActiveSync, the durable
+  outbox, Postfix, Gmail acceptance, server Sent, device Sync state, and the
+  follow-up account error. Delivery and the single Sent copy were complete;
+  the iPad Sent checkpoint was stale.
+- Reproduced the account-error boundary as six 20-byte
+  `Settings/Oof/Get/BodyType` requests receiving HTTP 501. Added a strict,
+  read-only Settings response that truthfully reports OOF disabled and rejects
+  every unsupported write/shape with protocol status 2.
+- Integrated commit `a172be8` passes 789 backend tests with seven skips and the
+  complete integration suite. Surgical release `c9d5606a`, based on the exact
+  535-file installed baseline, passes 777 backend tests with five skips,
+  frontend 175/175, generated parity, and full integration.
+- Guarded bridge then active deployment passed all public protocol gates and
+  cleanup. The live runtime matches all 541 release files, has zero restarts or
+  warning entries, and an exact public Settings canary returns status 1/1 with
+  `OofState=0`.
+- Physical closure is limited to refreshing the already delivered item in iPad
+  Sent and confirming the account error stays gone. Do not resend; ClientId
+  retry remains a separate physical test.

@@ -9178,3 +9178,59 @@ Branch: `main`
   physical iOS SendMail/ClientId and Direct Push behavior, physical macOS
   CardDAV and Notes lifecycles, the backup-quiescence reduction, and a complete
   mutating/off-host recovery exercise.
+
+## 2026-08-17 — Cycle 14: Physical iPad Send And Settings Compatibility
+
+Agent/tool: Codex diagnosis loop, physical iPad observation, exact live mail/
+ActiveSync correlation, isolated release worktree, and guarded bridge/active
+deployment
+
+Branch: `main`; surgical live release built from installed baseline
+`21b60b15` plus release commit `c9d5606a`
+
+### Diagnosis and change
+
+- A physical iPad Exchange SendMail reached the durable outbox once, completed
+  SMTP once, was accepted by Gmail, and completed one IMAP Sent-copy append.
+  The exact Message-ID exists once in the server Sent mailbox. The missing iPad
+  Sent item was therefore a stale device Sent Sync checkpoint, not failed
+  delivery or failed Sent storage.
+- The account error had a separate deterministic cause: immediately after the
+  send, the iPad issued six 20-byte `Settings/Oof/Get/BodyType` requests and
+  received HTTP `501`. The same device also resumed a paged Contacts catch-up,
+  but current PIM state validates and the unsupported Settings response was the
+  reproducible connection-error boundary.
+- Added a strict page-18 Settings handler for only read-only OOF Get with Text
+  or HTML body type. It reports Settings success, OOF success, and
+  `OofState=0`; malformed, duplicate, Set, or unknown operations return Settings
+  protocol error. Settings remains unadvertised, and the handler creates no OOF
+  state or mailbox/database mutation.
+- TDD reproduced the exact 20-byte request returning `501`, then proved the
+  authenticated HTTP route returns a valid WBXML response. The unreachable old
+  mock branch was removed and generated runtime artifacts were rebuilt.
+
+### Proof and rollout
+
+- Integrated `main`: backend 789 total, 782 pass, 7 documented skips, 0 fail;
+  focused Settings/HTTP/hardening/parity 22/22; full repository integration
+  passed.
+- The installed backend was proven byte-identical to `21b60b15` across all 535
+  tracked files. A separate release worktree added only the 17 Settings source,
+  test, and generated files/changes. Its backend passed 777 total, 772 pass,
+  5 documented skips, 0 fail; frontend passed 175/175; complete integration,
+  protocol, deployment, rollback, backup/restore, and dry-run checks passed.
+- Guarded `webmail-bridge` and then `webmail` both passed pre/post public IMAPS
+  and ActiveSync Mail/Ping/Contacts/Calendar gates with exact cleanup. The live
+  runtime is active, 541/541 tracked release files match, readiness is `401`,
+  service restarts remain zero, and the warning journal is empty.
+- A real public authenticated canary sent the exact 20-byte Settings request
+  and received HTTP `200`, 27 WBXML bytes, Settings/Oof status `1`, and
+  `OofState=0`.
+
+### Remaining physical check
+
+- Do not resend the delivered message. The owner must dismiss the iPad account
+  error, open HouseVo Sent, and pull to refresh. Physical closure requires the
+  existing message to appear and the account error not to recur; the server-side
+  fix and Sent copy are already verified. ClientId lost-response retry remains a
+  separate physical duplicate-prevention test.

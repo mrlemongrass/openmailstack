@@ -1,4 +1,4 @@
-# OpenMailStack Release Readiness — Cycle 13 Addendum
+# OpenMailStack Release Readiness — Cycle 14 Addendum
 
 Original assessment: 2026-08-15
 
@@ -21,6 +21,15 @@ outbound delivery. Public IMAPS, ActiveSync Mail/Contacts/Calendar, three-class
 Ping wake and Sync, deletion non-wake, 60-second renewals, and one 900.080-second
 Ping heartbeat all passed with zero canary residue or service restart.
 
+Cycle 14 physically proved one iPad Exchange SendMail through one durable row,
+one SMTP acceptance, Gmail receipt, and exactly one server Sent copy. The iPad's
+missing Sent view was a stale device checkpoint. Its visible account error was
+separately traced to repeated 20-byte Settings/OOF reads receiving HTTP 501; a
+strict read-only OOF-disabled response is now guarded-deployed and passes the
+exact public authenticated WBXML canary. The owner still needs to refresh the
+existing Sent item and confirm the account error stays gone; no resend is
+required, and same-ClientId lost-response retry remains open.
+
 The integrated `main` branch goes further than the installed runtime: it adds a
 privacy-minimal replay registry, disabled-by-default verified compaction, exact
 mixed-time-basis ordering, a real authenticated ActiveSync SendMail
@@ -37,7 +46,7 @@ still not being misreported as “shippable.”
 |---|---|---|
 | Reported Notes duplicate | SQL/IMAP and overlapping web-save races fixed; original Notes backend fix is deployed | Physical macOS edit/close/reopen/delete remains open |
 | Universal outbound delivery | Active in production for web, scheduled/Undo, and ActiveSync; integrated registry expansion is locally verified | Delivery path deployed; compaction remains disabled pending registry-compatible rollback proof |
-| Backend | 786 tests: 779 pass, 7 documented opt-in skips, 0 fail | Green within the tested scope |
+| Backend | Integrated main: 789 tests, 782 pass, 7 documented opt-in skips; surgical live baseline: 777 tests, 772 pass, 5 skips; 0 fail | Green within the tested scope |
 | Frontend | 175/175, ESLint, and production build pass | Green |
 | Database proof | Four isolated MariaDB proofs cover migration, ordering, registry retention, real EAS HTTP durability, and exact tombstone repair | Green; temporary servers and trees removed |
 | Browser qualification | 240/240 across Chromium/WebKit desktop/mobile with zero unexpected diagnostics | Deterministic real-browser evidence, not physical Apple-client evidence |

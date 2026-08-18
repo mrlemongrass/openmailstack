@@ -26,6 +26,13 @@ Last updated: 2026-08-17
   Contacts, and Calendar wake+Sync, deletion non-wake, 60-second renewals, and
   one public 900.080-second Status-1 hold. Physical on-screen/network-transition
   validation remains separate release evidence.
+- ✅ ActiveSync iPad Settings/OOF connection failure: a physical SendMail was
+  delivered once and copied once to server Sent, after which the iPad issued
+  six exact 20-byte `Settings/Oof/Get/BodyType` requests that returned HTTP
+  501. The deployed strict compatibility handler now returns Settings/Oof
+  success with disabled OOF state, rejects writes/unknown shapes, and passed an
+  exact public authenticated WBXML canary. Physical Sent refresh/account-error
+  confirmation remains in the Apple evidence gate below.
 - ✅ IMAP/ActiveSync release regressions escaping route-only checks: the
   installed-host gate now fails closed on missing credentials or skipped
   smokes and authenticates through strict public IMAPS plus ActiveSync against
@@ -114,8 +121,11 @@ Last updated: 2026-08-17
 
 ## Remaining High-Priority Risks
 
-- 🔴 Physical Apple release evidence: complete iOS SendMail/ClientId retry,
-  on-screen Direct Push idle/wake/network/restart behavior, and the original
+- 🔴 Physical Apple release evidence: the first final-runtime iPad SendMail is
+  proven end-to-end through one durable row, one SMTP acceptance, and one
+  server Sent copy. The iPad must still refresh that existing Sent item without
+  another account error, and same-ClientId lost-response retry remains unproven.
+  On-screen Direct Push idle/wake/network/restart behavior and the original
   macOS CardDAV identity edit/merge retry plus Notes edit/reopen/delete lifecycle
   remain unproven on the final runtime.
 - ✅ Authorized durable-row rollback evidence: exact approval produced one inert

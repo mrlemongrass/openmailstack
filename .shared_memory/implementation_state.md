@@ -1,5 +1,29 @@
 # Implementation State
 
+## 2026-08-17 Cycle 14 Physical iPad Send And Settings Repair
+
+**Status: server delivery/Sent storage and the iPad Settings failure are fixed
+and guarded-deployed; the final iPad Sent refresh is awaiting owner
+confirmation.** One physical iPad Exchange send reserved one durable immediate
+row, reached SMTP once, was accepted by Gmail, and produced exactly one server
+Sent copy. The iPad's legacy Sent Sync state had not incorporated that new UID,
+so its missing Sent item was stale device state rather than a delivery or IMAP
+append failure.
+
+The visible account error correlated with six exact 20-byte page-18
+`Settings/Oof/Get/BodyType` requests returning HTTP 501. A strict compatibility
+handler now answers only Text/HTML OOF Get with Settings/Oof success and
+`OofState=0`; it keeps Settings unadvertised, rejects every write/unknown shape
+with protocol status 2, and creates no OOF/database/mailbox state. Integrated
+main commit `a172be8` is green; the surgical production release `c9d5606a` was
+built from the byte-identical installed baseline `21b60b15`, passed complete
+local validation, and passed guarded bridge then active public gates. The live
+backend matches all 541 tracked release files, is active with zero restarts and
+an empty warning journal, and the real public canary returns the exact 27-byte
+success response. Do not resend the already delivered mail; physical closure
+is an iPad Sent pull-to-refresh plus confirmation that the account error does
+not return. ClientId retry remains separately open.
+
 ## 2026-08-17 Cycle 13 Durable-Row Rollback Evidence
 
 **Status: the current production active/bridge rollback pair has exact durable

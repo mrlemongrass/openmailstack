@@ -8,6 +8,7 @@ const readJson = file => JSON.parse(fs.readFileSync(path.join(root, file), 'utf8
 const frontendPackage = readJson('webmail-frontend/package.json');
 const frontendLock = readJson('webmail-frontend/package-lock.json');
 const backendLock = readJson('webmail-backend/package-lock.json');
+const backendPackage = readJson('webmail-backend/package.json');
 
 const versionAt = (lock, name) => {
   const entry = lock.packages[`node_modules/${name}`];
@@ -46,7 +47,14 @@ requireMinimum(frontendLock, 'postcss', '8.5.23', 'GHSA-fxqj-rqcc-2cmp');
 requireMinimum(backendLock, 'ip-address', '10.3.1', 'GHSA-mwp4-54f8-5fhr');
 requireMinimum(backendLock, 'linkify-it', '5.0.2', 'GHSA-v245-v573-v5vm');
 requireMinimum(backendLock, 'mailparser', '3.9.13', 'GHSA-v245-v573-v5vm');
+requireMinimum(backendLock, 'deepmerge-ts', '8.0.0', 'GHSA-ggr8-5vv4-36mx');
 requireMinimum(backendLock, 'socket.io-parser', '4.2.7', 'GHSA-2m8v-j782-fhvr');
+
+assert.equal(
+  backendPackage.overrides?.['deepmerge-ts'],
+  '8.0.0',
+  'html-to-text must resolve the patched deepmerge-ts major until its dependency range catches up',
+);
 
 const routerVersion = versionAt(frontendLock, 'react-router');
 assert.equal(

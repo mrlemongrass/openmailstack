@@ -38,5 +38,8 @@
     "@types/multer": "^2.1.0",
     "@types/nodemailer": "^8.0.1",
     "@types/ws": "^8.18.1"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.0"
   }
 }

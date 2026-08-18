@@ -79,6 +79,7 @@ export declare function validateMailClientCommands(commands: any[], collectionId
 export declare function assertMailSyncRowBound(knownItems: string, commands: string, response: Buffer | null): void;
 export declare const effectiveMailSyncWindow: (options: Pick<MailSyncOptions, "windowSize" | "truncationSize">, reservedBodyItems?: number) => number;
 export declare const mailSyncReplayResponse: (state: StoredMailSyncState | null, syncKey: string, requestHash: string, now?: Date) => Buffer | null;
+export declare const mailSyncPreviousKeyFetchResponseKey: (state: StoredMailSyncState | null, syncKey: string, commands: any[], collectionId: string, now?: Date) => string | null;
 export declare const ensureEasMailSyncSchema: () => Promise<void>;
 export declare const parseMailSyncKnownItems: (value: unknown) => MailSyncKnownItems;
 export declare const loadMailSyncState: (username: string, deviceId: string, collectionId: string, signal?: AbortSignal) => Promise<StoredMailSyncState | null>;

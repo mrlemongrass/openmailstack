@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.saveMailSyncState = exports.deleteMailSyncState = exports.loadMailSyncState = exports.parseMailSyncKnownItems = exports.ensureEasMailSyncSchema = exports.mailSyncReplayResponse = exports.effectiveMailSyncWindow = exports.MAIL_SYNC_STATE_TTL_MS = exports.MAX_MAIL_SYNC_PARTNERSHIPS_PER_USER = exports.MAX_MAIL_SYNC_USER_BYTES = exports.MAX_MAIL_SYNC_ROW_BYTES = exports.MAX_MAIL_SYNC_COMMANDS_BYTES = exports.MAX_MAIL_SYNC_KNOWN_ITEMS_BYTES = exports.MAX_MAIL_SYNC_KNOWN_ITEMS = exports.MAX_MAIL_SYNC_SOURCE_BYTES = exports.MAX_MAIL_SYNC_RESPONSE_BYTES = exports.MAX_MAIL_SYNC_REPLAY_BYTES = exports.createMailSyncKey = exports.validateActiveSyncDeviceId = exports.mailSyncRequestHash = exports.mailSyncScopeHash = exports.MailSyncStateError = void 0;
+exports.saveMailSyncState = exports.deleteMailSyncState = exports.loadMailSyncState = exports.parseMailSyncKnownItems = exports.ensureEasMailSyncSchema = exports.mailSyncPreviousKeyFetchResponseKey = exports.mailSyncReplayResponse = exports.effectiveMailSyncWindow = exports.MAIL_SYNC_STATE_TTL_MS = exports.MAX_MAIL_SYNC_PARTNERSHIPS_PER_USER = exports.MAX_MAIL_SYNC_USER_BYTES = exports.MAX_MAIL_SYNC_ROW_BYTES = exports.MAX_MAIL_SYNC_COMMANDS_BYTES = exports.MAX_MAIL_SYNC_KNOWN_ITEMS_BYTES = exports.MAX_MAIL_SYNC_KNOWN_ITEMS = exports.MAX_MAIL_SYNC_SOURCE_BYTES = exports.MAX_MAIL_SYNC_RESPONSE_BYTES = exports.MAX_MAIL_SYNC_REPLAY_BYTES = exports.createMailSyncKey = exports.validateActiveSyncDeviceId = exports.mailSyncRequestHash = exports.mailSyncScopeHash = exports.MailSyncStateError = void 0;
 exports.resolveActiveSyncWindowSize = resolveActiveSyncWindowSize;
 exports.normalizeMailSyncOptions = normalizeMailSyncOptions;
 exports.filterTypeCutoff = filterTypeCutoff;
@@ -15,6 +15,7 @@ const mailparser_1 = require("mailparser");
 const db_1 = require("./db");
 const eas_sync_1 = require("./eas-sync");
 const eas_protocol_1 = require("./eas-protocol");
+const parser_1 = require("./wbxml/parser");
 class MailSyncStateError extends Error {
     constructor(message) {
         super(message);
@@ -251,6 +252,54 @@ const mailSyncReplayResponse = (state, syncKey, requestHash, now = new Date()) =
     return Buffer.from(state.lastResponse);
 };
 exports.mailSyncReplayResponse = mailSyncReplayResponse;
+const uniqueChild = (node, tag, page) => {
+    const matches = node.children.filter(child => child.tag === tag && child.page === page);
+    return matches.length === 1 ? matches[0] : null;
+};
+const previousMailSyncResponseWasFetchOnly = (state) => {
+    if (!state.lastResponse || state.lastCommands.length !== 0 || state.lastMoreAvailable)
+        return false;
+    try {
+        const root = new parser_1.WbxmlParser(state.lastResponse).parse();
+        const collections = root.tag === 'Sync' && root.page === 0
+            ? uniqueChild(root, 'Collections', 0)
+            : null;
+        const collection = collections && collections.children.length === 1
+            && collections.children[0].tag === 'Collection' && collections.children[0].page === 0
+            ? collections.children[0]
+            : null;
+        if (!collection || collection.children.some(child => ['Commands', 'MoreAvailable'].includes(child.tag)))
+            return false;
+        if (uniqueChild(collection, 'SyncKey', 0)?.content !== state.currentSyncKey
+            || uniqueChild(collection, 'CollectionId', 0)?.content !== state.collectionId
+            || uniqueChild(collection, 'Status', 0)?.content !== '1')
+            return false;
+        const responses = uniqueChild(collection, 'Responses', 0);
+        return Boolean(responses?.children.length)
+            && responses.children.every(response => response.tag === 'Fetch' && response.page === 0);
+    }
+    catch {
+        return false;
+    }
+};
+const mailSyncPreviousKeyFetchResponseKey = (state, syncKey, commands, collectionId, now = new Date()) => {
+    // Apple Mail can overlap body Fetches before it applies the first response key. Tolerate only the
+    // immediately previous, read-only transition and converge both responses on the already-current key.
+    if (!state || syncKey === '0' || state.previousSyncKey !== syncKey
+        || state.currentSyncKey === syncKey || state.collectionId !== collectionId
+        || validateMailClientCommands(commands, collectionId).ok === false
+        || commands.length === 0 || commands.some(command => command.tag !== 'Fetch'))
+        return null;
+    const age = now.getTime() - state.updatedAt.getTime();
+    if (age < 0 || age > 10 * 60 * 1000 || !previousMailSyncResponseWasFetchOnly(state))
+        return null;
+    const everyItemIsKnown = commands.every(command => {
+        const uid = (0, eas_protocol_1.activeSyncMailMessageUid)(collectionId, command.children[0].content);
+        return uid !== null && Object.hasOwn(state.knownItems, String(uid));
+    });
+    return everyItemIsKnown ? state.currentSyncKey : null;
+};
+exports.mailSyncPreviousKeyFetchResponseKey = mailSyncPreviousKeyFetchResponseKey;
 let schemaPromise = null;
 const ensureEasMailSyncSchema = async () => {
     if (!schemaPromise) {

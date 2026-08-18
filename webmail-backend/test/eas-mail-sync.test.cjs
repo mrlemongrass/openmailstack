@@ -10,6 +10,7 @@ const {
   resolveActiveSyncWindowSize,
   truncateUtf8Body,
   activeSyncMailApplicationData,
+  mailSyncPreviousKeyFetchResponseKey,
   mailSyncReplayResponse,
   mailSyncRequestHash,
   mailSyncScopeHash,
@@ -25,6 +26,7 @@ const {
   validateActiveSyncDeviceId,
 } = require('../src/eas-mail-sync.js');
 const { activeSyncMailCollectionId, activeSyncMailMessageServerId } = require('../src/eas-protocol.js');
+const { WbxmlWriter } = require('../src/wbxml/writer.js');
 
 test('mail client commands require exact canonical bounded shapes', () => {
   const collectionId = activeSyncMailCollectionId('INBOX');
@@ -494,6 +496,89 @@ test('duplicate Sync requests replay the exact persisted WBXML response', () => 
     mailSyncReplayResponse(initialState, '0', requestHash, new Date('2026-07-20T12:03:00Z')),
     null,
   );
+});
+
+test('previous mail key compatibility is bounded to known read-only Fetch after a Fetch-only transition', () => {
+  const collectionId = activeSyncMailCollectionId('INBOX');
+  const previousSyncKey = `oms-mail-${'a'.repeat(48)}`;
+  const currentSyncKey = `oms-mail-${'b'.repeat(48)}`;
+  const serverId = activeSyncMailMessageServerId(collectionId, 42);
+  const responseWriter = new WbxmlWriter();
+  responseWriter.writeNode({
+    tag: 'Sync', page: 0, children: [{
+      tag: 'Collections', page: 0, children: [{
+        tag: 'Collection', page: 0, children: [
+          { tag: 'SyncKey', page: 0, content: currentSyncKey },
+          { tag: 'CollectionId', page: 0, content: collectionId },
+          { tag: 'Status', page: 0, content: '1' },
+          { tag: 'Responses', page: 0, children: [{
+            tag: 'Fetch', page: 0, children: [
+              { tag: 'ServerId', page: 0, content: serverId },
+              { tag: 'Status', page: 0, content: '1' },
+            ],
+          }] },
+        ],
+      }],
+    }],
+  });
+  const state = {
+    scopeHash: 'scope',
+    username: 'user@example.test',
+    deviceId: 'DEVICE',
+    collectionId,
+    currentSyncKey,
+    previousSyncKey,
+    uidValidity: '1',
+    highestModseq: '1',
+    minimumUid: 1,
+    filterType: 0,
+    windowSize: 25,
+    bodyType: 1,
+    truncationSize: 500,
+    knownItems: { 42: 0 },
+    lastCommands: [],
+    lastMoreAvailable: false,
+    lastRequestHash: 'a'.repeat(64),
+    lastResponse: responseWriter.getBuffer(),
+    updatedAt: new Date('2026-08-17T12:00:00Z'),
+  };
+  const fetch = [{ tag: 'Fetch', page: 0, children: [
+    { tag: 'ServerId', page: 0, content: serverId },
+  ] }];
+  const now = new Date('2026-08-17T12:00:15Z');
+
+  assert.equal(
+    mailSyncPreviousKeyFetchResponseKey(state, previousSyncKey, fetch, collectionId, now),
+    currentSyncKey,
+  );
+  assert.equal(mailSyncPreviousKeyFetchResponseKey(
+    state,
+    previousSyncKey,
+    [{ tag: 'Fetch', page: 0, children: [{
+      tag: 'ServerId', page: 0, content: activeSyncMailMessageServerId(collectionId, 43),
+    }] }],
+    collectionId,
+    now,
+  ), null, 'an item not in the device state was accepted');
+  assert.equal(mailSyncPreviousKeyFetchResponseKey(
+    state,
+    previousSyncKey,
+    [{ tag: 'Delete', page: 0, children: [{ tag: 'ServerId', page: 0, content: serverId }] }],
+    collectionId,
+    now,
+  ), null, 'a mutating stale command was accepted');
+  assert.equal(mailSyncPreviousKeyFetchResponseKey(
+    { ...state, lastMoreAvailable: true }, previousSyncKey, fetch, collectionId, now,
+  ), null, 'a paginated prior transition was accepted');
+  assert.equal(mailSyncPreviousKeyFetchResponseKey(
+    { ...state, lastCommands: [{ type: 'Add', uid: 43 }] }, previousSyncKey, fetch, collectionId, now,
+  ), null, 'a prior transition with server changes was accepted');
+  assert.equal(mailSyncPreviousKeyFetchResponseKey(
+    { ...state, lastResponse: Buffer.from([0x03]) }, previousSyncKey, fetch, collectionId, now,
+  ), null, 'an undecodable prior response was accepted');
+  assert.equal(mailSyncPreviousKeyFetchResponseKey(
+    state, previousSyncKey, fetch, collectionId, new Date('2026-08-17T12:10:01Z'),
+  ), null, 'an expired previous-key Fetch was accepted');
 });
 
 test('malformed persisted mail state fails visibly instead of resetting known items', () => {

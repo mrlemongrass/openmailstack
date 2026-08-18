@@ -9,7 +9,10 @@ process.env.OMS_WEBMAIL_PORT = '0';
 
 const { WbxmlParser } = require('../src/wbxml/parser.js');
 const { WbxmlWriter } = require('../src/wbxml/writer.js');
-const { activeSyncMailCollectionId } = require('../src/eas-protocol.js');
+const {
+  activeSyncMailCollectionId,
+  activeSyncMailMessageServerId,
+} = require('../src/eas-protocol.js');
 const {
   ACTIVE_SYNC_PING_MAX_FOLDERS,
   ACTIVE_SYNC_PING_MAX_REQUEST_BYTES,
@@ -47,6 +50,43 @@ class FakeImapService {
 
   async getFolders() {
     return [{ path: 'Sent', delimiter: '/', specialUse: '\\Sent' }];
+  }
+
+  async getActiveSyncMessages(folderPath, uids) {
+    assert.equal(folderPath, 'Sent');
+    return uids.map(uid => {
+      const source = Buffer.from([
+        `From: Sender ${uid} <sender${uid}@example.test>`,
+        'To: Recipient <ping-user@example.test>',
+        `Subject: Physical Fetch ${uid}`,
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        `EXACT-PHYSICAL-FETCH-BODY-${uid}`,
+      ].join('\r\n'));
+      return {
+        uid,
+        flags: [],
+        envelope: {},
+        internalDate: new Date('2026-08-17T12:00:00Z'),
+        size: source.length,
+        source,
+        sourceComplete: true,
+      };
+    });
+  }
+
+  async getActiveSyncMailSnapshot() {
+    return {
+      uidValidity: '1',
+      highestModseq: '1',
+      allUids: [41, 42],
+      eligibleUids: [41, 42],
+      changedReadFlags: {},
+    };
+  }
+
+  async messageAction(folderPath, uids, action) {
+    mailMessageActions.push({ folderPath, uids, action });
   }
 }
 
@@ -160,6 +200,8 @@ require.cache[contactsPath] = {
 };
 
 let savedMailSyncState;
+let mailSyncSaveCalls = 0;
+const mailMessageActions = [];
 const mailSyncPath = require.resolve('../src/eas-mail-sync.js');
 const realMailSync = require(mailSyncPath);
 require.cache[mailSyncPath] = {
@@ -169,9 +211,12 @@ require.cache[mailSyncPath] = {
   exports: {
     ...realMailSync,
     withMailSyncScopeLock: async (_scopeHash, operation) => operation(),
-    loadMailSyncState: async () => null,
-    saveMailSyncState: async state => { savedMailSyncState = state; },
-    deleteMailSyncState: async () => {},
+    loadMailSyncState: async () => savedMailSyncState || null,
+    saveMailSyncState: async state => {
+      mailSyncSaveCalls += 1;
+      savedMailSyncState = state;
+    },
+    deleteMailSyncState: async () => { savedMailSyncState = undefined; },
   },
 };
 
@@ -347,6 +392,59 @@ const ipadInitialMailSyncBody = collectionId => {
   return writer.getBuffer();
 };
 
+const ipadMailFetchBody = ({ collectionId, syncKey, serverId, command = 'Fetch' }) => {
+  const commandChildren = [{ tag: 'ServerId', page: 0, content: serverId }];
+  if (command === 'Change') {
+    commandChildren.push({
+      tag: 'ApplicationData',
+      page: 0,
+      children: [{ tag: 'Read', page: 2, content: '1' }],
+    });
+  }
+  const writer = new WbxmlWriter();
+  writer.writeNode({
+    tag: 'Sync',
+    page: 0,
+    children: [{
+      tag: 'Collections',
+      page: 0,
+      children: [{
+        tag: 'Collection',
+        page: 0,
+        children: [
+          { tag: 'SyncKey', page: 0, content: syncKey },
+          { tag: 'CollectionId', page: 0, content: collectionId },
+          { tag: 'GetChanges', page: 0, children: [] },
+          {
+            tag: 'Options',
+            page: 0,
+            children: [
+              { tag: 'MIMETruncation', page: 0, content: '1' },
+              { tag: 'Conflict', page: 0, content: '0' },
+              { tag: 'MIMESupport', page: 0, content: '2' },
+              {
+                tag: 'BodyPreference',
+                page: 17,
+                children: [{ tag: 'Type', page: 17, content: '4' }],
+              },
+            ],
+          },
+          {
+            tag: 'Commands',
+            page: 0,
+            children: [{ tag: command, page: 0, children: commandChildren }],
+          },
+        ],
+      }],
+    }],
+  });
+  return writer.getBuffer();
+};
+
+const mailSyncCollection = response => new WbxmlParser(response.body).parse()
+  .children?.find(node => node.tag === 'Collections')
+  ?.children?.find(node => node.tag === 'Collection');
+
 const waitUntil = async (predicate, message) => {
   const deadline = Date.now() + 2_000;
   while (!predicate()) {
@@ -430,6 +528,92 @@ test('physical iPad initial mail Sync accepts Conflict and returns a collection 
   assert.equal(collection.children.find(node => node.tag === 'CollectionId')?.content, collectionId);
   assert.match(collection.children.find(node => node.tag === 'SyncKey')?.content || '', /^oms-mail-[0-9a-f]{48}$/);
   assert.equal(savedMailSyncState?.collectionId, collectionId);
+});
+
+test('physical iPad can fetch two different message bodies from one prior mail key without resetting', async () => {
+  const collectionId = activeSyncMailCollectionId('Sent');
+  const originalSyncKey = `oms-mail-${'a'.repeat(48)}`;
+  const firstServerId = activeSyncMailMessageServerId(collectionId, 41);
+  const secondServerId = activeSyncMailMessageServerId(collectionId, 42);
+  savedMailSyncState = {
+    scopeHash: 'fixture-scope',
+    username: 'ping-user@example.test',
+    deviceId: 'PINGDEVICE0123456789ABCDEF',
+    collectionId,
+    currentSyncKey: originalSyncKey,
+    previousSyncKey: null,
+    uidValidity: '1',
+    highestModseq: '0',
+    minimumUid: 1,
+    filterType: 0,
+    windowSize: 25,
+    bodyType: 1,
+    truncationSize: 500,
+    knownItems: { 41: 0, 42: 0 },
+    lastCommands: [],
+    lastMoreAvailable: false,
+    lastRequestHash: null,
+    lastResponse: null,
+    updatedAt: new Date(),
+  };
+  mailSyncSaveCalls = 0;
+  mailMessageActions.length = 0;
+
+  const firstBody = ipadMailFetchBody({ collectionId, syncKey: originalSyncKey, serverId: firstServerId });
+  const first = await postPing({ command: 'Sync', body: firstBody, deviceType: 'iPad' });
+  assert.equal(first.status, 200);
+  const firstCollection = mailSyncCollection(first);
+  assert.equal(firstCollection.children.find(node => node.tag === 'Status')?.content, '1');
+  const currentSyncKey = firstCollection.children.find(node => node.tag === 'SyncKey')?.content;
+  assert.match(currentSyncKey || '', /^oms-mail-[0-9a-f]{48}$/);
+  assert.notEqual(currentSyncKey, originalSyncKey);
+  const firstFetch = firstCollection.children.find(node => node.tag === 'Responses')
+    ?.children?.find(node => node.tag === 'Fetch');
+  assert.equal(firstFetch?.children.find(node => node.tag === 'Status')?.content, '1');
+  assert.match(JSON.stringify(firstFetch), /EXACT-PHYSICAL-FETCH-BODY-41/);
+  assert.equal(mailSyncSaveCalls, 1);
+  const stateAfterFirstFetch = savedMailSyncState;
+
+  const secondBody = ipadMailFetchBody({ collectionId, syncKey: originalSyncKey, serverId: secondServerId });
+  const second = await postPing({ command: 'Sync', body: secondBody, deviceType: 'iPad' });
+  assert.equal(second.status, 200);
+  const secondCollection = mailSyncCollection(second);
+  assert.equal(
+    secondCollection.children.find(node => node.tag === 'Status')?.content,
+    '1',
+    'a different read-only Fetch on the immediately previous key forced a destructive status-3 resync',
+  );
+  assert.equal(secondCollection.children.find(node => node.tag === 'SyncKey')?.content, currentSyncKey);
+  const secondFetch = secondCollection.children.find(node => node.tag === 'Responses')
+    ?.children?.find(node => node.tag === 'Fetch');
+  assert.equal(secondFetch?.children.find(node => node.tag === 'Status')?.content, '1');
+  assert.match(JSON.stringify(secondFetch), /EXACT-PHYSICAL-FETCH-BODY-42/);
+  assert.equal(savedMailSyncState, stateAfterFirstFetch, 'compatibility Fetch mutated collection state');
+  assert.equal(mailSyncSaveCalls, 1, 'compatibility Fetch persisted a second key transition');
+
+  const exactRetry = await postPing({ command: 'Sync', body: firstBody, deviceType: 'iPad' });
+  assert.deepEqual(exactRetry.body, first.body, 'compatibility Fetch displaced exact lost-response replay state');
+
+  const staleMutation = await postPing({
+    command: 'Sync',
+    body: ipadMailFetchBody({
+      collectionId,
+      syncKey: originalSyncKey,
+      serverId: firstServerId,
+      command: 'Change',
+    }),
+    deviceType: 'iPad',
+  });
+  assert.equal(mailSyncCollection(staleMutation).children.find(node => node.tag === 'Status')?.content, '3');
+  assert.deepEqual(mailMessageActions, [], 'a stale mutating command reached IMAP');
+
+  const olderKey = `oms-mail-${'b'.repeat(48)}`;
+  const unknown = await postPing({
+    command: 'Sync',
+    body: ipadMailFetchBody({ collectionId, syncKey: olderKey, serverId: secondServerId }),
+    deviceType: 'iPad',
+  });
+  assert.equal(mailSyncCollection(unknown).children.find(node => node.tag === 'Status')?.content, '3');
 });
 
 test('Ping HTTP boundary enforces auth, device, syntax, ownership, limits, and cache atomicity', async () => {

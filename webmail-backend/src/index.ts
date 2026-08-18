@@ -58,6 +58,7 @@ import {
     ensureEasMailSyncSchema,
     filterTypeCutoff,
     loadMailSyncState,
+    mailSyncPreviousKeyFetchResponseKey,
     mailSyncReplayResponse,
     mailSyncRequestHash,
     mailSyncScopeHash,
@@ -1923,15 +1924,18 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
                 return res.status(200).send(replayResponse);
             }
-            if (syncKey !== '0' && (!state || syncKey !== state.currentSyncKey)) {
+            const commandsNode = childNode(syncCollectionNode, 'Commands');
+            const requestCommands = commandsNode?.children || [];
+            const commandsAreValid = (!commandsNode || Array.isArray(commandsNode.children))
+                && validateMailClientCommands(requestCommands, collectionId).ok;
+            const previousKeyFetchResponseKey = commandsAreValid
+                ? mailSyncPreviousKeyFetchResponseKey(state, syncKey, requestCommands, collectionId)
+                : null;
+            if (syncKey !== '0' && (!state || syncKey !== state.currentSyncKey) && !previousKeyFetchResponseKey) {
                 console.log(`[SYNC] Rejecting stale EAS mail key for scope ${scopeHash.slice(0, 12)}; device reset required`);
                 return sendMailSyncStatus('3');
             }
-
-            const commandsNode = childNode(syncCollectionNode, 'Commands');
-            const requestCommands = commandsNode?.children || [];
-            if ((commandsNode && !Array.isArray(commandsNode.children))
-                || !validateMailClientCommands(requestCommands, collectionId).ok) {
+            if (!commandsAreValid) {
                 return sendMailSyncStatus('4');
             }
             const requestedFetchServerIds = requestCommands
@@ -1954,7 +1958,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
             const deletesAsMoves = childText(syncCollectionNode, 'DeletesAsMoves') !== '0';
             const getChanges = parseActiveSyncGetChanges(syncKey, childNode(syncCollectionNode, 'GetChanges'));
             if (!getChanges.ok) return sendMailSyncStatus('4');
-            const getChangesRequested = getChanges.value;
+            const getChangesRequested = previousKeyFetchResponseKey ? false : getChanges.value;
             const optionsNode = childNode(syncCollectionNode, 'Options');
             const bodyPreferenceNodes = optionsNode?.children?.filter((node: any) => node.tag === 'BodyPreference') || [];
             const bodyPreferenceNode = bodyPreferenceNodes.find((node: any) => ['1', '2', '4'].includes(childText(node, 'Type')))
@@ -2018,7 +2022,7 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
             const fetchServerIds = requestedFetchServerIds.slice(0, effectiveMailSyncWindow(syncOptions));
             const rejectedFetchServerIds = requestedFetchServerIds.slice(fetchServerIds.length);
 
-            const nextSyncKey = createMailSyncKey();
+            const nextSyncKey = previousKeyFetchResponseKey || createMailSyncKey();
             let serverCommands: MailSyncCommand[] = [];
             let nextKnownItems: MailSyncKnownItems = { ...(state?.knownItems || {}) };
             let nextHighestModseq = state?.highestModseq || '0';
@@ -2212,6 +2216,11 @@ app.all(['/Microsoft-Server-ActiveSync'], async (req, res) => {
                 const responseBuffer = writer.getBuffer();
                 if (responseBuffer.length > MAX_MAIL_SYNC_RESPONSE_BYTES) {
                     throw new MailSyncStateError('Mail Sync response exceeds its aggregate byte budget');
+                }
+                if (previousKeyFetchResponseKey) {
+                    console.log(`[SYNC] Scope ${scopeHash.slice(0, 12)}: served previous-key read-only Fetch without advancing state`);
+                    res.set('Content-Type', 'application/vnd.ms-sync.wbxml');
+                    return res.status(200).send(responseBuffer);
                 }
                 const replayable = responseBuffer.length <= MAX_MAIL_SYNC_REPLAY_BYTES;
                 state = {

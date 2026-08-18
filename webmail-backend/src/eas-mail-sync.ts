@@ -4,6 +4,7 @@ import { pool } from './db';
 import type { ActiveSyncMailMessage } from './imap';
 import { normalizeActiveSyncWindowSize } from './eas-sync';
 import { activeSyncMailMessageUid } from './eas-protocol';
+import { WbxmlParser, type WbxmlNode } from './wbxml/parser';
 
 export type MailReadState = 0 | 1;
 export type MailSyncKnownItems = Record<string, MailReadState>;
@@ -318,6 +319,58 @@ export const mailSyncReplayResponse = (
     const age = now.getTime() - state.updatedAt.getTime();
     if (age > (syncKey === '0' ? 2 : 10) * 60 * 1000) return null;
     return Buffer.from(state.lastResponse);
+};
+
+const uniqueChild = (node: WbxmlNode, tag: string, page: number): WbxmlNode | null => {
+    const matches = node.children.filter(child => child.tag === tag && child.page === page);
+    return matches.length === 1 ? matches[0] : null;
+};
+
+const previousMailSyncResponseWasFetchOnly = (
+    state: StoredMailSyncState,
+): boolean => {
+    if (!state.lastResponse || state.lastCommands.length !== 0 || state.lastMoreAvailable) return false;
+    try {
+        const root = new WbxmlParser(state.lastResponse).parse();
+        const collections = root.tag === 'Sync' && root.page === 0
+            ? uniqueChild(root, 'Collections', 0)
+            : null;
+        const collection = collections && collections.children.length === 1
+            && collections.children[0].tag === 'Collection' && collections.children[0].page === 0
+            ? collections.children[0]
+            : null;
+        if (!collection || collection.children.some(child => ['Commands', 'MoreAvailable'].includes(child.tag))) return false;
+        if (uniqueChild(collection, 'SyncKey', 0)?.content !== state.currentSyncKey
+            || uniqueChild(collection, 'CollectionId', 0)?.content !== state.collectionId
+            || uniqueChild(collection, 'Status', 0)?.content !== '1') return false;
+        const responses = uniqueChild(collection, 'Responses', 0);
+        return Boolean(responses?.children.length)
+            && responses!.children.every(response => response.tag === 'Fetch' && response.page === 0);
+    } catch {
+        return false;
+    }
+};
+
+export const mailSyncPreviousKeyFetchResponseKey = (
+    state: StoredMailSyncState | null,
+    syncKey: string,
+    commands: any[],
+    collectionId: string,
+    now = new Date(),
+): string | null => {
+    // Apple Mail can overlap body Fetches before it applies the first response key. Tolerate only the
+    // immediately previous, read-only transition and converge both responses on the already-current key.
+    if (!state || syncKey === '0' || state.previousSyncKey !== syncKey
+        || state.currentSyncKey === syncKey || state.collectionId !== collectionId
+        || validateMailClientCommands(commands, collectionId).ok === false
+        || commands.length === 0 || commands.some(command => command.tag !== 'Fetch')) return null;
+    const age = now.getTime() - state.updatedAt.getTime();
+    if (age < 0 || age > 10 * 60 * 1000 || !previousMailSyncResponseWasFetchOnly(state)) return null;
+    const everyItemIsKnown = commands.every(command => {
+        const uid = activeSyncMailMessageUid(collectionId, command.children[0].content);
+        return uid !== null && Object.hasOwn(state.knownItems, String(uid));
+    });
+    return everyItemIsKnown ? state.currentSyncKey : null;
 };
 
 let schemaPromise: Promise<void> | null = null;

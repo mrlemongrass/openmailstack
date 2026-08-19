@@ -9257,3 +9257,63 @@ Branch: `main`; surgical live release built from installed baseline
   existing message to appear and the account error not to recur; the server-side
   fix and Sent copy are already verified. ClientId lost-response retry remains a
   separate physical duplicate-prevention test.
+
+## 2026-08-18 — Cycle 15: Physical iPad Message Body Retrieval
+
+Agent/tool: Codex diagnosis loop, privacy-bounded packet/WBXML structure
+inspection, exact HTTP regression, isolated surgical release, guarded
+bridge/active deployment, and physical iPad confirmation
+
+Branch: `main`; surgical live release `4417f3d0` built from the installed
+release line and integrated main fix `885099fd`
+
+### Diagnosis and change
+
+- Sent and other Exchange folders eventually populated and the earlier
+  Settings account error stopped, but opening any listed message left the iPad
+  on an endless loading spinner.
+- The physical request sequence showed that the first read-only Sync `Fetch`
+  completed, advanced the collection key, and returned one response. Fifteen
+  seconds later the iPad sent a different body `Fetch` using the immediately
+  previous key. Because the request hash differed, the exact-replay seam did
+  not apply and the server returned Sync status 3, forcing a full 5,426-item
+  Inbox catch-up instead of returning the requested body.
+- Added a deliberately narrow previous-key compatibility path. It applies only
+  to a recent, immediate previous key in the same collection when both the
+  prior response and new request are Fetch-only, prior paging is complete,
+  there are no pending server commands, and every requested UID is already in
+  known state. It returns the current key with the requested body and does not
+  mutate or save Sync state. Change/Delete, older keys, paging, malformed prior
+  responses, and unknown UIDs retain the status-3 reset boundary.
+
+### Proof and rollout
+
+- The exact physical-shaped route regression was red with status 3, then green
+  with two different previous-key Fetches converging on the current key. It
+  also proves the compatibility response is non-mutating, exact replay remains
+  byte-identical, and stale Change or older keys never reach IMAP.
+- Focused mail-Sync/HTTP/hardening/generated-runtime checks pass 49/49. The
+  complete backend suite passes with bounded test concurrency; an initial
+  maximum-parallel run in the cold temporary worktree exhausted route-test
+  resources, while each isolated failure and the complete serial suite passed.
+  Frontend passes 175/175, ESLint and production build pass, both production
+  dependency audits report zero findings, and the complete repository
+  integration suite passes through protocol, deployment, rollback,
+  backup/restore, and local dry-run gates.
+- Guarded `webmail-bridge` and then `webmail` both passed pre/post public IMAPS
+  and ActiveSync Mail/Ping/Contacts/Calendar gates with exact cleanup. The live
+  backend and Scheduler worker are active, readiness is `401`, `NRestarts=0`,
+  and the deployed Sync and route artifacts are byte-identical to surgical
+  release `4417f3d0`.
+- The owner then opened a real Exchange message on the iPad and confirmed that
+  its content rendered normally. The one post-deploy tap used the current key,
+  so it did not artificially force the overlap compatibility branch; that
+  exact overlap remains covered by the physical-shaped HTTP regression.
+
+### Remaining gates
+
+- The reported message-body spinner is physically closed. Do not infer from
+  this one successful body open that same-ClientId SendMail retry, every Direct
+  Push network/sleep transition, physical macOS CardDAV identity retry, or the
+  original macOS Notes lifecycle is complete. Those remain separate release
+  evidence, as does the production backup-quiescence reduction.

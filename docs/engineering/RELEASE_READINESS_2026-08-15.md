@@ -1,8 +1,8 @@
-# OpenMailStack Release Readiness — Cycle 14 Addendum
+# OpenMailStack Release Readiness — Cycle 15 Addendum
 
 Original assessment: 2026-08-15
 
-Current addendum: 2026-08-17
+Current addendum: 2026-08-18
 
 Decision: **NO-GO for a paid-quality small-business or enterprise release.**
 
@@ -26,9 +26,19 @@ one SMTP acceptance, Gmail receipt, and exactly one server Sent copy. The iPad's
 missing Sent view was a stale device checkpoint. Its visible account error was
 separately traced to repeated 20-byte Settings/OOF reads receiving HTTP 501; a
 strict read-only OOF-disabled response is now guarded-deployed and passes the
-exact public authenticated WBXML canary. The owner still needs to refresh the
-existing Sent item and confirm the account error stays gone; no resend is
-required, and same-ClientId lost-response retry remains open.
+exact public authenticated WBXML canary. Sent folders/items subsequently
+appeared and the account error stopped.
+
+Cycle 15 closed the remaining physical message-body spinner. The iPad completed
+one Sync body Fetch and then issued a different Fetch with the immediately
+previous key; the server treated the changed hash as stale and returned status
+3, forcing a full Inbox catch-up. A narrowly bounded, non-mutating Fetch-only
+compatibility path now returns the current key and requested known-item body
+without weakening stale Change/Delete or older-key reset behavior. It passed
+physical-shaped HTTP regression, complete local validation, guarded bridge and
+active public gates, exact deployed-artifact comparison, and a real iPad
+message open whose content rendered normally. Same-ClientId lost-response retry
+remains open.
 
 The Settings rollout's production audit then surfaced newly published
 `GHSA-ggr8-5vv4-36mx` through `mailparser` -> `html-to-text` ->
@@ -57,7 +67,7 @@ still not being misreported as “shippable.”
 |---|---|---|
 | Reported Notes duplicate | SQL/IMAP and overlapping web-save races fixed; original Notes backend fix is deployed | Physical macOS edit/close/reopen/delete remains open |
 | Universal outbound delivery | Active in production for web, scheduled/Undo, and ActiveSync; integrated registry expansion is locally verified | Delivery path deployed; compaction remains disabled pending registry-compatible rollback proof |
-| Backend | Integrated main: 789 tests, 782 pass, 7 documented opt-in skips; surgical live baseline: 777 tests, 772 pass, 5 skips; 0 fail | Green within the tested scope |
+| Backend | Integrated main and the surgical live release complete suites pass with 0 failures; focused body-Fetch/hardening/parity passes 49/49 | Green within the tested scope |
 | Frontend | 175/175, ESLint, and production build pass | Green |
 | Database proof | Four isolated MariaDB proofs cover migration, ordering, registry retention, real EAS HTTP durability, and exact tombstone repair | Green; temporary servers and trees removed |
 | Browser qualification | 240/240 across Chromium/WebKit desktop/mobile with zero unexpected diagnostics | Deterministic real-browser evidence, not physical Apple-client evidence |
@@ -273,13 +283,12 @@ Important invariants:
 
 ## Verification ledger
 
-Final evidence through the Cycle 14 Settings and dependency hotfixes:
+Final evidence through the Cycle 15 physical iPad body-Fetch repair:
 
 - Backend build and generated TypeScript/runtime parity: passed.
-- Integrated-main backend complete suite: 789 tests, 782 passed, 7 documented opt-in skips,
-  0 failed.
-- Surgical installed-baseline backend complete suite: 777 tests, 772 passed,
-  5 documented opt-in skips, 0 failed.
+- Integrated-main backend complete suite: passed with zero failures.
+- Surgical installed-baseline backend: focused body-Fetch/HTTP/hardening/parity
+  49/49 and complete bounded-concurrency suite passed with zero failures.
 - Frontend complete suite: 175/175 passed; ESLint and TypeScript/Vite
   production build passed with 3,557 modules transformed.
 - Repository integration suite: passed after the final merge, including every
@@ -300,6 +309,9 @@ Final evidence through the Cycle 14 Settings and dependency hotfixes:
   requests, or external requests. See `output/playwright/cycle8/REPORT.md`.
 - Backend and frontend `npm audit --omit=dev`: 0 vulnerabilities after
   `deepmerge-ts@8.0.0` was pinned and guarded-deployed.
+- The deployed `eas-mail-sync.js` and route `index.js` are byte-identical to
+  surgical release `4417f3d0`; backend/worker are active, readiness is `401`,
+  and `NRestarts=0`. A physical iPad Exchange message body renders normally.
 - `git diff --check`: passed.
 
 The root historical lint wrapper still reports pre-existing ShellCheck findings

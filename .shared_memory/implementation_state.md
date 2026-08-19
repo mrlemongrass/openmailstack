@@ -1,5 +1,33 @@
 # Implementation State
 
+## 2026-08-18 Cycle 15 Physical iPad Body Fetch Repair
+
+**Status: the Exchange message-body spinner is fixed, guarded-deployed, and
+physically confirmed on the iPad.** The original iPad sequence completed one
+Sync body Fetch, then issued a different Fetch with the immediately previous
+SyncKey. Exact replay correctly rejected the changed hash, but the generic stale
+boundary returned status 3 and forced a full Inbox resync instead of returning
+the second body.
+
+Main commit `885099fd` and surgical release `4417f3d0` add a narrow,
+non-mutating compatibility path only for recent same-collection previous-key
+Fetch-only requests after a completed Fetch-only response with no paging or
+pending commands and only known UIDs. Change/Delete, older keys, unknown UIDs,
+and incomplete/malformed state still reset. The physical-shaped HTTP seam proves
+two different Fetches converge on the current key without another state save,
+while exact replay remains byte-identical.
+
+Focused backend checks pass 49/49; the complete backend suite passes with
+bounded concurrency; frontend passes 175/175 plus lint/build; both production
+audits are zero; complete repository integration passes. Guarded bridge and
+active deployments passed every public IMAPS and ActiveSync
+Mail/Ping/Contacts/Calendar pre/post gate. Live backend and worker are active,
+readiness is `401`, `NRestarts=0`, and the two changed runtime artifacts match
+the surgical release byte-for-byte. The owner opened a real Exchange message
+after rollout and confirmed its body renders normally. Same-ClientId retry,
+the full physical Direct Push transition matrix, macOS CardDAV/Notes evidence,
+and backup-quiescence reduction remain open.
+
 ## 2026-08-17 Cycle 14 Physical iPad Send And Settings Repair
 
 **Status: server delivery/Sent storage and the iPad Settings failure are fixed

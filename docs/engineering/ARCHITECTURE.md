@@ -1277,12 +1277,19 @@ Current Calendar interoperability seam, verified locally 2026-07-20:
 - `webmail-backend/src/eas-timezone.ts` encodes and decodes the 172-byte EAS `TIME_ZONE_INFORMATION` value, validates candidate IANA/Windows names against the decoded bias and transition rules, and uses bounded caches/fallbacks. `windows-timezones.ts` carries the CLDR 48 territory-`001` map under the Unicode notice in `THIRD_PARTY_NOTICES.md`.
 - Recurrence exceptions, reminders, and conservative custom/invalid `VTIMEZONE` handling pass the automated and physical macOS/iOS Calendar gates recorded in the worklog. Arbitrary unsupported custom rules remain floating by design.
 
-Current ActiveSync Mail interoperability seam, deployed and script-verified 2026-07-20:
+Current ActiveSync Mail interoperability seam, deployed and physically verified
+2026-08-18:
 
 - `webmail-backend/src/eas-mail-sync.ts` owns persistent mail delta state. State is isolated by normalized mailbox, EAS `DeviceId`, and folder `CollectionId`; opaque sync keys bind the client to one stored snapshot, and exact WBXML retry responses are replayed only after the request has passed direct IMAP credential verification.
+- A recent immediate-previous-key request may converge on the current key only
+  for a non-mutating Fetch-only overlap: same collection, completed Fetch-only
+  prior response, no paging or pending commands, and only already-known UIDs.
+  The compatibility response is not saved and cannot advance state. Changed
+  request bodies containing Change/Delete, older keys, malformed/incomplete
+  prior state, or unknown UIDs retain the status-3 reset boundary.
 - Each folder snapshot stores `UIDVALIDITY`, `HIGHESTMODSEQ`, a filter-specific UID floor, cached Sync options, and known UID/read state. Previously known UIDs that leave the source folder emit EAS `Delete`; messages moved into Junk or Trash arrive as normal `Add` commands when those destination collections synchronize.
 - Email `FilterType`, `WindowSize`, and AirSyncBase body preferences are honored with UTF-8-safe truncation, protocol window bounds, and a 16 MiB aggregate source-fetch budget. FilterType `0` or an omitted FilterType paginates every eligible item through `MoreAvailable`; once the initial catch-up is complete, unchanged `HIGHESTMODSEQ` polls avoid `SEARCH ALL`.
-- `tests/integration/activesync_mail_smoke.sh` uses the real web message-action API to prove Inbox-to-Junk and Junk-to-Trash deltas, body truncation, read/unread changes, and an empty no-change Sync. The production smoke passed under isolated synthetic-device state. Physical iOS 26.5.2 passed the stale-key reset, continuous all-mail paging, catch-up exhaustion, reconciliation, and sustained empty no-change polling after hotfix `bc4f7387`; the owner then confirmed the iOS Exchange, iOS IMAP, and macOS Mail views looked correct. This closes mail paging, not the separate final-runtime Direct Push and SendMail-retry gates. Do not repeat a spam move based on subject alone while the IMAP clients and current server UIDs disagree about the two historical examples.
+- `tests/integration/activesync_mail_smoke.sh` uses the real web message-action API to prove Inbox-to-Junk and Junk-to-Trash deltas, body truncation, read/unread changes, and an empty no-change Sync. The production smoke passed under isolated synthetic-device state. Physical iOS 26.5.2 passed stale-key reset, continuous all-mail paging, catch-up exhaustion, reconciliation, and sustained empty no-change polling after hotfix `bc4f7387`. Cycle 15 then reproduced two different previous-key body Fetches at the HTTP seam and physically confirmed a real iPad Exchange body renders after guarded release `4417f3d0`. This closes mail paging/body retrieval, not the separate final-runtime Direct Push and SendMail-retry gates. Do not repeat a spam move based on subject alone while the IMAP clients and current server UIDs disagree about the two historical examples.
 
 Current ActiveSync Ping / Direct Push seam, deployed and public-gate verified
 2026-08-16:

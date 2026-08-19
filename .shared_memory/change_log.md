@@ -1960,3 +1960,20 @@ Future entry template:
   IMAPS and ActiveSync Mail/Ping/Contacts/Calendar gates. Live mode is active,
   541/541 tracked files match, readiness is `401`, `NRestarts=0`, the warning
   journal is empty, and the installed dependency audit is zero.
+
+## 2026-08-18 — Cycle 15 Physical iPad Body Fetch Repair
+
+- Diagnosed the endless iPad message spinner as two different read-only Sync
+  Fetches using the immediately previous key. The generic stale-key path
+  returned status 3 and restarted full Inbox catch-up after the first body had
+  already advanced the key.
+- Added a bounded non-mutating previous-key Fetch compatibility seam in main
+  `885099fd` and surgical release `4417f3d0`; stale mutations, older keys,
+  paging, malformed prior state, and unknown UIDs remain fail-closed.
+- Verified focused backend 49/49, complete bounded-concurrency backend, frontend
+  175/175, lint/build, zero production audit findings, generated parity, and
+  complete repository integration.
+- Guarded bridge and active deployments passed all public protocol pre/post
+  gates. Live service/worker are active, readiness is `401`, `NRestarts=0`, and
+  changed deployed artifacts match the release byte-for-byte. A real iPad
+  Exchange message body then rendered normally.

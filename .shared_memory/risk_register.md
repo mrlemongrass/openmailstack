@@ -2,7 +2,7 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-08-17
+Last updated: 2026-08-18
 
 ## Resolved Risks
 
@@ -32,7 +32,15 @@ Last updated: 2026-08-17
   501. The deployed strict compatibility handler now returns Settings/Oof
   success with disabled OOF state, rejects writes/unknown shapes, and passed an
   exact public authenticated WBXML canary. Physical Sent refresh/account-error
-  confirmation remains in the Apple evidence gate below.
+  confirmation subsequently passed when Sent folders/items appeared and the
+  account error stopped; Cycle 15 separately closed message-body retrieval.
+- ✅ ActiveSync iPad message body spinner: the device issued different
+  read-only Sync Fetches against the immediately previous key. The second
+  request formerly received status 3 and restarted a full Inbox catch-up. The
+  deployed compatibility path now serves only bounded, known-item,
+  Fetch-only previous-key overlap without advancing state; stale mutations and
+  older keys still reset. The exact route regression passes and a physical
+  post-deploy iPad message body renders normally.
 - ✅ Newly published deepmerge recursion advisory: the Settings rollout audit
   exposed `GHSA-ggr8-5vv4-36mx` through `mailparser`/`html-to-text` and
   `deepmerge-ts@7.1.5`. Main and the surgical installed-baseline release pin
@@ -129,11 +137,12 @@ Last updated: 2026-08-17
 
 - 🔴 Physical Apple release evidence: the first final-runtime iPad SendMail is
   proven end-to-end through one durable row, one SMTP acceptance, and one
-  server Sent copy. The iPad must still refresh that existing Sent item without
-  another account error, and same-ClientId lost-response retry remains unproven.
-  On-screen Direct Push idle/wake/network/restart behavior and the original
-  macOS CardDAV identity edit/merge retry plus Notes edit/reopen/delete lifecycle
-  remain unproven on the final runtime.
+  server Sent copy. Sent folders/items now appear, the Settings account error
+  stopped, and a physical Exchange message body renders after the previous-key
+  Fetch fix. Same-ClientId lost-response retry remains unproven. On-screen
+  Direct Push idle/wake/network/restart behavior and the original macOS CardDAV
+  identity edit/merge retry plus Notes edit/reopen/delete lifecycle remain
+  unproven on the final runtime.
 - ✅ Authorized durable-row rollback evidence: exact approval produced one inert
   production immediate row. It survived active-to-bridge with a byte-identical
   30-column digest and zero canary claim/SMTP/IMAP evidence, was deleted exactly

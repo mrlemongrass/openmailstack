@@ -1038,7 +1038,7 @@ exports.apiRouter.post('/account/2fa/setup', requireAuth, async (req, res) => {
 });
 exports.apiRouter.post('/account/2fa/confirm', requireAuth, async (req, res) => {
     try {
-        const currentSessionHash = crypto_1.default.createHash('sha256').update(req.user.sessionId).digest('hex');
+        const currentSessionHash = (0, auth_1.hashSessionId)(req.user.sessionId);
         const recoveryCodes = await (0, account_security_1.confirmTotpSetup)(req.user.username, String(req.body?.code || ''), currentSessionHash);
         res.json({ success: true, recoveryCodes });
     }
@@ -1140,7 +1140,7 @@ exports.apiRouter.get('/account/sessions', requireAuth, async (req, res) => {
         try {
             const [rows] = await db.query(`SELECT id_hash, created_at, updated_at FROM webmail_sessions
                  WHERE username = ? AND expires_at > NOW() ORDER BY updated_at DESC`, [req.user.username]);
-            const currentHash = crypto_1.default.createHash('sha256').update(req.user.sessionId).digest('hex');
+            const currentHash = (0, auth_1.hashSessionId)(req.user.sessionId);
             const sessions = rows.map(r => ({
                 id: r.id_hash.substring(0, 8),
                 created_at: r.created_at,
@@ -1163,7 +1163,7 @@ exports.apiRouter.delete('/account/sessions/:id', requireAuth, async (req, res) 
         if (!/^[a-f0-9]{8}$/.test(sessionHashPrefix)) {
             return res.status(400).json({ success: false, error: 'Invalid session identifier.' });
         }
-        const currentHash = crypto_1.default.createHash('sha256').update(req.user.sessionId).digest('hex');
+        const currentHash = (0, auth_1.hashSessionId)(req.user.sessionId);
         if (currentHash.startsWith(sessionHashPrefix)) {
             return res.status(400).json({ success: false, error: 'Cannot revoke your current session.' });
         }

@@ -72,7 +72,7 @@ const parseCookies = (header = ''): Record<string, string> => {
     return cookies;
 };
 
-const hashSessionId = (id: string) => crypto.createHash('sha256').update(id).digest('hex');
+export const hashSessionId = (id: string) => crypto.createHash('sha256').update(id).digest('hex');
 
 const getSessionKey = () => crypto.createHash('sha256').update(serverConfig.sessionSecret).digest();
 

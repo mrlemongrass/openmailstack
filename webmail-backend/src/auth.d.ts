@@ -8,6 +8,7 @@ export interface WebmailSession {
 }
 export declare const SESSION_COOKIE = "oms_session";
 export declare const initializeSessionStore: () => Promise<void>;
+export declare const hashSessionId: (id: string) => string;
 export declare const decryptPassword: (ciphertext: string, iv: Buffer, tag: Buffer) => string;
 export declare const hasGlobalAdminAccess: (row: {
     superadmin?: unknown;

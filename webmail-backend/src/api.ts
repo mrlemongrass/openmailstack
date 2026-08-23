@@ -15,7 +15,7 @@ import {
     patchVCardData,
     withContactMutation,
 } from './contact-utils';
-import { canDemoteGlobalAdmin, clearSession, createSession, hasGlobalAdminAccess, requireAdminSession, requireSession } from './auth';
+import { canDemoteGlobalAdmin, clearSession, createSession, hashSessionId, hasGlobalAdminAccess, requireAdminSession, requireSession } from './auth';
 import { imapConfig, normalizeMailboxUsername, schedulerConfig, serverConfig, sieveConfig, smtpConfig } from './config';
 import { compileSieve, extractJsonFromSieve, type SieveRule, type SieveRulesDocument } from './sieve-compiler';
 import { evaluateRulesForMessage } from './rule-engine';
@@ -1153,7 +1153,7 @@ apiRouter.post('/account/2fa/setup', requireAuth, async (req: any, res) => {
 
 apiRouter.post('/account/2fa/confirm', requireAuth, async (req: any, res) => {
     try {
-        const currentSessionHash = crypto.createHash('sha256').update(req.user.sessionId).digest('hex');
+        const currentSessionHash = hashSessionId(req.user.sessionId);
         const recoveryCodes = await confirmTotpSetup(
             req.user.username,
             String(req.body?.code || ''),
@@ -1270,7 +1270,7 @@ apiRouter.get('/account/sessions', requireAuth, async (req: any, res) => {
                  WHERE username = ? AND expires_at > NOW() ORDER BY updated_at DESC`,
                 [req.user.username]
             );
-            const currentHash = crypto.createHash('sha256').update(req.user.sessionId).digest('hex');
+            const currentHash = hashSessionId(req.user.sessionId);
             const sessions = (rows as any[]).map(r => ({
                 id: r.id_hash.substring(0, 8),
                 created_at: r.created_at,
@@ -1292,7 +1292,7 @@ apiRouter.delete('/account/sessions/:id', requireAuth, async (req: any, res) => 
         if (!/^[a-f0-9]{8}$/.test(sessionHashPrefix)) {
             return res.status(400).json({ success: false, error: 'Invalid session identifier.' });
         }
-        const currentHash = crypto.createHash('sha256').update(req.user.sessionId).digest('hex');
+        const currentHash = hashSessionId(req.user.sessionId);
         if (currentHash.startsWith(sessionHashPrefix)) {
             return res.status(400).json({ success: false, error: 'Cannot revoke your current session.' });
         }

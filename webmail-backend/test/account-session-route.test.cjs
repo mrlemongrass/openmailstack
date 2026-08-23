@@ -6,6 +6,12 @@ const test = require('node:test');
 process.env.OMS_DB_PASSWORD ||= 'account-session-route-test';
 process.env.OMS_SESSION_SECRET ||= 's'.repeat(64);
 process.env.OMS_ACCOUNT_SECURITY_KEY ||= 'a'.repeat(64);
+process.env.OMS_IMAP_MASTER_USER ||= 'session-test-master';
+process.env.OMS_IMAP_MASTER_PASS ||= 'session-test-password';
+process.env.OMS_SMTP_MASTER_USER ||= 'session-test-master';
+process.env.OMS_SMTP_MASTER_PASS ||= 'session-test-password';
+process.env.OMS_SIEVE_MASTER_USER ||= 'session-test-master';
+process.env.OMS_SIEVE_MASTER_PASS ||= 'session-test-password';
 
 const username = 'sessions@example.test';
 const currentSessionId = 'current-session-token';
@@ -42,20 +48,33 @@ const connection = {
 
 const db = require('../src/db.js');
 db.pool.getConnection = async () => connection;
-
-const authPath = require.resolve('../src/auth.js');
-const auth = require(authPath);
-require.cache[authPath].exports = {
-  ...auth,
-  requireSession: (req, _res, next) => {
-    req.user = {
-      sessionId: currentSessionId,
+db.pool.query = async (sql, params = []) => {
+  const normalizedSql = String(sql).replace(/\s+/g, ' ').trim();
+  if (normalizedSql.startsWith('CREATE TABLE IF NOT EXISTS')) {
+    return [{}, []];
+  }
+  if (normalizedSql.startsWith('SELECT id_hash FROM webmail_sessions WHERE password_ciphertext')) {
+    return [[], []];
+  }
+  if (normalizedSql.startsWith('SELECT username FROM mailbox_credentials WHERE password_ciphertext')) {
+    return [[], []];
+  }
+  if (normalizedSql.includes('FROM webmail_sessions s') && normalizedSql.includes('WHERE s.id_hash = ?')) {
+    if (params[0] !== currentSessionHash) return [[], []];
+    return [[{
       username,
-      password: '',
-      isAdmin: false,
-    };
-    next();
-  },
+      password_ciphertext: '',
+      password_iv: Buffer.alloc(12),
+      password_tag: Buffer.alloc(16),
+      is_admin: 0,
+      expires_at: new Date('2026-08-23T12:00:00Z'),
+      superadmin: 0,
+    }], []];
+  }
+  if (normalizedSql.startsWith('UPDATE webmail_sessions SET expires_at')) {
+    return [{ affectedRows: 1 }, []];
+  }
+  throw new Error(`Unexpected auth query: ${normalizedSql}`);
 };
 
 let confirmTotpArgs = null;
@@ -81,10 +100,13 @@ const requestJson = (port, method, requestPath, body) => new Promise((resolve, r
     port,
     path: requestPath,
     method,
-    headers: payload ? {
-      'Content-Type': 'application/json',
-      'Content-Length': payload.length,
-    } : undefined,
+    headers: {
+      Cookie: `oms_session=${encodeURIComponent(currentSessionId)}`,
+      ...(payload ? {
+        'Content-Type': 'application/json',
+        'Content-Length': payload.length,
+      } : {}),
+    },
   }, response => {
     const chunks = [];
     response.on('data', chunk => chunks.push(chunk));
@@ -116,6 +138,11 @@ test('session listing marks the authenticated request session as current', async
   assert.equal(response.status, 200);
   assert.equal(response.json.success, true);
   assert.deepEqual(
+    response.json.sessions.map(session => Object.keys(session).sort()),
+    sessionRows.map(() => ['created_at', 'id', 'isCurrent', 'updated_at']),
+  );
+  assert.equal(JSON.stringify(response.json).includes(currentSessionId), false);
+  assert.deepEqual(
     response.json.sessions.map(session => ({ id: session.id, isCurrent: session.isCurrent })),
     [
       { id: currentSessionHash.substring(0, 8), isCurrent: true },
@@ -140,6 +167,13 @@ test('session revocation rejects the authenticated request session', async t => 
     error: 'Cannot revoke your current session.',
   });
   assert.deepEqual(deleteCalls, []);
+
+  const authResponse = await requestJson(port, 'GET', '/api/auth/me');
+  assert.equal(authResponse.status, 200);
+  assert.deepEqual(authResponse.json, {
+    success: true,
+    user: { username, isAdmin: false },
+  });
 });
 
 test('session revocation still removes another session owned by the user', async t => {
@@ -154,17 +188,23 @@ test('session revocation still removes another session owned by the user', async
   assert.deepEqual(deleteCalls, [[`${otherPrefix}%`, username]]);
 });
 
-test('session revocation rejects selectors that could alter the SQL prefix match', async t => {
+test('session revocation rejects malformed selectors before querying the database', async t => {
   deleteCalls.length = 0;
   const port = await withServer(t);
 
-  const response = await requestJson(port, 'DELETE', '/api/account/sessions/%25');
+  for (const selector of ['%', '_', 'abc1234', 'abc123456', 'not-hex!']) {
+    const response = await requestJson(
+      port,
+      'DELETE',
+      `/api/account/sessions/${encodeURIComponent(selector)}`,
+    );
 
-  assert.equal(response.status, 400);
-  assert.deepEqual(response.json, {
-    success: false,
-    error: 'Invalid session identifier.',
-  });
+    assert.equal(response.status, 400, selector);
+    assert.deepEqual(response.json, {
+      success: false,
+      error: 'Invalid session identifier.',
+    });
+  }
   assert.deepEqual(deleteCalls, []);
 });
 

@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.requireAdminSession = exports.requireSession = exports.clearSession = exports.getSession = exports.createSession = exports.canDemoteGlobalAdmin = exports.hasGlobalAdminAccess = exports.decryptPassword = exports.initializeSessionStore = exports.SESSION_COOKIE = void 0;
+exports.requireAdminSession = exports.requireSession = exports.clearSession = exports.getSession = exports.createSession = exports.canDemoteGlobalAdmin = exports.hasGlobalAdminAccess = exports.decryptPassword = exports.hashSessionId = exports.initializeSessionStore = exports.SESSION_COOKIE = void 0;
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("./db");
 const config_1 = require("./config");
@@ -65,6 +65,7 @@ const parseCookies = (header = '') => {
     return cookies;
 };
 const hashSessionId = (id) => crypto_1.default.createHash('sha256').update(id).digest('hex');
+exports.hashSessionId = hashSessionId;
 const getSessionKey = () => crypto_1.default.createHash('sha256').update(config_1.serverConfig.sessionSecret).digest();
 const encryptPassword = (password) => {
     const iv = crypto_1.default.randomBytes(12);
@@ -129,7 +130,7 @@ const createSession = async (res, data) => {
     await db_1.pool.query(`INSERT INTO webmail_sessions
             (id_hash, username, password_ciphertext, password_iv, password_tag, is_admin, expires_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`, [
-        hashSessionId(id),
+        (0, exports.hashSessionId)(id),
         data.username,
         encryptedPassword.ciphertext,
         encryptedPassword.iv,
@@ -166,14 +167,14 @@ const getSession = async (req) => {
          FROM webmail_sessions s
          LEFT JOIN admin a ON a.username = s.username AND a.active = 1
          WHERE s.id_hash = ? AND s.expires_at > NOW()
-         LIMIT 1`, [hashSessionId(id)]);
+         LIMIT 1`, [(0, exports.hashSessionId)(id)]);
     if (rows.length === 0) {
-        await db_1.pool.query('DELETE FROM webmail_sessions WHERE id_hash = ?', [hashSessionId(id)]);
+        await db_1.pool.query('DELETE FROM webmail_sessions WHERE id_hash = ?', [(0, exports.hashSessionId)(id)]);
         return null;
     }
     const row = rows[0];
     const expiresAt = Date.now() + config_1.serverConfig.sessionTtlMs;
-    await db_1.pool.query('UPDATE webmail_sessions SET expires_at = ? WHERE id_hash = ?', [toMysqlDate(expiresAt), hashSessionId(id)]);
+    await db_1.pool.query('UPDATE webmail_sessions SET expires_at = ? WHERE id_hash = ?', [toMysqlDate(expiresAt), (0, exports.hashSessionId)(id)]);
     try {
         const isSuperAdmin = (0, exports.hasGlobalAdminAccess)(row);
         return {
@@ -188,7 +189,7 @@ const getSession = async (req) => {
         };
     }
     catch (err) {
-        await db_1.pool.query('DELETE FROM webmail_sessions WHERE id_hash = ?', [hashSessionId(id)]);
+        await db_1.pool.query('DELETE FROM webmail_sessions WHERE id_hash = ?', [(0, exports.hashSessionId)(id)]);
         console.error('Failed to decrypt webmail session:', err);
         return null;
     }
@@ -198,7 +199,7 @@ const clearSession = async (req, res) => {
     const id = parseCookies(req.headers.cookie || '')[exports.SESSION_COOKIE];
     if (id) {
         await ensureSessionSchema();
-        await db_1.pool.query('DELETE FROM webmail_sessions WHERE id_hash = ?', [hashSessionId(id)]);
+        await db_1.pool.query('DELETE FROM webmail_sessions WHERE id_hash = ?', [(0, exports.hashSessionId)(id)]);
     }
     res.setHeader('Set-Cookie', `${exports.SESSION_COOKIE}=; ${cookieOptions(0).join('; ')}`);
 };

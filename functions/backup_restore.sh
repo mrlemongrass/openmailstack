@@ -702,6 +702,7 @@ oms_br_validate_snapshot_contents() {
     local checksum_tmp
     local control_file
     local assert_format
+    local service_quiescence_ms
 
     [[ -d "${snapshot_dir}" && ! -L "${snapshot_dir}" ]] || return 1
     for control_file in inventory.tsv snapshot.meta symlinks.tsv checksums.sha256 databases.sql databases.tsv; do
@@ -722,6 +723,15 @@ oms_br_validate_snapshot_contents() {
         "${snapshot_dir}/snapshot.meta" || return 1
     grep -Fxq $'mysql_configuration\tnot_included' \
         "${snapshot_dir}/snapshot.meta" || return 1
+    service_quiescence_ms=$(awk -F'\t' \
+        '$1 == "service_quiescence_ms" { print $2 }' \
+        "${snapshot_dir}/snapshot.meta") || return 1
+    if [[ -n "${service_quiescence_ms}" ]]; then
+        [[ "${service_quiescence_ms}" == "managed_externally" \
+            || "${service_quiescence_ms}" =~ ^[0-9]+$ ]] || return 1
+        [[ "$(grep -Fc $'service_quiescence_ms\t' "${snapshot_dir}/snapshot.meta")" == "1" ]] \
+            || return 1
+    fi
     oms_br_validate_database_manifest "${snapshot_dir}" || return 1
     oms_br_validate_inventory "${snapshot_dir}" || return 1
     oms_br_validate_symlinks "${snapshot_dir}" || return 1
@@ -844,14 +854,23 @@ oms_br_copy_inventory() {
     done < <(oms_br_inventory_specs)
 }
 
-oms_br_build_snapshot_stage() {
+oms_br_capture_snapshot_stage() {
     local staging_dir="$1"
-    local snapshot_kind="$2"
-    local created_at="$3"
 
     oms_br_write_database_manifest "${staging_dir}/databases.tsv" || return 1
     oms_br_dump_databases "${staging_dir}/databases.sql" "${staging_dir}/databases.tsv" || return 1
     oms_br_copy_inventory "${staging_dir}" || return 1
+}
+
+oms_br_finalize_snapshot_stage() {
+    local staging_dir="$1"
+    local snapshot_kind="$2"
+    local created_at="$3"
+    local service_quiescence_ms="${4:-managed_externally}"
+
+    [[ "${service_quiescence_ms}" == "managed_externally" \
+        || "${service_quiescence_ms}" =~ ^[0-9]+$ ]] || return 1
+
     {
         printf 'format_version\t1\n'
         printf 'snapshot_kind\t%s\n' "${snapshot_kind}"
@@ -862,6 +881,7 @@ oms_br_build_snapshot_stage() {
         printf 'mysql_configuration\tnot_included\n'
         printf 'encryption\tnone\n'
         printf 'point_in_time_recovery\tnot_available\n'
+        printf 'service_quiescence_ms\t%s\n' "${service_quiescence_ms}"
     } > "${staging_dir}/snapshot.meta" || return 1
     oms_br_symlink_manifest "${staging_dir}" "${staging_dir}/symlinks.tsv" || return 1
     oms_br_generate_checksums "${staging_dir}" "${staging_dir}/checksums.sha256" || return 1
@@ -873,6 +893,15 @@ oms_br_build_snapshot_stage() {
         "${staging_dir}/symlinks.tsv" \
         "${staging_dir}/checksums.sha256" || return 1
     oms_br_validate_snapshot_contents "${staging_dir}" || return 1
+}
+
+oms_br_build_snapshot_stage() {
+    local staging_dir="$1"
+    local snapshot_kind="$2"
+    local created_at="$3"
+
+    oms_br_capture_snapshot_stage "${staging_dir}" || return 1
+    oms_br_finalize_snapshot_stage "${staging_dir}" "${snapshot_kind}" "${created_at}"
 }
 
 oms_br_backup_cleanup() {
@@ -931,12 +960,21 @@ oms_br_create_backup_unlocked() {
                 trap 'exit 143' TERM
                 trap 'exit 129' HUP
                 oms_br_record_active_services || exit $?
+                service_quiescence_started_ms=$(date +%s%3N) || exit $?
+                [[ "${service_quiescence_started_ms}" =~ ^[0-9]+$ ]] || exit 1
                 oms_br_quiesce_services || exit $?
-                oms_br_build_snapshot_stage \
-                    "${staging_dir}" "${snapshot_kind}" "${timestamp}" || exit $?
+                oms_br_capture_snapshot_stage "${staging_dir}" || exit $?
                 oms_br_resume_services || exit $?
+                service_quiescence_finished_ms=$(date +%s%3N) || exit $?
+                [[ "${service_quiescence_finished_ms}" =~ ^[0-9]+$ \
+                    && "${service_quiescence_finished_ms}" -ge "${service_quiescence_started_ms}" ]] \
+                    || exit 1
+                service_quiescence_ms=$((service_quiescence_finished_ms - service_quiescence_started_ms))
                 OMS_BR_SERVICES_QUIESCED=0
                 oms_br_wait_for_health || exit $?
+                oms_br_finalize_snapshot_stage \
+                    "${staging_dir}" "${snapshot_kind}" "${timestamp}" \
+                    "${service_quiescence_ms}" || exit $?
                 trap - EXIT INT TERM HUP
             ); then
                 oms_br_error "Snapshot remains incomplete and was not promoted: ${staging_dir}"

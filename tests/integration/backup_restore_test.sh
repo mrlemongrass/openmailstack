@@ -52,6 +52,29 @@ assert_event_count() {
     fi
 }
 
+first_event_line() {
+    grep -nF -m1 -- "$1" "${EVENT_LOG}" | cut -d: -f1
+}
+
+last_event_line() {
+    grep -nF -- "$1" "${EVENT_LOG}" | tail -n 1 | cut -d: -f1
+}
+
+assert_event_before() {
+    local earlier="$1"
+    local later="$2"
+    local label="$3"
+    local earlier_line
+    local later_line
+    earlier_line=$(last_event_line "${earlier}")
+    later_line=$(first_event_line "${later}")
+    if [[ -z "${earlier_line}" || -z "${later_line}" \
+        || "${earlier_line}" -ge "${later_line}" ]]; then
+        sed 's/^/EVENT: /' "${EVENT_LOG}" >&2
+        fail "${label}: expected ${earlier} before ${later}"
+    fi
+}
+
 assert_exact_service_state() {
     local active_unit
     for active_unit in monit.service nginx.service postfix.service dovecot.service rspamd.service openmailstack.service; do
@@ -314,6 +337,7 @@ EOF
 set -euo pipefail
 matches=0
 source_argument="${@: -2:1}"
+printf 'RSYNC:%s\n' "${source_argument}" >> "${FAKE_EVENT_LOG}"
 if [[ -n "${FAKE_RSYNC_FAIL_MATCH:-}" \
     && "${source_argument}" == *"${FAKE_RSYNC_FAIL_MATCH}"* ]]; then
     matches=1
@@ -335,6 +359,17 @@ if [[ "${matches}" == "1" ]]; then
     esac
 fi
 exec "${FAKE_REAL_RSYNC}" "$@"
+EOF
+
+    cat > "${BIN_ROOT}/sha256sum" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' 'SHA256SUM' >> "${FAKE_EVENT_LOG}"
+if [[ "${FAKE_SHA256SUM_MODE:-ok}" == "fail" ]]; then
+    printf '%s\n' 'SHA256SUM_FAIL' >> "${FAKE_EVENT_LOG}"
+    exit 42
+fi
+exec "${FAKE_REAL_SHA256SUM}" "$@"
 EOF
 
     chmod 0755 "${BIN_ROOT}"/*
@@ -371,6 +406,8 @@ run_oms_command() {
         FAKE_RSYNC_FAIL_STATE="${RSYNC_FAIL_STATE}" \
         FAKE_START_FAIL_STATE="${STATE_ROOT}/start-fail.state" \
         FAKE_REAL_RSYNC="$(command -v rsync)" \
+        FAKE_REAL_SHA256SUM="$(command -v sha256sum)" \
+        PATH="${BIN_ROOT}:${PATH}" \
         "$@" \
         bash "${BACKUP_SCRIPT}" "${action_args[@]}"
 }
@@ -423,6 +460,10 @@ assert_contains "${SNAPSHOT}/snapshot.meta" \
 assert_contains "${SNAPSHOT}/snapshot.meta" \
     $'database_scope\tconfigured_openmailstack_databases'
 assert_contains "${SNAPSHOT}/snapshot.meta" $'mysql_configuration\tnot_included'
+QUIESCENCE_MS=$(awk -F'\t' '$1 == "service_quiescence_ms" { print $2 }' \
+    "${SNAPSHOT}/snapshot.meta")
+[[ "${QUIESCENCE_MS}" =~ ^[0-9]+$ ]] \
+    || fail "Managed backup did not record a numeric service quiescence duration"
 assert_equals $'postfixadmin\nroundcube\nvmail' "$(<"${SNAPSHOT}/databases.tsv")" \
     "configured database manifest"
 assert_contains "${SNAPSHOT}/inventory.tsv" \
@@ -468,8 +509,38 @@ assert_equals 'START:monit.service' "$(grep '^START:' "${EVENT_LOG}" | tail -n 1
 if grep -Fq 'START:openmailstack-scheduler-worker.service' "${EVENT_LOG}"; then
     fail "Backup started the previously inactive Scheduler worker"
 fi
+assert_event_before 'STOP:' 'DUMP:' \
+    "database capture began before services were quiesced"
+assert_event_before 'DUMP:' 'RSYNC:' \
+    "inventory capture began before the database dump completed"
+assert_event_before 'RSYNC:' 'START:' \
+    "services resumed before the immutable inventory capture completed"
+assert_event_before 'START:' 'HEALTH' \
+    "health verification ran before services resumed"
+assert_event_before 'HEALTH' 'SHA256SUM' \
+    "snapshot checksums ran before service health recovered"
 
 echo 'PASS: complete snapshot is root-only, checksummed, explicit, and restores exact service activity'
+
+write_service_state
+reset_fake_counters
+: > "${EVENT_LOG}"
+if run_backup_command 20260815T120025Z \
+    FAKE_SHA256SUM_MODE=fail >"${TEST_ROOT}/checksum-failure.out" 2>&1; then
+    fail "Backup promoted a snapshot after finalization failed"
+fi
+assert_absent "${BACKUP_ROOT}/oms-backup-20260815T120025Z"
+[[ -d "${BACKUP_ROOT}/oms-backup-20260815T120025Z.incomplete" ]] \
+    || fail "Finalization failure did not remain visibly incomplete"
+assert_exact_service_state
+assert_event_before 'HEALTH' 'SHA256SUM_FAIL' \
+    "checksum failure occurred before service health recovered"
+
+echo 'PASS: post-resume finalization failure leaves services healthy and the snapshot incomplete'
+
+if [[ "${OMS_BACKUP_TEST_STOP_AFTER_INITIAL:-0}" == "1" ]]; then
+    exit 0
+fi
 
 write_service_state
 reset_fake_counters
@@ -562,7 +633,9 @@ if run_restore_command 20260815T131000Z "${TAMPERED_SNAPSHOT}" \
     fail "Restore accepted a snapshot with invalid checksums"
 fi
 assert_absent "${BACKUP_ROOT}/oms-pre-restore-20260815T131000Z"
-[[ ! -s "${EVENT_LOG}" ]] || fail "Rejected snapshot mutated services or databases"
+if grep -Eq '^(STOP:|START:|IMPORT|DUMP:|RSYNC:)' "${EVENT_LOG}"; then
+    fail "Rejected snapshot mutated services or databases"
+fi
 
 MODE_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T121100Z"
 cp -a -- "${SNAPSHOT}" "${MODE_SNAPSHOT}"
@@ -667,6 +740,8 @@ run_restore_command 20260815T130000Z "${SNAPSHOT}" >/dev/null
 SAFETY_SNAPSHOT="${BACKUP_ROOT}/oms-pre-restore-20260815T130000Z"
 [[ -d "${SAFETY_SNAPSHOT}" ]] || fail "Restore did not create a pre-restore safety snapshot"
 run_verify_command "${SAFETY_SNAPSHOT}"
+assert_contains "${SAFETY_SNAPSHOT}/snapshot.meta" \
+    $'service_quiescence_ms\tmanaged_externally'
 assert_equals 'fixture:/var/vmail' \
     "$(<"$(fixture_path /var/vmail)/fixture.txt")" \
     "mail store after successful restore"

@@ -1,6 +1,6 @@
 # Outlook Quality-of-Life Migration Contract
 
-Status: `Current first-party research baseline; first Inbox Rules selection slice implemented and release-tested`
+Status: `Current first-party research baseline; first Inbox Rules selection slice guarded-deployed and verified`
 
 Research date: 2026-08-23
 
@@ -105,12 +105,22 @@ rules without IDs remain runnable, including documents with duplicate names;
 their collision-safe positional selectors are invalidated by any document
 reorder. Omitting `ruleIds` retains the previous all-enabled API behavior.
 
-Release-candidate evidence includes 13 focused backend route tests, three
-focused frontend contract tests, the complete 185-test frontend suite, and the
+Release evidence includes 13 focused backend route tests, three focused
+frontend contract tests, the complete 823-test backend suite (816 pass and
+seven documented optional skips), the complete 185-test frontend suite, and the
 complete repository integration gate. Desktop and 390 px browser checks cover
 run-all defaults, disabled-rule visibility, clear-all prevention, a two-rule
 selection, the exact selected-rule request, Preview results, and a row-local
 one-rule launch. The API stress regression accepts 201 selected rules.
+
+Commit `a55be94` was released through the required bridge then active guarded
+path. Both stages passed public IMAPS and ActiveSync Mail, Contacts, and Calendar
+pre/post gates; both post-gates also passed Ping. The active frontend and backend
+artifacts are byte-identical to the repository build, local and public readiness
+return the expected unauthenticated `401`, and the service has zero restarts. A
+fresh public browser loaded the released asset and rendered this dialog with no
+console errors or warnings using mocked API fixtures, so that visual check did
+not read or mutate a real mailbox.
 
 This does **not** complete the full P0 contract. `Include subfolders` and
 All/Unread/Read scope are not implemented, and the current existing-mail runner

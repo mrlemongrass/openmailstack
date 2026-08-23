@@ -1,5 +1,41 @@
 # Implementation State
 
+## 2026-08-23 Selective Existing-mail Rule Runs
+
+**Status: guarded-deployed in active mode and verified against the public
+frontend artifact.** Mail Filters now combines new Outlook's row-local `Run
+now` path with classic Outlook's selected-rule batch flow. The page action
+defaults to every enabled saved rule; each saved row can launch only itself;
+disabled rules stay visible but cannot run. The dialog keeps selection in saved
+order through Preview, Apply, pagination, and retry, and remains bounded on
+desktop and mobile.
+
+The API validates explicit selections before IMAP work and hashes the complete
+saved document together with the canonical selection. Empty, duplicate,
+unknown, disabled, or preview-changed selectors fail closed. Legacy ID-less and
+duplicate-name documents use collision-safe deterministic positional selectors;
+201 selected rules pass the stress seam. Omitting `ruleIds` keeps the previous
+all-enabled API behavior, and the existing UIDVALIDITY, UID ceiling, and durable
+copy-ledger safeguards remain intact.
+
+Commit `a55be94` passed 13 focused route tests, three focused frontend tests,
+the complete backend suite (823 total, 816 pass, seven optional skips), the
+complete frontend suite (185/185), lint/build, desktop/mobile browser checks,
+fixed-point Standards and Spec review, and the complete repository integration
+gate. Guarded bridge and active releases passed public IMAPS and ActiveSync
+Mail/Ping/Contacts/Calendar gates. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260823T225629Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260823T230408Z`.
+Repository and live backend plus complete frontend artifacts are exact; active
+mode has zero restarts, local/public readiness is `401`, and the warning journal
+is empty. A fresh public-browser fixture rendered the released selector with
+zero console errors/warnings without reading or mutating a real mailbox.
+
+The broad first-party parity contract is recorded in
+`docs/product/outlook-qol-parity-2026-08-23.md`. This tranche does not include
+`Include subfolders`, All/Unread/Read scope, or non-Move existing-mail actions;
+those remain the next bounded rules task.
+
 ## 2026-08-23 Production Backup Live Pre-copy
 
 **Status: deployed, production-measured, independently verified, and 79.5%

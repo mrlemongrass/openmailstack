@@ -2155,3 +2155,33 @@ Future entry template:
   prior snapshots; nothing was deleted. Remaining risk is the planned
   3m 40.406s outage plus no encryption, point-in-time recovery, or realistically
   sized off-host restore proof.
+
+## 2026-08-23 — Selective Existing-mail Rule Runs
+
+- Added a current 39-source first-party Outlook migration contract across Mail,
+  Calendar, People, Notes-adjacent workflows, and Bookings/Scheduler, with
+  explicit P0/P1/P2 tranches and no blanket parity claim.
+- Added selected-rule execution to the existing Preview/Apply runner. Batch Run
+  rules defaults to all enabled saved rules, each saved row has a one-rule Run
+  now path, disabled rules remain visible, and selected rules execute in saved
+  order through pagination and retry.
+- Bound Apply to the full saved document plus canonical selected-rule snapshot;
+  rejected malformed, empty, duplicate, unknown, disabled, and changed
+  selections before mailbox mutation. Preserved omitted-ID compatibility,
+  ID-less legacy rules, independently selectable duplicate-name legacy rules,
+  201-rule selection, UIDVALIDITY/UID-ceiling binding, and the durable Move copy
+  ledger.
+- Verified 13/13 focused backend routes, 3/3 focused frontend contracts, 823
+  complete backend tests (816 pass, seven optional skips), 185/185 frontend
+  tests, lint/build, desktop/mobile Playwright, and the complete repository
+  integration gate. Standards and Spec re-review found no residual issue after
+  legacy collision and large-selection hardening.
+- Guarded bridge and active deployments passed public IMAPS and ActiveSync
+  Mail/Ping/Contacts/Calendar gates. Rollbacks are
+  `protocol-guarded-webmail-20260823T225629Z` and
+  `protocol-guarded-webmail-20260823T230408Z`. Active mode is healthy with zero
+  restarts, empty warning journal, expected local/public `401`, exact backend
+  and frontend artifacts, and a zero-console-error public-browser fixture.
+- Remaining rules gaps are explicit: Include subfolders, All/Unread/Read scope,
+  and the broader existing-mail action vocabulary are not shipped in this
+  tranche.

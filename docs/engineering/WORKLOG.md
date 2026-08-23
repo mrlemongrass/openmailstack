@@ -9803,3 +9803,97 @@ stable bytes online and prove exact convergence during a shorter stop.
 Add encrypted off-host snapshot replication and execute a production-sized
 second-host restore drill with DNS/TLS, mail-flow, recovery-time, and capacity
 evidence.
+
+## 2026-08-23 — Outlook QoL Contract And Selective Rule Runs
+
+### Selected task
+
+Research the interaction contracts that Outlook web, new Outlook, and classic
+Outlook users rely on across Mail, Calendar, People, Notes-adjacent workflows,
+and Bookings/Scheduler, then implement the first bounded P0 gap: choosing which
+saved Mail Filters run against existing messages.
+
+### Why this task
+
+The existing `Run rules` workflow already had a safe folder-scoped Preview and
+Apply backend, but it always evaluated every enabled rule. That omitted the
+single-rule shortcut documented for new Outlook and the explicit multi-rule
+selection familiar to classic Outlook users. It also made a page label promise
+more control than the dialog actually provided.
+
+### Goal and acceptance criteria
+
+- Page-level Run rules opens with all enabled saved rules selected.
+- A saved enabled row can launch the same dialog with only itself selected.
+- Disabled rules remain visible and cannot run.
+- The server resolves selected rules in saved order and validates the complete
+  selection before any mailbox mutation.
+- Preview, Apply, pagination, and retry bind to both the complete saved document
+  and the same canonical selection.
+- Legacy ID-less/duplicate-name rules, large selections, and omitted `ruleIds`
+  remain safe and compatible.
+- Existing UIDVALIDITY, UID ceiling, and durable Move-copy safeguards remain.
+- Desktop/mobile browser behavior, focused regressions, full suites, integration,
+  guarded release, artifact equality, and public readiness are proven.
+
+### Changes made
+
+- Added `ruleIds` to the rule-run contract and carried the canonical selection
+  unchanged across frontend pagination, Preview, Apply, and retry.
+- Added a bounded rule selector with saved-order priority, stop/continue status,
+  Select all/Clear all, visible disabled rows, selected counts, and an empty
+  selection guard.
+- Added a row-local accessible Run-now control while retaining the page-level
+  batch action and mobile/touch accessibility.
+- Validated empty, malformed, duplicate, unknown, disabled, and changed
+  selections before IMAP work. The revision now hashes the full saved document
+  and selected IDs; omitted IDs preserve the all-enabled API contract.
+- Added collision-safe document-wide positional selectors when legacy IDs or
+  fallback names collide, preserving independent selection and making reorder
+  invalidate stale previews. Added a 201-rule regression rather than an
+  arbitrary UI/API cap.
+- Recorded the wider migration contract and prioritized tranches in
+  `docs/product/outlook-qol-parity-2026-08-23.md`; this is functional familiarity,
+  not a pixel copy or a blanket parity claim.
+
+### Proof, review, and rollout
+
+- TDD red was observed for both new frontend selection seams and backend route
+  cases before implementation.
+- Focused tests: backend 13/13; frontend 3/3.
+- Complete backend: 823 total, 816 pass, seven documented optional skips.
+- Complete frontend: 185/185; lint and production build passed.
+- `tests/integration/run.sh`: passed the complete local dry-run integration
+  matrix.
+- Desktop and 390 px Playwright checks covered run-all default, disabled
+  visibility, Clear all, selected request IDs, Preview summary, and per-row
+  launch. The public released asset `index-D2Ozu6jc.js` rendered the selector
+  with zero console errors/warnings using API fixtures, so no real mailbox was
+  read or mutated.
+- Independent Standards and Spec reviews first identified ID-less legacy
+  breakage, duplicate-name collisions, and an arbitrary 200-rule mismatch.
+  Those were fixed; fixed-point re-review reported no residual issue.
+- Commit `a55be94` was guarded-deployed through bridge and active modes. Both
+  stages passed public IMAPS and ActiveSync Mail/Contacts/Calendar pre/post
+  gates plus post-deploy Ping. Rollbacks are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260823T225629Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260823T230408Z`.
+- Active mode is healthy with `NRestarts=0`, an empty warning journal, valid
+  Nginx configuration, expected local/public unauthenticated `401`, and exact
+  repository/live backend plus full frontend artifacts.
+
+### Risks and limits
+
+- This release does not add Include subfolders or All/Unread/Read scope.
+- Existing-mail execution still applies Move actions only; Reject and Discard
+  remain delivery-time behavior.
+- The public-browser UI proof used mocked API data to avoid production mailbox
+  access. Backend behavior is covered by the real-router regression and exact
+  deployed-artifact comparison, not by a production mailbox mutation.
+
+### Next recommended task
+
+Complete the classic-Outlook scope portion of this same vertical slice: add
+Include subfolders and All/Unread/Read selection, bind both to Preview/Apply,
+and prove ordering plus stop-processing across nested folders before moving to
+the broader Mail action grammar.

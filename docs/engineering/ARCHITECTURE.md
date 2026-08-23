@@ -1569,13 +1569,24 @@ Agents should verify and document:
 - migration strategy
 
 The logical backup transaction records and restores the exact active/inactive
-service set, keeps failed snapshots visibly `.incomplete`, and now waits through
-bounded post-start readiness checks before promotion. A production-size Cycle
-13 run proved fail-closed recovery from a six-second backend listener delay and
-then passed full trusted snapshot validation. The same run showed that copying
-and repeatedly hashing the mail tree keeps services quiesced too long; moving
-immutable staging finalization/verification after service resume is required
-before the backup path is considered availability-ready.
+service set and keeps failed snapshots visibly `.incomplete`. Managed full
+backups hold quiescence through the logical database dump and immutable
+inventory copy, then resume the exact prior services and pass bounded health
+before writing metadata, hashing, validating once, and atomically promoting.
+Restore safety snapshots remain continuously quiesced. Format-1 snapshots
+record whether service timing was managed locally or externally; managed
+snapshots include command-level and health-inclusive durations, while legacy
+snapshots without the whole timing schema remain compatible and partial or
+malformed timing metadata fails closed.
+
+A 2026-08-23 production-size run promoted and independently verified root-only
+snapshot `oms-backup-20260823T072524Z`. It measured 1,073,924 ms through service
+resume and 1,076,910 ms through health recovery, versus an approximately
+55m 15s systemd stop/start window in Cycle 13 when repeated hashing remained
+inside quiescence. The roughly 67.5% reduction closes the repeated-hashing
+defect, but the remaining 17m 56.910s consistency-copy outage is still a P2
+availability risk requiring a proven storage snapshot or bounded pre-copy
+design.
 
 Previously documented allowed firewall ports:
 
@@ -1680,6 +1691,9 @@ During repository intake, agents should answer these questions and update this f
 
 ## 16. Change Log for This Document
 
+- 2026-08-23: Documented the production-measured split between quiesced logical
+  capture and post-health immutable finalization, strict timing metadata,
+  legacy compatibility, and the remaining full-copy availability risk.
 - 2026-08-16: Documented the bridge-first universal-outbox release sequence,
   total outbound quarantine, immutable runtime/environment attestation, and
   the legacy-versus-compatible rollback boundary.

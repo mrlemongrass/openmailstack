@@ -2090,3 +2090,33 @@ Future entry template:
   while preserving current authentication, logged out both, and left zero
   canary session rows. Active service health, readiness, journals, and exact
   source/deployed artifact hashes are clean.
+
+## 2026-08-23 — Production Backup Availability Split
+
+- Changed managed full backups to keep services quiesced only through the
+  logical database dump and immutable inventory copy, then restore the exact
+  prior service state and pass bounded health before metadata, checksums, final
+  validation, and atomic promotion. Continuously quiesced restore safety
+  snapshots retain their original contract.
+- Added strict capture provenance plus command-level and health-inclusive timing
+  metadata. Legacy format-1 snapshots with all timing fields absent still
+  verify; blank, duplicate, partial, non-numeric, extra-field, and contradictory
+  new metadata fails closed.
+- Added public-CLI regression coverage for capture/resume/health/hash ordering,
+  post-recovery finalization failure, delayed health timing, legacy
+  compatibility, malformed metadata, exact service recovery, and externally
+  managed restore safety snapshots.
+- Verified the focused backup/restore fixture, Bash syntax, ShellCheck,
+  whitespace, and the complete repository integration suite; frontend remained
+  184/184. Fixed-point Standards and Spec re-reviews found no remaining code or
+  scope issue.
+- Promoted and independently verified root-only 13 GB production snapshot
+  `/var/backups/openmailstack/oms-backup-20260823T072524Z`. It records
+  1,073,924 ms through service resume and 1,076,910 ms through bounded health.
+  Systemd journals show the comparable Cycle 13 stop/start window was about
+  55m 15s, so availability improved by about 37m 18s, or 67.5%. All seven
+  primary services recovered active/running with `NRestarts=0`; local/public
+  readiness is `401` and the Postfix queue is empty.
+- Remaining risk: the consistency-critical full database/mail-tree copy still
+  causes a 17m 56.910s outage. A storage-native snapshot or carefully bounded
+  pre-copy design is the next backup-availability task.

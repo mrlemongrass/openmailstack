@@ -2,7 +2,7 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-08-18
+Last updated: 2026-08-23
 
 ## Resolved Risks
 
@@ -148,11 +148,14 @@ Last updated: 2026-08-18
   30-column digest and zero canary claim/SMTP/IMAP evidence, was deleted exactly
   once under bridge, and active plus the Ping-required public suite were
   restored with zero residue.
-- 🔴 Production backup availability: the logical snapshot is fail-closed and
-  fully checksummed, but a production-size run kept services quiesced while the
-  mail tree was copied and repeatedly hashed. Finalize and verify the immutable
-  staging tree after service resume, retain rollback tests, and measure the
-  reduced outage before calling backup operations release-ready.
+- 🟡 Production backup availability: the repeated-hashing outage is closed.
+  Snapshot finalization and verification now run only after exact service-state
+  recovery and bounded health; a production run reduced the prior approximate
+  55m 15s stop/start window to an exact 17m 56.910s health-inclusive window
+  (about 67.5%) and independently verified the promoted snapshot. The remaining
+  full logical database/mail-tree capture is still quiesced for consistency and
+  is too long for frequent low-impact backups. Prove a storage-native snapshot
+  or bounded pre-copy design before calling this path high-availability.
 - 🟡 Clean-host recovery: a fresh Debian 13.6 guest proved backup, verify,
   exact service-state restore, injected rollback, and cleanup. Full mutating
   install, realistically sized off-host restore, DNS/TLS, and mail flow remain.
@@ -180,7 +183,7 @@ Last updated: 2026-08-18
 - Full Calendly/Cal.com functional parity is a moving, multi-release target. Track capabilities and acceptance tests rather than claiming blanket parity, recheck official sources each parity release, and distinguish OMS-owned features from third-party services that still charge usage fees.
 - Public Scheduler handle collisions and reserved routes are enforced by normalized validation plus a database-wide unique key. The Admin UI supports alternate handles. Recheck normalization before adding Unicode/IDN handles or organization-level aliases.
 - Scheduler public requests enforce a configured hostname allowlist, generated links use the preferred base URL, and installer scripts add configured aliases to Nginx and certificate SANs. Clean-VM and certificate-renewal testing remain required before treating multi-host routing as release-validated.
-- Production delegated auth is live: the installer owns the Dovecot master passdb and explicit session secret, and stored session/index credential values are empty. Keep the raw master secret `root:root 0600`, its one-way Dovecot hash `root:dovecot 0640`, and all three IMAP/SMTP/Sieve credential pairs aligned. Preserve and back up `OMS_ACCOUNT_SECURITY_KEY` with the same care as the session secret: losing it prevents TOTP decryption, while disclosure compromises encrypted TOTP material. The current host also requires `/etc/systemd/system/dovecot.service.d/openmailstack-host-compat.conf` with `PrivateDevices=false` because systemd otherwise fails before exec with `226/NAMESPACE`; `ProtectSystem=full` remains enabled.
+- Production delegated auth is live: the installer owns the Dovecot master passdb and explicit session secret, and stored session/index credential values are empty. Keep the raw master secret `root:root 0600`, its one-way Dovecot hash `root:dovecot 0640`, and all three IMAP/SMTP/Sieve credential pairs aligned. Preserve and back up `OMS_ACCOUNT_SECURITY_KEY` with the same care as the session secret. Losing it prevents TOTP decryption, while disclosure compromises encrypted TOTP material. The current host also requires `/etc/systemd/system/dovecot.service.d/openmailstack-host-compat.conf` with `PrivateDevices=false` because systemd otherwise fails before exec with `226/NAMESPACE`; `ProtectSystem=full` remains enabled.
 - Dovecot configuration is rewritten by `functions/04_dovecot.sh`, while certificate selection is normally performed later by `functions/07_security.sh`. Targeted Dovecot reruns must preserve or recover a hostname-valid, key-matching pair; never accept a successful TLS handshake alone as proof. Require `mail.housevo.us` hostname verification on public/local port 993 after every Dovecot change.
 - Dovecot personal Sieve storage is rooted at `~/sieve`. Keep both the absolute `home` and `mail_path` fields in the SQL userdb query; dropping `home` can leave IMAP storage working while LMTP silently falls through without the active filter. After any userdb change, require delegated ManageSieve retrieval plus a disposable LMTP `fileinto` proof, not only `doveconf -n`.
 - Tasks/notes remain prototype/mock folders in ActiveSync.

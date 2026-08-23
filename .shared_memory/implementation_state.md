@@ -1,5 +1,38 @@
 # Implementation State
 
+## 2026-08-23 Production Backup Availability Split
+
+**Status: repeated snapshot hashing is removed from the service-outage window,
+production-measured, and independently verified; the full consistency copy
+still causes a material 17m 56.910s outage.** Managed full backups now quiesce
+services only for the logical database dump and immutable inventory copy,
+restore the exact prior service set, pass bounded health recovery, and only
+then create control metadata, hash, validate, and atomically promote the
+snapshot. Restore safety snapshots keep their original continuously quiesced
+contract.
+
+Format-1 metadata distinguishes `managed` from `managed_externally` capture.
+Managed snapshots record command-level `service_quiescence_ms` and a
+health-inclusive `service_outage_window_ms`; legacy snapshots with the entire
+timing schema absent remain valid, while partial, blank, duplicated,
+non-numeric, extra-field, or contradictory timing rows fail closed. Final
+validation runs once immediately before promotion, and post-recovery
+finalization failure leaves a visible `.incomplete` snapshot without changing
+the recovered service state.
+
+Production snapshot
+`/var/backups/openmailstack/oms-backup-20260823T072524Z` is 13 GB, root-owned
+mode 0700, and passed the public `verify` command. It measured 1,073,924 ms of
+command-level quiescence and 1,076,910 ms through successful health recovery.
+The prior Cycle 13 systemd journal shows an approximately 55m 15s stop/start
+window because all checksum and validation passes were still inside
+quiescence; the new health-inclusive window is about 37m 18s, or 67.5%, lower.
+All seven primary services recovered active/running with
+`NRestarts=0`, local/public readiness returned `401`, and the Postfix queue
+remained empty. The next availability step is a consistency-safe filesystem
+snapshot or bounded pre-copy design that reduces the remaining full-copy
+window without weakening restore correctness.
+
 ## 2026-08-22 Account Session Identity And Safe Revocation
 
 **Status: fixed, guarded-deployed in active mode, and verified with a live

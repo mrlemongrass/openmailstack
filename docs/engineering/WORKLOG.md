@@ -9592,3 +9592,103 @@ Branch: `main`; code commits `36ef3d53` and `2706da8f`; guarded-deployed active
 - The UI contract is unchanged: it already consumes `isCurrent` and eight-digit
   session IDs. This bounded task repairs server identity and validation; it does
   not redesign the account-session screen or expand session metadata.
+
+## 2026-08-23 — Production Backup Availability Split
+
+Agent/tool: Codex diagnosis loop, TDD, fixed-point Standards/Spec review, and a
+bounded production-size backup/verification run
+
+Branch: `main`; code commits `6dff6b6d` and `c2f56a8d`
+
+Starting git state: clean at `9e1226b8`
+
+Ending git state: clean after the cycle commits and push
+
+### Selected task
+
+Move immutable snapshot finalization and verification out of the managed
+service-quiescence window without weakening fail-closed backup or restore
+safety, then measure the result on the production-size mail store.
+
+### Why this task
+
+The release risk register identified full-backup availability as the next
+highest-value bounded operator-safety defect. Cycle 13 kept the complete mail
+stack down while it copied the mail tree and ran every checksum/validation
+pass, despite the staging payload already being immutable after capture.
+
+### Changes made
+
+- `functions/backup_restore.sh`
+  - Split quiesced database/inventory capture from post-recovery metadata,
+    checksum, validation, and atomic promotion.
+  - Preserved exact prior service-state restoration, bounded health, visible
+    `.incomplete` failures, and continuously quiesced restore safety snapshots.
+  - Added strict `managed`/`managed_externally` provenance. Managed snapshots
+    record command-level `service_quiescence_ms` and health-inclusive
+    `service_outage_window_ms`; legacy format-1 snapshots remain compatible only
+    when the complete timing schema is absent.
+  - Removed duplicate full validation while retaining one authoritative
+    validation immediately before promotion.
+- `tests/integration/backup_restore_test.sh`
+  - Added command-order evidence proving dump/copy occur before service resume
+    and health occurs before any checksum work.
+  - Added delayed-health timing, post-recovery checksum failure, strict
+    malformed metadata, real legacy verification, exact service-state, and
+    restore safety snapshot regressions.
+
+### Proof / checks run
+
+- The fast TDD seam first failed because `SHA256SUM` occurred before `START` and
+  `HEALTH`; it passes after the split.
+- `rtk bash tests/integration/backup_restore_test.sh`: passed every backup,
+  verify, restore, injected-failure, and rollback case.
+- `bash -n functions/backup_restore.sh tests/integration/backup_restore_test.sh`,
+  ShellCheck, and `git diff --check`: passed.
+- `rtk bash tests/integration/run.sh`: passed through all protocol, deployment,
+  rollback, backup/restore, frontend 184/184, and local dry-run gates.
+- Fixed-point Standards and Spec re-reviews: no remaining hard violation,
+  judgment call, missing code requirement, scope creep, or wrong behavior.
+- Production preflight: all seven primary services active/running with
+  `NRestarts=0`, local/public auth readiness `401`, queue depth zero, backup
+  lock free, and 74 GB available for the 12 GB live mail store.
+- `rtk bash functions/backup_restore.sh backup`: promoted root-only mode-0700,
+  13 GB snapshot
+  `/var/backups/openmailstack/oms-backup-20260823T072524Z`. Metadata records
+  1,073,924 ms through service resume and 1,076,910 ms through successful
+  health recovery.
+- Independent public-CLI verification of
+  `/var/backups/openmailstack/oms-backup-20260823T072524Z`: exit 0.
+- Post-run: all seven primary services active/running, `NRestarts=0`, local/public
+  readiness `401`, queue depth zero, and 61 GB free.
+- Cycle 13 journal evidence corrected the old file-timestamp inference:
+  services began stopping at 14:50:22 and finished starting at 15:45:37, an
+  approximately 55m 15s window. The new health-inclusive window is about
+  37m 18s (67.5%) lower.
+
+### Acceptance criteria
+
+- [x] Service downtime covers only consistency-critical database/filesystem
+  capture; immutable finalization follows exact recovery and health.
+- [x] Failure retains a visible incomplete snapshot and exact prior service
+  state; restore safety snapshots stay continuously quiesced.
+- [x] Legacy and malformed timing metadata behavior is regression-backed.
+- [x] A production-size backup records the health-inclusive outage, promotes
+  atomically, independently verifies, and leaves live services healthy.
+
+### Risks / notes
+
+- The repeated-hashing availability defect is closed, but 17m 56.910s remains
+  too disruptive for frequent low-impact backups because the 13 GB consistency
+  copy is still quiesced.
+- The Postfix `smtpd_use_tls` deprecation and Rspamd task-timeout messages seen
+  during health validation are pre-existing configuration warnings, not backup
+  failures.
+- The verified production snapshot is retained; no old or incomplete snapshot
+  was deleted.
+
+### Next recommended task
+
+Design and benchmark one consistency-safe storage snapshot or bounded pre-copy
+seam that materially reduces the remaining full-copy quiescence without
+weakening database/mail-store restore correctness.

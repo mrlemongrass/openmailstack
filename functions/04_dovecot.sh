@@ -17,6 +17,7 @@ echo -e "${YELLOW}Starting Dovecot IMAP/POP3 Installation...${NC}"
 source ./config.conf
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/lib_os.sh"
+source "${SCRIPT_DIR}/lib_dovecot_config.sh"
 detect_openmailstack_os
 
 PROTOCOL_GATE_REQUIRED_FILE="${OMS_PROTOCOL_GATE_REQUIRED_FILE:-/etc/openmailstack/protocol-gate.required}"
@@ -154,6 +155,11 @@ if [[ "$DOVECOT_VERSION" == "2.4" ]]; then
     # ==========================================
     # Dovecot 2.4+ Syntax
     # ==========================================
+
+    # Dovecot 2.4 treats the old empty `dict quota {}` sample as a real
+    # dictionary named "quota". Retire only that empty legacy block; a
+    # configured dictionary is preserved by the migration helper.
+    openmailstack_remove_empty_legacy_quota_dict /etc/dovecot/dovecot.conf
     
     # Clean up the old ext file if it exists from a previous run
     rm -f /etc/dovecot/dovecot-sql.conf.ext /etc/dovecot/dovecot-app-passwords-sql.conf.ext

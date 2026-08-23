@@ -319,6 +319,7 @@ test_postfixadmin_dns_guard_defaults
 test_secret_handling_guards
 test_rspamd_milter_timeout_guards
 test_staging_starttls_output_guard
+bash "${PROJECT_ROOT}/tests/integration/dovecot_24_dict_migration_test.sh"
 "${PROJECT_ROOT}/tests/integration/rspamd_health_recovery_test.sh"
 "${PROJECT_ROOT}/tests/integration/rspamd_map_sync_test.sh"
 test_mysql_e_reduction_guards

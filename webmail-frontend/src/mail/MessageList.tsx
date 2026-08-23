@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate, useParams } from 'react-router';
 import { addDays, startOfDay, setHours } from 'date-fns';
@@ -9,11 +9,32 @@ import { ErrorBanner } from '../shared/components/ErrorBanner';
 import { EmptyState } from '../shared/components/EmptyState';
 import { useToast } from '../shared/components/Toast';
 import { ScrollToTop } from '../shared/components/ScrollToTop';
-import { Inbox, SearchX, Loader } from 'lucide-react';
+import {
+  Archive,
+  Clock,
+  ExternalLink,
+  FolderInput,
+  Inbox,
+  Loader,
+  Mail,
+  MailOpen,
+  SearchX,
+  ShieldAlert,
+  Star,
+  Trash2,
+} from 'lucide-react';
 import type { useMail } from './hooks/useMail';
 import type { Message } from '../shared/types';
-import { groupMessagesByFolder, messageFolder, messageIdentityKey } from './mail-message-identity';
+import { ContextMenu, type ContextMenuItem } from '../shared/components/ContextMenu';
+import type { ContextMenuPoint } from '../shared/context-menu-navigation';
+import {
+  groupMessagesByFolder,
+  messageFolder,
+  messageIdentityKey,
+  moveDestinationFolders,
+} from './mail-message-identity';
 import { isDraftFolder } from './draft-resume';
+import { FolderDestinationDialog } from './components/FolderDialogs';
 
 interface MessageListProps {
   mail: ReturnType<typeof useMail>;
@@ -27,6 +48,11 @@ export function MessageList({ mail, density }: MessageListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const starringRef = useRef<Set<string>>(new Set());
+  const [messageMenu, setMessageMenu] = useState<{
+    message: Message;
+    point: ContextMenuPoint;
+  } | null>(null);
+  const [movingMessage, setMovingMessage] = useState<Message | null>(null);
   const decodedFolder = folder ? decodeURIComponent(folder) : 'INBOX';
   const {
     activeFolder,
@@ -58,6 +84,8 @@ export function MessageList({ mail, density }: MessageListProps) {
 
   useEffect(() => {
     parentRef.current?.scrollTo({ top: 0 });
+    setMessageMenu(null);
+    setMovingMessage(null);
   }, [decodedFolder]);
 
   useEffect(() => {
@@ -142,6 +170,113 @@ export function MessageList({ mail, density }: MessageListProps) {
       starringRef.current.delete(identity);
     });
   };
+
+  const closeMessageMenu = () => setMessageMenu(null);
+  const openMessage = (message: Message) => {
+    navigate(`/mail/${encodeURIComponent(messageFolder(message, decodedFolder))}/${message.uid}`);
+  };
+  const runMessageAction = (action: string, message: Message) => {
+    const folderPath = messageFolder(message, decodedFolder);
+    void mail.messageAction(action, [message.uid], folderPath).then(success => {
+      if (!success) showToast({ type: 'error', message: `The message could not be ${action === 'delete' ? 'deleted' : 'updated'}.` });
+    });
+  };
+  const markMessageAsSpam = (message: Message) => {
+    const folderPath = messageFolder(message, decodedFolder);
+    void mail.messageAction('spam', [message.uid], folderPath).then(success => {
+      showToast({
+        type: success ? 'success' : 'error',
+        message: success ? 'Message marked as spam' : 'The message could not be marked as spam.',
+      });
+    });
+  };
+  const moveSelectedMessage = async (targetFolder: string | null) => {
+    if (!movingMessage || !targetFolder) return;
+    const sourceFolder = messageFolder(movingMessage, decodedFolder);
+    const moved = await mail.messageAction('move', [movingMessage.uid], sourceFolder, targetFolder);
+    if (!moved) throw new Error('The message could not be moved.');
+    showToast({ type: 'success', message: `Message moved to ${targetFolder}` });
+  };
+  const messageMenuItems: ContextMenuItem[] = [];
+  if (messageMenu) {
+    const message = messageMenu.message;
+    const isScheduled = Boolean(message.is_scheduled);
+    const sourceFolder = messageFolder(message, decodedFolder);
+    const isDraft = isDraftFolder(sourceFolder);
+    const sourceFolderDetails = mail.folders.find(candidate => candidate.path === sourceFolder);
+    const isJunk = sourceFolderDetails?.specialUse?.toLowerCase() === '\\junk'
+      || /(^|[/.])(junk|spam)$/i.test(sourceFolder);
+    messageMenuItems.push({
+      id: 'open',
+      label: isDraft ? 'Open draft' : 'Open message',
+      icon: ExternalLink,
+      onSelect: () => openMessage(message),
+    });
+    if (isDraft) {
+      messageMenuItems.push({
+        id: 'delete',
+        label: 'Delete draft',
+        icon: Trash2,
+        danger: true,
+        separatorBefore: true,
+        onSelect: () => runMessageAction('delete', message),
+      });
+    } else if (!isScheduled) {
+      messageMenuItems.push(
+        {
+          id: 'read',
+          label: message.isRead ? 'Mark unread' : 'Mark read',
+          icon: message.isRead ? MailOpen : Mail,
+          separatorBefore: true,
+          onSelect: () => runMessageAction(message.isRead ? 'unread' : 'read', message),
+        },
+        {
+          id: 'star',
+          label: message.isStarred ? 'Remove star' : 'Star message',
+          icon: Star,
+          onSelect: () => runMessageAction(message.isStarred ? 'unstar' : 'star', message),
+        },
+        {
+          id: 'archive',
+          label: 'Archive',
+          icon: Archive,
+          onSelect: () => runMessageAction('archive', message),
+        },
+        {
+          id: 'move',
+          label: 'Move to…',
+          icon: FolderInput,
+          onSelect: () => setMovingMessage(message),
+        },
+        ...(!isJunk ? [{
+          id: 'spam',
+          label: 'Mark as spam',
+          icon: ShieldAlert,
+          onSelect: () => markMessageAsSpam(message),
+        }] : []),
+        {
+          id: 'snooze',
+          label: 'Snooze until tomorrow',
+          icon: Clock,
+          onSelect: () => {
+            void mail.snoozeMessages(
+              [message.uid],
+              setHours(startOfDay(addDays(new Date(), 1)), 8),
+              messageFolder(message, decodedFolder),
+            );
+          },
+        },
+        {
+          id: 'delete',
+          label: 'Delete',
+          icon: Trash2,
+          danger: true,
+          separatorBefore: true,
+          onSelect: () => runMessageAction('delete', message),
+        },
+      );
+    }
+  }
 
   if (mail.mailLoading && mail.messages.length === 0) {
     return <MessageListSkeleton density={density} />;
@@ -270,7 +405,8 @@ export function MessageList({ mail, density }: MessageListProps) {
                 }}
                 onSnooze={() => {
                   mail.snoozeMessages([msg.uid], setHours(startOfDay(addDays(new Date(), 1)), 8), messageFolder(msg, decodedFolder));
-                }} />
+                }}
+                onOpenContextMenu={(point) => setMessageMenu({ message: msg, point })} />
             );
           })}
         </div>
@@ -290,6 +426,26 @@ export function MessageList({ mail, density }: MessageListProps) {
         )}
       </div>
       <ScrollToTop scrollRef={parentRef} />
+      {messageMenu && (
+        <ContextMenu
+          label={`Actions for ${messageMenu.message.subject || 'message'}`}
+          point={messageMenu.point}
+          items={messageMenuItems}
+          onClose={closeMessageMenu}
+        />
+      )}
+      {movingMessage && (
+        <FolderDestinationDialog
+          title="Move message"
+          description="Choose where this message should go."
+          folders={moveDestinationFolders(
+            mail.folders,
+            messageFolder(movingMessage, decodedFolder),
+          )}
+          onSelect={moveSelectedMessage}
+          onClose={() => setMovingMessage(null)}
+        />
+      )}
     </div>
   );
 }

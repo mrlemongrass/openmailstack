@@ -4,7 +4,7 @@ import type {
   SearchResponse, SearchIndexStatusResponse, SearchIndexRefreshResponse,
   SearchWorkerStatusResponse, SavedSearch,
   SearchField, SearchScope,
-  MailFolder, Signature, Rule, RuleRunPageResponse, RuleRunRequest,
+  MailFolder, FolderMutationResponse, Signature, Rule, RuleRunPageResponse, RuleRunRequest,
   ContactsResponse, Contact, ContactLabel, ContactGroup,
   CalendarsResponse, Calendar, CalendarUpdateResponse, CalendarDeleteResponse,
   CalendarShare,
@@ -32,6 +32,48 @@ export async function fetchFolders(): Promise<MailFolder[]> {
   if (!res.ok) throw new Error('Failed to fetch folders');
   const data = await res.json();
   return data.folders || [];
+}
+
+export async function createFolder(parent: string | null, name: string): Promise<MailFolder> {
+  const res = await fetch('/api/folders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parent, name }),
+  });
+  const data = await res.json().catch(() => ({ success: false })) as FolderMutationResponse;
+  if (!res.ok || !data.success || !data.folder) {
+    throw new Error(data.error || 'The folder could not be created.');
+  }
+  return data.folder;
+}
+
+export async function moveFolder(path: string, parent: string | null): Promise<{
+  previousPath: string;
+  folder: MailFolder;
+}> {
+  const res = await fetch('/api/folders', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, parent }),
+  });
+  const data = await res.json().catch(() => ({ success: false })) as FolderMutationResponse;
+  if (!res.ok || !data.success || !data.folder || !data.previousPath) {
+    throw new Error(data.error || 'The folder could not be moved.');
+  }
+  return { previousPath: data.previousPath, folder: data.folder };
+}
+
+export async function deleteFolder(path: string): Promise<string> {
+  const res = await fetch('/api/folders', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  const data = await res.json().catch(() => ({ success: false })) as FolderMutationResponse;
+  if (!res.ok || !data.success || !data.deletedPath) {
+    throw new Error(data.error || 'The folder could not be deleted.');
+  }
+  return data.deletedPath;
 }
 
 export async function fetchMessages(folder: string, olderThan?: number): Promise<MessageListResponse> {

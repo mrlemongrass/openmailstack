@@ -64,6 +64,17 @@ export interface MailFolder {
   path: string;
   unseen: number;
   delimiter?: string;
+  specialUse?: string;
+  disabled?: boolean;
+}
+
+export interface FolderMutationResponse {
+  success: boolean;
+  folder?: MailFolder;
+  previousPath?: string;
+  deletedPath?: string;
+  code?: string;
+  error?: string;
 }
 
 export interface FolderTreeNode {

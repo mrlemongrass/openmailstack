@@ -167,13 +167,13 @@ export function useMail(_opts: UseMailOptions) {
   });
 
   // Persist expanded state to localStorage
-  const setExpandedPersisted = (updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
+  const setExpandedPersisted = useCallback((updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
     setExpandedFolders((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       try { localStorage.setItem('oms_expanded_folders', JSON.stringify(next)); } catch {}
       return next;
     });
-  };
+  }, []);
 
   // Message state
   const [messages, setMessagesState] = useState<Message[]>([]);
@@ -436,6 +436,39 @@ export function useMail(_opts: UseMailOptions) {
       setMailError('');
     } catch (e: unknown) { setMailError(errorMessage(e, 'Failed to load folders')); console.error('Failed to fetch folders', e); }
   }, []);
+
+  const createFolder = useCallback(async (parent: string | null, name: string) => {
+    const folder = await api.createFolder(parent, name);
+    if (parent) setExpandedPersisted(previous => ({ ...previous, [parent]: true }));
+    await fetchFolders();
+    return folder.path;
+  }, [fetchFolders, setExpandedPersisted]);
+
+  const moveFolder = useCallback(async (path: string, parent: string | null) => {
+    const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
+    const result = await api.moveFolder(path, parent);
+    setExpandedPersisted(previous => Object.fromEntries(
+      Object.entries(previous).map(([folderPath, expanded]) => [
+        folderPath === path || folderPath.startsWith(`${path}${sourceDelimiter}`)
+          ? `${result.folder.path}${folderPath.slice(path.length)}`
+          : folderPath,
+        expanded,
+      ]),
+    ));
+    if (parent) setExpandedPersisted(previous => ({ ...previous, [parent]: true }));
+    await fetchFolders();
+    return result.folder.path;
+  }, [fetchFolders, folders, setExpandedPersisted]);
+
+  const deleteFolder = useCallback(async (path: string) => {
+    await api.deleteFolder(path);
+    setExpandedPersisted(previous => {
+      const next = { ...previous };
+      delete next[path];
+      return next;
+    });
+    await fetchFolders();
+  }, [fetchFolders, setExpandedPersisted]);
 
   const invalidateOlderMessageRequest = useCallback(() => {
     olderMessageRequestIdRef.current += 1;
@@ -1369,7 +1402,7 @@ export function useMail(_opts: UseMailOptions) {
     checkEarlierReplySend, checkingEarlierReplySend, allowReplyRetryAfterVerifiedNonDelivery,
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
-    fetchFolders, fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,
+    fetchFolders, createFolder, moveFolder, deleteFolder, fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,
     messageAction, undoAction, doSearch, snoozeMessages, cancelScheduledSend, removeScheduledMessage,
     mailSettings: _opts.mailSettings,
   };
@@ -1380,6 +1413,7 @@ function getUndoMessage(action: string): string {
     case 'delete': return 'Message moved to Trash.';
     case 'archive': return 'Message archived.';
     case 'spam': return 'Message marked as spam.';
+    case 'move': return 'Message moved.';
     default: return 'Action undone.';
   }
 }

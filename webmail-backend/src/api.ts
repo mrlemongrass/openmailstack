@@ -20,7 +20,7 @@ import { imapConfig, normalizeMailboxUsername, schedulerConfig, serverConfig, si
 import { compileSieve, extractJsonFromSieve, type SieveRule, type SieveRulesDocument } from './sieve-compiler';
 import { evaluateRulesForMessage } from './rule-engine';
 import { executableRuleCriteria } from './rule-semantics';
-import { RuleMoveApplyError, type RuleMoveApplyResult } from './imap';
+import { MailboxMutationError, RuleMoveApplyError, type RuleMoveApplyResult } from './imap';
 import { RuleRunLedger } from './rule-run-ledger';
 import {
     createSavedMailSearch,
@@ -1627,6 +1627,121 @@ apiRouter.get('/quota', requireAuth, async (req: any, res) => {
     }
 });
 
+function respondToFolderMutationFailure(res: any, err: unknown, action: 'created' | 'moved' | 'deleted') {
+    if (err instanceof MailboxMutationError) {
+        return res.status(err.statusCode).json({
+            success: false,
+            code: err.code,
+            error: err.message,
+        });
+    }
+    console.error(`Failed to ${action.slice(0, -1)} folder`, {
+        errorType: err instanceof Error ? err.name : 'UnknownError',
+    });
+    return res.status(500).json({
+        success: false,
+        error: `The folder could not be ${action}. Please try again.`,
+    });
+}
+
+function folderReferenceMatches(reference: unknown, path: string, delimiter: string) {
+    if (typeof reference !== 'string') return false;
+    return reference === path
+        || Boolean(delimiter && reference.startsWith(`${path}${delimiter}`));
+}
+
+async function assertFolderMutationIsUnreferenced(
+    user: string,
+    pass: string,
+    imap: any,
+    requestedPath: unknown,
+) {
+    const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+    if (!path) return;
+
+    const folders = await imap.getFolders();
+    const source = folders.find((folder: any) => (
+        folder.path === path
+        || (path.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')
+    ));
+    if (!source) return;
+    const delimiter = typeof source.delimiter === 'string' ? source.delimiter : '';
+    const [rulesDocument, snoozeResult] = await Promise.all([
+        getActiveRulesDocument(user, pass),
+        pool.query('SELECT original_folder FROM snooze_queue WHERE owner = ?', [user]),
+    ]);
+    const ruleReferencesFolder = (rulesDocument.rules || []).some(rule => (
+        (rule.actions || []).some(action => (
+            action.type === 'move'
+            && folderReferenceMatches(action.folder, source.path, delimiter)
+        ))
+    ));
+    const snoozeRows = (snoozeResult as any)?.[0] || [];
+    const snoozeReferencesFolder = snoozeRows.some((row: any) => (
+        folderReferenceMatches(row.original_folder, source.path, delimiter)
+    ));
+    if (ruleReferencesFolder || snoozeReferencesFolder) {
+        throw new MailboxMutationError(
+            'FOLDER_IN_USE',
+            409,
+            'This folder is used by a mail rule or snoozed message. Update that reference first.',
+        );
+    }
+}
+
+async function resetSearchIndexAfterFolderMutation(user: string) {
+    try {
+        await purgeUserSearchIndex(user);
+    } catch (err) {
+        console.error('Failed to reset the mail search index after a folder mutation', {
+            errorType: err instanceof Error ? err.name : 'UnknownError',
+        });
+    }
+}
+
+apiRouter.post('/folders', requireAuth, async (req: any, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+
+    try {
+        const imap = await getPooledImap(user, pass);
+        const folder = await imap.createFolder(req.body?.parent, req.body?.name);
+        res.status(201).json({ success: true, folder });
+    } catch (err: unknown) {
+        return respondToFolderMutationFailure(res, err, 'created');
+    }
+});
+
+apiRouter.patch('/folders', requireAuth, async (req: any, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+
+    try {
+        const imap = await getPooledImap(user, pass);
+        await assertFolderMutationIsUnreferenced(user, pass, imap, req.body?.path);
+        const result = await imap.moveFolder(req.body?.path, req.body?.parent);
+        await resetSearchIndexAfterFolderMutation(user);
+        res.json({ success: true, ...result });
+    } catch (err: unknown) {
+        return respondToFolderMutationFailure(res, err, 'moved');
+    }
+});
+
+apiRouter.delete('/folders', requireAuth, async (req: any, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+
+    try {
+        const imap = await getPooledImap(user, pass);
+        await assertFolderMutationIsUnreferenced(user, pass, imap, req.body?.path);
+        const result = await imap.deleteFolder(req.body?.path);
+        await resetSearchIndexAfterFolderMutation(user);
+        res.json({ success: true, ...result });
+    } catch (err: unknown) {
+        return respondToFolderMutationFailure(res, err, 'deleted');
+    }
+});
+
 apiRouter.get('/folders', requireAuth, async (req: any, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -2830,26 +2945,44 @@ apiRouter.post('/messages/action', requireAuth, async (req: any, res) => {
     const pass = req.user.password;
     const { folder, uids, action, targetFolder } = req.body;
     const allowedActions = ['delete', 'archive', 'spam', 'move', 'read', 'unread', 'star', 'unstar'];
+    const sourceFolder = typeof folder === 'string' ? folder.trim() : '';
+    const destinationFolder = typeof targetFolder === 'string' ? targetFolder.trim() : '';
 
-    if (!folder || !uids || !Array.isArray(uids) || uids.length === 0 || !allowedActions.includes(action)) {
+    if (
+        !sourceFolder
+        || /[\u0000-\u001f\u007f]/u.test(sourceFolder)
+        || !Array.isArray(uids)
+        || uids.length === 0
+        || !uids.every(uid => Number.isInteger(uid) && uid > 0 && uid <= MAX_IMAP_UID)
+        || !allowedActions.includes(action)
+        || (action === 'move' && (
+            !destinationFolder
+            || /[\u0000-\u001f\u007f]/u.test(destinationFolder)
+        ))
+    ) {
         return res.status(400).json({ success: false, error: 'Missing required parameters' });
     }
 
     try {
         const imap = await getPooledImap(user, pass);
-        const actionResult = await imap.messageAction(folder, uids, action, targetFolder);
+        const actionResult = await imap.messageAction(
+            sourceFolder,
+            uids,
+            action,
+            action === 'move' ? destinationFolder : undefined,
+        );
 
         try {
             if (action === 'read') {
-                await updateMailSearchFlags(user, folder, uids, { isRead: true });
+                await updateMailSearchFlags(user, sourceFolder, uids, { isRead: true });
             } else if (action === 'unread') {
-                await updateMailSearchFlags(user, folder, uids, { isRead: false });
+                await updateMailSearchFlags(user, sourceFolder, uids, { isRead: false });
             } else if (action === 'star') {
-                await updateMailSearchFlags(user, folder, uids, { isStarred: true });
+                await updateMailSearchFlags(user, sourceFolder, uids, { isStarred: true });
             } else if (action === 'unstar') {
-                await updateMailSearchFlags(user, folder, uids, { isStarred: false });
+                await updateMailSearchFlags(user, sourceFolder, uids, { isStarred: false });
             } else {
-                await deleteMailSearchRows(user, folder, uids);
+                await deleteMailSearchRows(user, sourceFolder, uids);
                 await invalidateSearchIndexSnapshot(user);
             }
         } catch (indexErr) {
@@ -2868,7 +3001,10 @@ apiRouter.post('/messages/action', requireAuth, async (req: any, res) => {
         });
     } catch (err: any) {
         console.error('Failed to perform action:', err);
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({
+            success: false,
+            error: 'The message action could not be completed. Please try again.',
+        });
     }
 });
 

@@ -1,5 +1,67 @@
 # Implementation State
 
+## 2026-08-22 Webmail Folder And Message Context Menus
+
+**Status: guarded-deployed in active mode and verified through a disposable
+public webmail/IMAPS lifecycle.** Mail folders and message rows now open context
+menus through desktop right click, a visible actions button for folder
+discovery/touch fallback, and `Shift+F10`/the Context Menu key. The shared menu
+uses ARIA menu semantics, bounded viewport placement, roving keyboard focus,
+outside/Escape/ancestor-scroll dismissal, usable internal overflow scrolling,
+and focus restoration. Folder menus provide Open and New subfolder, plus Move
+and confirmation-gated Delete for custom folders. The visible Folders heading
+provides top-level New folder, and its action affordance stays visible on touch
+devices. Message menus reuse the existing folder-qualified
+Open/read/star/archive/snooze/delete actions and add Move to and Mark as spam,
+with honest Draft/Junk/Scheduled variants. Each message row is a non-focusable
+group whose checkbox, star/actions, and labelled open button are siblings.
+
+Authenticated `POST /api/folders` creates at Top level or beneath an existing
+selectable parent; `PATCH /api/folders` moves a custom folder while preserving
+its leaf name; `DELETE /api/folders` removes a custom leaf. The IMAP service
+resolves real folders and the hierarchy delimiter from LIST, treats INBOX casing
+compatibly, rejects control characters, delimiter injection, duplicate names,
+the virtual Scheduled folder, missing/nonselectable parents, and invalid flat
+hierarchy requests, then calls ImapFlow with path segments. INBOX and every RFC
+special-use/system folder are protected from move/delete even when ImapFlow does
+not select that mailbox as the canonical alias. Top-level `SCHEDULED` is
+reserved. Self/descendant moves, collisions, no-op moves, and delete requests
+while children remain are rejected. Move/delete preserve IMAP subscriptions,
+block paths referenced by active rules or snoozed messages, and atomically purge
+the per-user folder-keyed search index so a later worker cannot certify stale
+state.
+
+Proof is green: backend 804 pass / 7 documented environment-dependent skips
+(811 total); frontend 184/184; ESLint, production build, diff checks, and
+complete repository integration pass. Focused backend folder/search regressions
+are 39/39 and focused frontend context/search regressions are 20/20. Guarded
+bridge and active webmail releases passed public IMAPS and ActiveSync
+Mail/Ping/Contacts/Calendar gates. An API/public-IMAPS canary created a top-level
+folder and child, moved the child to Top level, proved its new LSUB entry and the
+old entry's removal, then deleted both with zero LIST/LSUB residue. Deployed
+Chromium proved the corrected message-row accessibility tree, kept a clipped
+context menu open while scrolling it in a 900x220 viewport, exercised folder
+Move and viewport-wide permanent Delete confirmation, and deleted the folder.
+One exact disposable message moved to Archive and then Mark as spam placed it in
+the server-designated Junk folder; exact Message-ID cleanup removed it. Browser
+sessions and ephemeral authentication state were removed. Folder rename remains
+out of scope.
+
+The lifecycle initially exposed a pre-existing Dovecot 2.4 upgrade defect:
+Debian's retained 2.3-era empty `dict quota {}` sample became a real dictionary
+whose implicit driver was the unsupported name `quota`, so IMAP DELETE returned
+an internal error before storage mutation. `functions/lib_dovecot_config.sh`
+now removes only an empty/comment-only legacy block, preserves configured
+dictionaries, and is idempotently covered by
+`tests/integration/dovecot_24_dict_migration_test.sh`. A guarded Dovecot release
+passed pre/post mail, required Ping, contacts, and calendar gates. Effective
+`dict quota` blocks and post-release dictionary errors are both zero; Dovecot,
+the backend, Scheduler worker, and Nginx are active with zero restart counters.
+Rollback snapshots are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260823T001723Z`,
+`/var/backups/openmailstack/protocol-guarded-webmail-20260823T002451Z`, and
+`/var/backups/openmailstack/protocol-guarded-dovecot-20260822T202155Z`.
+
 ## 2026-08-18 Cycle 15 Physical iPad Body Fetch Repair
 
 **Status: the Exchange message-body spinner is fixed, guarded-deployed, and

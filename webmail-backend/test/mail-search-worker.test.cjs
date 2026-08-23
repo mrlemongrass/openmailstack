@@ -11,6 +11,7 @@ let reconciliationFails = false;
 let imapInstances = 0;
 let connectGate = null;
 let connectStarted = null;
+let purgeFailureTable = '';
 
 const dbPath = require.resolve('../src/db.js');
 require.cache[dbPath] = {
@@ -46,6 +47,21 @@ require.cache[dbPath] = {
           return [[{ uid: 10 }, { uid: 11 }], []];
         }
         return [[], []];
+      },
+      async getConnection() {
+        return {
+          async beginTransaction() { dbEvents.push('purge-begin'); },
+          async query(sql) {
+            const text = String(sql).replace(/\s+/g, ' ').trim();
+            const table = text.match(/^DELETE FROM ([a-z_]+)/)?.[1] || '';
+            dbEvents.push(`purge-delete:${table}`);
+            if (table === purgeFailureTable) throw new Error(`failed ${table}`);
+            return [{ affectedRows: table === 'mail_search_index' ? 3 : 1 }, []];
+          },
+          async commit() { dbEvents.push('purge-commit'); },
+          async rollback() { dbEvents.push('purge-rollback'); },
+          release() { dbEvents.push('purge-release'); },
+        };
       },
     },
   },
@@ -124,7 +140,7 @@ require.cache[imapPath] = {
   paths: [],
 };
 
-const { runSearchIndexer } = require('../src/search-worker.js');
+const { purgeUserSearchIndex, runSearchIndexer } = require('../src/search-worker.js');
 
 const reset = () => {
   dbEvents.length = 0;
@@ -134,6 +150,7 @@ const reset = () => {
   imapInstances = 0;
   connectGate = null;
   connectStarted = null;
+  purgeFailureTable = '';
 };
 
 test('worker invalidates the old snapshot and reconciles deletions before certifying a new one', async () => {
@@ -170,4 +187,32 @@ test('a second scheduler tick does not overlap an active indexing cycle', async 
   assert.equal(imapInstances, 1);
   releaseConnect();
   await firstCycle;
+});
+
+test('user search-index purge commits index and worker state atomically', async () => {
+  reset();
+
+  assert.equal(await purgeUserSearchIndex(username), 3);
+  assert.deepEqual(dbEvents, [
+    'purge-begin',
+    'purge-delete:mail_search_index',
+    'purge-delete:mail_search_worker_state',
+    'purge-delete:mail_search_user_state',
+    'purge-commit',
+    'purge-release',
+  ]);
+});
+
+test('mid-purge failure rolls back before worker state can diverge from the index', async () => {
+  reset();
+  purgeFailureTable = 'mail_search_worker_state';
+
+  await assert.rejects(() => purgeUserSearchIndex(username), /failed mail_search_worker_state/);
+  assert.deepEqual(dbEvents, [
+    'purge-begin',
+    'purge-delete:mail_search_index',
+    'purge-delete:mail_search_worker_state',
+    'purge-rollback',
+    'purge-release',
+  ]);
 });

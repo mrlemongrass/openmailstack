@@ -330,7 +330,7 @@ test('message row child controls do not bubble pointer or keyboard activation in
 
   assert.match(source, /<input type="checkbox"[\s\S]*aria-label=\{`Select \$\{message\.subject \|\| 'message'\}`\}/);
   assert.match(source, /<input type="checkbox"[\s\S]*onClick=\{\(e\) => e\.stopPropagation\(\)\}[\s\S]*onChange=/);
-  assert.match(source, /onKeyDown=\{\(e\) => \{\s*if \(e\.target !== e\.currentTarget\) return;/);
+  assert.match(source, /role="group"[\s\S]*className="message-row-open"/);
 });
 
 test('mail search identities and route lookups remain folder-qualified when UIDs collide', () => {
@@ -360,5 +360,12 @@ test('mail search identities and route lookups remain folder-qualified when UIDs
       { path: 'SCHEDULED', unseen: 0 },
     ], 'Archive').map((folder) => folder.path),
     ['INBOX', 'Projects'],
+  );
+  assert.deepEqual(
+    moveDestinationFolders([
+      { path: 'INBOX', unseen: 0 },
+      { path: 'Archive', unseen: 0 },
+    ], 'inbox').map((folder) => folder.path),
+    ['Archive'],
   );
 });

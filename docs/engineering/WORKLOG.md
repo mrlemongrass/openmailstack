@@ -9317,3 +9317,150 @@ release line and integrated main fix `885099fd`
   Push network/sleep transition, physical macOS CardDAV identity retry, or the
   original macOS Notes lifecycle is complete. Those remain separate release
   evidence, as does the production backup-quiescence reduction.
+
+## 2026-08-22 — Webmail Folder And Message Context Menus
+
+Agent/tool: Codex with graph-guided source inspection, test-first backend and
+frontend implementation, mocked authenticated Chromium verification, a
+deterministic Dovecot diagnosis loop, and guarded production releases
+
+Branch: `main`; current working tree guarded-deployed and ready for commit
+
+### Goal and acceptance criteria
+
+- Let a mailbox owner create a top-level folder or a child beneath INBOX or
+  another real selectable IMAP folder from the web app.
+- Give folder and message rows Outlook-style context menus while preserving
+  ordinary left-click behavior.
+- Let owners move or confirmation-delete custom folders while protecting INBOX
+  and every special-use/system folder, and add message Move/Mark as spam.
+- Keep the feature discoverable and keyboard accessible through a visible
+  folder actions button, `Shift+F10`/Context Menu key, ARIA menu semantics,
+  arrow navigation, Escape/outside dismissal, and focus restoration.
+- Reuse proven message actions and keep virtual or destructive folder behavior
+  honest rather than exposing unsupported controls.
+
+### Changes made
+
+- Added a shared portal-based context menu with viewport clamping, roving focus,
+  separators, disabled/danger states, touch-visible folder affordances, and
+  desktop/keyboard dismissal behavior. Short menus scroll internally without
+  closing themselves, and dialogs/confirmations are portaled and viewport-bound.
+- Added folder menus with Open and New subfolder plus Move and Delete for custom
+  folders. A visible New folder button creates at Top level; shared
+  focus-managed create/destination dialogs refresh and expand the resulting
+  hierarchy. Delete requires a warning that messages are permanently removed.
+- Added message menus with folder-qualified Open, read/unread, star/unstar,
+  archive, next-morning snooze, and delete actions, plus Move to and Mark as
+  spam. Draft, Junk, and virtual Scheduled rows expose only supported subsets.
+- Added authenticated `POST`, `PATCH`, and `DELETE /api/folders` operations.
+  `ImapService` resolves LIST metadata and the advertised delimiter, supports
+  root/child creation and root/child moves, preserves the moved leaf name, and
+  rejects protected/system mutation, no-op/self/descendant moves, conflicts,
+  invalid names/parents, and deletion while subfolders remain.
+- Protected every mailbox carrying an RFC special-use flag rather than only
+  ImapFlow's canonical alias, reserved top-level `SCHEDULED`, used the designated
+  Junk mailbox, preserved moved/deleted LSUB state, blocked active rule/snooze
+  references, and atomically purged the folder-keyed search index after mutation.
+- Kept flat-namespace delimiters authoritative, made folder-tree maps safe for
+  prototype-like mailbox names, and replaced the nested-interactive message row
+  with a non-focusable group containing sibling checkbox/actions/open controls.
+- Added backend route/IMAP and frontend menu/navigation/API regressions,
+  including case-insensitive current-INBOX destination exclusion. Rebuilt the
+  tracked backend JavaScript, declarations, and source maps.
+
+### Proof and limits
+
+- Focused red/green checks: backend 39/39 and frontend 20/20.
+- Complete backend: 811 tests, 804 pass, 7 documented environment-dependent
+  skips, 0 fail. Complete frontend: 184/184, 0 fail.
+- ESLint, frontend production build, `git diff --check`, and the full
+  `tests/integration/run.sh` repository suite pass.
+- A fresh mocked authenticated Chromium session right-clicked INBOX, exposed
+  Open/New subfolder, created and rendered `INBOX/Receipts`, exercised message
+  actions, Escape focus restoration, `Shift+F10`, and arrow navigation. The
+  final session reported zero console errors and zero warnings.
+- Guarded `webmail-bridge` and `webmail` deployments passed pre/post public
+  IMAPS and ActiveSync mail/Ping/contacts/calendar suites. Rollback snapshots
+  are `/var/backups/openmailstack/protocol-guarded-webmail-20260822T195557Z`
+  and `/var/backups/openmailstack/protocol-guarded-webmail-20260822T200347Z`.
+- A dedicated protocol canary created one unique dot-delimited child beneath
+  INBOX through `POST /api/folders`. `/api/folders` and public IMAPS LIST both
+  observed the exact child; STATUS proved it empty. No human mailbox or message
+  was used.
+- A fresh browser session against the deployed site logged in as that canary,
+  right-clicked INBOX, observed the labelled Open/New subfolder ARIA menu,
+  opened a dialog naming INBOX as its parent with autofocus and disabled empty
+  submission, then dismissed it with Escape and logged out. Console traffic
+  contained only expected unauthenticated `401` checks before login and after
+  logout, with no authenticated interaction warning or error.
+- A second browser pass loaded one exact disposable IMAP message and
+  right-clicked its live row. The menu exposed Open message, Mark unread, Star,
+  Archive, Snooze until tomorrow, and Delete; Escape returned focus to the same
+  message. No menu action was invoked. Exact cleanup removed the Message-ID and
+  the one asynchronous `mail_search_index` row created by loading it, then
+  proved zero canary index rows, sessions, and pending protocol runs.
+- The first cleanup reproduced the same public-IMAPS DELETE failure twice:
+  Dovecot returned `NO` and logged `mail_attribute: dict_init_auto() failed:
+  Unknown dict module: quota`. Selecting INBOX first and unsubscribing the
+  target ruled out selected-mailbox and subscription state.
+- Dovecot 2.4.1 was parsing a retained 2.3-era empty `dict quota {}` sample as a
+  real named dictionary whose implicit driver was `quota`. Official 2.4 syntax
+  documents that an empty `dict_driver` defaults to the dictionary name and
+  lists the supported drivers; `quota` is not one of them. Package release
+  notes independently warn that 2.4's configuration language is incompatible.
+- Added `functions/lib_dovecot_config.sh` and
+  `tests/integration/dovecot_24_dict_migration_test.sh`. The test was red before
+  the helper existed, then proved removal of only the empty/comment-only legacy
+  block, preservation of a configured dictionary, and idempotency. A migrated
+  copy of the host config also passed Dovecot's own parser with no `dict quota`
+  instance.
+- Guarded Dovecot deployment passed pre/post public IMAPS and ActiveSync
+  mail/Ping/contacts/calendar suites. The unchanged delete probe then succeeded
+  and LIST proved exact absence; an authenticated API check also proved absence
+  and logged out. Rollback is
+  `/var/backups/openmailstack/protocol-guarded-dovecot-20260822T202155Z`.
+- A second bounded increment added top-level create, custom-folder Move/Delete,
+  message Move/Mark as spam, and special-use protection. A live API/public-IMAPS
+  canary created one root and one child, moved the child to Top level, proved
+  exact empty state throughout, and deleted both. Deployed Chromium created two
+  root folders, moved one below the other and back to Top level, displayed the
+  destructive confirmation, and deleted both. It then moved one exact message
+  to Archive and marked it as spam into Junk; exact Message-ID cleanup removed
+  it from public IMAPS.
+- The browser run exposed a lowercase `/mail/inbox` identity mismatch that
+  offered uppercase INBOX as a destination. A focused regression was added and
+  the comparison is now case-insensitive for INBOX. The final deployed browser
+  pass proved INBOX absent from the move dialog while Archive/Junk/Trash remain.
+- The fixed-point Spec/Standards review found no remaining code, accessibility,
+  secret, generated-parity, or unrelated-change blocker after the remediations.
+  Guarded corrected bridge and active releases of the final reviewed tree passed
+  pre/post public IMAPS and ActiveSync Mail/Ping/Contacts/Calendar gates. Final
+  rollback snapshots are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260823T001723Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260823T002451Z`.
+- A fresh live API/public-IMAPS canary rejected reserved `scheduled`, created a
+  root and child, moved the child to Top level, proved the new LSUB subscription
+  and removal of the old one, then deleted both with zero LIST/LSUB residue.
+  Deployed Chromium proved the message row exposes sibling controls, the 900x220
+  context menu stayed open while scrolling, folder Move excluded itself, and the
+  permanent-delete overlay covered the 1280x720 viewport. It moved one exact
+  message to Archive and Mark as spam placed it in the server-designated Junk;
+  exact folder, subscription, message, auth-state, and browser cleanup passed.
+- Browser form-fill tooling echoed the dedicated protocol-canary password in
+  local command output. The credential was immediately rotated, its root-only
+  file atomically replaced, and HTTPS, public IMAPS, and canary provisioning
+  reverified. No human credential was involved. The final browser pass used an
+  ephemeral mode-0600 auth state that was deleted immediately after loading.
+- Final attestation: active release mode; Dovecot, backend, Scheduler worker,
+  and Nginx active; backend readiness `401`; effective `dict quota` blocks,
+  protocol fixtures, canary browser messages/folders, and auth-state files are
+  absent. Folder rename remains unimplemented; folder deletion is intentionally
+  permanent after confirmation and requires child folders to be removed first.
+- Unrelated residual found during exact cleanup: `/api/account/sessions` reads
+  `req.cookies` to identify the current session, while this backend's auth path
+  parses the raw Cookie header and does not populate `req.cookies`. A newly
+  created canary session consequently appeared non-current and could revoke
+  itself. This commit does not expand into account security; an exact
+  transaction-bounded delete left zero protocol-canary session rows. Repairing
+  that route is the recommended next bounded task.

@@ -1,5 +1,10 @@
 import type { MailFolder, Message } from '../shared/types';
 
+function mailboxPathsMatch(left: string, right: string) {
+  return left === right
+    || (left.toUpperCase() === 'INBOX' && right.toUpperCase() === 'INBOX');
+}
+
 export function messageFolder(message: Pick<Message, 'folder'>, fallbackFolder: string) {
   return message.folder || fallbackFolder;
 }
@@ -19,7 +24,9 @@ export function messageForRoute(messages: Message[], routeFolder: string, uid: n
 
 export function moveDestinationFolders(folders: MailFolder[], sourceFolder: string) {
   return folders.filter((folder) => (
-    folder.path !== sourceFolder && folder.path.toUpperCase() !== 'SCHEDULED'
+    !mailboxPathsMatch(folder.path, sourceFolder)
+    && folder.path.toUpperCase() !== 'SCHEDULED'
+    && !folder.disabled
   ));
 }
 

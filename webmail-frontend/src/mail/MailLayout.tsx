@@ -94,7 +94,11 @@ export function MailLayout({ mail }: MailLayoutProps) {
             <FolderSidebar folders={mail.folders} activeFolder={mail.activeFolder}
               expandedFolders={mail.expandedFolders}
               onToggleExpand={(path) => mail.setExpandedFolders((prev) => ({ ...prev, [path]: !prev[path] }))}
-              onCompose={() => mail.startCompose()} quota={mail.userQuota} />
+              onCompose={() => mail.startCompose()}
+              onCreateFolder={mail.createFolder}
+              onMoveFolder={mail.moveFolder}
+              onDeleteFolder={mail.deleteFolder}
+              quota={mail.userQuota} />
           </div>
         </Panel>
 

@@ -254,7 +254,7 @@ Agents should verify all paths, sockets, ports, SQL map files, and service confi
 
 ### 4.2 Dovecot
 
-Status: `Authentication, storage paths, and Sieve delivery verified 2026-07-30`
+Status: `Authentication, storage paths, Sieve delivery, and Dovecot 2.4 config migration verified 2026-08-22`
 
 The live host runs Dovecot 2.4.1. Its ordered passdb list contains a root-owned
 master-user passwd-file, an SQL app-password passdb, and an SQL mailbox-password
@@ -281,6 +281,17 @@ and ManageSieve require a resolved per-user home to find the active script.
 `tests/integration/auth_hardening_guard.cjs` prevents the Dovecot 2.4 query from
 dropping either field. A disposable live LMTP delivery on 2026-07-30 exercised
 an active `fileinto` rule and stored the message only in its target mailbox.
+
+Dovecot 2.4 named-list syntax makes a legacy empty `dict quota {}` sample
+active: its empty `dict_driver` defaults to the name `quota`, which is not a
+supported dictionary driver. On upgraded hosts this can make mailbox metadata
+initialization fail before IMAP DELETE reaches storage. The 2.4 installer calls
+`openmailstack_remove_empty_legacy_quota_dict` before rendering `local.conf`.
+That migration removes only an empty/comment-only legacy block, preserves any
+dictionary containing settings, and is idempotent. The focused fixture test is
+`tests/integration/dovecot_24_dict_migration_test.sh`; live proof on 2026-08-22
+used the same public-IMAPS delete probe red before and green after a guarded
+Dovecot deployment.
 
 Documented responsibilities:
 
@@ -639,6 +650,39 @@ Agents should reclassify each feature as `Implemented`, `Partial`, `Planned`, or
 - full-text search
 - search operators
 - SSE or live updates
+
+Verified 2026-08-22: mail folders and message rows share an accessible context
+menu that opens through desktop right click and the standard keyboard context
+menu gestures. Folder rows also retain a visible actions button so the commands
+are discoverable and usable without a secondary mouse button, including on
+touch-only devices. Menus are portaled, viewport-bounded, internally scrollable
+without self-dismissal, and restore focus. Message rows expose their checkbox,
+star/actions, and labelled open button as sibling controls rather than nesting
+interactive descendants. Folder commands include Open and New subfolder
+everywhere they are valid, plus Move and Delete for custom folders. The Folders
+heading exposes New folder for top-level creation. Message commands reuse the
+existing folder-qualified
+Open/read/star/archive/snooze/delete paths and add Move to and Mark as spam,
+with bounded Draft and virtual Scheduled variants. Left click continues to
+navigate normally.
+
+Authenticated `POST /api/folders` creates either a top-level folder or one child
+beneath an existing selectable IMAP folder. `PATCH /api/folders` moves a custom
+folder without renaming its leaf, including back to the hierarchy root, and
+`DELETE /api/folders` deletes a custom leaf after UI confirmation. The
+service resolves real folders and the server hierarchy delimiter from LIST,
+passes path segments to ImapFlow, and rejects invalid or duplicate names,
+missing/nonselectable parents, flat-namespace child requests, system/special-use
+folder mutation, self/descendant moves, collisions, and deletion while children
+remain. Special-use protection derives from every advertised RFC flag rather
+than only ImapFlow's one canonical alias, and the virtual top-level `SCHEDULED`
+name is reserved. Folder moves preserve subscribed paths and delete removes the
+subscription. Move/delete are blocked while an active rule or snoozed message
+references that path, then atomically clear the owner's folder-keyed search
+index after the IMAP mutation. This behavior is guarded-deployed and was
+exercised with a dedicated disposable canary through API, webmail, LIST, and
+LSUB create/move/delete lifecycles with exact cleanup. Folder rename remains
+unimplemented.
 
 Verified 2026-07-30: Mail Filters preserve array order as user-visible priority.
 Each executable rule stops later processing unless `stopProcessing=false`;

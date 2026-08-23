@@ -1463,6 +1463,100 @@ exports.apiRouter.get('/quota', requireAuth, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+function respondToFolderMutationFailure(res, err, action) {
+    if (err instanceof imap_1.MailboxMutationError) {
+        return res.status(err.statusCode).json({
+            success: false,
+            code: err.code,
+            error: err.message,
+        });
+    }
+    console.error(`Failed to ${action.slice(0, -1)} folder`, {
+        errorType: err instanceof Error ? err.name : 'UnknownError',
+    });
+    return res.status(500).json({
+        success: false,
+        error: `The folder could not be ${action}. Please try again.`,
+    });
+}
+function folderReferenceMatches(reference, path, delimiter) {
+    if (typeof reference !== 'string')
+        return false;
+    return reference === path
+        || Boolean(delimiter && reference.startsWith(`${path}${delimiter}`));
+}
+async function assertFolderMutationIsUnreferenced(user, pass, imap, requestedPath) {
+    const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+    if (!path)
+        return;
+    const folders = await imap.getFolders();
+    const source = folders.find((folder) => (folder.path === path
+        || (path.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')));
+    if (!source)
+        return;
+    const delimiter = typeof source.delimiter === 'string' ? source.delimiter : '';
+    const [rulesDocument, snoozeResult] = await Promise.all([
+        getActiveRulesDocument(user, pass),
+        db_1.pool.query('SELECT original_folder FROM snooze_queue WHERE owner = ?', [user]),
+    ]);
+    const ruleReferencesFolder = (rulesDocument.rules || []).some(rule => ((rule.actions || []).some(action => (action.type === 'move'
+        && folderReferenceMatches(action.folder, source.path, delimiter)))));
+    const snoozeRows = snoozeResult?.[0] || [];
+    const snoozeReferencesFolder = snoozeRows.some((row) => (folderReferenceMatches(row.original_folder, source.path, delimiter)));
+    if (ruleReferencesFolder || snoozeReferencesFolder) {
+        throw new imap_1.MailboxMutationError('FOLDER_IN_USE', 409, 'This folder is used by a mail rule or snoozed message. Update that reference first.');
+    }
+}
+async function resetSearchIndexAfterFolderMutation(user) {
+    try {
+        await (0, search_worker_1.purgeUserSearchIndex)(user);
+    }
+    catch (err) {
+        console.error('Failed to reset the mail search index after a folder mutation', {
+            errorType: err instanceof Error ? err.name : 'UnknownError',
+        });
+    }
+}
+exports.apiRouter.post('/folders', requireAuth, async (req, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+    try {
+        const imap = await getPooledImap(user, pass);
+        const folder = await imap.createFolder(req.body?.parent, req.body?.name);
+        res.status(201).json({ success: true, folder });
+    }
+    catch (err) {
+        return respondToFolderMutationFailure(res, err, 'created');
+    }
+});
+exports.apiRouter.patch('/folders', requireAuth, async (req, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+    try {
+        const imap = await getPooledImap(user, pass);
+        await assertFolderMutationIsUnreferenced(user, pass, imap, req.body?.path);
+        const result = await imap.moveFolder(req.body?.path, req.body?.parent);
+        await resetSearchIndexAfterFolderMutation(user);
+        res.json({ success: true, ...result });
+    }
+    catch (err) {
+        return respondToFolderMutationFailure(res, err, 'moved');
+    }
+});
+exports.apiRouter.delete('/folders', requireAuth, async (req, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+    try {
+        const imap = await getPooledImap(user, pass);
+        await assertFolderMutationIsUnreferenced(user, pass, imap, req.body?.path);
+        const result = await imap.deleteFolder(req.body?.path);
+        await resetSearchIndexAfterFolderMutation(user);
+        res.json({ success: true, ...result });
+    }
+    catch (err) {
+        return respondToFolderMutationFailure(res, err, 'deleted');
+    }
+});
 exports.apiRouter.get('/folders', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -2632,27 +2726,36 @@ exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
     const pass = req.user.password;
     const { folder, uids, action, targetFolder } = req.body;
     const allowedActions = ['delete', 'archive', 'spam', 'move', 'read', 'unread', 'star', 'unstar'];
-    if (!folder || !uids || !Array.isArray(uids) || uids.length === 0 || !allowedActions.includes(action)) {
+    const sourceFolder = typeof folder === 'string' ? folder.trim() : '';
+    const destinationFolder = typeof targetFolder === 'string' ? targetFolder.trim() : '';
+    if (!sourceFolder
+        || /[\u0000-\u001f\u007f]/u.test(sourceFolder)
+        || !Array.isArray(uids)
+        || uids.length === 0
+        || !uids.every(uid => Number.isInteger(uid) && uid > 0 && uid <= MAX_IMAP_UID)
+        || !allowedActions.includes(action)
+        || (action === 'move' && (!destinationFolder
+            || /[\u0000-\u001f\u007f]/u.test(destinationFolder)))) {
         return res.status(400).json({ success: false, error: 'Missing required parameters' });
     }
     try {
         const imap = await getPooledImap(user, pass);
-        const actionResult = await imap.messageAction(folder, uids, action, targetFolder);
+        const actionResult = await imap.messageAction(sourceFolder, uids, action, action === 'move' ? destinationFolder : undefined);
         try {
             if (action === 'read') {
-                await (0, search_index_1.updateMailSearchFlags)(user, folder, uids, { isRead: true });
+                await (0, search_index_1.updateMailSearchFlags)(user, sourceFolder, uids, { isRead: true });
             }
             else if (action === 'unread') {
-                await (0, search_index_1.updateMailSearchFlags)(user, folder, uids, { isRead: false });
+                await (0, search_index_1.updateMailSearchFlags)(user, sourceFolder, uids, { isRead: false });
             }
             else if (action === 'star') {
-                await (0, search_index_1.updateMailSearchFlags)(user, folder, uids, { isStarred: true });
+                await (0, search_index_1.updateMailSearchFlags)(user, sourceFolder, uids, { isStarred: true });
             }
             else if (action === 'unstar') {
-                await (0, search_index_1.updateMailSearchFlags)(user, folder, uids, { isStarred: false });
+                await (0, search_index_1.updateMailSearchFlags)(user, sourceFolder, uids, { isStarred: false });
             }
             else {
-                await (0, search_index_1.deleteMailSearchRows)(user, folder, uids);
+                await (0, search_index_1.deleteMailSearchRows)(user, sourceFolder, uids);
                 await (0, search_worker_1.invalidateSearchIndexSnapshot)(user);
             }
         }
@@ -2671,7 +2774,10 @@ exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
     }
     catch (err) {
         console.error('Failed to perform action:', err);
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({
+            success: false,
+            error: 'The message action could not be completed. Please try again.',
+        });
     }
 });
 exports.apiRouter.get('/folders/*folder/messages/:uid/attachments/:attachmentId', requireAuth, async (req, res) => {

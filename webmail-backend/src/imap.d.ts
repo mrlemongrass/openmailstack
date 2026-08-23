@@ -40,6 +40,11 @@ export declare class RuleMoveApplyError extends Error {
     pendingCopies: RuleCopyLedgerAction[];
     constructor(result: RuleMoveApplyResult, cause: unknown, retrySafe?: boolean, pendingCopies?: RuleCopyLedgerAction[]);
 }
+export declare class MailboxMutationError extends Error {
+    code: string;
+    statusCode: number;
+    constructor(code: string, statusCode: number, message: string);
+}
 export declare class ImapService {
     client: ImapFlow;
     constructor(user: string, pass: string, useMasterCredentials?: boolean);
@@ -47,6 +52,22 @@ export declare class ImapService {
     logout(): Promise<void>;
     close(): void;
     getFolders(): Promise<any[]>;
+    createFolder(parentPath: string | null | undefined, requestedName: string): Promise<{
+        path: string;
+        delimiter: string;
+        unseen: number;
+    }>;
+    moveFolder(requestedPath: string, requestedParent: string | null | undefined): Promise<{
+        previousPath: string;
+        folder: {
+            path: string;
+            delimiter: string;
+            unseen: number;
+        };
+    }>;
+    deleteFolder(requestedPath: string): Promise<{
+        deletedPath: string;
+    }>;
     getMessageIdentities(folderPath: string): Promise<any[]>;
     getSearchFolderSnapshot(): Promise<{
         folderPaths: string[];

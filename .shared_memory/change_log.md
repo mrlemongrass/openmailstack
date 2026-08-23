@@ -1977,3 +1977,71 @@ Future entry template:
   gates. Live service/worker are active, readiness is `401`, `NRestarts=0`, and
   changed deployed artifacts match the release byte-for-byte. A real iPad
   Exchange message body then rendered normally.
+
+## 2026-08-22 — Webmail Folder And Message Context Menus
+
+- Added one shared accessible context-menu primitive for mail folders and
+  messages, opened by right click, `Shift+F10`/Context Menu key, and a visible
+  folder actions button without changing normal left-click navigation.
+- Added top-level New folder plus New subfolder beneath existing selectable
+  folders. Added Move and confirmation-gated Delete for custom folders while
+  hiding both commands for INBOX and special-use/system folders. Moves preserve
+  the leaf name, support return to Top level, and reject self/descendant moves;
+  delete rejects folders that still contain children.
+- Reused existing folder-qualified message operations for Open, read/unread,
+  star/unstar, archive, snooze, and delete, and added Move to and Mark as spam;
+  Draft, Junk, and virtual Scheduled rows expose only operations their backing
+  models actually support. Move destinations exclude the active folder with
+  case-insensitive INBOX identity.
+- Added authenticated create/move/delete folder routes and delimiter-aware IMAP
+  operations with bounded errors and protected-folder checks. Verified 804
+  backend passes / 7 documented skips (811 total), frontend 184/184, focused
+  backend 39/39, focused frontend 20/20, ESLint, production build, diff checks,
+  and the complete repository integration suite.
+- Guarded bridge and active webmail deployments passed their public IMAPS and
+  ActiveSync mail/Ping/contacts/calendar gates. A dedicated API/public-IMAPS
+  canary created a top-level folder and child, moved the child to Top level,
+  proved each hierarchy state, and deleted both exactly. Deployed Chromium
+  created two top-level folders, moved one below the other and back to Top
+  level, displayed the permanent-delete warning, and deleted both. A disposable
+  message's right-click menu moved it to Archive and then marked it as spam into
+  Junk; an exact Message-ID cleanup removed it. A final deployed regression
+  proved lowercase `/mail/inbox` does not offer INBOX as its own move target.
+- The cleanup first reproduced a pre-existing Dovecot 2.4 migration failure:
+  the retained empty 2.3 `dict quota {}` sample was parsed as an unsupported
+  dictionary driver named `quota`, causing mailbox DELETE to return an internal
+  error. Added a narrow idempotent migration helper and regression that remove
+  only empty/comment-only blocks and preserve configured dictionaries.
+- Guarded Dovecot deployment passed pre/post public protocol gates. Effective
+  quota dictionary blocks and post-deploy dictionary errors are zero; services
+  are active with zero restart counters, web/backend artifacts have zero drift,
+  and the exact empty canary deletion probe is green. The final webmail rollback
+  snapshots are `protocol-guarded-webmail-20260823T001723Z` and
+  `protocol-guarded-webmail-20260823T002451Z`.
+- Review hardening now reserves top-level `SCHEDULED`, protects every mailbox
+  carrying an RFC special-use flag, uses the designated Junk mailbox, rejects
+  malformed parents/message moves, preserves LSUB state, blocks rule/snooze
+  references, and atomically resets the folder-keyed search index. The folder
+  tree preserves flat namespaces and prototype-like names; dialogs are portaled
+  and viewport-bounded; touch actions stay visible; internal context-menu scroll
+  no longer dismisses the menu; and message rows no longer nest controls inside
+  an interactive row.
+- Final live proof used only the dedicated protocol canary. API/public IMAPS
+  create/move/delete preserved the new subscription and removed old/deleted LSUB
+  entries with zero exact residue. Deployed Chromium proved the sibling-control
+  accessibility tree, scrollable 900x220 menu, folder Move/Delete warning and
+  viewport-wide portal, then moved one exact message to Archive and marked it as
+  spam into the server-designated Junk folder. Exact folder, subscription,
+  message, auth-state, and browser-session cleanup passed.
+- Residual, pre-existing and not changed here: `/api/account/sessions` derives
+  current-session identity from `req.cookies`, but this backend authenticates by
+  parsing the raw Cookie header and does not initialize `req.cookies`. A fresh
+  canary session therefore appeared non-current and could revoke itself. Exact
+  transaction-bounded canary-session cleanup reached zero rows; repairing that
+  account-security route is the recommended next task.
+- Browser form-fill tooling echoed the dedicated protocol-canary password in
+  local command output. It was rotated immediately, the root-only credential
+  file was updated atomically, and HTTPS login, public IMAPS, and canary
+  provisioning verification passed. Subsequent browser authentication used an
+  ephemeral mode-0600 storage state, deleted immediately after loading; no
+  human credential was involved.

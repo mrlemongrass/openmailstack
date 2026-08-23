@@ -21,6 +21,25 @@ test('folder listings request unseen counts through LIST-STATUS', async () => {
   assert.deepEqual(folders, [{ path: 'INBOX', delimiter: '/', unseen: 7 }]);
 });
 
+test('folder listings expose special-use and non-selectable metadata for safe mutations', async () => {
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async list() {
+      return [
+        { path: 'Sent', delimiter: '/', specialUse: '\\Sent', flags: new Set() },
+        { path: 'Deleted Messages', delimiter: '/', flags: new Set(['\\Trash']) },
+        { path: 'Container', delimiter: '/', flags: new Set(['\\Noselect']) },
+      ];
+    },
+  };
+
+  assert.deepEqual(await service.getFolders(), [
+    { path: 'Sent', delimiter: '/', unseen: 0, specialUse: '\\Sent' },
+    { path: 'Deleted Messages', delimiter: '/', unseen: 0, specialUse: '\\Trash' },
+    { path: 'Container', delimiter: '/', unseen: 0, disabled: true },
+  ]);
+});
+
 test('search snapshots collect UID state in one LIST-STATUS request', async () => {
   const calls = [];
   const service = Object.create(ImapService.prototype);

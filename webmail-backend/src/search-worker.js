@@ -490,12 +490,27 @@ exports.getSearchWorkerStatus = getSearchWorkerStatus;
 const purgeUserSearchIndex = async (username) => {
     await (0, search_index_1.ensureMailSearchSchema)();
     await ensureWorkerSchema();
-    const [result] = await db_1.pool.query('DELETE FROM mail_search_index WHERE username = ?', [username]);
-    await db_1.pool.query('DELETE FROM mail_search_worker_state WHERE username = ?', [username]);
-    await db_1.pool.query('DELETE FROM mail_search_user_state WHERE username = ?', [username]);
-    const deletedCount = result.affectedRows || 0;
-    console.log(`[SearchWorker] Purged ${deletedCount} index entries for ${username}`);
-    return deletedCount;
+    const connection = await db_1.pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const [result] = await connection.query('DELETE FROM mail_search_index WHERE username = ?', [username]);
+        await connection.query('DELETE FROM mail_search_worker_state WHERE username = ?', [username]);
+        await connection.query('DELETE FROM mail_search_user_state WHERE username = ?', [username]);
+        await connection.commit();
+        const deletedCount = result.affectedRows || 0;
+        console.log(`[SearchWorker] Purged ${deletedCount} index entries for ${username}`);
+        return deletedCount;
+    }
+    catch (err) {
+        try {
+            await connection.rollback();
+        }
+        catch { }
+        throw err;
+    }
+    finally {
+        connection.release();
+    }
 };
 exports.purgeUserSearchIndex = purgeUserSearchIndex;
 /* ---------- Lifecycle ---------- */

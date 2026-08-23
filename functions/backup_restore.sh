@@ -697,12 +697,48 @@ oms_br_validate_top_level() {
     fi
 }
 
+oms_br_metadata_key_count() {
+    local metadata_file="$1"
+    local key="$2"
+
+    awk -F'\t' -v key="${key}" '
+        $1 == key { count += 1 }
+        END { print count + 0 }
+    ' "${metadata_file}"
+}
+
+oms_br_read_single_metadata_value() {
+    local metadata_file="$1"
+    local key="$2"
+
+    awk -F'\t' -v key="${key}" '
+        $1 == key {
+            count += 1
+            value = $2
+            if (NF != 2 || $2 == "") {
+                invalid = 1
+            }
+        }
+        END {
+            if (count != 1 || invalid) {
+                exit 1
+            }
+            print value
+        }
+    ' "${metadata_file}"
+}
+
 oms_br_validate_snapshot_contents() {
     local snapshot_dir="$1"
     local checksum_tmp
     local control_file
     local assert_format
+    local service_quiescence_mode
     local service_quiescence_ms
+    local service_outage_window_ms
+    local service_quiescence_mode_count
+    local service_quiescence_ms_count
+    local service_outage_window_ms_count
 
     [[ -d "${snapshot_dir}" && ! -L "${snapshot_dir}" ]] || return 1
     for control_file in inventory.tsv snapshot.meta symlinks.tsv checksums.sha256 databases.sql databases.tsv; do
@@ -723,14 +759,39 @@ oms_br_validate_snapshot_contents() {
         "${snapshot_dir}/snapshot.meta" || return 1
     grep -Fxq $'mysql_configuration\tnot_included' \
         "${snapshot_dir}/snapshot.meta" || return 1
-    service_quiescence_ms=$(awk -F'\t' \
-        '$1 == "service_quiescence_ms" { print $2 }' \
-        "${snapshot_dir}/snapshot.meta") || return 1
-    if [[ -n "${service_quiescence_ms}" ]]; then
-        [[ "${service_quiescence_ms}" == "managed_externally" \
-            || "${service_quiescence_ms}" =~ ^[0-9]+$ ]] || return 1
-        [[ "$(grep -Fc $'service_quiescence_ms\t' "${snapshot_dir}/snapshot.meta")" == "1" ]] \
-            || return 1
+    service_quiescence_mode_count=$(oms_br_metadata_key_count \
+        "${snapshot_dir}/snapshot.meta" service_quiescence_mode) || return 1
+    service_quiescence_ms_count=$(oms_br_metadata_key_count \
+        "${snapshot_dir}/snapshot.meta" service_quiescence_ms) || return 1
+    service_outage_window_ms_count=$(oms_br_metadata_key_count \
+        "${snapshot_dir}/snapshot.meta" service_outage_window_ms) || return 1
+    if (( service_quiescence_mode_count == 0 \
+        && service_quiescence_ms_count == 0 \
+        && service_outage_window_ms_count == 0 )); then
+        : # Legacy format-1 snapshots predate service timing metadata.
+    else
+        (( service_quiescence_mode_count == 1 )) || return 1
+        service_quiescence_mode=$(oms_br_read_single_metadata_value \
+            "${snapshot_dir}/snapshot.meta" service_quiescence_mode) || return 1
+        case "${service_quiescence_mode}" in
+            managed)
+                (( service_quiescence_ms_count == 1 \
+                    && service_outage_window_ms_count == 1 )) || return 1
+                service_quiescence_ms=$(oms_br_read_single_metadata_value \
+                    "${snapshot_dir}/snapshot.meta" service_quiescence_ms) || return 1
+                service_outage_window_ms=$(oms_br_read_single_metadata_value \
+                    "${snapshot_dir}/snapshot.meta" service_outage_window_ms) || return 1
+                [[ "${service_quiescence_ms}" =~ ^[0-9]+$ \
+                    && "${service_outage_window_ms}" =~ ^[0-9]+$ ]] || return 1
+                (( 10#${service_outage_window_ms} >= 10#${service_quiescence_ms} )) \
+                    || return 1
+                ;;
+            managed_externally)
+                (( service_quiescence_ms_count == 0 \
+                    && service_outage_window_ms_count == 0 )) || return 1
+                ;;
+            *) return 1 ;;
+        esac
     fi
     oms_br_validate_database_manifest "${snapshot_dir}" || return 1
     oms_br_validate_inventory "${snapshot_dir}" || return 1
@@ -866,10 +927,23 @@ oms_br_finalize_snapshot_stage() {
     local staging_dir="$1"
     local snapshot_kind="$2"
     local created_at="$3"
-    local service_quiescence_ms="${4:-managed_externally}"
+    local service_quiescence_mode="${4:-managed_externally}"
+    local service_quiescence_ms="${5:-}"
+    local service_outage_window_ms="${6:-}"
 
-    [[ "${service_quiescence_ms}" == "managed_externally" \
-        || "${service_quiescence_ms}" =~ ^[0-9]+$ ]] || return 1
+    case "${service_quiescence_mode}" in
+        managed)
+            [[ "${service_quiescence_ms}" =~ ^[0-9]+$ \
+                && "${service_outage_window_ms}" =~ ^[0-9]+$ ]] || return 1
+            (( 10#${service_outage_window_ms} >= 10#${service_quiescence_ms} )) \
+                || return 1
+            ;;
+        managed_externally)
+            [[ -z "${service_quiescence_ms}" && -z "${service_outage_window_ms}" ]] \
+                || return 1
+            ;;
+        *) return 1 ;;
+    esac
 
     {
         printf 'format_version\t1\n'
@@ -881,7 +955,11 @@ oms_br_finalize_snapshot_stage() {
         printf 'mysql_configuration\tnot_included\n'
         printf 'encryption\tnone\n'
         printf 'point_in_time_recovery\tnot_available\n'
-        printf 'service_quiescence_ms\t%s\n' "${service_quiescence_ms}"
+        printf 'service_quiescence_mode\t%s\n' "${service_quiescence_mode}"
+        if [[ "${service_quiescence_mode}" == "managed" ]]; then
+            printf 'service_quiescence_ms\t%s\n' "${service_quiescence_ms}"
+            printf 'service_outage_window_ms\t%s\n' "${service_outage_window_ms}"
+        fi
     } > "${staging_dir}/snapshot.meta" || return 1
     oms_br_symlink_manifest "${staging_dir}" "${staging_dir}/symlinks.tsv" || return 1
     oms_br_generate_checksums "${staging_dir}" "${staging_dir}/checksums.sha256" || return 1
@@ -892,7 +970,6 @@ oms_br_finalize_snapshot_stage() {
         "${staging_dir}/snapshot.meta" \
         "${staging_dir}/symlinks.tsv" \
         "${staging_dir}/checksums.sha256" || return 1
-    oms_br_validate_snapshot_contents "${staging_dir}" || return 1
 }
 
 oms_br_build_snapshot_stage() {
@@ -972,9 +1049,14 @@ oms_br_create_backup_unlocked() {
                 service_quiescence_ms=$((service_quiescence_finished_ms - service_quiescence_started_ms))
                 OMS_BR_SERVICES_QUIESCED=0
                 oms_br_wait_for_health || exit $?
+                service_outage_finished_ms=$(date +%s%3N) || exit $?
+                [[ "${service_outage_finished_ms}" =~ ^[0-9]+$ \
+                    && "${service_outage_finished_ms}" -ge "${service_quiescence_finished_ms}" ]] \
+                    || exit 1
+                service_outage_window_ms=$((service_outage_finished_ms - service_quiescence_started_ms))
                 oms_br_finalize_snapshot_stage \
                     "${staging_dir}" "${snapshot_kind}" "${timestamp}" \
-                    "${service_quiescence_ms}" || exit $?
+                    managed "${service_quiescence_ms}" "${service_outage_window_ms}" || exit $?
                 trap - EXIT INT TERM HUP
             ); then
                 oms_br_error "Snapshot remains incomplete and was not promoted: ${staging_dir}"

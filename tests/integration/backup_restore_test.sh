@@ -319,6 +319,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' 'HEALTH' >> "${FAKE_EVENT_LOG}"
+sleep "${FAKE_HEALTH_DELAY_SECONDS:-0}"
 count=0
 [[ ! -f "${FAKE_HEALTH_COUNT}" ]] || count=$(<"${FAKE_HEALTH_COUNT}")
 count=$((count + 1))
@@ -431,6 +432,26 @@ run_restore_command() {
     run_oms_command "${timestamp}" restore "${snapshot}" "$@"
 }
 
+regenerate_snapshot_checksums() {
+    local snapshot="$1"
+
+    bash -c '
+        source "$1"
+        oms_br_generate_checksums "$2" "$2/checksums.sha256"
+    ' backup-restore-regenerate "${BACKUP_SCRIPT}" "${snapshot}"
+    chmod 0600 -- "${snapshot}/checksums.sha256"
+}
+
+assert_metadata_rejected() {
+    local snapshot="$1"
+    local label="$2"
+
+    regenerate_snapshot_checksums "${snapshot}"
+    if run_verify_command "${snapshot}" >"${TEST_ROOT}/${label}.out" 2>&1; then
+        fail "Verification accepted malformed service timing metadata: ${label}"
+    fi
+}
+
 prepare_live_inventory
 write_service_state
 prepare_fake_commands
@@ -460,10 +481,17 @@ assert_contains "${SNAPSHOT}/snapshot.meta" \
 assert_contains "${SNAPSHOT}/snapshot.meta" \
     $'database_scope\tconfigured_openmailstack_databases'
 assert_contains "${SNAPSHOT}/snapshot.meta" $'mysql_configuration\tnot_included'
+assert_contains "${SNAPSHOT}/snapshot.meta" $'service_quiescence_mode\tmanaged'
 QUIESCENCE_MS=$(awk -F'\t' '$1 == "service_quiescence_ms" { print $2 }' \
     "${SNAPSHOT}/snapshot.meta")
 [[ "${QUIESCENCE_MS}" =~ ^[0-9]+$ ]] \
     || fail "Managed backup did not record a numeric service quiescence duration"
+OUTAGE_WINDOW_MS=$(awk -F'\t' '$1 == "service_outage_window_ms" { print $2 }' \
+    "${SNAPSHOT}/snapshot.meta")
+[[ "${OUTAGE_WINDOW_MS}" =~ ^[0-9]+$ ]] \
+    || fail "Managed backup did not record a numeric service outage window"
+(( OUTAGE_WINDOW_MS >= QUIESCENCE_MS )) \
+    || fail "Service outage window ended before command-level quiescence"
 assert_equals $'postfixadmin\nroundcube\nvmail' "$(<"${SNAPSHOT}/databases.tsv")" \
     "configured database manifest"
 assert_contains "${SNAPSHOT}/inventory.tsv" \
@@ -545,13 +573,23 @@ fi
 write_service_state
 reset_fake_counters
 : > "${EVENT_LOG}"
-run_backup_command 20260815T120050Z FAKE_HEALTH_MODE=fail-first:3
+run_backup_command 20260815T120050Z \
+    FAKE_HEALTH_MODE=fail-first:3 \
+    FAKE_HEALTH_DELAY_SECONDS=0.02
 TRANSIENT_HEALTH_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T120050Z"
 [[ -d "${TRANSIENT_HEALTH_SNAPSHOT}" ]] \
     || fail "Backup did not tolerate transient post-resume health failures"
 assert_absent "${TRANSIENT_HEALTH_SNAPSHOT}.incomplete"
 assert_event_count 4 'HEALTH'
 assert_exact_service_state
+TRANSIENT_QUIESCENCE_MS=$(awk -F'\t' \
+    '$1 == "service_quiescence_ms" { print $2 }' \
+    "${TRANSIENT_HEALTH_SNAPSHOT}/snapshot.meta")
+TRANSIENT_OUTAGE_WINDOW_MS=$(awk -F'\t' \
+    '$1 == "service_outage_window_ms" { print $2 }' \
+    "${TRANSIENT_HEALTH_SNAPSHOT}/snapshot.meta")
+(( 10#${TRANSIENT_OUTAGE_WINDOW_MS} - 10#${TRANSIENT_QUIESCENCE_MS} >= 50 )) \
+    || fail "Service outage window did not include delayed health recovery"
 
 echo 'PASS: backup waits for transient service readiness before promotion'
 
@@ -618,6 +656,61 @@ assert_absent "${ABSENT_SNAPSHOT}/payload/roundcube"
 echo 'PASS: inventory records absent components explicitly'
 
 run_verify_command "${SNAPSHOT}"
+
+LEGACY_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T120900Z"
+cp -a -- "${SNAPSHOT}" "${LEGACY_SNAPSHOT}"
+sed -i \
+    -e '/^service_quiescence_mode\t/d' \
+    -e '/^service_quiescence_ms\t/d' \
+    -e '/^service_outage_window_ms\t/d' \
+    "${LEGACY_SNAPSHOT}/snapshot.meta"
+regenerate_snapshot_checksums "${LEGACY_SNAPSHOT}"
+run_verify_command "${LEGACY_SNAPSHOT}"
+
+BLANK_MODE_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T120910Z"
+cp -a -- "${SNAPSHOT}" "${BLANK_MODE_SNAPSHOT}"
+sed -i 's/^service_quiescence_mode\t.*/service_quiescence_mode\t/' \
+    "${BLANK_MODE_SNAPSHOT}/snapshot.meta"
+assert_metadata_rejected "${BLANK_MODE_SNAPSHOT}" blank-mode
+
+DUPLICATE_MODE_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T120920Z"
+cp -a -- "${SNAPSHOT}" "${DUPLICATE_MODE_SNAPSHOT}"
+printf 'service_quiescence_mode\tmanaged\n' \
+    >> "${DUPLICATE_MODE_SNAPSHOT}/snapshot.meta"
+assert_metadata_rejected "${DUPLICATE_MODE_SNAPSHOT}" duplicate-mode
+
+MISSING_DURATION_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T120930Z"
+cp -a -- "${SNAPSHOT}" "${MISSING_DURATION_SNAPSHOT}"
+sed -i '/^service_quiescence_ms\t/d' \
+    "${MISSING_DURATION_SNAPSHOT}/snapshot.meta"
+assert_metadata_rejected "${MISSING_DURATION_SNAPSHOT}" missing-duration
+
+BLANK_DURATION_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T120940Z"
+cp -a -- "${SNAPSHOT}" "${BLANK_DURATION_SNAPSHOT}"
+sed -i 's/^service_quiescence_ms\t.*/service_quiescence_ms\t/' \
+    "${BLANK_DURATION_SNAPSHOT}/snapshot.meta"
+assert_metadata_rejected "${BLANK_DURATION_SNAPSHOT}" blank-duration
+
+NONNUMERIC_DURATION_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T120950Z"
+cp -a -- "${SNAPSHOT}" "${NONNUMERIC_DURATION_SNAPSHOT}"
+sed -i 's/^service_quiescence_ms\t.*/service_quiescence_ms\tnot-a-number/' \
+    "${NONNUMERIC_DURATION_SNAPSHOT}/snapshot.meta"
+assert_metadata_rejected "${NONNUMERIC_DURATION_SNAPSHOT}" nonnumeric-duration
+
+EXTRA_FIELD_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T120951Z"
+cp -a -- "${SNAPSHOT}" "${EXTRA_FIELD_SNAPSHOT}"
+sed -i 's/^service_quiescence_mode\t.*/service_quiescence_mode\tmanaged\textra/' \
+    "${EXTRA_FIELD_SNAPSHOT}/snapshot.meta"
+assert_metadata_rejected "${EXTRA_FIELD_SNAPSHOT}" extra-mode-field
+
+EXTERNAL_DURATION_SNAPSHOT="${BACKUP_ROOT}/oms-backup-20260815T120952Z"
+cp -a -- "${SNAPSHOT}" "${EXTERNAL_DURATION_SNAPSHOT}"
+sed -i 's/^service_quiescence_mode\t.*/service_quiescence_mode\tmanaged_externally/' \
+    "${EXTERNAL_DURATION_SNAPSHOT}/snapshot.meta"
+assert_metadata_rejected "${EXTERNAL_DURATION_SNAPSHOT}" external-with-duration
+
+echo 'PASS: timing metadata is strict while legacy format-1 snapshots remain compatible'
+
 if run_verify_command "${SNAPSHOT}" \
     OMS_BACKUP_DATABASES='postfixadmin roundcube unexpected' \
     >"${TEST_ROOT}/database-allowlist-verify.out" 2>&1; then
@@ -741,7 +834,11 @@ SAFETY_SNAPSHOT="${BACKUP_ROOT}/oms-pre-restore-20260815T130000Z"
 [[ -d "${SAFETY_SNAPSHOT}" ]] || fail "Restore did not create a pre-restore safety snapshot"
 run_verify_command "${SAFETY_SNAPSHOT}"
 assert_contains "${SAFETY_SNAPSHOT}/snapshot.meta" \
-    $'service_quiescence_ms\tmanaged_externally'
+    $'service_quiescence_mode\tmanaged_externally'
+if grep -Eq '^service_(quiescence_ms|outage_window_ms)\t' \
+    "${SAFETY_SNAPSHOT}/snapshot.meta"; then
+    fail "Externally managed safety snapshot recorded an invented timing duration"
+fi
 assert_equals 'fixture:/var/vmail' \
     "$(<"$(fixture_path /var/vmail)/fixture.txt")" \
     "mail store after successful restore"

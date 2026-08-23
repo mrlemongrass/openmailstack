@@ -84,11 +84,12 @@ test('folder rule runs aggregate paged results against one stable snapshot', asy
   const summary = await runRulesThroughFolder({
     folder: 'INBOX',
     mode: 'preview',
+    ruleIds: ['finance', 'ads'],
     onProgress: value => progress.push(value.processed),
   });
 
   assert.deepEqual(requests, [
-    { folder: 'INBOX', mode: 'preview', cursor: 0 },
+    { folder: 'INBOX', mode: 'preview', cursor: 0, ruleIds: ['finance', 'ads'] },
     {
       folder: 'INBOX',
       mode: 'preview',
@@ -96,6 +97,7 @@ test('folder rule runs aggregate paged results against one stable snapshot', asy
       maxUid: 500,
       uidValidity: '9001',
       ruleRevision: 'saved-rules-v1',
+      ruleIds: ['finance', 'ads'],
     },
   ]);
   assert.equal(summary.processed, 380);
@@ -108,6 +110,40 @@ test('folder rule runs aggregate paged results against one stable snapshot', asy
   assert.equal(summary.ruleRevision, 'saved-rules-v1');
   assert.equal(summary.uidValidity, '9001');
   assert.deepEqual(progress, [200, 380]);
+});
+
+test('rule-run selection keeps saved order and supports legacy identities', () => {
+  const {
+    getRunnableRuleIds,
+    getRuleRunSelectors,
+    normalizeRuleRunSelection,
+  } = loadTypeScriptModule('../src/settings/rule-run.ts', {
+    '../shared/api': { runRulesPage: async () => { throw new Error('not called'); } },
+  });
+  const rules = [
+    { id: 'finance', name: 'Finance', enabled: true },
+    { name: 'Legacy named', enabled: true },
+    { id: 'disabled', name: 'Disabled', enabled: false },
+    { enabled: true },
+  ];
+
+  assert.deepEqual(getRuleRunSelectors(rules), ['finance', 'Legacy named', 'disabled', 'rule-4']);
+  assert.deepEqual(getRunnableRuleIds(rules), ['finance', 'Legacy named', 'rule-4']);
+  assert.deepEqual(
+    normalizeRuleRunSelection(rules, ['rule-4', 'disabled', 'finance']),
+    ['finance', 'rule-4'],
+  );
+
+  const collidingRules = [
+    { name: 'Same legacy name', enabled: true },
+    { name: 'Same legacy name', enabled: true },
+    { id: 'unique', name: 'Unique', enabled: true },
+  ];
+  assert.deepEqual(getRuleRunSelectors(collidingRules), ['rule-1', 'rule-2', 'rule-3']);
+  assert.deepEqual(
+    normalizeRuleRunSelection(collidingRules, ['rule-2']),
+    ['rule-2'],
+  );
 });
 
 test('filters expose ordered priority, stop processing, and preview-first folder runs', () => {
@@ -130,9 +166,15 @@ test('filters expose ordered priority, stop processing, and preview-first folder
   assert.match(panelSource, /Stop processing more rules/);
   assert.match(panelSource, /setActiveRuleId\(onAddRule\(\)\)/);
   assert.match(panelSource, /Save your rule changes before running them on existing mail/);
-  assert.match(panelSource, /<RuleRunDialog/);
+  assert.match(panelSource, /aria-label=\{`Run \$\{rule\.name \|\| 'Untitled Rule'\} now`\}/);
+  assert.match(panelSource, /<RuleRunDialog[\s\S]*rules=\{rules\}/);
   assert.match(dialogSource, /aria-labelledby="rule-run-title"/);
   assert.match(dialogSource, /aria-label="Source folder"/);
+  assert.match(dialogSource, /Rules to run/);
+  assert.match(dialogSource, /selectedRuleIds/);
+  assert.match(dialogSource, /Select all/);
+  assert.match(dialogSource, /Clear all/);
+  assert.match(dialogSource, /ruleIds: selectedRuleIds/);
   assert.match(dialogSource, /Preview matches/);
   assert.match(dialogSource, /Apply rules/);
   assert.match(dialogSource, /disabled=\{phase === 'applying'\}/);

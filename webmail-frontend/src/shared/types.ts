@@ -19,6 +19,7 @@ export interface RuleRunRequest {
   folder: string;
   mode: 'preview' | 'apply';
   cursor: number;
+  ruleIds?: string[];
   maxUid?: number;
   uidValidity?: string;
   ruleRevision?: string;

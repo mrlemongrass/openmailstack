@@ -1,24 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Play, X } from 'lucide-react';
-import type { MailFolder } from '../shared/types';
+import type { MailFolder, Rule } from '../shared/types';
 import { useModalFocus } from '../shared/hooks/useModalFocus';
-import { runRulesThroughFolder, type RuleRunSummary } from './rule-run';
+import {
+  getRunnableRuleIds,
+  getRuleRunSelectors,
+  normalizeRuleRunSelection,
+  runRulesThroughFolder,
+  type RuleRunSummary,
+} from './rule-run';
 
 type RuleRunPhase = 'choose' | 'previewing' | 'preview' | 'applying' | 'complete';
 type PendingCopy = { actionKey: string; uid: number; destination: string };
 
 export function RuleRunDialog({
   folders,
+  rules,
+  initialRuleIds,
   onClose,
 }: {
   folders: MailFolder[];
+  rules: Rule[];
+  initialRuleIds: string[];
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const latestProgressRef = useRef<RuleRunSummary | null>(null);
   const inbox = folders.find(folder => folder.path.toUpperCase() === 'INBOX');
+  const ruleSelectors = getRuleRunSelectors(rules);
+  const runnableRuleIds = getRunnableRuleIds(rules);
   const [folder, setFolder] = useState(inbox?.path || folders[0]?.path || 'INBOX');
+  const [selectedRuleIds, setSelectedRuleIds] = useState(() => (
+    normalizeRuleRunSelection(rules, initialRuleIds)
+  ));
   const [phase, setPhase] = useState<RuleRunPhase>('choose');
   const [preview, setPreview] = useState<RuleRunSummary | null>(null);
   const [result, setResult] = useState<RuleRunSummary | null>(null);
@@ -46,6 +61,10 @@ export function RuleRunDialog({
     mode: 'preview' | 'apply',
     copyResolution?: 'completed' | 'retry',
   ) => {
+    if (selectedRuleIds.length === 0) {
+      setError('Select at least one enabled rule to run.');
+      return;
+    }
     const controller = new AbortController();
     controllerRef.current = controller;
     latestProgressRef.current = null;
@@ -58,6 +77,7 @@ export function RuleRunDialog({
       const summary = await runRulesThroughFolder({
         folder,
         mode,
+        ruleIds: selectedRuleIds,
         ...(mode === 'apply' && preview
           ? {
               maxUid: preview.maxUid,
@@ -167,6 +187,62 @@ export function RuleRunDialog({
         <div className="rule-run-body">
           {phase === 'choose' && (
             <>
+              <fieldset className="rule-run-picker">
+                <legend>Rules to run</legend>
+                <div className="rule-run-picker-toolbar">
+                  <span>{selectedRuleIds.length} of {runnableRuleIds.length} active selected</span>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRuleIds(runnableRuleIds)}
+                      disabled={selectedRuleIds.length === runnableRuleIds.length}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRuleIds([])}
+                      disabled={selectedRuleIds.length === 0}
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                </div>
+                <div className="rule-run-picker-list">
+                  {rules.map((rule, index) => {
+                    const disabled = rule.enabled === false;
+                    const identity = ruleSelectors[index];
+                    const checked = selectedRuleIds.includes(identity);
+                    return (
+                      <label key={identity} className={`rule-run-picker-option ${disabled ? 'disabled' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={disabled}
+                          onChange={event => {
+                            const nextSelected = new Set(selectedRuleIds);
+                            if (event.target.checked) nextSelected.add(identity);
+                            else nextSelected.delete(identity);
+                            setSelectedRuleIds(runnableRuleIds.filter(id => nextSelected.has(id)));
+                          }}
+                        />
+                        <span className="rule-run-picker-priority">{index + 1}</span>
+                        <span>
+                          <strong>{rule.name || 'Untitled Rule'}</strong>
+                          <small>
+                            {disabled
+                              ? 'Disabled'
+                              : rule.stopProcessing === false
+                                ? 'Continues to rules below'
+                                : 'Stops after a match'}
+                          </small>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <small>Selected rules keep their saved top-to-bottom order.</small>
+              </fieldset>
               <label className="settings-field">
                 <span>Folder to process</span>
                 <select
@@ -280,7 +356,12 @@ export function RuleRunDialog({
           {phase === 'choose' && (
             <>
               <button className="btn btn-ghost" type="button" onClick={onClose}>Cancel</button>
-              <button className="btn btn-primary" type="button" onClick={() => void run('preview')}>
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={selectedRuleIds.length === 0}
+                onClick={() => void run('preview')}
+              >
                 <Play size={16} /> Preview matches
               </button>
             </>
@@ -297,7 +378,7 @@ export function RuleRunDialog({
                   setPhase('choose');
                 }}
               >
-                Choose another folder
+                Change rules or folder
               </button>
               {needsCopyResolution ? (
                 <>

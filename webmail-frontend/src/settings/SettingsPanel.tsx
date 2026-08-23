@@ -11,6 +11,7 @@ import { useToast } from '../shared/components/Toast';
 import { supportedTimeZones } from '../calendar/calendarTime';
 import { AccountSecurityControls } from './AccountSecurityControls';
 import { RuleRunDialog } from './RuleRunDialog';
+import { getRunnableRuleIds, getRuleRunSelectors } from './rule-run';
 
 interface Rule {
   id: string;
@@ -633,9 +634,11 @@ function FiltersPane({
   rulesDirty,
 }: SettingsContentProps) {
   const [activeRuleId, setActiveRuleId] = useState<string | null>(null);
-  const [showRunDialog, setShowRunDialog] = useState(false);
+  const [runDialogRuleIds, setRunDialogRuleIds] = useState<string[] | null>(null);
 
   const activeRule = rules.find(r => r.id === activeRuleId) || rules[0];
+  const ruleSelectors = getRuleRunSelectors(rules);
+  const enabledRuleIds = getRunnableRuleIds(rules);
   const handleAddRule = () => {
     setActiveRuleId(onAddRule());
   };
@@ -654,8 +657,8 @@ function FiltersPane({
             <button
               className="btn btn-ghost"
               type="button"
-              onClick={() => setShowRunDialog(true)}
-              disabled={rules.length === 0 || rulesDirty}
+              onClick={() => setRunDialogRuleIds(enabledRuleIds)}
+              disabled={enabledRuleIds.length === 0 || rulesDirty}
               title={rulesDirty ? 'Save rule changes before running them' : 'Run saved rules on existing mail'}
             >
               <Play size={17} /> Run rules
@@ -683,8 +686,10 @@ function FiltersPane({
         <div className="settings-three-pane">
           <div className="settings-list-pane">
             <p className="filter-rule-order-hint">Rules run from top to bottom.</p>
-            {rules.map((rule, index) => (
-              <div className="filter-rule-list-row" key={rule.id}>
+            {rules.map((rule, index) => {
+              const runIdentity = ruleSelectors[index];
+              return (
+              <div className="filter-rule-list-row" key={runIdentity}>
                 <div className="filter-rule-priority-controls" aria-label={`Priority controls for ${rule.name || 'Untitled Rule'}`}>
                   <button
                     type="button"
@@ -713,8 +718,25 @@ function FiltersPane({
                   <span>{rule.name || 'Untitled Rule'}</span>
                   {rule.enabled === false && <small>Disabled</small>}
                 </button>
+                <button
+                  className="filter-rule-run-button"
+                  type="button"
+                  aria-label={`Run ${rule.name || 'Untitled Rule'} now`}
+                  title={
+                    rulesDirty
+                      ? 'Save rule changes before running them'
+                      : rule.enabled === false
+                        ? 'Enable this rule before running it'
+                        : `Run ${rule.name || 'Untitled Rule'} now`
+                  }
+                  disabled={rulesDirty || rule.enabled === false}
+                  onClick={() => setRunDialogRuleIds([runIdentity])}
+                >
+                  <Play size={15} />
+                </button>
               </div>
-            ))}
+              );
+            })}
           </div>
           <div className="settings-detail-pane" style={{ paddingBottom: 0 }}>
             {activeRule && (
@@ -754,7 +776,14 @@ function FiltersPane({
           </div>
         </div>
       )}
-      {showRunDialog && <RuleRunDialog folders={folders} onClose={() => setShowRunDialog(false)} />}
+      {runDialogRuleIds && (
+        <RuleRunDialog
+          folders={folders}
+          rules={rules}
+          initialRuleIds={runDialogRuleIds}
+          onClose={() => setRunDialogRuleIds(null)}
+        />
+      )}
     </div>
   );
 }

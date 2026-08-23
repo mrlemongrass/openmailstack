@@ -14,7 +14,7 @@ let blockNextApply = false;
 
 const { compileSieve } = require('../src/sieve-compiler.js');
 const { RuleMoveApplyError } = require('../src/imap.js');
-const activeScript = compileSieve({
+let activeScript = compileSieve({
   rules: [
     {
       id: 'finance',
@@ -60,6 +60,18 @@ const activeScript = compileSieve({
       name: 'Body only',
       enabled: true,
       criteria: [{ field: 'body', operator: 'contains', value: 'body fallback' }],
+      actions: [{ type: 'move', folder: 'Ads' }],
+    },
+    {
+      id: 'disabled-rule',
+      name: 'Disabled rule',
+      enabled: false,
+      criteria: [{ field: 'subject', operator: 'contains', value: 'statement' }],
+      actions: [{ type: 'move', folder: 'Ads' }],
+    },
+    {
+      enabled: true,
+      criteria: [{ field: 'subject', operator: 'contains', value: 'never matches' }],
       actions: [{ type: 'move', folder: 'Ads' }],
     },
   ],
@@ -300,6 +312,186 @@ test('rule-run preview respects order and reports delivery-only matches without 
   assert.equal(response.json.bodySkippedMessages, 1);
   assert.match(response.json.ruleRevision, /^[A-Za-z0-9_-]+$/);
   assert.deepEqual(appliedPlans, []);
+});
+
+test('rule-run preview evaluates only the selected saved rules', async t => {
+  const port = await startServer(t);
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['ads'],
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.json.processed, 5);
+  assert.equal(response.json.matchedMessages, 1);
+  assert.equal(response.json.affectedMessages, 1);
+  assert.deepEqual(response.json.destinations, [{ folder: 'Ads', count: 1 }]);
+  assert.deepEqual(response.json.ruleMatches, [{ id: 'ads', name: 'Ads', count: 1 }]);
+  assert.equal(response.json.deliveryOnlyMatches, 0);
+  assert.equal(response.json.bodySkippedMessages, 0);
+});
+
+test('rule-run accepts the stable fallback identity of a legacy saved rule', async t => {
+  const port = await startServer(t);
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['rule-8'],
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.json.processed, 5);
+  assert.equal(response.json.matchedMessages, 0);
+  assert.deepEqual(response.json.ruleMatches, []);
+});
+
+test('rule-run disambiguates colliding legacy rule names', async t => {
+  const priorScript = activeScript;
+  t.after(() => { activeScript = priorScript; });
+  activeScript = compileSieve({
+    rules: [
+      {
+        name: 'Same legacy name',
+        enabled: true,
+        criteria: [{ field: 'subject', operator: 'contains', value: 'statement is available' }],
+        actions: [{ type: 'move', folder: 'Finance' }],
+      },
+      {
+        name: 'Same legacy name',
+        enabled: true,
+        criteria: [{ field: 'from', operator: 'contains', value: 'noreply@chase.com' }],
+        actions: [{ type: 'move', folder: 'Ads' }],
+      },
+    ],
+  });
+  const port = await startServer(t);
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['rule-2'],
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.json.ruleMatches, [
+    { id: 'rule-2', name: 'Same legacy name', count: 1 },
+  ]);
+  assert.deepEqual(response.json.destinations, [{ folder: 'Ads', count: 1 }]);
+});
+
+test('rule-run accepts every selected saved rule without an arbitrary count mismatch', async t => {
+  const priorScript = activeScript;
+  t.after(() => { activeScript = priorScript; });
+  const rules = Array.from({ length: 201 }, (_, index) => ({
+    id: `many-${index + 1}`,
+    name: `Many ${index + 1}`,
+    enabled: true,
+    criteria: [{ field: 'subject', operator: 'contains', value: `never-${index + 1}` }],
+    actions: [{ type: 'move', folder: 'Finance' }],
+  }));
+  activeScript = compileSieve({ rules });
+  const port = await startServer(t);
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: rules.map(rule => rule.id),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.json.processed, 5);
+  assert.equal(response.json.matchedMessages, 0);
+});
+
+test('rule-run validates an explicit saved-rule selection', async t => {
+  const port = await startServer(t);
+
+  const empty = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: [],
+  });
+  assert.equal(empty.status, 400);
+
+  const duplicate = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['ads', 'ads'],
+  });
+  assert.equal(duplicate.status, 400);
+
+  const unknown = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['missing-rule'],
+  });
+  assert.equal(unknown.status, 409);
+  assert.equal(unknown.json.error, 'Selected rules changed or are disabled. Choose saved enabled rules and preview again.');
+
+  const disabled = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['disabled-rule'],
+  });
+  assert.equal(disabled.status, 409);
+  assert.equal(disabled.json.error, 'Selected rules changed or are disabled. Choose saved enabled rules and preview again.');
+});
+
+test('rule-run applies only the selection bound by preview', async t => {
+  const port = await startServer(t);
+  const preview = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['ads'],
+  });
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'apply',
+    cursor: 0,
+    maxUid: preview.json.maxUid,
+    uidValidity: preview.json.uidValidity,
+    ruleRevision: preview.json.ruleRevision,
+    ruleIds: ['ads'],
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.json.appliedMessages, 1);
+  assert.deepEqual(appliedPlans.at(-1), {
+    folder: 'INBOX',
+    plans: [{ uid: 101, moveFolders: ['Ads'] }],
+  });
+});
+
+test('rule-run apply is bound to the previewed rule selection', async t => {
+  const port = await startServer(t);
+  const preview = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['ads'],
+  });
+  const appliedBefore = appliedPlans.length;
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'apply',
+    cursor: 0,
+    maxUid: preview.json.maxUid,
+    uidValidity: preview.json.uidValidity,
+    ruleRevision: preview.json.ruleRevision,
+    ruleIds: ['finance'],
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.json.error, 'Rules or selection changed since preview. Preview again before applying.');
+  assert.equal(appliedPlans.length, appliedBefore);
 });
 
 test('rule-run apply requires the preview revision, moves planned messages, and invalidates search', async t => {

@@ -1362,6 +1362,11 @@ apiRouter.post('/rules', requireAuth, async (req: any, res) => {
 });
 
 const ruleIdentity = (rule: SieveRule, index: number) => String(rule.id || rule.name || `rule-${index + 1}`);
+const ruleSelectionIds = (rules: SieveRule[]) => {
+    const identities = rules.map(ruleIdentity);
+    if (new Set(identities).size === identities.length) return identities;
+    return rules.map((_rule, index) => `rule-${index + 1}`);
+};
 
 const envelopeAddressText = (addresses: any): string => (
     Array.isArray(addresses)
@@ -1402,6 +1407,10 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
     const folder = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';
     const mode = req.body?.mode === 'apply' ? 'apply' : req.body?.mode === 'preview' ? 'preview' : '';
     const cursor = req.body?.cursor === undefined ? 0 : Number(req.body.cursor);
+    const hasRequestedRuleIds = req.body?.ruleIds !== undefined;
+    const requestedRuleIds = Array.isArray(req.body?.ruleIds)
+        ? req.body.ruleIds.map((value: unknown) => typeof value === 'string' ? value : '')
+        : [];
     const requestedMaxUid = req.body?.maxUid === undefined ? undefined : Number(req.body.maxUid);
     const requestedUidValidity = typeof req.body?.uidValidity === 'string'
         ? req.body.uidValidity.trim()
@@ -1424,6 +1433,19 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
         || !mode
         || !Number.isInteger(cursor)
         || cursor < 0
+        || (
+            hasRequestedRuleIds
+            && (
+                !Array.isArray(req.body.ruleIds)
+                || requestedRuleIds.length < 1
+                || requestedRuleIds.some((id: string) => (
+                    id.length < 1
+                    || id.length > 256
+                    || /[\u0000-\u001f\u007f]/.test(id)
+                ))
+                || new Set(requestedRuleIds).size !== requestedRuleIds.length
+            )
+        )
         || (requestedMaxUid !== undefined && (!Number.isInteger(requestedMaxUid) || requestedMaxUid < 0))
         || (requestedUidValidity && !/^\d{1,64}$/.test(requestedUidValidity))
         || requestedRuleRevision.length > 128
@@ -1459,17 +1481,42 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
         }
 
         const document = await getActiveRulesDocument(user, pass);
+        const documentRules = Array.isArray(document.rules) ? document.rules : [];
+        const selectionIds = ruleSelectionIds(documentRules);
+        const enabledRuleEntries = documentRules
+            .map((rule, index) => ({
+                rule,
+                index,
+                selectionId: selectionIds[index],
+            }))
+            .filter(entry => entry.rule.enabled !== false);
+        const requestedRuleIdSet = new Set(requestedRuleIds);
+        const selectedRuleEntries = hasRequestedRuleIds
+            ? enabledRuleEntries.filter(entry => requestedRuleIdSet.has(entry.selectionId))
+            : enabledRuleEntries;
+        if (hasRequestedRuleIds && selectedRuleEntries.length !== requestedRuleIdSet.size) {
+            return res.status(409).json({
+                success: false,
+                error: 'Selected rules changed or are disabled. Choose saved enabled rules and preview again.',
+            });
+        }
+        const selectedRuleIds = selectedRuleEntries.map(entry => entry.selectionId);
         const ruleRevision = crypto
             .createHash('sha256')
-            .update(JSON.stringify(document.rules || []))
+            .update(JSON.stringify({ rules: documentRules, selectedRuleIds }))
             .digest('base64url');
         if (requestedRuleRevision && requestedRuleRevision !== ruleRevision) {
             return res.status(409).json({
                 success: false,
-                error: 'Rules changed since preview. Preview again before applying.',
+                error: hasRequestedRuleIds
+                    ? 'Rules or selection changed since preview. Preview again before applying.'
+                    : 'Rules changed since preview. Preview again before applying.',
             });
         }
-        const rules = (Array.isArray(document.rules) ? document.rules : []).filter(rule => rule.enabled !== false);
+        const rules: SieveRule[] = selectedRuleEntries.map(entry => ({
+            ...entry.rule,
+            id: entry.selectionId,
+        }));
         const includesBodyRules = rules.some(rule => (
             executableRuleCriteria(rule).some(criterion => criterion.field === 'body')
         ));
@@ -1563,11 +1610,11 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             await reconcileAppliedMoves(applyResult);
         }
 
-        const ruleMatches = rules
-            .map((rule, index) => ({
-                id: ruleIdentity(rule, index),
-                name: String(rule.name || `Rule ${index + 1}`),
-                count: ruleMatchCounts.get(ruleIdentity(rule, index)) || 0,
+        const ruleMatches = selectedRuleEntries
+            .map(entry => ({
+                id: entry.selectionId,
+                name: String(entry.rule.name || `Rule ${entry.index + 1}`),
+                count: ruleMatchCounts.get(entry.selectionId) || 0,
             }))
             .filter(rule => rule.count > 0);
 

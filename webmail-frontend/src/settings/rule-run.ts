@@ -1,5 +1,35 @@
 import { runRulesPage } from '../shared/api';
-import type { RuleMatchCount, RuleRunCount, RuleRunPageResponse } from '../shared/types';
+import type { Rule, RuleMatchCount, RuleRunCount, RuleRunPageResponse } from '../shared/types';
+
+type RuleIdentitySource = Pick<Rule, 'id' | 'name' | 'enabled'> & {
+  id?: string;
+  name?: string;
+};
+
+function baseRuleRunIdentity(rule: RuleIdentitySource, index: number): string {
+  return String(rule.id || rule.name || `rule-${index + 1}`);
+}
+
+export function getRuleRunSelectors(rules: RuleIdentitySource[]): string[] {
+  const identities = rules.map(baseRuleRunIdentity);
+  if (new Set(identities).size === identities.length) return identities;
+  return rules.map((_rule, index) => `rule-${index + 1}`);
+}
+
+export function getRunnableRuleIds(rules: RuleIdentitySource[]): string[] {
+  const selectors = getRuleRunSelectors(rules);
+  return rules.flatMap((rule, index) => (
+    rule.enabled === false ? [] : [selectors[index]]
+  ));
+}
+
+export function normalizeRuleRunSelection(
+  rules: RuleIdentitySource[],
+  requestedRuleIds: string[],
+): string[] {
+  const requested = new Set(requestedRuleIds);
+  return getRunnableRuleIds(rules).filter(id => requested.has(id));
+}
 
 export interface RuleRunSummary {
   folder: string;
@@ -23,6 +53,7 @@ export interface RuleRunSummary {
 interface RunRulesOptions {
   folder: string;
   mode: 'preview' | 'apply';
+  ruleIds?: string[];
   maxUid?: number;
   uidValidity?: string;
   ruleRevision?: string;
@@ -35,6 +66,7 @@ interface RunRulesOptions {
 export async function runRulesThroughFolder({
   folder,
   mode,
+  ruleIds,
   maxUid,
   uidValidity,
   ruleRevision,
@@ -74,6 +106,7 @@ export async function runRulesThroughFolder({
       folder,
       mode,
       cursor,
+      ...(ruleIds === undefined ? {} : { ruleIds }),
       ...(snapshotMaxUid === undefined ? {} : { maxUid: snapshotMaxUid }),
       ...(snapshotUidValidity ? { uidValidity: snapshotUidValidity } : {}),
       ...(snapshotRuleRevision ? { ruleRevision: snapshotRuleRevision } : {}),

@@ -1903,9 +1903,34 @@ body {
 
 .filter-rule-list-row {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
   gap: 8px;
   align-items: stretch;
+}
+
+.filter-rule-run-button {
+  width: 34px;
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.filter-rule-run-button:hover:not(:disabled),
+.filter-rule-run-button:focus-visible {
+  border-color: var(--accent-primary);
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--text-primary);
+}
+
+.filter-rule-run-button:disabled {
+  cursor: default;
+  opacity: 0.35;
 }
 
 .filter-rule-priority-controls {
@@ -2180,6 +2205,114 @@ body {
   color: var(--text-secondary);
 }
 
+.rule-run-picker {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.rule-run-picker legend {
+  padding: 0 5px;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.rule-run-picker > small,
+.rule-run-picker-toolbar {
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+}
+
+.rule-run-picker-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rule-run-picker-toolbar > div {
+  display: flex;
+  gap: 5px;
+}
+
+.rule-run-picker-toolbar button {
+  border: 0;
+  background: transparent;
+  color: var(--accent-primary);
+  padding: 3px 5px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.rule-run-picker-toolbar button:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.rule-run-picker-list {
+  max-height: 210px;
+  display: grid;
+  gap: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.rule-run-picker-option {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 9px;
+  cursor: pointer;
+}
+
+.rule-run-picker-option:hover:not(.disabled),
+.rule-run-picker-option:focus-within:not(.disabled) {
+  border-color: var(--border-glass);
+  background: var(--bg-glass-hover);
+}
+
+.rule-run-picker-option.disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.rule-run-picker-option > span:last-child,
+.rule-run-picker-option strong,
+.rule-run-picker-option small {
+  min-width: 0;
+  display: block;
+}
+
+.rule-run-picker-option strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-run-picker-option small {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+}
+
+.rule-run-picker-priority {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-2xs);
+  font-weight: 750;
+  text-align: center;
+}
+
 .rule-run-progress,
 .rule-run-complete {
   min-height: 210px;
@@ -2307,7 +2440,12 @@ body {
   }
 
   .filter-rule-list-row {
-    grid-template-columns: 116px minmax(0, 1fr);
+    grid-template-columns: 116px minmax(0, 1fr) 44px;
+  }
+
+  .filter-rule-run-button {
+    width: 44px;
+    min-height: 44px;
   }
 
   .filter-rule-priority-controls {
@@ -2372,6 +2510,20 @@ body {
     width: 100%;
     min-height: 44px;
     justify-content: center;
+  }
+
+  .rule-run-picker-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .rule-run-picker-toolbar button {
+    min-height: 44px;
+    padding: 8px;
+  }
+
+  .rule-run-picker-option {
+    min-height: 44px;
   }
 
   .rule-run-metrics {

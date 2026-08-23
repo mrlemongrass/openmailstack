@@ -692,9 +692,16 @@ cannot stop on a rule that delivery-time Sieve would omit.
 
 `POST /api/rules/run` evaluates the active saved `webmail` script against any
 existing IMAP folder. Preview and Apply use one bounded UID snapshot and the
-same UIDVALIDITY plus SHA-256 saved-rule revision. Apply performs only Move
-actions; Reject and Discard remain delivery-time actions. Continued Move
-matches copy into earlier destinations and move to the final destination.
+same UIDVALIDITY plus SHA-256 revision of the complete saved document and the
+canonical selected-rule list. Omitting `ruleIds` remains the run-all-active
+contract. An explicit selection is resolved in saved order, rejects malformed,
+unknown, or disabled selectors before mailbox work, and uses deterministic
+index selectors whenever legacy rules have colliding missing IDs/names. The
+Filters UI exposes both a per-row Run-now action and a batch dialog with
+enabled-rule checkboxes; disabled rules remain visible but cannot run. Apply
+performs only Move actions; Reject and Discard remain delivery-time actions.
+Continued Move matches copy into earlier destinations and move to the final
+destination.
 Copy completion is reserved and recorded by source UIDVALIDITY, UID, and
 destination in the durable `mail_rule_copy_ledger`; that action identity stays
 stable across rule edits. Confirmed copies are skipped on a retry, while an

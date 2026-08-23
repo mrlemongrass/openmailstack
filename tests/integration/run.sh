@@ -283,7 +283,28 @@ test_mozilla_autoconfig_guards() {
 }
 
 test_backup_restore_guards() {
+    local backup_script="${PROJECT_ROOT}/functions/backup_restore.sh"
+    local installer="${PROJECT_ROOT}/install.sh"
+    local os_helpers="${PROJECT_ROOT}/functions/lib_os.sh"
+    local system_db="${PROJECT_ROOT}/functions/01_system_db.sh"
+    local bootstrap_line
+    local backup_line
+
+    assert_contains "${backup_script}" 'mail_store_move_watch.py'
+    assert_contains "${os_helpers}" '        python3'
+    assert_not_contains "${system_db}" 'inotify-tools'
+    bootstrap_line=$(grep -nF 'openmailstack_install_required_packages python3' \
+        "${installer}" | head -n 1 | cut -d: -f1)
+    backup_line=$(grep -nF '    create_backup' "${installer}" | head -n 1 | cut -d: -f1)
+    [[ -n "${bootstrap_line}" && -n "${backup_line}" \
+        && "${bootstrap_line}" -lt "${backup_line}" ]] \
+        || fail "Python watcher runtime is not bootstrapped before the pre-update backup"
+    python3 "${PROJECT_ROOT}/tests/integration/mail_store_move_watch_test.py"
     bash "${PROJECT_ROOT}/tests/integration/backup_restore_test.sh"
+    OMS_BACKUP_TEST_STOP_AFTER_INITIAL=1 \
+        OMS_BACKUP_TEST_MOVE_WATCH_BIN="${PROJECT_ROOT}/functions/mail_store_move_watch.py" \
+        FAKE_SYNTHETIC_MOVE_EVENTS=0 \
+        bash "${PROJECT_ROOT}/tests/integration/backup_restore_test.sh"
 }
 
 test_dry_run_local() {

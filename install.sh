@@ -252,6 +252,12 @@ if [[ "$ANY_INSTALLED" == "yes" && "$DRY_RUN" -eq 0 ]]; then
         exit 0
     fi
     
+    # The managed backup's raw inotify watcher runs on Python. Bootstrap only
+    # this base runtime before the otherwise mutation-first safety snapshot.
+    if ! command -v python3 >/dev/null 2>&1; then
+        openmailstack_install_required_packages python3
+    fi
+
     # Create a backup before proceeding with modifications
     create_backup
     

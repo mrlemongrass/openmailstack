@@ -280,6 +280,7 @@ openmailstack_base_packages() {
         sudo
         ca-certificates
         dnsutils
+        python3
         unzip
         tar
     )

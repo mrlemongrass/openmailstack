@@ -286,8 +286,63 @@ oms_br_rsync_bin() {
     oms_br_require_command "${OMS_BACKUP_RSYNC_BIN:-}" rsync rsync
 }
 
+oms_br_python_bin() {
+    oms_br_require_command "${OMS_BACKUP_PYTHON_BIN:-}" python3 python3
+}
+
+oms_br_mail_store_move_watch_script() {
+    local script_path="${OMS_BR_SCRIPT_DIR}/mail_store_move_watch.py"
+
+    [[ -f "${script_path}" && ! -L "${script_path}" && -r "${script_path}" ]] \
+        || { oms_br_fail "Mail-store move watcher is unavailable: ${script_path}"; return 1; }
+    printf '%s\n' "${script_path}"
+}
+
+oms_br_random_watch_token() {
+    local token
+
+    token=$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]') || return 1
+    [[ "${token}" =~ ^[0-9a-f]{32}$ ]] || return 1
+    printf '%s\n' "${token}"
+}
+
+oms_br_create_mail_store_watch_sentinel() {
+    local sentinel_path="$1"
+    local sentinel_token="$2"
+    local python_bin
+    local watch_script
+
+    [[ "${sentinel_token}" =~ ^[0-9a-f]{32}$ ]] || return 1
+    python_bin=$(oms_br_python_bin) || return 1
+    watch_script=$(oms_br_mail_store_move_watch_script) || return 1
+    printf '%s\n' "${sentinel_token}" \
+        | "${python_bin}" "${watch_script}" --create-sentinel "${sentinel_path}"
+}
+
+oms_br_check_process_signaling_support() {
+    local python_bin
+    local watch_script
+
+    python_bin=$(oms_br_python_bin) || return 1
+    watch_script=$(oms_br_mail_store_move_watch_script) || return 1
+    "${python_bin}" "${watch_script}" --check-process-signaling
+}
+
 declare -a OMS_BR_ACTIVE_UNITS=()
 OMS_BR_SERVICES_QUIESCED=0
+OMS_BR_MAIL_STORE_WATCH_PID=""
+OMS_BR_MAIL_STORE_WATCH_START_TIME=""
+OMS_BR_MAIL_STORE_WATCH_STAGING=""
+OMS_BR_MAIL_STORE_WATCH_SOURCE=""
+OMS_BR_MAIL_STORE_WATCH_CONTROL=""
+OMS_BR_MAIL_STORE_WATCH_SENTINEL=""
+OMS_BR_MAIL_STORE_WATCH_SENTINEL_ID=""
+OMS_BR_MAIL_STORE_WATCH_EXIT_STATUS=""
+OMS_BR_MAIL_STORE_WATCH_REPORTED_PID=""
+OMS_BR_MAIL_STORE_WATCH_REPORTED_START_TIME=""
+OMS_BR_PROCESS_STATE=""
+OMS_BR_PROCESS_START_TIME=""
+OMS_BR_EXACT_LINE_COUNT=0
 
 oms_br_unit_state() {
     local systemctl_bin="$1"
@@ -872,8 +927,790 @@ oms_br_dump_databases() {
     mv -- "${tmp_file}" "${output_file}" || return 1
 }
 
+oms_br_write_mail_store_message_manifest() {
+    local source_path="$1"
+    local output_file="$2"
+
+    : > "${output_file}" || return 1
+    chmod 0600 -- "${output_file}" || return 1
+    [[ -e "${source_path}" ]] || return 0
+    [[ -d "${source_path}" ]] || return 1
+    if ! (
+        cd -- "${source_path}" || exit 1
+        find . -regextype posix-extended -type f \
+            -regex '.*/(cur|new)/[^/]*' -printf '%p\0%D:%i\0'
+    ) > "${output_file}"; then
+        oms_br_error "Could not inventory immutable Maildir message identities"
+        return 1
+    fi
+}
+
+oms_br_write_mail_store_regular_manifest() {
+    local source_path="$1"
+    local output_file="$2"
+
+    : > "${output_file}" || return 1
+    chmod 0600 -- "${output_file}" || return 1
+    [[ -e "${source_path}" ]] || return 0
+    [[ -d "${source_path}" ]] || return 1
+    if ! (
+        cd -- "${source_path}" || exit 1
+        find . -type f -printf '%p\0%D:%i\0'
+    ) > "${output_file}"; then
+        oms_br_error "Could not inventory current mail-store regular-file identities"
+        return 1
+    fi
+}
+
+oms_br_read_process_identity() {
+    local process_pid="$1"
+    local stat_line
+    local stat_tail
+    local -a stat_fields=()
+
+    [[ "${process_pid}" =~ ^[0-9]+$ ]] || return 2
+    if ! IFS= read -r stat_line 2>/dev/null < "/proc/${process_pid}/stat"; then
+        return 1
+    fi
+    [[ "${stat_line}" == "${process_pid} ("* && "${stat_line}" == *') '* ]] \
+        || return 2
+    stat_tail="${stat_line##*) }"
+    read -r -a stat_fields <<< "${stat_tail}" || return 2
+    [[ ${#stat_fields[@]} -ge 20 ]] || return 2
+    [[ "${stat_fields[0]}" =~ ^[A-Za-z]$ \
+        && "${stat_fields[19]}" =~ ^[0-9]+$ ]] || return 2
+    OMS_BR_PROCESS_STATE="${stat_fields[0]}"
+    OMS_BR_PROCESS_START_TIME="${stat_fields[19]}"
+}
+
+oms_br_mail_store_move_watch_is_active() {
+    local watch_pid="$1"
+    local watch_start_time="$2"
+
+    [[ "${watch_start_time}" =~ ^[0-9]+$ ]] || return 1
+    oms_br_read_process_identity "${watch_pid}" || return 1
+    [[ "${OMS_BR_PROCESS_START_TIME}" == "${watch_start_time}" ]] || return 1
+    case "${OMS_BR_PROCESS_STATE}" in
+        Z|X|x) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+oms_br_signal_mail_store_move_watch() {
+    local watch_pid="$1"
+    local watch_start_time="$2"
+    local signal_name="$3"
+    local python_bin
+    local watch_script
+
+    oms_br_mail_store_move_watch_is_active \
+        "${watch_pid}" "${watch_start_time}" || return 1
+    [[ "${signal_name}" == "TERM" || "${signal_name}" == "KILL" ]] || return 1
+    python_bin=$(oms_br_python_bin) || return 1
+    watch_script=$(oms_br_mail_store_move_watch_script) || return 1
+    "${python_bin}" "${watch_script}" \
+        --signal-pid "${watch_pid}" \
+        --expected-start-time "${watch_start_time}" \
+        --process-signal "${signal_name}"
+}
+
+oms_br_reap_mail_store_move_watch() {
+    local watch_pid="$1"
+    local watch_start_time="$2"
+    local max_attempts="$3"
+    local attempt
+    local process_status
+
+    [[ "${watch_pid}" =~ ^[0-9]+$ \
+        && "${watch_start_time}" =~ ^[0-9]+$ \
+        && "${max_attempts}" =~ ^[0-9]+$ \
+        && "${max_attempts}" -gt 0 ]] || return 1
+    OMS_BR_MAIL_STORE_WATCH_EXIT_STATUS=""
+    for ((attempt = 0; attempt < max_attempts; attempt++)); do
+        if oms_br_read_process_identity "${watch_pid}"; then
+            if [[ "${OMS_BR_PROCESS_START_TIME}" == "${watch_start_time}" ]]; then
+                case "${OMS_BR_PROCESS_STATE}" in
+                    Z|X|x) ;;
+                    *) sleep 0.1; continue ;;
+                esac
+            fi
+        elif [[ -d "/proc/${watch_pid}" ]]; then
+            return 1
+        fi
+        if wait "${watch_pid}" 2>/dev/null; then
+            process_status=0
+        else
+            process_status=$?
+        fi
+        OMS_BR_MAIL_STORE_WATCH_EXIT_STATUS="${process_status}"
+        return 0
+    done
+    return 1
+}
+
+oms_br_clear_mail_store_move_watch_state() {
+    OMS_BR_MAIL_STORE_WATCH_PID=""
+    OMS_BR_MAIL_STORE_WATCH_START_TIME=""
+    OMS_BR_MAIL_STORE_WATCH_STAGING=""
+    OMS_BR_MAIL_STORE_WATCH_SOURCE=""
+    OMS_BR_MAIL_STORE_WATCH_CONTROL=""
+    OMS_BR_MAIL_STORE_WATCH_SENTINEL=""
+    OMS_BR_MAIL_STORE_WATCH_SENTINEL_ID=""
+    OMS_BR_MAIL_STORE_WATCH_EXIT_STATUS=""
+    OMS_BR_MAIL_STORE_WATCH_REPORTED_PID=""
+    OMS_BR_MAIL_STORE_WATCH_REPORTED_START_TIME=""
+}
+
+oms_br_remove_mail_store_watch_control_dir() {
+    local staging_dir="${OMS_BR_MAIL_STORE_WATCH_STAGING:-}"
+    local control_dir="${OMS_BR_MAIL_STORE_WATCH_CONTROL:-}"
+
+    [[ -n "${control_dir}" ]] || return 0
+    [[ -n "${staging_dir}" \
+        && "${control_dir}" == "${staging_dir}/mail-store-watch-control" ]] \
+        || return 1
+    oms_br_assert_absolute_bounded_path "${staging_dir}" \
+        "mail-store watch staging directory" || return 1
+    oms_br_assert_no_symlink_components "${staging_dir}" || return 1
+    oms_br_assert_root_owned_nonwritable_directory \
+        "${staging_dir}" "mail-store watch staging directory" || return 1
+    oms_br_assert_root_owned_nonwritable_directory \
+        "${control_dir}" "mail-store watch control directory" || return 1
+    rmdir -- "${control_dir}"
+}
+
+oms_br_terminate_mail_store_move_watch() {
+    local watch_pid="${OMS_BR_MAIL_STORE_WATCH_PID:-}"
+    local watch_start_time="${OMS_BR_MAIL_STORE_WATCH_START_TIME:-}"
+    local cleanup_status=0
+
+    if ! oms_br_remove_mail_store_watch_sentinel; then
+        cleanup_status=1
+    fi
+    if [[ -n "${watch_pid}" ]]; then
+        if [[ ! "${watch_pid}" =~ ^[0-9]+$ \
+            || ! "${watch_start_time}" =~ ^[0-9]+$ ]]; then
+            cleanup_status=1
+        else
+            if oms_br_mail_store_move_watch_is_active \
+                "${watch_pid}" "${watch_start_time}"; then
+                oms_br_signal_mail_store_move_watch \
+                    "${watch_pid}" "${watch_start_time}" TERM \
+                    || cleanup_status=1
+            fi
+            if ! oms_br_reap_mail_store_move_watch \
+                "${watch_pid}" "${watch_start_time}" 50; then
+                oms_br_signal_mail_store_move_watch \
+                    "${watch_pid}" "${watch_start_time}" KILL || true
+                oms_br_reap_mail_store_move_watch \
+                    "${watch_pid}" "${watch_start_time}" 10 || true
+                cleanup_status=1
+            fi
+        fi
+    fi
+    if ! oms_br_remove_mail_store_watch_control_dir; then
+        cleanup_status=1
+    fi
+    oms_br_clear_mail_store_move_watch_state
+    return "${cleanup_status}"
+}
+
+oms_br_remove_mail_store_watch_sentinel() {
+    local require_present="${1:-0}"
+    local control_dir="${OMS_BR_MAIL_STORE_WATCH_CONTROL:-}"
+    local sentinel_path="${OMS_BR_MAIL_STORE_WATCH_SENTINEL:-}"
+    local sentinel_id="${OMS_BR_MAIL_STORE_WATCH_SENTINEL_ID:-}"
+    local current_id
+    local sentinel_name
+
+    [[ "${require_present}" == "0" || "${require_present}" == "1" ]] || return 1
+    [[ -n "${sentinel_path}" ]] || return 0
+    [[ -n "${control_dir}" ]] || return 1
+    oms_br_assert_absolute_bounded_path "${control_dir}" \
+        "mail-store watch control directory" \
+        || return 1
+    sentinel_name=$(basename -- "${sentinel_path}") || return 1
+    [[ "${sentinel_path}" == "${control_dir}/${sentinel_name}" \
+        && "${sentinel_name}" =~ ^\.oms-backup-watch-[0-9a-f]{32}$ ]] || return 1
+    oms_br_assert_no_symlink_components "${control_dir}" || return 1
+    oms_br_assert_root_owned_nonwritable_directory \
+        "${control_dir}" "mail-store watch control directory" || return 1
+    if [[ ! -e "${sentinel_path}" && ! -L "${sentinel_path}" ]]; then
+        [[ "${require_present}" == "0" ]] || return 1
+        return 0
+    fi
+    [[ "${sentinel_id}" =~ ^[0-9]+:[0-9]+$ \
+        && -f "${sentinel_path}" && ! -L "${sentinel_path}" \
+        && "$(stat -c '%u' -- "${sentinel_path}")" == "0" ]] || return 1
+    current_id=$(stat -c '%d:%i' -- "${sentinel_path}") || return 1
+    [[ "${current_id}" == "${sentinel_id}" ]] || return 1
+    rm -f -- "${sentinel_path}" || return 1
+}
+
+oms_br_count_exact_file_lines() {
+    local file_path="$1"
+    local expected_line="$2"
+    local current_line
+    local count=0
+
+    [[ -f "${file_path}" && ! -L "${file_path}" ]] || return 1
+    while IFS= read -r current_line || [[ -n "${current_line}" ]]; do
+        if [[ "${current_line}" == "${expected_line}" ]]; then
+            count=$((count + 1))
+        fi
+    done < "${file_path}"
+    OMS_BR_EXACT_LINE_COUNT="${count}"
+}
+
+oms_br_read_mail_store_watch_reported_identity() {
+    local identity_file="$1"
+    local identity_kind="$2"
+    local identity_pattern
+    local current_line
+    local reported_pid=""
+    local reported_start_time=""
+    local count=0
+
+    case "${identity_kind}" in
+        launch) identity_pattern='^Watcher launched: ([0-9]+):([0-9]+)$' ;;
+        ready) identity_pattern='^Watches established: ([0-9]+):([0-9]+)$' ;;
+        *) return 1 ;;
+    esac
+    OMS_BR_MAIL_STORE_WATCH_REPORTED_PID=""
+    OMS_BR_MAIL_STORE_WATCH_REPORTED_START_TIME=""
+    [[ -f "${identity_file}" && ! -L "${identity_file}" ]] || return 1
+    while IFS= read -r current_line || [[ -n "${current_line}" ]]; do
+        if [[ "${current_line}" =~ ${identity_pattern} ]]; then
+            count=$((count + 1))
+            reported_pid="${BASH_REMATCH[1]}"
+            reported_start_time="${BASH_REMATCH[2]}"
+        fi
+    done < "${identity_file}"
+    [[ ${count} -eq 1 ]] || return 1
+    OMS_BR_MAIL_STORE_WATCH_REPORTED_PID="${reported_pid}"
+    OMS_BR_MAIL_STORE_WATCH_REPORTED_START_TIME="${reported_start_time}"
+}
+
+oms_br_start_mail_store_move_watch() {
+    local staging_dir="$1"
+    local source_path="$2"
+    local event_file="${staging_dir}/mail-store-directory-moves.events"
+    local error_file="${staging_dir}/mail-store-directory-moves.stderr"
+    local identity_file="${staging_dir}/mail-store-watch.identity"
+    local control_dir="${staging_dir}/mail-store-watch-control"
+    local move_watch_bin
+    local python_bin
+    local watch_script
+    local sentinel_nonce
+    local sentinel_name
+    local sentinel_path
+    local attempt
+    local ready_attempts=300
+    local -a watch_command=()
+
+    [[ -z "${OMS_BR_MAIL_STORE_WATCH_PID:-}" ]] || return 1
+    oms_br_read_process_identity "$$" \
+        || { oms_br_fail "Linux procfs is required for bounded watcher lifecycle management"; return 1; }
+    oms_br_check_process_signaling_support \
+        || { oms_br_fail "Linux process signaling support is required for bounded watcher lifecycle management"; return 1; }
+    [[ ! -e "${control_dir}" && ! -L "${control_dir}" ]] || return 1
+    install -d -o root -g root -m 0700 -- "${control_dir}" || return 1
+    oms_br_assert_root_owned_nonwritable_directory \
+        "${control_dir}" "mail-store watch control directory" || return 1
+    OMS_BR_MAIL_STORE_WATCH_STAGING="${staging_dir}"
+    OMS_BR_MAIL_STORE_WATCH_SOURCE="${source_path}"
+    OMS_BR_MAIL_STORE_WATCH_CONTROL="${control_dir}"
+    sentinel_nonce=$(oms_br_random_watch_token) || return 1
+    sentinel_name=".oms-backup-watch-${sentinel_nonce}"
+    sentinel_path="${control_dir}/${sentinel_name}"
+    OMS_BR_MAIL_STORE_WATCH_SENTINEL="${sentinel_path}"
+    OMS_BR_MAIL_STORE_WATCH_SENTINEL_ID=""
+    [[ ! -e "${sentinel_path}" && ! -L "${sentinel_path}" ]] \
+        || { oms_br_fail "Mail-store watcher sentinel already exists"; return 1; }
+    if [[ -n "${OMS_BACKUP_MOVE_WATCH_BIN:-}" ]]; then
+        move_watch_bin=$(oms_br_require_command \
+            "${OMS_BACKUP_MOVE_WATCH_BIN}" mail-store-move-watch mail-store-move-watch) \
+            || return 1
+        watch_command=("${move_watch_bin}")
+    else
+        python_bin=$(oms_br_python_bin) || return 1
+        watch_script=$(oms_br_mail_store_move_watch_script) || return 1
+        watch_command=("${python_bin}" "${watch_script}")
+    fi
+    if [[ "${OMS_BACKUP_FIXTURE_MODE:-0}" == "1" \
+        && -n "${OMS_BACKUP_TEST_MOVE_WATCH_READY_ATTEMPTS:-}" ]]; then
+        [[ "${OMS_BACKUP_TEST_MOVE_WATCH_READY_ATTEMPTS}" =~ ^[0-9]+$ \
+            && "${OMS_BACKUP_TEST_MOVE_WATCH_READY_ATTEMPTS}" -gt 0 \
+            && "${OMS_BACKUP_TEST_MOVE_WATCH_READY_ATTEMPTS}" -le 300 ]] \
+            || return 1
+        ready_attempts="${OMS_BACKUP_TEST_MOVE_WATCH_READY_ATTEMPTS}"
+    fi
+    : > "${event_file}" || return 1
+    : > "${error_file}" || return 1
+    : > "${identity_file}" || return 1
+    chmod 0600 -- "${event_file}" "${error_file}" "${identity_file}" || return 1
+    (
+        watch_process_pid="${BASHPID}"
+        IFS= read -r watch_process_stat \
+            < "/proc/${watch_process_pid}/stat" || exit 70
+        watch_process_tail="${watch_process_stat##*) }"
+        read -r -a watch_process_fields <<< "${watch_process_tail}" || exit 70
+        [[ "${watch_process_fields[19]:-}" =~ ^[0-9]+$ ]] || exit 70
+        printf 'Watcher launched: %s:%s\n' \
+            "${watch_process_pid}" "${watch_process_fields[19]}" \
+            > "${identity_file}" || exit 70
+        exec "${watch_command[@]}" \
+            --root "${source_path}" \
+            --control-dir "${control_dir}" \
+            --sentinel "${sentinel_name}"
+    ) > "${event_file}" 2> "${error_file}" &
+    OMS_BR_MAIL_STORE_WATCH_PID=$!
+    OMS_BR_MAIL_STORE_WATCH_START_TIME=""
+
+    for ((attempt = 0; attempt < ready_attempts; attempt++)); do
+        if [[ -z "${OMS_BR_MAIL_STORE_WATCH_START_TIME}" ]] \
+            && oms_br_read_mail_store_watch_reported_identity \
+                "${identity_file}" launch; then
+            if [[ "${OMS_BR_MAIL_STORE_WATCH_REPORTED_PID}" \
+                    == "${OMS_BR_MAIL_STORE_WATCH_PID}" ]] \
+                && oms_br_read_process_identity \
+                    "${OMS_BR_MAIL_STORE_WATCH_PID}" \
+                && [[ "${OMS_BR_PROCESS_START_TIME}" \
+                    == "${OMS_BR_MAIL_STORE_WATCH_REPORTED_START_TIME}" ]]; then
+                case "${OMS_BR_PROCESS_STATE}" in
+                    Z|X|x) ;;
+                    *)
+                        OMS_BR_MAIL_STORE_WATCH_START_TIME="${OMS_BR_MAIL_STORE_WATCH_REPORTED_START_TIME}"
+                        ;;
+                esac
+            fi
+            if [[ -z "${OMS_BR_MAIL_STORE_WATCH_START_TIME}" ]]; then
+                oms_br_terminate_mail_store_move_watch || true
+                oms_br_error "Mail-store directory move watch reported an unexpected launch identity"
+                return 1
+            fi
+        fi
+        if [[ -n "${OMS_BR_MAIL_STORE_WATCH_START_TIME}" ]] \
+            && oms_br_read_mail_store_watch_reported_identity \
+                "${error_file}" ready; then
+            if [[ "${OMS_BR_MAIL_STORE_WATCH_REPORTED_PID}" \
+                    == "${OMS_BR_MAIL_STORE_WATCH_PID}" \
+                && "${OMS_BR_MAIL_STORE_WATCH_REPORTED_START_TIME}" \
+                    == "${OMS_BR_MAIL_STORE_WATCH_START_TIME}" ]] \
+                && oms_br_mail_store_move_watch_is_active \
+                    "${OMS_BR_MAIL_STORE_WATCH_PID}" \
+                    "${OMS_BR_MAIL_STORE_WATCH_START_TIME}"; then
+                return 0
+            fi
+            oms_br_terminate_mail_store_move_watch || true
+            oms_br_error "Mail-store directory move watch reported an unexpected readiness identity"
+            return 1
+        fi
+        if [[ -n "${OMS_BR_MAIL_STORE_WATCH_START_TIME}" ]]; then
+            if oms_br_mail_store_move_watch_is_active \
+                "${OMS_BR_MAIL_STORE_WATCH_PID}" \
+                "${OMS_BR_MAIL_STORE_WATCH_START_TIME}"; then
+                sleep 0.1
+                continue
+            fi
+            oms_br_terminate_mail_store_move_watch || true
+            oms_br_error "Mail-store directory move watch exited before becoming ready"
+            return 1
+        elif oms_br_read_process_identity "${OMS_BR_MAIL_STORE_WATCH_PID}"; then
+            case "${OMS_BR_PROCESS_STATE}" in
+                Z|X|x)
+                    wait "${OMS_BR_MAIL_STORE_WATCH_PID}" 2>/dev/null || true
+                    oms_br_terminate_mail_store_move_watch || true
+                    oms_br_error "Mail-store directory move watch exited before becoming ready"
+                    return 1
+                    ;;
+            esac
+        elif [[ ! -d "/proc/${OMS_BR_MAIL_STORE_WATCH_PID}" ]]; then
+            wait "${OMS_BR_MAIL_STORE_WATCH_PID}" 2>/dev/null || true
+            oms_br_terminate_mail_store_move_watch || true
+            oms_br_error "Mail-store directory move watch exited before becoming ready"
+            return 1
+        fi
+        sleep 0.1
+    done
+    oms_br_terminate_mail_store_move_watch || true
+    oms_br_error "Mail-store directory move watch did not become ready within 30 seconds"
+    return 1
+}
+
+oms_br_stop_mail_store_move_watch() {
+    local staging_dir="$1"
+    local watch_pid="${OMS_BR_MAIL_STORE_WATCH_PID:-}"
+    local watch_start_time="${OMS_BR_MAIL_STORE_WATCH_START_TIME:-}"
+    local source_path="${OMS_BR_MAIL_STORE_WATCH_SOURCE:-}"
+    local control_dir="${OMS_BR_MAIL_STORE_WATCH_CONTROL:-}"
+    local sentinel_path="${OMS_BR_MAIL_STORE_WATCH_SENTINEL:-}"
+    local sentinel_mode
+    local sentinel_token
+    local expected_ready_line
+    local expected_drain_line
+    local watch_status=0
+    local error_line
+    local attempt
+    local drained=0
+
+    [[ -n "${watch_pid}" && "${watch_pid}" =~ ^[0-9]+$ \
+        && "${watch_start_time}" =~ ^[0-9]+$ \
+        && "${OMS_BR_MAIL_STORE_WATCH_STAGING:-}" == "${staging_dir}" \
+        && -n "${source_path}" && -n "${control_dir}" \
+        && -n "${sentinel_path}" ]] || return 1
+    if ! oms_br_mail_store_move_watch_is_active \
+        "${watch_pid}" "${watch_start_time}"; then
+        oms_br_terminate_mail_store_move_watch || true
+        oms_br_error "Mail-store directory move watch exited before service quiescence"
+        return 1
+    fi
+    oms_br_assert_no_symlink_components "${source_path}" || return 1
+    oms_br_assert_no_symlink_components "${control_dir}" || return 1
+    [[ -d "${source_path}" && ! -L "${source_path}" \
+        && "${sentinel_path}" == "${control_dir}/"* \
+        && ! -e "${sentinel_path}" && ! -L "${sentinel_path}" ]] || return 1
+    oms_br_assert_root_owned_nonwritable_directory \
+        "${control_dir}" "mail-store watch control directory" || return 1
+    if grep -Fq 'Drain complete' \
+        "${staging_dir}/mail-store-directory-moves.stderr"; then
+        oms_br_error "Mail-store directory move watch acknowledged a drain before quiescence"
+        return 1
+    fi
+    sentinel_token=$(oms_br_random_watch_token) || return 1
+    if ! oms_br_create_mail_store_watch_sentinel \
+        "${sentinel_path}" "${sentinel_token}"; then
+        oms_br_error "Could not create the mail-store watcher drain sentinel exclusively"
+        return 1
+    fi
+    [[ -f "${sentinel_path}" && ! -L "${sentinel_path}" \
+        && "$(stat -c '%u' -- "${sentinel_path}")" == "0" ]] || return 1
+    OMS_BR_MAIL_STORE_WATCH_SENTINEL_ID=$(stat -c '%d:%i' -- "${sentinel_path}") \
+        || return 1
+    sentinel_mode=$(stat -c '%a' -- "${sentinel_path}") || return 1
+    (( (8#${sentinel_mode} & 8#077) == 0 )) || return 1
+    expected_drain_line="Drain complete: ${sentinel_token}"
+    for ((attempt = 0; attempt < 300; attempt++)); do
+        if oms_br_count_exact_file_lines \
+            "${staging_dir}/mail-store-directory-moves.stderr" \
+            "${expected_drain_line}" \
+            && [[ "${OMS_BR_EXACT_LINE_COUNT}" -gt 0 ]]; then
+            drained=1
+            break
+        fi
+        if ! oms_br_mail_store_move_watch_is_active \
+            "${watch_pid}" "${watch_start_time}"; then
+            break
+        fi
+        sleep 0.1
+    done
+    if ! oms_br_remove_mail_store_watch_sentinel 1; then
+        oms_br_error "Could not remove the mail-store watcher drain sentinel"
+        return 1
+    fi
+    if [[ ${drained} -ne 1 ]]; then
+        oms_br_error "Mail-store directory move watch did not drain after service quiescence"
+        return 1
+    fi
+    if oms_br_mail_store_move_watch_is_active \
+        "${watch_pid}" "${watch_start_time}"; then
+        oms_br_signal_mail_store_move_watch \
+            "${watch_pid}" "${watch_start_time}" TERM || return 1
+    fi
+    if ! oms_br_reap_mail_store_move_watch \
+        "${watch_pid}" "${watch_start_time}" 50; then
+        oms_br_error "Mail-store directory move watch did not stop after TERM"
+        oms_br_signal_mail_store_move_watch \
+            "${watch_pid}" "${watch_start_time}" KILL || true
+        oms_br_reap_mail_store_move_watch \
+            "${watch_pid}" "${watch_start_time}" 10 || true
+        oms_br_remove_mail_store_watch_control_dir || true
+        oms_br_clear_mail_store_move_watch_state
+        return 1
+    fi
+    watch_status="${OMS_BR_MAIL_STORE_WATCH_EXIT_STATUS}"
+    if ! oms_br_remove_mail_store_watch_control_dir; then
+        oms_br_clear_mail_store_move_watch_state
+        return 1
+    fi
+    oms_br_clear_mail_store_move_watch_state
+    if [[ ${watch_status} -ne 0 ]]; then
+        oms_br_error "Mail-store directory move watch failed with status ${watch_status}"
+        return 1
+    fi
+    expected_ready_line="Watches established: ${watch_pid}:${watch_start_time}"
+    oms_br_count_exact_file_lines \
+        "${staging_dir}/mail-store-directory-moves.stderr" \
+        "${expected_ready_line}" || return 1
+    [[ "${OMS_BR_EXACT_LINE_COUNT}" -eq 1 ]] || return 1
+    oms_br_count_exact_file_lines \
+        "${staging_dir}/mail-store-directory-moves.stderr" \
+        "${expected_drain_line}" || return 1
+    [[ "${OMS_BR_EXACT_LINE_COUNT}" -eq 1 ]] || return 1
+    while IFS= read -r error_line; do
+        case "${error_line}" in
+            "${expected_ready_line}"|"${expected_drain_line}") ;;
+            '') ;;
+            *)
+                oms_br_error "Mail-store directory move watch reported an error"
+                return 1
+                ;;
+        esac
+    done < "${staging_dir}/mail-store-directory-moves.stderr"
+}
+
+oms_br_assert_mail_store_move_watch_active() {
+    local staging_dir="$1"
+    local watch_pid="${OMS_BR_MAIL_STORE_WATCH_PID:-}"
+    local watch_start_time="${OMS_BR_MAIL_STORE_WATCH_START_TIME:-}"
+    local control_dir="${OMS_BR_MAIL_STORE_WATCH_CONTROL:-}"
+    local sentinel_path="${OMS_BR_MAIL_STORE_WATCH_SENTINEL:-}"
+    local expected_ready_line
+    local error_line
+
+    [[ -n "${watch_pid}" && "${watch_pid}" =~ ^[0-9]+$ \
+        && "${watch_start_time}" =~ ^[0-9]+$ \
+        && "${OMS_BR_MAIL_STORE_WATCH_STAGING:-}" == "${staging_dir}" \
+        && -n "${control_dir}" && -n "${sentinel_path}" ]] || return 1
+    oms_br_mail_store_move_watch_is_active \
+        "${watch_pid}" "${watch_start_time}" \
+        || { oms_br_error "Mail-store directory move watch exited during live pre-copy"; return 1; }
+    oms_br_assert_root_owned_nonwritable_directory \
+        "${control_dir}" "mail-store watch control directory" || return 1
+    [[ ! -e "${sentinel_path}" && ! -L "${sentinel_path}" ]] \
+        || { oms_br_error "Mail-store watcher sentinel appeared before service quiescence"; return 1; }
+    expected_ready_line="Watches established: ${watch_pid}:${watch_start_time}"
+    oms_br_count_exact_file_lines \
+        "${staging_dir}/mail-store-directory-moves.stderr" \
+        "${expected_ready_line}" || return 1
+    [[ "${OMS_BR_EXACT_LINE_COUNT}" -eq 1 ]] || return 1
+    while IFS= read -r error_line; do
+        case "${error_line}" in
+            "${expected_ready_line}"|'') ;;
+            *)
+                oms_br_error "Mail-store directory move watch reported unexpected pre-quiescence output"
+                return 1
+                ;;
+        esac
+    done < "${staging_dir}/mail-store-directory-moves.stderr"
+}
+
+oms_br_precopy_mail_store() {
+    local staging_dir="$1"
+    local marker_path="${staging_dir}/mail-store-precopy.marker"
+    local message_manifest="${staging_dir}/mail-store-message-baseline.manifest"
+    local source_path
+    local rsync_bin
+    local rsync_status
+    local source_was_present=0
+
+    source_path=$(oms_br_actual_path mail-store /var/vmail) || return 1
+    oms_br_assert_absolute_bounded_path "${source_path}" "inventory source mail-store" \
+        || return 1
+    oms_br_assert_no_symlink_components "$(dirname -- "${source_path}")" || return 1
+    [[ ! -L "${source_path}" ]] \
+        || { oms_br_fail "Inventory source root must not be a symlink: ${source_path}"; return 1; }
+    if [[ -e "${source_path}" ]]; then
+        [[ -d "${source_path}" ]] || return 1
+        oms_br_start_mail_store_move_watch "${staging_dir}" "${source_path}" || return 1
+        source_was_present=1
+    else
+        : > "${staging_dir}/mail-store-directory-moves.events" || return 1
+        : > "${staging_dir}/mail-store-directory-moves.stderr" || return 1
+        chmod 0600 -- \
+            "${staging_dir}/mail-store-directory-moves.events" \
+            "${staging_dir}/mail-store-directory-moves.stderr" || return 1
+    fi
+    : > "${marker_path}" || return 1
+    chmod 0600 -- "${marker_path}" || return 1
+    touch -d '1 second ago' -- "${marker_path}" || return 1
+    oms_br_write_mail_store_message_manifest "${source_path}" "${message_manifest}" \
+        || return 1
+    [[ ${source_was_present} -eq 1 ]] || return 0
+    rsync_bin=$(oms_br_rsync_bin) || return 1
+    install -d -o root -g root -m 0700 -- "${staging_dir}/payload/mail-store" \
+        || return 1
+    if OMS_BR_RSYNC_PHASE=live-precopy \
+        "${rsync_bin}" -aHAX --numeric-ids --no-specials --no-devices --quiet --delete -- \
+            "${source_path}/" "${staging_dir}/payload/mail-store/"; then
+        return 0
+    else
+        rsync_status=$?
+    fi
+
+    # A live Maildir can legitimately lose files while rsync is walking it.
+    # The stopped convergence pass remains authoritative and must return zero.
+    if [[ ${rsync_status} -eq 24 ]]; then
+        printf 'Warning: live mail-store pre-copy observed vanished files; continuing to stopped convergence\n' >&2
+        return 0
+    fi
+    oms_br_error "Live mail-store pre-copy failed with rsync status ${rsync_status}"
+    return "${rsync_status}"
+}
+
+oms_br_converge_changed_mail_store_files() {
+    local staging_dir="$1"
+    local source_path="$2"
+    local rsync_bin="$3"
+    local marker_path="${staging_dir}/mail-store-precopy.marker"
+    local baseline_manifest="${staging_dir}/mail-store-message-baseline.manifest"
+    local launch_identity="${staging_dir}/mail-store-watch.identity"
+    local current_manifest="${staging_dir}/mail-store-regular-current.manifest"
+    local changed_list="${staging_dir}/mail-store-changed-files.list"
+    local changed_directory_list="${staging_dir}/mail-store-changed-directories.list"
+    local directory_move_events="${staging_dir}/mail-store-directory-moves.events"
+    local directory_move_errors="${staging_dir}/mail-store-directory-moves.stderr"
+    local unsupported_list="${staging_dir}/mail-store-unsupported.list"
+    local payload_root="${staging_dir}/payload/mail-store"
+    local relative_path
+    local identity
+    local event_path
+    local event_names
+    local trailing_byte
+    local target_path
+    local normalized_target
+    local -A baseline_identity=()
+    local -A changed_identity=()
+    local -A forced_directory_path=()
+    local -A forced_file_path=()
+
+    [[ -f "${marker_path}" && ! -L "${marker_path}" ]] \
+        || { oms_br_fail "Live mail-store pre-copy marker is missing"; return 1; }
+    [[ -f "${baseline_manifest}" && ! -L "${baseline_manifest}" ]] \
+        || { oms_br_fail "Live Maildir message identity manifest is missing"; return 1; }
+    [[ -f "${directory_move_events}" && ! -L "${directory_move_events}" ]] \
+        || { oms_br_fail "Live mail-store directory move event log is missing"; return 1; }
+    : > "${changed_list}" || return 1
+    chmod 0600 -- "${changed_list}" || return 1
+
+    # Maildir message bodies are immutable once atomically delivered into cur
+    # or new. Force every mutable/control file, plus messages whose inode path
+    # changed or whose inode was written during the live seed.
+    if ! (
+        cd -- "${source_path}" || exit 1
+        find . -regextype posix-extended -type f \
+            ! -regex '.*/(cur|new)/[^/]*' -print0 || exit 1
+        find . -regextype posix-extended -type f \
+            -regex '.*/(cur|new)/[^/]*' -cnewer "${marker_path}" -print0 || exit 1
+    ) > "${changed_list}"; then
+        oms_br_error "Could not enumerate mail-store files changed during live pre-copy"
+        return 1
+    fi
+    : > "${changed_directory_list}" || return 1
+    chmod 0600 -- "${changed_directory_list}" || return 1
+    if [[ -s "${directory_move_events}" ]]; then
+        trailing_byte=$(tail -c 1 -- "${directory_move_events}" \
+            | od -An -tu1 | tr -d '[:space:]') || return 1
+        [[ "${trailing_byte}" == "0" ]] \
+            || { oms_br_fail "Mail-store directory move event log is truncated"; return 1; }
+    fi
+    while IFS= read -r -d '' event_path; do
+        IFS= read -r -d '' event_names || return 1
+        case "${event_names}" in
+            Q_OVERFLOW|UNMOUNT|WATCH_LOST)
+                oms_br_error "Mail-store directory move watch lost continuity"
+                return 1
+                ;;
+            MOVED_FROM,ISDIR|MOVED_TO,ISDIR) ;;
+            *)
+                oms_br_error "Mail-store directory move watch emitted an invalid event"
+                return 1
+                ;;
+        esac
+        event_path="${event_path%/}"
+        [[ "${event_path}" == "${source_path}/"* ]] || return 1
+        relative_path=".${event_path#"${source_path}"}"
+        [[ "${relative_path}" == ./* && "${relative_path}" != */../* ]] || return 1
+        if [[ -z "${forced_directory_path["${relative_path}"]+x}" ]]; then
+            forced_directory_path["${relative_path}"]=1
+            printf '%s\0' "${relative_path}" >> "${changed_directory_list}" || return 1
+        fi
+    done < "${directory_move_events}"
+    while IFS= read -r -d '' relative_path; do
+        [[ "${relative_path}" == ./* ]] || return 1
+        if [[ ! -e "${source_path}/${relative_path#./}" \
+            && ! -L "${source_path}/${relative_path#./}" ]]; then
+            continue
+        fi
+        if ! (
+            cd -- "${source_path}" || exit 1
+            find "${relative_path}" -regextype posix-extended -type f \
+                -regex '.*/(cur|new)/[^/]*' -print0
+        ) >> "${changed_list}"; then
+            oms_br_error "Could not enumerate messages below a renamed Maildir folder"
+            return 1
+        fi
+    done < "${changed_directory_list}"
+    while IFS= read -r -d '' relative_path; do
+        [[ -n "${relative_path}" ]] || return 1
+        forced_file_path["${relative_path}"]=1
+    done < "${changed_list}"
+    oms_br_write_mail_store_regular_manifest "${source_path}" "${current_manifest}" \
+        || return 1
+    while IFS= read -r -d '' relative_path; do
+        IFS= read -r -d '' identity || return 1
+        [[ -n "${relative_path}" && -n "${identity}" ]] || return 1
+        baseline_identity["${relative_path}"]="${identity}"
+    done < "${baseline_manifest}"
+    while IFS= read -r -d '' relative_path; do
+        IFS= read -r -d '' identity || return 1
+        [[ -n "${relative_path}" && -n "${identity}" ]] || return 1
+        if [[ -n "${forced_file_path["${relative_path}"]+x}" ]]; then
+            changed_identity["${identity}"]=1
+        elif [[ "${relative_path}" =~ ^\./(.*/)?(cur|new)/[^/]+$ \
+            && -n "${baseline_identity["${relative_path}"]+x}" \
+            && "${baseline_identity["${relative_path}"]}" != "${identity}" ]]; then
+            changed_identity["${identity}"]=1
+        fi
+    done < "${current_manifest}"
+    while IFS= read -r -d '' relative_path; do
+        IFS= read -r -d '' identity || return 1
+        if [[ -n "${changed_identity["${identity}"]+x}" ]]; then
+            printf '%s\0' "${relative_path}" >> "${changed_list}" || return 1
+        fi
+    done < "${current_manifest}"
+
+    : > "${unsupported_list}" || return 1
+    chmod 0600 -- "${unsupported_list}" || return 1
+    if ! (
+        cd -- "${source_path}" || exit 1
+        find . \( -type b -o -type c -o -type p -o -type s \) -print0
+    ) > "${unsupported_list}"; then
+        oms_br_error "Could not enumerate unsupported live mail-store objects"
+        return 1
+    fi
+    while IFS= read -r -d '' relative_path; do
+        [[ "${relative_path}" == ./* ]] || return 1
+        target_path="${payload_root}/${relative_path#./}"
+        normalized_target=$(readlink -m -- "${target_path}") || return 1
+        [[ "${normalized_target}" == "${payload_root}/"* ]] || return 1
+        if [[ -e "${target_path}" || -L "${target_path}" ]]; then
+            rm -rf -- "${target_path}" || return 1
+        fi
+    done < "${unsupported_list}"
+
+    if ! OMS_BR_RSYNC_PHASE=quiesced-changed-files \
+        "${rsync_bin}" -aHAX --numeric-ids --no-specials --no-devices --quiet \
+            --ignore-times --from0 --files-from="${changed_list}" -- \
+            "${source_path}/" "${staging_dir}/payload/mail-store/"; then
+        oms_br_error "Could not converge mail-store files changed during live pre-copy"
+        return 1
+    fi
+    rm -f -- \
+        "${baseline_manifest}" \
+        "${changed_directory_list}" \
+        "${changed_list}" \
+        "${current_manifest}" \
+        "${directory_move_errors}" \
+        "${directory_move_events}" \
+        "${launch_identity}" \
+        "${marker_path}" \
+        "${unsupported_list}" || return 1
+}
+
 oms_br_copy_inventory() {
     local staging_dir="$1"
+    local phase="${2:-quiesced-full-copy}"
     local key
     local logical_path
     local kind
@@ -899,9 +1736,16 @@ oms_br_copy_inventory() {
                 # Quiesced service trees can still contain stale Unix sockets,
                 # FIFOs, or device nodes. They are runtime endpoints, not
                 # restorable data; the service recreates them after restart.
-                "${rsync_bin}" -aHAX --numeric-ids --no-specials --no-devices --quiet -- \
+                OMS_BR_RSYNC_PHASE="${phase}" \
+                "${rsync_bin}" -aHAX --numeric-ids --no-specials --no-devices --quiet --delete -- \
                     "${source_path}/" "${staging_dir}/payload/${key}/" \
                     || return 1
+                if [[ "${key}" == "mail-store" && "${phase}" == "quiesced-convergence" ]]; then
+                    # File contents changed during the live seed always advance
+                    # inode ctime, even when size and mtime are restored.
+                    oms_br_converge_changed_mail_store_files \
+                        "${staging_dir}" "${source_path}" "${rsync_bin}" || return 1
+                fi
             else
                 [[ -f "${source_path}" ]] || return 1
                 cp -a -- "${source_path}" "${staging_dir}/payload/${key}" || return 1
@@ -909,6 +1753,19 @@ oms_br_copy_inventory() {
             printf '%s\t%s\tpresent\t%s\n' "${key}" "${logical_path}" "${kind}" \
                 >> "${staging_dir}/inventory.tsv" || return 1
         else
+            if [[ "${key}" == "mail-store" ]]; then
+                rm -rf -- "${staging_dir}/payload/mail-store" || return 1
+                rm -f -- \
+                    "${staging_dir}/mail-store-changed-files.list" \
+                    "${staging_dir}/mail-store-changed-directories.list" \
+                    "${staging_dir}/mail-store-directory-moves.events" \
+                    "${staging_dir}/mail-store-directory-moves.stderr" \
+                    "${staging_dir}/mail-store-message-baseline.manifest" \
+                    "${staging_dir}/mail-store-watch.identity" \
+                    "${staging_dir}/mail-store-regular-current.manifest" \
+                    "${staging_dir}/mail-store-precopy.marker" \
+                    "${staging_dir}/mail-store-unsupported.list" || return 1
+            fi
             printf '%s\t%s\tabsent\t%s\n' "${key}" "${logical_path}" "${kind}" \
                 >> "${staging_dir}/inventory.tsv" || return 1
         fi
@@ -917,10 +1774,11 @@ oms_br_copy_inventory() {
 
 oms_br_capture_snapshot_stage() {
     local staging_dir="$1"
+    local inventory_phase="${2:-quiesced-full-copy}"
 
     oms_br_write_database_manifest "${staging_dir}/databases.tsv" || return 1
     oms_br_dump_databases "${staging_dir}/databases.sql" "${staging_dir}/databases.tsv" || return 1
-    oms_br_copy_inventory "${staging_dir}" || return 1
+    oms_br_copy_inventory "${staging_dir}" "${inventory_phase}" || return 1
 }
 
 oms_br_finalize_snapshot_stage() {
@@ -984,7 +1842,12 @@ oms_br_build_snapshot_stage() {
 oms_br_backup_cleanup() {
     local status=$?
     local resume_status=0
+    local watch_status=0
     trap - EXIT INT TERM HUP
+    if ! oms_br_terminate_mail_store_move_watch; then
+        oms_br_error "Failed to stop the mail-store directory move watch"
+        watch_status=1
+    fi
     if [[ "${OMS_BR_SERVICES_QUIESCED}" == "1" ]]; then
         if ! oms_br_resume_services; then
             oms_br_error "Failed to restore the exact pre-backup service state"
@@ -995,8 +1858,8 @@ oms_br_backup_cleanup() {
             resume_status=1
         fi
     fi
-    if [[ ${status} -eq 0 && ${resume_status} -ne 0 ]]; then
-        status=${resume_status}
+    if [[ ${status} -eq 0 && ( ${resume_status} -ne 0 || ${watch_status} -ne 0 ) ]]; then
+        status=1
     fi
     exit "${status}"
 }
@@ -1032,15 +1895,32 @@ oms_br_create_backup_unlocked() {
                 # This state intentionally belongs to the trapped subshell.
                 # shellcheck disable=SC2030
                 OMS_BR_SERVICES_QUIESCED=0
+                OMS_BR_MAIL_STORE_WATCH_PID=""
+                OMS_BR_MAIL_STORE_WATCH_START_TIME=""
+                OMS_BR_MAIL_STORE_WATCH_STAGING=""
+                OMS_BR_MAIL_STORE_WATCH_SOURCE=""
+                OMS_BR_MAIL_STORE_WATCH_CONTROL=""
+                OMS_BR_MAIL_STORE_WATCH_SENTINEL=""
+                OMS_BR_MAIL_STORE_WATCH_SENTINEL_ID=""
+                OMS_BR_MAIL_STORE_WATCH_EXIT_STATUS=""
+                OMS_BR_MAIL_STORE_WATCH_REPORTED_PID=""
+                OMS_BR_MAIL_STORE_WATCH_REPORTED_START_TIME=""
                 trap oms_br_backup_cleanup EXIT
                 trap 'exit 130' INT
                 trap 'exit 143' TERM
                 trap 'exit 129' HUP
+                oms_br_precopy_mail_store "${staging_dir}" || exit $?
                 oms_br_record_active_services || exit $?
+                if [[ -n "${OMS_BR_MAIL_STORE_WATCH_PID}" ]]; then
+                    oms_br_assert_mail_store_move_watch_active "${staging_dir}" || exit $?
+                fi
                 service_quiescence_started_ms=$(date +%s%3N) || exit $?
                 [[ "${service_quiescence_started_ms}" =~ ^[0-9]+$ ]] || exit 1
                 oms_br_quiesce_services || exit $?
-                oms_br_capture_snapshot_stage "${staging_dir}" || exit $?
+                if [[ -n "${OMS_BR_MAIL_STORE_WATCH_PID}" ]]; then
+                    oms_br_stop_mail_store_move_watch "${staging_dir}" || exit $?
+                fi
+                oms_br_capture_snapshot_stage "${staging_dir}" quiesced-convergence || exit $?
                 oms_br_resume_services || exit $?
                 service_quiescence_finished_ms=$(date +%s%3N) || exit $?
                 [[ "${service_quiescence_finished_ms}" =~ ^[0-9]+$ \

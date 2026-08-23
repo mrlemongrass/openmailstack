@@ -1,4 +1,4 @@
-# OpenMailStack Release Readiness — Cycle 16 Addendum
+# OpenMailStack Release Readiness — Cycle 17 Addendum
 
 Original assessment: 2026-08-15
 
@@ -52,7 +52,22 @@ independent verification and measured 17m 53.924s through service resume and
 approximately 55m 15s stop/start window when repeated hash passes were still
 inside quiescence, so the health-inclusive window fell by about 37m 18s, or
 67.5%. The repeated-hashing defect is closed; the still-quiesced full-copy
-window remains a P2 availability risk.
+window became the bounded Cycle 17 target and remains the historical baseline.
+
+Cycle 17 added a live mail-store pre-copy followed by a fail-closed stopped
+convergence pass. A raw recursive inotify watcher records directory moves while
+services are active; path/inode/ctime baselines, mutable Maildir paths, and a
+content-authenticated drain sentinel close the gaps that timestamp-only or
+double-rsync designs would miss. Queue overflow, watch loss, unmount, malformed
+output, and stopped-copy errors abort visibly. Exact PID/start-time identity is
+signaled through pidfds on the production runtime, with an EL8-compatible
+`/proc` fallback. Root-only 13 GB snapshot
+`/var/backups/openmailstack/oms-backup-20260823T192653Z` promoted and passed an
+independent public-CLI verification. Its live seed took roughly 12.5 minutes
+with services available; quiescence was 217,564 ms and health-inclusive outage
+was 220,406 ms, 856,504 ms or 79.5% below the Cycle 16 baseline. This materially
+reduces planned backup disruption without claiming high availability or
+closing off-host recovery.
 
 The Settings rollout's production audit then surfaced newly published
 `GHSA-ggr8-5vv4-36mx` through `mailparser` -> `html-to-text` ->
@@ -82,13 +97,13 @@ still not being misreported as “shippable.”
 | Reported Notes duplicate | SQL/IMAP and overlapping web-save races fixed; original Notes backend fix is deployed | Physical macOS edit/close/reopen/delete remains open |
 | Universal outbound delivery | Active in production for web, scheduled/Undo, and ActiveSync; integrated registry expansion is locally verified | Delivery path deployed; compaction remains disabled pending registry-compatible rollback proof |
 | Backend | Integrated main and the surgical live release complete suites pass with 0 failures; focused body-Fetch/hardening/parity passes 49/49 | Green within the tested scope |
-| Frontend | 175/175, ESLint, and production build pass | Green |
+| Frontend | 184/184, ESLint, and production build pass | Green |
 | Database proof | Four isolated MariaDB proofs cover migration, ordering, registry retention, real EAS HTTP durability, and exact tombstone repair | Green; temporary servers and trees removed |
 | Browser qualification | 240/240 across Chromium/WebKit desktop/mobile with zero unexpected diagnostics | Deterministic real-browser evidence, not physical Apple-client evidence |
 | Repository integration | Complete integration suite passes | Green locally |
 | Production dependencies | Backend and frontend report 0 production vulnerabilities after the newly published deepmerge advisory was pinned to 8.0.0 | Green and guarded-deployed |
 | Deployment/rollback | Verified backup, exact repair, guarded bridge, active release, hotfix bridge/active round trip, runtime attestation, and an inert durable-row production rollback canary passed | Current active/bridge pair is proven; registry compaction still waits for a registry-compatible installed rollback pair |
-| Backup availability | Finalization and verification run after health recovery; a 13 GB production snapshot verified and reduced the journal-backed outage window by about 67.5% | Repeated-hashing outage closed; the remaining 17m 56.910s quiesced consistency copy is still P2 |
+| Backup availability | Live pre-copy plus stopped convergence promoted and independently verified a 13 GB production snapshot with a 3m 40.406s health-inclusive outage, 79.5% below the Cycle 16 baseline | Materially improved and production-proven; a planned outage remains and this is not storage-snapshot high availability |
 | Small-business release | No-go | Reassess after the physical Apple-client matrix and full recovery exercise |
 | Enterprise release | No-go | Product, governance, scale, and recovery gaps remain |
 
@@ -349,7 +364,7 @@ not folded into this outbound change.
 | Rollout gate | Bounded universal-outbox retention is implemented and disposable-database verified | Keep compaction disabled until the installed rollback runtime is registry-compatible; then opt in only with `registry-verified-v1` |
 | Closed locally | Mixed legacy/local and keyed/UTC Scheduled ordering | Project both bases to real instants for list and global worker claim order; do not rewrite historical DATETIME values |
 | P2 recovery | Clean-host recovery semantics are proven, but not a full production-scale rebuild | Add a full mutating install plus realistically sized second-host/off-host restore, DNS/TLS, and mail-flow exercise |
-| P2 availability | Full logical backup still quiesces services for the consistency-critical database and 13 GB mail-tree capture | Repeated hashing now runs after health and the production window fell about 67.5% to 17m 56.910s; prove a storage-native snapshot or bounded pre-copy design without weakening fail-closed recovery |
+| P2 availability | Live pre-copy reduces but does not eliminate the consistency-critical database and mail-store convergence outage | The verified production window is 3m 40.406s, 79.5% below Cycle 16; retain fail-closed watcher/convergence guarantees and use storage-native snapshots if a tighter availability target is required |
 | P2 protocol | A pre-network process crash after `smtp_inflight` is conservatively uncertain | Deepen the SMTP transaction boundary only with evidence that cannot cause resend after DATA |
 | Closed locally | No authenticated HTTP-to-database-to-SMTP ActiveSync harness | Disposable WBXML/Basic-auth/MariaDB/SMTP/Sent-copy proof now covers first send, replay, changed MIME, auth, malformed input, and bridge quarantine |
 | Feature gap | True conversations, shared/delegated mailboxes, cross-account Notes ACLs, Tasks UI, rooms/resources | Deliver as bounded product slices after release correctness gates |
@@ -410,21 +425,27 @@ not folded into this outbound change.
   immutable-stage hash after bounded health reduced the new exact window to
   17m 56.910s; this corrects the baseline without claiming the remaining copy
   window is low-impact.
+- Cycle 17 confirmed that a simple live double-copy would not be a sufficient
+  correctness argument. Directory moves, inode reuse, same-size/same-mtime
+  writes, hardlinks, vanished live files, and event-queue loss all needed
+  explicit convergence or fail-closed handling. The resulting production run
+  cut the exact Cycle 16 window to 3m 40.406s without deleting either safely
+  aborted staging candidate.
 
 ## Recommended next release sequence
 
 1. Complete physical iOS SendMail/ClientId retry, Direct Push idle/wake/network/
    restart behavior, the macOS CardDAV identity edit/merge retry, and the
    original macOS Notes edit/reopen/delete lifecycle.
-2. Reduce the remaining 17m 56.910s full-copy backup outage with a proven
-   storage-native snapshot or bounded pre-copy design; keep exact-state,
-   continuously quiesced restore-safety, and fail-closed promotion tests.
+2. Complete a mutating clean install and realistically sized encrypted off-host
+   restore, including DNS/TLS, mail flow, recovery time, and capacity evidence.
 3. Deploy the integrated registry expansion through the already-proven bridge
    sequence. Keep compaction disabled until that installed rollback pair reads
    registry tombstones, then enable only `registry-verified-v1` under a bounded
    maintenance/scale canary.
-4. Complete a mutating clean install and realistically sized off-host restore,
-   including DNS/TLS, mail flow, and recovery-time/capacity evidence.
+4. If the required backup availability target is below the measured
+   3m 40.406s, add a storage-native snapshot path while preserving exact-state,
+   continuously quiesced restore-safety, and fail-closed promotion tests.
 5. Re-run the complete authenticated product/browser/physical-client matrix and
    issue a fresh small-business go/no-go.
 
@@ -435,8 +456,9 @@ mail-delivery, privacy, and recovery foundation than at the start. The
 repository's largest known duplicate-send defect is closed and its bridge-first
 delivery runtime is active. It is not yet responsible to call the release
 small-business ready because the physical Apple-client and full off-host
-recovery evidence is incomplete, and the production-size backup still has an
-improved but material 17m 56.910s consistency-copy outage. It remains
+recovery evidence is incomplete. The production-size backup outage is now a
+verified 3m 40.406s, but it remains planned downtime rather than high
+availability. OpenMailStack remains
 substantially short of enterprise procurement requirements. Keep the attested
 active/bridge snapshots and compaction disabled until the ordered sequence above
 is complete.

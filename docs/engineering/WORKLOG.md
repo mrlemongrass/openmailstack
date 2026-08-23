@@ -9692,3 +9692,114 @@ pass, despite the staging payload already being immutable after capture.
 Design and benchmark one consistency-safe storage snapshot or bounded pre-copy
 seam that materially reduces the remaining full-copy quiescence without
 weakening database/mail-store restore correctness.
+
+## 2026-08-23 — Production Backup Live Pre-copy
+
+Agent/tool: Codex diagnosis loop, TDD, implementation, fixed-point
+Standards/Spec review, production backup, and independent verification
+
+Branch: `main`; code commit `4ce9d94f`
+
+Starting git state: clean at `c9765682`
+
+Ending git state: clean after the cycle commits and push
+
+### Selected task
+
+Reduce the remaining 17m 56.910s production backup outage with a bounded live
+mail-store pre-copy and stopped convergence pass, without weakening exact
+restore correctness or fail-closed promotion.
+
+### Why this task
+
+The Cycle 16 split removed repeated hashing from downtime, but the complete
+13 GB mail-tree copy still ran while every mail service was stopped. Production
+stores `/var/vmail` and `/var/backups` on the same ext4 filesystem without
+snapshot or reflink support, so the highest-value bounded path was to seed
+stable bytes online and prove exact convergence during a shorter stop.
+
+### Changes made
+
+- `functions/backup_restore.sh`
+  - Added a live `rsync -aHAX` seed before service quiescence, with status 24
+    tolerated only while the source is mutable.
+  - Captures baseline path/inode and ctime evidence, drains directory-move
+    events after quiescence, and forces mutable Maildir paths, changed files,
+    moved directories, path/inode mismatches, and hardlink expansion through a
+    strict stopped convergence pass.
+  - Preserves the existing exact prior-service recovery, bounded health,
+    visible `.incomplete` failure, validation, and atomic-promotion contracts.
+- `functions/mail_store_move_watch.py`
+  - Added a Python 3.6-compatible raw recursive inotify watcher, protected
+    root-only control directory, and content-authenticated sentinel barrier.
+  - Queue overflow, unmount, watch loss, malformed/error output, and output
+    failures abort rather than accepting uncertain coverage.
+  - Binds watcher launch and readiness to PID plus Linux start time. Current
+    runtimes use pidfds; the compatibility path rechecks `/proc` immediately
+    before `os.kill()`.
+- `functions/lib_os.sh` and `install.sh`
+  - Added Python 3 as a required backup runtime dependency.
+- `tests/integration/backup_restore_test.sh`,
+  `tests/integration/mail_store_move_watch_test.py`, and
+  `tests/integration/run.sh`
+  - Added real and injected coverage for the watcher barrier, kernel overflow,
+    startup cleanup, stale identity, older-runtime signaling, live mutation,
+    directory swaps, same-size/same-mtime writes, hardlinks, special objects,
+    vanished files, and stopped-copy failure.
+
+### Proof / checks run
+
+- Bash syntax, ShellCheck, `git diff --check`, and Python 3.6 AST parsing:
+  passed.
+- Focused raw-watcher suite: passed ordinary drain, real kernel overflow,
+  output failure, sentinel cleanup, stale identity, and pre-pidfd fallback.
+- Focused backup/restore fixture and real-watcher integration: passed.
+- `rtk bash tests/integration/run.sh`: passed the complete repository suite;
+  frontend remained 184/184.
+- Fixed-point Standards and Spec reviews of `4ce9d94f`: GO with no Blocker or
+  High finding. Both identified only the narrow pre-pidfd signaling race as a
+  Medium residual.
+- Production preflight at exact `4ce9d94f`: clean tree; all seven services
+  active/running with `NRestarts=0`; local/public readiness `401`; queue empty;
+  backup lock free; 36 GB free; pidfd signaling available.
+- `rtk bash functions/backup_restore.sh backup`: promoted root-owned mode-0700
+  13 GB snapshot
+  `/var/backups/openmailstack/oms-backup-20260823T192653Z`. The roughly
+  12.5-minute live seed ran with services active. Metadata records 217,564 ms
+  of quiescence and 220,406 ms through bounded health recovery.
+- Compared with Cycle 16's exact 1,076,910 ms health-inclusive baseline, the
+  new window is 856,504 ms, or 79.5%, lower.
+- Independent `verify` of the promoted snapshot: exit 0. Final audit: all seven
+  services active/running with `NRestarts=0`, local/public readiness `401`,
+  queue empty, lock free, no backup/watcher process or control residue, and
+  24 GB free.
+
+### Acceptance criteria
+
+- [x] Most mail-store bytes copy while services stay active.
+- [x] Concurrent file and directory mutations either converge under stopped
+  services or fail closed; watcher ambiguity is never accepted.
+- [x] Exact service-state recovery, restore safety, validation, and visible
+  incomplete-failure behavior remain regression-backed.
+- [x] A production-size backup promotes, independently verifies, and materially
+  reduces the exact health-inclusive outage without deleting prior snapshots.
+
+### Risks / notes
+
+- The production host uses exact pidfd signaling. Python 3.6 or older kernels
+  fall back to `/proc` start-time verification immediately before `os.kill()`;
+  that fallback retains a narrow PID-reuse race.
+- The proven path assumes Linux inotify and the current ext4/Maildir++ layout.
+  Its 3m 40.406s planned outage is not a high-availability claim.
+- Snapshot metadata explicitly records no encryption and no point-in-time
+  recovery. A realistically sized encrypted off-host restore is still unproven.
+- Safely aborted staging candidates
+  `oms-backup-20260823T144735Z.incomplete` and
+  `oms-backup-20260823T160317Z.incomplete` remain available for audit. No
+  production snapshot or incomplete tree was deleted.
+
+### Next recommended task
+
+Add encrypted off-host snapshot replication and execute a production-sized
+second-host restore drill with DNS/TLS, mail-flow, recovery-time, and capacity
+evidence.

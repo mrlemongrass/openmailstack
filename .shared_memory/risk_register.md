@@ -148,14 +148,14 @@ Last updated: 2026-08-23
   30-column digest and zero canary claim/SMTP/IMAP evidence, was deleted exactly
   once under bridge, and active plus the Ping-required public suite were
   restored with zero residue.
-- 🟡 Production backup availability: the repeated-hashing outage is closed.
-  Snapshot finalization and verification now run only after exact service-state
-  recovery and bounded health; a production run reduced the prior approximate
-  55m 15s stop/start window to an exact 17m 56.910s health-inclusive window
-  (about 67.5%) and independently verified the promoted snapshot. The remaining
-  full logical database/mail-tree capture is still quiesced for consistency and
-  is too long for frequent low-impact backups. Prove a storage-native snapshot
-  or bounded pre-copy design before calling this path high-availability.
+- 🟡 Production backup availability: live mail-store pre-copy plus a fail-closed
+  stopped convergence pass is deployed and production-proven. Root-only 13 GB
+  snapshot `oms-backup-20260823T192653Z` independently verified with an exact
+  3m 40.406s health-inclusive outage, 79.5% below the Cycle 16 baseline. The
+  path still requires planned downtime, assumes Linux inotify plus ext4/Maildir
+  semantics, and has a narrow PID-reuse signaling race only on runtimes without
+  pidfds. Do not call it high availability; use storage-native snapshots if the
+  required outage is lower, and close encryption/off-host restore separately.
 - 🟡 Clean-host recovery: a fresh Debian 13.6 guest proved backup, verify,
   exact service-state restore, injected rollback, and cleanup. Full mutating
   install, realistically sized off-host restore, DNS/TLS, and mail flow remain.

@@ -2120,3 +2120,38 @@ Future entry template:
 - Remaining risk: the consistency-critical full database/mail-tree copy still
   causes a 17m 56.910s outage. A storage-native snapshot or carefully bounded
   pre-copy design is the next backup-availability task.
+
+## 2026-08-23 — Production Backup Live Pre-copy
+
+- Seeded `/var/vmail` while services remain active, then limited quiescence to
+  watcher drain, logical database/inventory capture, and stopped mail-store
+  convergence. Changed ctimes, mutable Maildir paths, directory moves,
+  path/inode mismatches, and hardlink expansion are forced through the stopped
+  pass; vanished files are tolerated only by the mutable live seed.
+- Added a raw recursive inotify watcher with a protected control directory and
+  content-authenticated sentinel barrier. Queue overflow, watch loss, unmount,
+  malformed/error output, or loss of process identity fails closed. Launch and
+  readiness both bind PID plus Linux start time; production uses exact pidfd
+  signaling and the older Python/kernel fallback rechecks `/proc` immediately
+  before signaling.
+- Added Python 3 installation coverage plus focused watcher and backup
+  regressions for real queue overflow, drain ordering, SIGSTOP-before-ready
+  cleanup, stale identity, pre-pidfd fallback, concurrent mutation, directory
+  swaps, hardlinks, same-size/same-mtime changes, special objects, and live-only
+  `rsync` status 24.
+- Bash syntax, ShellCheck, whitespace, Python 3.6 grammar, the focused watcher
+  and backup suites, real-watcher integration, and the complete repository
+  integration suite passed; frontend remained 184/184. Independent Standards
+  and Spec reviews reported no Blocker or High finding. Their only residual is
+  the narrow process-identity race on pre-pidfd runtimes.
+- Promoted root-owned mode-0700 13 GB production snapshot
+  `/var/backups/openmailstack/oms-backup-20260823T192653Z`, then independently
+  verified it through the public CLI. The roughly 12.5-minute live seed ran
+  online; quiescence was 217,564 ms and health-inclusive outage was 220,406 ms,
+  856,504 ms or 79.5% below the 1,076,910 ms Cycle 16 baseline. All seven
+  services recovered active/running with `NRestarts=0`, readiness is `401`, the
+  queue is empty, the lock is free, and no watcher/control residue remains.
+- Two safely aborted 2026-08-23 staging candidates were retained along with all
+  prior snapshots; nothing was deleted. Remaining risk is the planned
+  3m 40.406s outage plus no encryption, point-in-time recovery, or realistically
+  sized off-host restore proof.

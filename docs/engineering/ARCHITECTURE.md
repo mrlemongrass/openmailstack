@@ -1570,22 +1570,35 @@ Agents should verify and document:
 
 The logical backup transaction records and restores the exact active/inactive
 service set and keeps failed snapshots visibly `.incomplete`. Managed full
-backups hold quiescence through the logical database dump and immutable
-inventory copy, then resume the exact prior services and pass bounded health
-before writing metadata, hashing, validating once, and atomically promoting.
-Restore safety snapshots remain continuously quiesced. Format-1 snapshots
-record whether service timing was managed locally or externally; managed
-snapshots include command-level and health-inclusive durations, while legacy
-snapshots without the whole timing schema remain compatible and partial or
-malformed timing metadata fails closed.
+backups establish a recursive raw-inotify directory-move watch, capture
+path/inode baselines, and seed the mail store while services remain active.
+After stopping the prior active services, a content-authenticated sentinel
+drains the same event queue; the backup then captures the logical database and
+inventory and performs a stopped convergence pass over mutable Maildir paths,
+ctime changes, moved directories, and path/inode mismatches. Only a mutable
+live-copy `rsync` may tolerate vanished files. The stopped pass fails closed.
+The exact prior services then resume and pass bounded health before metadata,
+hashing, validation, and atomic promotion. Restore safety snapshots remain
+continuously quiesced.
 
-A 2026-08-23 production-size run promoted and independently verified root-only
-snapshot `oms-backup-20260823T072524Z`. It measured 1,073,924 ms through service
-resume and 1,076,910 ms through health recovery, versus an approximately
-55m 15s systemd stop/start window in Cycle 13 when repeated hashing remained
-inside quiescence. The roughly 67.5% reduction closes the repeated-hashing
-defect, but the remaining 17m 56.910s consistency-copy outage is still a P2
-availability risk requiring a proven storage snapshot or bounded pre-copy
+The watcher control directory is root-only and outside `/var/vmail`; queue
+overflow, watch loss, unmount, malformed output, or output failure aborts the
+backup. Launch and readiness both authenticate PID plus Linux process start
+time. Current runtimes signal that exact process through pidfds; the
+EL8-compatible fallback rechecks `/proc` immediately before `os.kill()` and
+therefore retains a narrow PID-reuse race on kernels/Python versions without
+pidfds. Format-1 timing compatibility and fail-closed metadata validation are
+unchanged.
+
+The Cycle 16 production baseline snapshot `oms-backup-20260823T072524Z`
+measured a 1,076,910 ms health-inclusive outage after repeated hashing had
+already moved online. The live-pre-copy production run promoted and
+independently verified root-only snapshot `oms-backup-20260823T192653Z`; its
+roughly 12.5-minute seed ran with services active, while command-level
+quiescence was 217,564 ms and the health-inclusive outage was 220,406 ms. That
+is 856,504 ms, or 79.5%, below the directly comparable Cycle 16 baseline. The
+planned 3m 40.406s outage is still material and this ext4/Maildir++ path is not
+a storage snapshot, point-in-time recovery, encryption, or off-host recovery
 design.
 
 Previously documented allowed firewall ports:

@@ -2045,3 +2045,21 @@ Future entry template:
   provisioning verification passed. Subsequent browser authentication used an
   ephemeral mode-0600 storage state, deleted immediately after loading; no
   human credential was involved.
+
+## 2026-08-22 — Context Menu Live Reverification And Publication
+
+- The public HTML, deployed web root, and current build already matched before
+  redeployment, and the served mail chunk already contained every new folder and
+  message command. HTML and assets were `no-store`, with no frontend service
+  worker. Treat an already-open SPA tab or a protected system folder as the
+  first distinction to test when these commands appear missing: Move/Delete are
+  intentionally available only on custom folders.
+- Repeated guarded bridge and active deployments passed authenticated public
+  IMAPS and ActiveSync Mail/Ping/Contacts/Calendar pre/post gates. The current
+  rollbacks are `protocol-guarded-webmail-20260823T022129Z` and
+  `protocol-guarded-webmail-20260823T022910Z`.
+- Fresh public Chromium created a top-level custom folder, exposed and opened
+  its Move flow, showed and accepted its permanent Delete warning, and exposed
+  Move to/Mark as spam on an exact disposable Inbox message. Authenticated
+  browser console output was clean. LIST/LSUB, Message-ID, search-index, session,
+  auth-state, browser, and pending-gate residue all ended at zero.

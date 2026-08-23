@@ -9464,3 +9464,56 @@ Branch: `main`; current working tree guarded-deployed and ready for commit
   itself. This commit does not expand into account security; an exact
   transaction-bounded delete left zero protocol-canary session rows. Repairing
   that route is the recommended next bounded task.
+
+## 2026-08-22 — Context Menu Live Reverification And Release Publication
+
+Agent/tool: Codex with public artifact comparison, guarded bridge/active
+deployment, fresh authenticated Chromium, and exact public-IMAPS cleanup
+
+Branch: `main`; release source `92a7288e`
+
+### Goal and acceptance criteria
+
+- Determine why the owner could not see the new folder/message commands without
+  assuming that the prior rollout was still live.
+- Redeploy the committed tree through the mandatory protocol guard and retain a
+  tested rollback for both bridge and active mode.
+- Prove top-level folder creation, custom-folder Move/Delete, and message
+  Move/Mark as spam from a fresh public browser context.
+- Remove every disposable folder, subscription, message, search-index row,
+  browser state file, and web session before publication.
+
+### Diagnosis and proof
+
+- Before redeployment, public `index.html`, `/var/www/openmailstack/index.html`,
+  and the current build were byte-identical. The served mail route bundle was
+  also byte-identical to the current build and already contained `New folder`,
+  `New subfolder`, `Move…`, `Delete folder`, `Move to…`, and `Mark as spam`.
+  Both HTML and JavaScript returned `Cache-Control: no-store, no-cache,
+  must-revalidate`; no service-worker registration exists in the frontend.
+- The likely discrepancy was therefore an already-open SPA tab or checking a
+  protected system/special-use folder. INBOX, Sent, Drafts, Archive, Junk, and
+  Trash intentionally omit Move/Delete; those commands appear on custom folders.
+- A fresh bridge release and active promotion passed their pre/post authenticated
+  public IMAPS and ActiveSync Mail/Ping/Contacts/Calendar gates. Rollback
+  snapshots are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260823T022129Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260823T022910Z`.
+- Fresh Chromium loaded a mode-0600 authentication state that was deleted
+  immediately after import. It exposed the top-level New folder button, created
+  `OmsLiveCtx0823A` outside INBOX, and right-clicked the live row. The menu showed
+  Open, New subfolder, Move, and Delete; Move opened the destination dialog, and
+  Delete displayed and accepted the permanent-removal warning.
+- The same browser right-clicked one exact disposable Inbox message and observed
+  Open message, Mark unread, Star, Archive, Move to, Mark as spam, Snooze, and
+  Delete. The authenticated flow had zero console errors or warnings; the only
+  later error was the expected `/api/auth/me` `401` after Logout.
+- Exact cleanup left zero LIST/LSUB matches for the folder, zero IMAP matches for
+  the Message-ID, zero matching `mail_search_index` rows, zero protocol-canary
+  web sessions, no authentication-state file, no live browser, and no pending
+  protocol-gate run.
+- Final attestation is active mode with backend, Scheduler worker, Nginx, and
+  Dovecot active at `NRestarts=0`; local/public readiness is the expected `401`,
+  Nginx validates, warning journals are empty, and the public/deployed/built mail
+  route SHA-256 is
+  `3368019d9627d90720400cbd38031bb3c3ce1d13df0a7ea03e9e6101fe6aabef`.

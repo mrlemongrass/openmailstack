@@ -47,6 +47,18 @@ the server-designated Junk folder; exact Message-ID cleanup removed it. Browser
 sessions and ephemeral authentication state were removed. Folder rename remains
 out of scope.
 
+The owner-requested live recheck on 2026-08-22 found that the public HTML and
+mail chunk already matched the current build before redeployment. A fresh
+guarded bridge/active cycle nevertheless passed, retaining rollbacks
+`protocol-guarded-webmail-20260823T022129Z` and
+`protocol-guarded-webmail-20260823T022910Z`. Fresh public Chromium then created
+and deleted a top-level custom folder, opened its Move dialog, and exposed Move
+to/Mark as spam on an exact disposable Inbox message with zero authenticated
+console errors. Exact protocol/browser/database cleanup reached zero residue.
+Remember that protected system/special-use folders intentionally show only the
+safe subset; custom-folder Move/Delete do not appear on INBOX, Sent, Drafts,
+Archive, Junk, or Trash.
+
 The lifecycle initially exposed a pre-existing Dovecot 2.4 upgrade defect:
 Debian's retained 2.3-era empty `dict quota {}` sample became a real dictionary
 whose implicit driver was the unsupported name `quota`, so IMAP DELETE returned

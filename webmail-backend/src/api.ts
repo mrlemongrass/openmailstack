@@ -15,7 +15,7 @@ import {
     patchVCardData,
     withContactMutation,
 } from './contact-utils';
-import { canDemoteGlobalAdmin, clearSession, createSession, hasGlobalAdminAccess, requireAdminSession, requireSession, SESSION_COOKIE } from './auth';
+import { canDemoteGlobalAdmin, clearSession, createSession, hasGlobalAdminAccess, requireAdminSession, requireSession } from './auth';
 import { imapConfig, normalizeMailboxUsername, schedulerConfig, serverConfig, sieveConfig, smtpConfig } from './config';
 import { compileSieve, extractJsonFromSieve, type SieveRule, type SieveRulesDocument } from './sieve-compiler';
 import { evaluateRulesForMessage } from './rule-engine';
@@ -1153,8 +1153,7 @@ apiRouter.post('/account/2fa/setup', requireAuth, async (req: any, res) => {
 
 apiRouter.post('/account/2fa/confirm', requireAuth, async (req: any, res) => {
     try {
-        const rawSessionId = String(req.cookies?.[SESSION_COOKIE] || '');
-        const currentSessionHash = crypto.createHash('sha256').update(rawSessionId).digest('hex');
+        const currentSessionHash = crypto.createHash('sha256').update(req.user.sessionId).digest('hex');
         const recoveryCodes = await confirmTotpSetup(
             req.user.username,
             String(req.body?.code || ''),
@@ -1271,8 +1270,7 @@ apiRouter.get('/account/sessions', requireAuth, async (req: any, res) => {
                  WHERE username = ? AND expires_at > NOW() ORDER BY updated_at DESC`,
                 [req.user.username]
             );
-            const rawId = req.cookies?.oms_session || '';
-            const currentHash = crypto.createHash('sha256').update(rawId).digest('hex');
+            const currentHash = crypto.createHash('sha256').update(req.user.sessionId).digest('hex');
             const sessions = (rows as any[]).map(r => ({
                 id: r.id_hash.substring(0, 8),
                 created_at: r.created_at,
@@ -1290,16 +1288,19 @@ apiRouter.get('/account/sessions', requireAuth, async (req: any, res) => {
 
 apiRouter.delete('/account/sessions/:id', requireAuth, async (req: any, res) => {
     try {
-        const rawId = req.cookies?.oms_session || '';
-        const currentHash = crypto.createHash('sha256').update(rawId).digest('hex');
-        if (currentHash.startsWith(req.params.id)) {
+        const sessionHashPrefix = String(req.params.id || '').toLowerCase();
+        if (!/^[a-f0-9]{8}$/.test(sessionHashPrefix)) {
+            return res.status(400).json({ success: false, error: 'Invalid session identifier.' });
+        }
+        const currentHash = crypto.createHash('sha256').update(req.user.sessionId).digest('hex');
+        if (currentHash.startsWith(sessionHashPrefix)) {
             return res.status(400).json({ success: false, error: 'Cannot revoke your current session.' });
         }
         const db = await pool.getConnection();
         try {
             const [result] = await db.query(
                 `DELETE FROM webmail_sessions WHERE id_hash LIKE ? AND username = ?`,
-                [`${req.params.id}%`, req.user.username]
+                [`${sessionHashPrefix}%`, req.user.username]
             );
             const affected = (result as any).affectedRows || 0;
             res.json({ success: true, revoked: affected });

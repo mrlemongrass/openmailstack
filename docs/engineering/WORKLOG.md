@@ -9517,3 +9517,78 @@ Branch: `main`; release source `92a7288e`
   Nginx validates, warning journals are empty, and the public/deployed/built mail
   route SHA-256 is
   `3368019d9627d90720400cbd38031bb3c3ce1d13df0a7ea03e9e6101fe6aabef`.
+
+## 2026-08-22 — Account Session Identity And Safe Revocation
+
+Agent/tool: Codex with a deterministic live canary, test-first Express route
+coverage, fixed-point Spec/Standards review, and guarded production releases
+
+Branch: `main`; code commits `36ef3d53` and `2706da8f`; guarded-deployed active
+
+### Goal and acceptance criteria
+
+- Make `/api/account/sessions` identify exactly the authenticated request's
+  session without exposing its raw opaque token.
+- Reject revocation of the current session while preserving its authentication,
+  and continue to revoke another session owned by the same user.
+- Reject malformed or SQL-wildcard session selectors before database access.
+- Retain the actual current session when two-factor authentication is confirmed.
+- Add a regression at the real Cookie/authentication/router boundary, pass the
+  complete checks and reviews, deploy bridge then active through the mandatory
+  protocol guard, and leave no canary state behind.
+
+### Diagnosis and changes
+
+- A disposable live session reproduced the defect: listing returned `200` with
+  one session but zero current rows; deleting its displayed ID returned `200`;
+  the same cookie then returned `401` from `/api/auth/me`.
+- `requireSession` already parses the raw Cookie header and attaches the opaque
+  token as `req.user.sessionId`. The account routes instead hashed
+  `req.cookies[SESSION_COOKIE]`, but no cookie-parser middleware initializes
+  `req.cookies`. The resulting SHA-256 digest of an empty string could never
+  identify the authenticated row. The same expression was also used when 2FA
+  confirmation asked storage to retain the current session.
+- Exported the existing auth-owned `hashSessionId` helper and used it in all
+  three account-security paths. Session deletion now lowercases and validates
+  an exact eight-character hexadecimal digest prefix before checking the
+  current hash or issuing the username-scoped `DELETE ... LIKE` query.
+- Added `account-session-route.test.cjs`. It sends a real `oms_session` Cookie
+  through production `requireSession`, checks the exact response fields and raw
+  token non-disclosure, proves self-revoke performs no delete and a follow-up
+  `/api/auth/me` remains `200`, proves another session is revoked, rejects `%`,
+  `_`, non-hex, seven-character, and nine-character selectors before SQL, and
+  verifies 2FA receives the authenticated session digest.
+
+### Proof, review, deployment, and limits
+
+- The initial four-test regression failed three assertions before the fix:
+  current marking, current-session revocation, and 2FA retention. After those
+  passed, the added wildcard case failed with `200` before selector validation;
+  the final focused suite passes 5/5.
+- Complete backend verification passes 816 tests: 809 pass, seven documented
+  environment-dependent skips, zero fail. Backend build, both production
+  dependency audits, `git diff --check`, and the complete
+  `tests/integration/run.sh` suite pass; that integration run includes frontend
+  184/184. Fixed-point Spec and Standards review found no remaining blocker
+  after the actual-auth continuity/non-disclosure/selector tests and shared hash
+  helper were added.
+- Guarded `webmail-bridge` and `webmail` deployments each passed pre/post public
+  IMAPS and ActiveSync Mail/Ping/Contacts/Calendar suites with unique canary IDs
+  and exact cleanup. Rollback snapshots are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260823T033609Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260823T034320Z`.
+- The post-deploy live check logged in twice, listed two sessions with exactly
+  one current row matching the authenticated cookie's digest, revoked the other
+  session (`200`, one row), observed its cookie become unauthorized (`401`),
+  and kept the current cookie authorized (`200`). Self-revoke and `%` selector
+  deletion each returned `400`, with the current cookie still authorized after
+  both. Both logouts returned `200`; a direct owner-scoped database count then
+  proved zero canary session rows.
+- Final active attestation: `openmailstack.service` is active/running with
+  `NRestarts=0`; local and public unauthenticated readiness both return `401`;
+  Nginx validates; warning-level service journal output is empty; only the
+  expected release-lock file remains under `/run/openmailstack`; deployed
+  `api.js` and `auth.js` SHA-256 values exactly match the repository build.
+- The UI contract is unchanged: it already consumes `isCurrent` and eight-digit
+  session IDs. This bounded task repairs server identity and validation; it does
+  not redesign the account-session screen or expand session metadata.

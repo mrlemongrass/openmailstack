@@ -2063,3 +2063,30 @@ Future entry template:
   Move to/Mark as spam on an exact disposable Inbox message. Authenticated
   browser console output was clean. LIST/LSUB, Message-ID, search-index, session,
   auth-state, browser, and pending-gate residue all ended at zero.
+
+## 2026-08-22 — Account Session Identity And Safe Revocation
+
+- Reproduced the residual live with one canary session: the sessions API marked
+  zero rows current, accepted deletion of that session, and the same cookie then
+  returned `401`. Root cause was account routes reading unpopulated
+  `req.cookies` while `requireSession` already carried the authenticated opaque
+  token in `req.user.sessionId`; the same mismatch affected 2FA session retention.
+- Exported the canonical auth hash helper and used it for session listing,
+  revocation, and 2FA confirmation. Session deletion now accepts exactly eight
+  hexadecimal digest-prefix characters before the owner-scoped SQL prefix
+  match, preventing wildcard or malformed selectors from reaching the query.
+- Added a real Express/authentication regression using an actual Cookie header.
+  It locks current-session marking, non-disclosure of the raw token, continued
+  authentication after rejected self-revoke, other-session revocation, bounded
+  selector validation, and current-session retention during 2FA confirmation.
+- Complete backend verification passed 809/816 with seven documented skips;
+  the complete integration suite, production builds, dependency audits, and
+  fixed-point Spec/Standards review are green.
+- Guarded bridge and active deployment passed public IMAPS and ActiveSync
+  Mail/Ping/Contacts/Calendar gates. Rollbacks are
+  `protocol-guarded-webmail-20260823T033609Z` and
+  `protocol-guarded-webmail-20260823T034320Z`. A live two-session canary marked
+  exactly one current, revoked only the other, rejected self/wildcard deletion
+  while preserving current authentication, logged out both, and left zero
+  canary session rows. Active service health, readiness, journals, and exact
+  source/deployed artifact hashes are clean.

@@ -1,5 +1,40 @@
 # Implementation State
 
+## 2026-08-22 Account Session Identity And Safe Revocation
+
+**Status: fixed, guarded-deployed in active mode, and verified with a live
+two-session lifecycle.** The account-session routes no longer inspect
+`req.cookies`, which this backend never populated. `requireSession` remains the
+single Cookie parser and attaches the authenticated raw opaque token as
+`req.user.sessionId`; the exported auth helper hashes it consistently for
+session listing, self-revocation protection, and two-factor confirmation.
+Listings expose only eight-character digest prefixes and identify exactly the
+current row. Revocation normalizes and requires exactly eight hexadecimal
+characters before any SQL prefix match, rejects the current session, and keeps
+other-session deletion owner-scoped.
+
+The real-router regression now sends an `oms_session` cookie through the actual
+authentication middleware, checks the exact non-secret response shape, proves
+self-revocation does not issue a delete and `/api/auth/me` remains authenticated,
+proves another session can still be revoked, rejects wildcard/non-hex/short/long
+selectors before SQL, and verifies 2FA retains the same authenticated digest.
+The complete backend suite passes 809 plus seven documented skips (816 total),
+and the complete repository integration suite remains green. Fixed-point Spec
+and Standards review found no remaining blocker after centralizing hashing and
+strengthening the seam.
+
+Guarded bridge and active releases passed pre/post public IMAPS and ActiveSync
+Mail/Ping/Contacts/Calendar gates. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260823T033609Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260823T034320Z`. A live
+canary created two web sessions, observed exactly one current row, revoked only
+the other session, received `400` for self-revocation and a malformed selector,
+and remained authenticated after both rejections. Both logout calls succeeded
+and the canary's final database session count is zero. The active backend has
+zero restarts and no warning-level release journal entries; local/public
+readiness is `401`, and deployed `api.js` and `auth.js` are byte-identical to
+the repository build.
+
 ## 2026-08-22 Webmail Folder And Message Context Menus
 
 **Status: guarded-deployed in active mode and verified through a disposable

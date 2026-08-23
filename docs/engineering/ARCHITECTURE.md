@@ -765,7 +765,7 @@ ACLs, and room membership are not yet implemented.
 
 ### 6.5 Backend architecture
 
-Status: `Authentication/session boundary verified 2026-07-29`
+Status: `Authentication/session boundary verified 2026-08-22`
 
 The modern backend stores opaque sessions in MariaDB and uses a Secure,
 HttpOnly, SameSite=Lax cookie. Production requires a preserved high-entropy
@@ -777,6 +777,16 @@ when 2FA is enabled. Internal Dovecot work uses delegated empty per-user
 credentials; protocol clients use either the mailbox password while 2FA is off
 or an app password while it is on. Mailbox verification supports current
 bcrypt hashes and bounded legacy SHA512-CRYPT verification.
+
+The authentication middleware is the single owner of the raw opaque web
+session token. It attaches that token to `req.user.sessionId`; account routes
+hash it through the same exported SHA-256 helper used by session persistence.
+Session listings disclose only the first eight hexadecimal characters of the
+stored digest and mark exactly the authenticated request's row as current.
+Revocation accepts only that fixed hexadecimal selector, remains scoped to the
+authenticated username, and rejects the current session before opening a
+delete connection. Two-factor confirmation uses the same identity when it
+retains the current session and revokes the others.
 
 Previously documented backend stack:
 

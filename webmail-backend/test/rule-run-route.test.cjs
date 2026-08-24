@@ -9,6 +9,14 @@ const appliedPlans = [];
 const invalidatedSnapshots = [];
 const deletedSearchRows = [];
 const copyResolutions = [];
+const ruleRunBatchCalls = [];
+const scopeUidValidity = new Map([
+  ['INBOX', '9001'],
+  ['INBOX/Projects', '9002'],
+  ['INBOX/Projects/2026', '9003'],
+  ['Finance', '9100'],
+  ['Ads', '9200'],
+]);
 let failNextApply = false;
 let blockNextApply = false;
 
@@ -106,18 +114,61 @@ require.cache[manageSievePath] = {
 
 const fakeImap = {
   async getFolders() {
-    return [{ path: 'INBOX' }, { path: 'Finance' }, { path: 'Ads' }];
+    return [
+      { path: 'INBOX', delimiter: '/' },
+      { path: 'INBOX/Projects', delimiter: '/' },
+      { path: 'INBOX/Projects/2026', delimiter: '/' },
+      { path: 'INBOX/Disabled', delimiter: '/', disabled: true },
+      { path: 'Finance', delimiter: '/' },
+      { path: 'Ads', delimiter: '/' },
+    ];
   },
-  async getRuleRunBatch(folder, cursor, maxUid) {
-    assert.equal(folder, 'INBOX');
-    assert.equal(cursor, 0);
-    assert.ok(maxUid === undefined || maxUid === 105);
+  async getFolderUidNext(folderPaths) {
     return {
-      maxUid: 105,
-      uidValidity: '9001',
-      nextCursor: 105,
-      done: true,
-      messages: [
+      uidNextByFolder: new Map(folderPaths.map(folder => [folder, ({
+        INBOX: 106,
+        'INBOX/Projects': 202,
+        'INBOX/Projects/2026': 302,
+        Finance: 1,
+        Ads: 1,
+      })[folder] || 1])),
+      uidValidityByFolder: new Map(folderPaths.map(folder => [folder, scopeUidValidity.get(folder) || '1'])),
+      failedFolders: [],
+    };
+  },
+  async getRuleRunBatch(folder, cursor, maxUid, _batchSize, _includeBody, readState = 'all') {
+    assert.equal(cursor, 0);
+    const folderMaxUid = {
+      INBOX: 105,
+      'INBOX/Projects': 201,
+      'INBOX/Projects/2026': 301,
+    }[folder];
+    assert.ok(maxUid === undefined || maxUid === folderMaxUid);
+    ruleRunBatchCalls.push({ folder, readState });
+    const messages = {
+      'INBOX/Projects': [{
+        uid: 201,
+        envelope: {
+          subject: 'Project statement is available',
+          from: [{ address: 'project@example.test' }],
+          to: [{ address: user }],
+        },
+        size: 500,
+        sourceComplete: true,
+        seen: false,
+      }],
+      'INBOX/Projects/2026': [{
+        uid: 301,
+        envelope: {
+          subject: 'Archived statement is available',
+          from: [{ address: 'archive@example.test' }],
+          to: [{ address: user }],
+        },
+        size: 500,
+        sourceComplete: true,
+        seen: true,
+      }],
+      INBOX: [
         {
           uid: 101,
           envelope: {
@@ -127,6 +178,7 @@ const fakeImap = {
           },
           size: 500,
           sourceComplete: true,
+          seen: false,
         },
         {
           uid: 102,
@@ -137,6 +189,7 @@ const fakeImap = {
           },
           size: 500,
           sourceComplete: true,
+          seen: true,
         },
         {
           uid: 103,
@@ -147,6 +200,7 @@ const fakeImap = {
           },
           size: 500,
           sourceComplete: true,
+          seen: false,
         },
         {
           uid: 104,
@@ -157,6 +211,7 @@ const fakeImap = {
           },
           size: 2 * 1024 * 1024,
           sourceComplete: false,
+          seen: true,
         },
         {
           uid: 105,
@@ -167,8 +222,20 @@ const fakeImap = {
           },
           size: 2 * 1024 * 1024,
           sourceComplete: false,
+          seen: false,
         },
       ],
+    }[folder] || [];
+    const selectedMessages = messages.filter(message => (
+      readState === 'all'
+      || (readState === 'read' ? message.seen : !message.seen)
+    ));
+    return {
+      maxUid: folderMaxUid,
+      uidValidity: scopeUidValidity.get(folder) || '1',
+      nextCursor: folderMaxUid,
+      done: true,
+      messages: selectedMessages,
     };
   },
   async applyRuleMoves(folder, plans) {
@@ -331,6 +398,197 @@ test('rule-run preview evaluates only the selected saved rules', async t => {
   assert.deepEqual(response.json.ruleMatches, [{ id: 'ads', name: 'Ads', count: 1 }]);
   assert.equal(response.json.deliveryOnlyMatches, 0);
   assert.equal(response.json.bodySkippedMessages, 0);
+});
+
+test('rule-run pages through selectable subfolders with one unread scope snapshot', async t => {
+  const port = await startServer(t);
+  const callsBefore = ruleRunBatchCalls.length;
+  const first = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['finance'],
+    includeSubfolders: true,
+    readState: 'unread',
+  });
+
+  assert.equal(first.status, 200);
+  assert.equal(first.json.sourceFolder, 'INBOX');
+  assert.equal(first.json.processed, 3);
+  assert.equal(first.json.affectedMessages, 1);
+  assert.equal(first.json.scopeIndex, 1);
+  assert.equal(first.json.cursor, 0);
+  assert.equal(first.json.done, false);
+  assert.deepEqual(first.json.scopeSnapshot, [
+    { folder: 'INBOX', maxUid: 105, uidValidity: '9001' },
+    { folder: 'INBOX/Projects', maxUid: 201, uidValidity: '9002' },
+    { folder: 'INBOX/Projects/2026', maxUid: 301, uidValidity: '9003' },
+  ]);
+
+  const second = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: first.json.cursor,
+    scopeIndex: first.json.scopeIndex,
+    scopeSnapshot: first.json.scopeSnapshot,
+    ruleRevision: first.json.ruleRevision,
+    ruleIds: ['finance'],
+    includeSubfolders: true,
+    readState: 'unread',
+  });
+  assert.equal(second.status, 200);
+  assert.equal(second.json.sourceFolder, 'INBOX/Projects');
+  assert.equal(second.json.processed, 1);
+  assert.equal(second.json.affectedMessages, 1);
+  assert.equal(second.json.scopeIndex, 2);
+  assert.equal(second.json.cursor, 0);
+  assert.equal(second.json.done, false);
+
+  const third = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: second.json.cursor,
+    scopeIndex: second.json.scopeIndex,
+    scopeSnapshot: second.json.scopeSnapshot,
+    ruleRevision: second.json.ruleRevision,
+    ruleIds: ['finance'],
+    includeSubfolders: true,
+    readState: 'unread',
+  });
+  assert.equal(third.status, 200);
+  assert.equal(third.json.sourceFolder, 'INBOX/Projects/2026');
+  assert.equal(third.json.processed, 0);
+  assert.equal(third.json.done, true);
+  assert.deepEqual(ruleRunBatchCalls.slice(callsBefore), [
+    { folder: 'INBOX', readState: 'unread' },
+    { folder: 'INBOX/Projects', readState: 'unread' },
+    { folder: 'INBOX/Projects/2026', readState: 'unread' },
+  ]);
+});
+
+test('rule-run applies the previewed unread scope in folder order', async t => {
+  const port = await startServer(t);
+  const plansBefore = appliedPlans.length;
+  const previewPages = [];
+  let previewRequest = {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['finance', 'ads'],
+    includeSubfolders: true,
+    readState: 'unread',
+  };
+  while (true) {
+    const page = await requestJson(port, previewRequest);
+    assert.equal(page.status, 200);
+    previewPages.push(page.json);
+    if (page.json.done) break;
+    previewRequest = {
+      ...previewRequest,
+      cursor: page.json.cursor,
+      scopeIndex: page.json.scopeIndex,
+      scopeSnapshot: page.json.scopeSnapshot,
+      ruleRevision: page.json.ruleRevision,
+    };
+  }
+
+  const snapshot = previewPages[0].scopeSnapshot;
+  const revision = previewPages[0].ruleRevision;
+  const applyPages = [];
+  let applyRequest = {
+    folder: 'INBOX',
+    mode: 'apply',
+    cursor: 0,
+    ruleIds: ['finance', 'ads'],
+    includeSubfolders: true,
+    readState: 'unread',
+    scopeIndex: 0,
+    scopeSnapshot: snapshot,
+    ruleRevision: revision,
+  };
+  while (true) {
+    const page = await requestJson(port, applyRequest);
+    assert.equal(page.status, 200);
+    applyPages.push(page.json);
+    if (page.json.done) break;
+    applyRequest = {
+      ...applyRequest,
+      cursor: page.json.cursor,
+      scopeIndex: page.json.scopeIndex,
+    };
+  }
+
+  assert.deepEqual(applyPages.map(page => ({
+    sourceFolder: page.sourceFolder,
+    appliedMessages: page.appliedMessages,
+  })), [
+    { sourceFolder: 'INBOX', appliedMessages: 1 },
+    { sourceFolder: 'INBOX/Projects', appliedMessages: 1 },
+    { sourceFolder: 'INBOX/Projects/2026', appliedMessages: 0 },
+  ]);
+  assert.deepEqual(appliedPlans.slice(plansBefore), [
+    { folder: 'INBOX', plans: [{ uid: 101, moveFolders: ['Finance'] }] },
+    { folder: 'INBOX/Projects', plans: [{ uid: 201, moveFolders: ['Finance'] }] },
+    { folder: 'INBOX/Projects/2026', plans: [] },
+  ]);
+});
+
+test('rule-run preflights every previewed folder before the first scoped mutation', async t => {
+  const port = await startServer(t);
+  const preview = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['finance'],
+    includeSubfolders: true,
+    readState: 'unread',
+  });
+  assert.equal(preview.status, 200);
+
+  const priorValidity = scopeUidValidity.get('INBOX/Projects');
+  t.after(() => scopeUidValidity.set('INBOX/Projects', priorValidity));
+  scopeUidValidity.set('INBOX/Projects', '9999');
+  const plansBefore = appliedPlans.length;
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'apply',
+    cursor: 0,
+    ruleIds: ['finance'],
+    includeSubfolders: true,
+    readState: 'unread',
+    scopeIndex: 0,
+    scopeSnapshot: preview.json.scopeSnapshot,
+    ruleRevision: preview.json.ruleRevision,
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.json.error, 'A source folder changed since preview. Preview again before applying.');
+  assert.equal(appliedPlans.length, plansBefore);
+});
+
+test('rule-run binds read-state selection to the preview revision', async t => {
+  const port = await startServer(t);
+  const preview = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['finance'],
+    readState: 'unread',
+  });
+  const plansBefore = appliedPlans.length;
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'apply',
+    cursor: 0,
+    ruleIds: ['finance'],
+    readState: 'read',
+    scopeSnapshot: preview.json.scopeSnapshot,
+    ruleRevision: preview.json.ruleRevision,
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.json.error, 'Rules or selection changed since preview. Preview again before applying.');
+  assert.equal(appliedPlans.length, plansBefore);
 });
 
 test('rule-run accepts the stable fallback identity of a legacy saved rule', async t => {
@@ -601,4 +859,26 @@ test('rule-run rejects unknown source folders', async t => {
 
   assert.equal(response.status, 400);
   assert.equal(response.json.error, 'Choose an existing source folder.');
+});
+
+test('rule-run rejects malformed message-scope fields', async t => {
+  const port = await startServer(t);
+  const invalidBodies = [
+    { folder: 'INBOX', mode: 'preview', includeSubfolders: 'yes' },
+    { folder: 'INBOX', mode: 'preview', readState: 'new' },
+    {
+      folder: 'INBOX',
+      mode: 'preview',
+      scopeSnapshot: [
+        { folder: 'INBOX', maxUid: 105, uidValidity: '9001' },
+        { folder: 'INBOX', maxUid: 105, uidValidity: '9001' },
+      ],
+    },
+  ];
+
+  for (const body of invalidBodies) {
+    const response = await requestJson(port, body);
+    assert.equal(response.status, 400);
+    assert.equal(response.json.error, 'Invalid rule-run request.');
+  }
 });

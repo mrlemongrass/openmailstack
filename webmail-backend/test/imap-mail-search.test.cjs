@@ -267,6 +267,28 @@ test('rule runs page through a stable folder UID snapshot', async () => {
   assert.equal(calls[2].query.source, undefined);
 });
 
+test('rule runs constrain the stable UID snapshot by read state', async () => {
+  const searches = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async mailboxOpen() { return { uidNext: 51, uidValidity: 9001n }; },
+    async mailboxClose() {},
+    async search(query) {
+      searches.push(query);
+      return [];
+    },
+    async *fetch() {},
+  };
+
+  await service.getRuleRunBatch('INBOX', 0, 50, 200, false, 'unread');
+  await service.getRuleRunBatch('INBOX', 0, 50, 200, false, 'read');
+
+  assert.deepEqual(searches, [
+    { uid: '1:50', seen: false },
+    { uid: '1:50', seen: true },
+  ]);
+});
+
 test('rule-run paging bounds each IMAP search window in sparse large mailboxes', async () => {
   const searches = [];
   const service = Object.create(ImapService.prototype);

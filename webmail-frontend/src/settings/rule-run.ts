@@ -1,5 +1,12 @@
 import { runRulesPage } from '../shared/api';
-import type { Rule, RuleMatchCount, RuleRunCount, RuleRunPageResponse } from '../shared/types';
+import type {
+  Rule,
+  RuleMatchCount,
+  RuleRunCount,
+  RuleRunPageResponse,
+  RuleRunReadState,
+  RuleRunScopeSnapshot,
+} from '../shared/types';
 
 type RuleIdentitySource = Pick<Rule, 'id' | 'name' | 'enabled'> & {
   id?: string;
@@ -33,6 +40,10 @@ export function normalizeRuleRunSelection(
 
 export interface RuleRunSummary {
   folder: string;
+  sourceFolder: string;
+  includeSubfolders: boolean;
+  readState: RuleRunReadState;
+  scopeSnapshot: RuleRunScopeSnapshot[];
   mode: 'preview' | 'apply';
   processed: number;
   matchedMessages: number;
@@ -53,6 +64,9 @@ export interface RuleRunSummary {
 interface RunRulesOptions {
   folder: string;
   mode: 'preview' | 'apply';
+  includeSubfolders?: boolean;
+  readState?: RuleRunReadState;
+  scopeSnapshot?: RuleRunScopeSnapshot[];
   ruleIds?: string[];
   maxUid?: number;
   uidValidity?: string;
@@ -66,6 +80,9 @@ interface RunRulesOptions {
 export async function runRulesThroughFolder({
   folder,
   mode,
+  includeSubfolders = false,
+  readState = 'all',
+  scopeSnapshot,
   ruleIds,
   maxUid,
   uidValidity,
@@ -79,11 +96,17 @@ export async function runRulesThroughFolder({
   let snapshotMaxUid = maxUid;
   let snapshotUidValidity = uidValidity;
   let snapshotRuleRevision = ruleRevision;
+  let snapshotFolders = scopeSnapshot;
+  let scopeIndex = 0;
   const ruleMatches = new Map<string, RuleMatchCount>();
   const destinations = new Map<string, RuleRunCount>();
   const invalidDestinations = new Set<string>();
   const summary: RuleRunSummary = {
     folder,
+    sourceFolder: folder,
+    includeSubfolders,
+    readState,
+    scopeSnapshot: snapshotFolders || [],
     mode,
     processed: 0,
     matchedMessages: 0,
@@ -102,20 +125,36 @@ export async function runRulesThroughFolder({
   };
 
   for (let pageNumber = 0; pageNumber < 10000; pageNumber += 1) {
+    const usesScopeSnapshot = Boolean(snapshotFolders?.length);
     const request = {
       folder,
       mode,
       cursor,
+      ...(includeSubfolders ? { includeSubfolders: true } : {}),
+      ...(readState === 'all' ? {} : { readState }),
+      ...(usesScopeSnapshot ? { scopeIndex, scopeSnapshot: snapshotFolders } : {}),
       ...(ruleIds === undefined ? {} : { ruleIds }),
-      ...(snapshotMaxUid === undefined ? {} : { maxUid: snapshotMaxUid }),
-      ...(snapshotUidValidity ? { uidValidity: snapshotUidValidity } : {}),
+      ...(usesScopeSnapshot || snapshotMaxUid === undefined ? {} : { maxUid: snapshotMaxUid }),
+      ...(usesScopeSnapshot || !snapshotUidValidity ? {} : { uidValidity: snapshotUidValidity }),
       ...(snapshotRuleRevision ? { ruleRevision: snapshotRuleRevision } : {}),
       ...(copyResolution ? { copyResolution } : {}),
       ...(copyActionKeys?.length ? { copyActionKeys } : {}),
     };
     const page: RuleRunPageResponse = await runRulesPage(request, signal);
+    const pageScopeSnapshot = Array.isArray(page.scopeSnapshot) ? page.scopeSnapshot : undefined;
+    if ((includeSubfolders || readState !== 'all') && !pageScopeSnapshot) {
+      throw new Error('The server does not support this folder scope yet. Refresh after the server update completes.');
+    }
+    if (
+      snapshotFolders
+      && pageScopeSnapshot
+      && JSON.stringify(pageScopeSnapshot) !== JSON.stringify(snapshotFolders)
+    ) {
+      throw new Error('The folder scope changed during this run. Preview again before applying.');
+    }
+    snapshotFolders = pageScopeSnapshot || snapshotFolders;
     snapshotMaxUid = page.maxUid;
-    if (snapshotUidValidity && page.uidValidity !== snapshotUidValidity) {
+    if (!snapshotFolders && snapshotUidValidity && page.uidValidity !== snapshotUidValidity) {
       throw new Error('The source folder changed during this run. Preview again before applying.');
     }
     snapshotUidValidity = page.uidValidity;
@@ -125,6 +164,10 @@ export async function runRulesThroughFolder({
     snapshotRuleRevision = page.ruleRevision;
 
     summary.processed += page.processed;
+    summary.sourceFolder = page.sourceFolder || page.folder;
+    summary.includeSubfolders = page.includeSubfolders ?? includeSubfolders;
+    summary.readState = page.readState || readState;
+    summary.scopeSnapshot = snapshotFolders || [];
     summary.matchedMessages += page.matchedMessages;
     summary.affectedMessages += page.affectedMessages;
     summary.appliedMessages += page.appliedMessages;
@@ -159,7 +202,11 @@ export async function runRulesThroughFolder({
     onProgress?.({ ...summary });
 
     if (page.done) return summary;
-    if (page.cursor <= cursor) throw new Error('Rule run stopped because mailbox progress stalled.');
+    const nextScopeIndex = Number.isInteger(page.scopeIndex) ? Number(page.scopeIndex) : scopeIndex;
+    if (nextScopeIndex === scopeIndex && page.cursor <= cursor) {
+      throw new Error('Rule run stopped because mailbox progress stalled.');
+    }
+    scopeIndex = nextScopeIndex;
     cursor = page.cursor;
   }
 

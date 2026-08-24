@@ -2274,6 +2274,94 @@ body {
   font-size: var(--font-size-2xs);
 }
 
+.rule-run-scope {
+  gap: 12px;
+}
+
+.rule-run-scope .settings-field {
+  gap: 6px;
+}
+
+.rule-run-scope-toggle {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  padding: 10px 11px;
+  cursor: pointer;
+}
+
+.rule-run-scope-toggle.disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.rule-run-scope-toggle > span,
+.rule-run-scope-toggle strong,
+.rule-run-scope-toggle small {
+  min-width: 0;
+  display: block;
+}
+
+.rule-run-scope-toggle strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.rule-run-scope-toggle small {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+}
+
+.rule-run-read-state {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.rule-run-read-state label {
+  min-width: 0;
+  position: relative;
+  cursor: pointer;
+}
+
+.rule-run-read-state input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.rule-run-read-state span {
+  min-height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  padding: 7px 9px;
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  text-align: center;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.rule-run-read-state input:checked + span {
+  border-color: color-mix(in srgb, var(--accent-primary) 68%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+  color: var(--text-primary);
+}
+
+.rule-run-read-state input:focus-visible + span {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
 .rule-run-picker-toolbar {
   display: flex;
   align-items: center;
@@ -2397,6 +2485,25 @@ body {
 .rule-run-summary {
   display: grid;
   gap: 16px;
+}
+
+.rule-run-scope-summary {
+  display: grid;
+  gap: 3px;
+  border-left: 3px solid var(--accent-primary);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--bg-glass);
+  padding: 10px 12px;
+}
+
+.rule-run-scope-summary strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.rule-run-scope-summary span {
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
 }
 
 .rule-run-metrics {

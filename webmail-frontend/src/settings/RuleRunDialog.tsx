@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Play, X } from 'lucide-react';
-import type { MailFolder, Rule } from '../shared/types';
+import type { MailFolder, Rule, RuleRunReadState } from '../shared/types';
 import { useModalFocus } from '../shared/hooks/useModalFocus';
 import {
   getRunnableRuleIds,
@@ -27,10 +27,13 @@ export function RuleRunDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const latestProgressRef = useRef<RuleRunSummary | null>(null);
-  const inbox = folders.find(folder => folder.path.toUpperCase() === 'INBOX');
+  const selectableFolders = folders.filter(folder => folder.disabled !== true);
+  const inbox = selectableFolders.find(folder => folder.path.toUpperCase() === 'INBOX');
   const ruleSelectors = getRuleRunSelectors(rules);
   const runnableRuleIds = getRunnableRuleIds(rules);
-  const [folder, setFolder] = useState(inbox?.path || folders[0]?.path || 'INBOX');
+  const [folder, setFolder] = useState(inbox?.path || selectableFolders[0]?.path || 'INBOX');
+  const [includeSubfolders, setIncludeSubfolders] = useState(false);
+  const [readState, setReadState] = useState<RuleRunReadState>('all');
   const [selectedRuleIds, setSelectedRuleIds] = useState(() => (
     normalizeRuleRunSelection(rules, initialRuleIds)
   ));
@@ -43,6 +46,11 @@ export function RuleRunDialog({
   const [needsCopyResolution, setNeedsCopyResolution] = useState(false);
   const [pendingCopies, setPendingCopies] = useState<PendingCopy[]>([]);
   const busy = phase === 'previewing' || phase === 'applying';
+  const selectedFolder = selectableFolders.find(item => item.path === folder);
+  const childPrefix = selectedFolder?.delimiter ? `${folder}${selectedFolder.delimiter}` : '';
+  const subfolderCount = childPrefix
+    ? selectableFolders.filter(item => item.path.startsWith(childPrefix)).length
+    : 0;
 
   const requestClose = useCallback(() => {
     if (phase === 'previewing') {
@@ -77,12 +85,17 @@ export function RuleRunDialog({
       const summary = await runRulesThroughFolder({
         folder,
         mode,
+        includeSubfolders: mode === 'apply' && preview
+          ? preview.includeSubfolders
+          : includeSubfolders,
+        readState: mode === 'apply' && preview ? preview.readState : readState,
         ruleIds: selectedRuleIds,
         ...(mode === 'apply' && preview
           ? {
               maxUid: preview.maxUid,
               uidValidity: preview.uidValidity,
               ruleRevision: preview.ruleRevision,
+              scopeSnapshot: preview.scopeSnapshot,
             }
           : {}),
         ...(copyResolution ? { copyResolution } : {}),
@@ -150,6 +163,12 @@ export function RuleRunDialog({
     counts.set(copy.destination, (counts.get(copy.destination) || 0) + 1);
     return counts;
   }, new Map());
+  const previewReadLabel = preview?.readState === 'unread'
+    ? 'Unread messages'
+    : preview?.readState === 'read'
+      ? 'Read messages'
+      : 'All messages';
+  const resultScopeCount = result?.scopeSnapshot.length || 1;
 
   return (
     <div className="modal-overlay rule-run-overlay">
@@ -243,18 +262,62 @@ export function RuleRunDialog({
                 </div>
                 <small>Selected rules keep their saved top-to-bottom order.</small>
               </fieldset>
-              <label className="settings-field">
-                <span>Folder to process</span>
-                <select
-                  className="glass-input glass-select"
-                  aria-label="Source folder"
-                  value={folder}
-                  onChange={event => setFolder(event.target.value)}
-                >
-                  {folders.map(item => <option key={item.path} value={item.path}>{item.path}</option>)}
-                </select>
-                <small>Only messages already in this folder are included.</small>
-              </label>
+              <fieldset className="rule-run-picker rule-run-scope">
+                <legend>Message scope</legend>
+                <label className="settings-field">
+                  <span>Folder to process</span>
+                  <select
+                    className="glass-input glass-select"
+                    aria-label="Source folder"
+                    value={folder}
+                    onChange={event => {
+                      setFolder(event.target.value);
+                      setIncludeSubfolders(false);
+                    }}
+                  >
+                    {selectableFolders.map(item => (
+                      <option key={item.path} value={item.path}>{item.path}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className={`rule-run-scope-toggle ${subfolderCount === 0 ? 'disabled' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={includeSubfolders}
+                    disabled={subfolderCount === 0}
+                    onChange={event => setIncludeSubfolders(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Include subfolders</strong>
+                    <small>
+                      {subfolderCount > 0
+                        ? `${subfolderCount} subfolder${subfolderCount === 1 ? '' : 's'} available`
+                        : 'No subfolders below this folder'}
+                    </small>
+                  </span>
+                </label>
+                <div className="rule-run-read-state" role="radiogroup" aria-label="Messages to process">
+                  {([
+                    ['all', 'All messages'],
+                    ['unread', 'Unread'],
+                    ['read', 'Read'],
+                  ] as Array<[RuleRunReadState, string]>).map(([value, label]) => (
+                    <label key={value}>
+                      <input
+                        type="radio"
+                        name="rule-run-read-state"
+                        value={value}
+                        checked={readState === value}
+                        onChange={() => setReadState(value)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <small>
+                  Messages arriving after Preview are excluded. Read status is checked again during Apply.
+                </small>
+              </fieldset>
               <div className="rule-run-safety-note">
                 <AlertTriangle size={17} />
                 <div>
@@ -269,7 +332,10 @@ export function RuleRunDialog({
             <div className="rule-run-progress" role="status" aria-live="polite">
               <div className="spinner" />
               <strong>{phase === 'previewing' ? 'Checking messages…' : 'Applying rules…'}</strong>
-              <span>{progress?.processed || 0} messages processed in {folder}</span>
+              <span>
+                {progress?.processed || 0} messages processed
+                {' · '}{progress?.sourceFolder || folder}
+              </span>
               {phase === 'previewing' ? (
                 <button className="btn btn-ghost" type="button" onClick={() => controllerRef.current?.abort()}>
                   Stop preview
@@ -282,6 +348,13 @@ export function RuleRunDialog({
 
           {phase === 'preview' && preview && (
             <div className="rule-run-summary" aria-live="polite">
+              <div className="rule-run-scope-summary">
+                <strong>{previewReadLabel} in {preview.folder}</strong>
+                <span>
+                  {preview.scopeSnapshot.length} folder{preview.scopeSnapshot.length === 1 ? '' : 's'} snapshotted
+                  {preview.includeSubfolders ? ', including subfolders' : ''}
+                </span>
+              </div>
               <div className="rule-run-metrics">
                 <div><strong>{preview.processed}</strong><span>Scanned</span></div>
                 <div><strong>{preview.matchedMessages}</strong><span>Matched</span></div>
@@ -343,7 +416,8 @@ export function RuleRunDialog({
               <CheckCircle2 size={34} />
               <h3>{stopped ? 'Rule run stopped' : 'Rules applied'}</h3>
               <p>
-                {result.appliedMessages} message{result.appliedMessages === 1 ? '' : 's'} processed with Move actions in {folder}.
+                {result.appliedMessages} message{result.appliedMessages === 1 ? '' : 's'} processed with Move actions
+                {' '}across {resultScopeCount} folder{resultScopeCount === 1 ? '' : 's'}.
               </p>
               {stopped && <span>You can safely run another preview to process what remains.</span>}
             </div>
@@ -378,7 +452,7 @@ export function RuleRunDialog({
                   setPhase('choose');
                 }}
               >
-                Change rules or folder
+                  Change scope or rules
               </button>
               {needsCopyResolution ? (
                 <>

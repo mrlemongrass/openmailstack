@@ -82,7 +82,7 @@ export declare class ImapService {
         lowestUid: number;
         moreAvailable: boolean;
     }>;
-    getRuleRunBatch(folderPath: string, cursor?: number, maxUid?: number, batchSize?: number, includeBody?: boolean): Promise<{
+    getRuleRunBatch(folderPath: string, cursor?: number, maxUid?: number, batchSize?: number, includeBody?: boolean, readState?: 'all' | 'unread' | 'read'): Promise<{
         messages: RuleRunRawMessage[];
         nextCursor: number;
         maxUid: number;

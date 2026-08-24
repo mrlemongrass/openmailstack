@@ -542,6 +542,7 @@ export class ImapService {
         maxUid?: number,
         batchSize = 100,
         includeBody = false,
+        readState: 'all' | 'unread' | 'read' = 'all',
     ) {
         const mbx = await this.client.mailboxOpen(folderPath);
         try {
@@ -563,10 +564,10 @@ export class ImapService {
                 snapshotMaxUid,
                 cursor + Math.max(200, cappedBatchSize * 4),
             );
-            const found = await this.client.search(
-                { uid: `${Math.max(1, cursor + 1)}:${scanEnd}` },
-                { uid: true },
-            );
+            const searchQuery: any = { uid: `${Math.max(1, cursor + 1)}:${scanEnd}` };
+            if (readState === 'unread') searchQuery.seen = false;
+            if (readState === 'read') searchQuery.seen = true;
+            const found = await this.client.search(searchQuery, { uid: true });
             const candidates = (Array.isArray(found) ? found : [])
                 .filter(uid => uid > cursor && uid <= scanEnd)
                 .sort((a, b) => a - b);

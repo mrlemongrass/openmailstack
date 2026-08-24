@@ -112,6 +112,112 @@ test('folder rule runs aggregate paged results against one stable snapshot', asy
   assert.deepEqual(progress, [200, 380]);
 });
 
+test('scoped rule runs carry the server folder snapshot and read state across folders', async () => {
+  const scopeSnapshot = [
+    { folder: 'INBOX', maxUid: 105, uidValidity: '9001' },
+    { folder: 'INBOX/Projects', maxUid: 201, uidValidity: '9002' },
+  ];
+  const pages = [
+    {
+      success: true,
+      mode: 'preview',
+      folder: 'INBOX',
+      sourceFolder: 'INBOX',
+      includeSubfolders: true,
+      readState: 'unread',
+      scopeSnapshot,
+      scopeIndex: 1,
+      processed: 3,
+      matchedMessages: 1,
+      affectedMessages: 1,
+      appliedMessages: 0,
+      copiedMessages: 0,
+      movedMessages: 0,
+      deliveryOnlyMatches: 0,
+      bodySkippedMessages: 0,
+      invalidDestinations: [],
+      ruleMatches: [{ id: 'finance', name: 'Finance', count: 1 }],
+      destinations: [{ folder: 'Finance', count: 1 }],
+      ruleRevision: 'scoped-rules-v1',
+      cursor: 0,
+      maxUid: 105,
+      uidValidity: '9001',
+      done: false,
+    },
+    {
+      success: true,
+      mode: 'preview',
+      folder: 'INBOX',
+      sourceFolder: 'INBOX/Projects',
+      includeSubfolders: true,
+      readState: 'unread',
+      scopeSnapshot,
+      scopeIndex: 1,
+      processed: 1,
+      matchedMessages: 1,
+      affectedMessages: 1,
+      appliedMessages: 0,
+      copiedMessages: 0,
+      movedMessages: 0,
+      deliveryOnlyMatches: 0,
+      bodySkippedMessages: 0,
+      invalidDestinations: [],
+      ruleMatches: [{ id: 'finance', name: 'Finance', count: 1 }],
+      destinations: [{ folder: 'Finance', count: 1 }],
+      ruleRevision: 'scoped-rules-v1',
+      cursor: 201,
+      maxUid: 201,
+      uidValidity: '9002',
+      done: true,
+    },
+  ];
+  const requests = [];
+  const { runRulesThroughFolder } = loadTypeScriptModule('../src/settings/rule-run.ts', {
+    '../shared/api': {
+      runRulesPage: async request => {
+        requests.push(request);
+        return pages.shift();
+      },
+    },
+  });
+
+  const summary = await runRulesThroughFolder({
+    folder: 'INBOX',
+    mode: 'preview',
+    ruleIds: ['finance'],
+    includeSubfolders: true,
+    readState: 'unread',
+  });
+
+  assert.deepEqual(requests, [
+    {
+      folder: 'INBOX',
+      mode: 'preview',
+      cursor: 0,
+      ruleIds: ['finance'],
+      includeSubfolders: true,
+      readState: 'unread',
+    },
+    {
+      folder: 'INBOX',
+      mode: 'preview',
+      cursor: 0,
+      scopeIndex: 1,
+      scopeSnapshot,
+      ruleRevision: 'scoped-rules-v1',
+      ruleIds: ['finance'],
+      includeSubfolders: true,
+      readState: 'unread',
+    },
+  ]);
+  assert.equal(summary.processed, 4);
+  assert.equal(summary.affectedMessages, 2);
+  assert.equal(summary.includeSubfolders, true);
+  assert.equal(summary.readState, 'unread');
+  assert.equal(summary.sourceFolder, 'INBOX/Projects');
+  assert.deepEqual(summary.scopeSnapshot, scopeSnapshot);
+});
+
 test('rule-run selection keeps saved order and supports legacy identities', () => {
   const {
     getRunnableRuleIds,
@@ -254,6 +360,14 @@ test('filters expose ordered priority, stop processing, and preview-first folder
   assert.match(panelSource, /<RuleDuplicateReviewDialog/);
   assert.match(dialogSource, /aria-labelledby="rule-run-title"/);
   assert.match(dialogSource, /aria-label="Source folder"/);
+  assert.match(dialogSource, /Message scope/);
+  assert.match(dialogSource, /Include subfolders/);
+  assert.match(dialogSource, /All messages/);
+  assert.match(dialogSource, /Unread/);
+  assert.match(dialogSource, /Read/);
+  assert.match(dialogSource, /includeSubfolders/);
+  assert.match(dialogSource, /readState/);
+  assert.match(dialogSource, /scopeSnapshot: preview\.scopeSnapshot/);
   assert.match(dialogSource, /Rules to run/);
   assert.match(dialogSource, /selectedRuleIds/);
   assert.match(dialogSource, /Select all/);

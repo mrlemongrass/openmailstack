@@ -1251,6 +1251,23 @@ const ruleSelectionIds = (rules) => {
         return identities;
     return rules.map((_rule, index) => `rule-${index + 1}`);
 };
+const MAX_RULE_RUN_SCOPE_FOLDERS = 500;
+function resolveRuleRunScope(folders, rootFolder, includeSubfolders) {
+    const root = folders.find(folder => (String(folder?.path || '') === rootFolder
+        && folder?.disabled !== true));
+    if (!root)
+        return [];
+    if (!includeSubfolders || typeof root.delimiter !== 'string' || !root.delimiter) {
+        return [rootFolder];
+    }
+    const childPrefix = `${rootFolder}${root.delimiter}`;
+    const descendants = folders
+        .filter(folder => (folder?.disabled !== true
+        && String(folder?.path || '').startsWith(childPrefix)))
+        .map(folder => String(folder.path))
+        .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+    return [rootFolder, ...descendants];
+}
 const envelopeAddressText = (addresses) => (Array.isArray(addresses)
     ? addresses
         .map(address => {
@@ -1285,7 +1302,22 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
     const pass = req.user.password;
     const folder = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';
     const mode = req.body?.mode === 'apply' ? 'apply' : req.body?.mode === 'preview' ? 'preview' : '';
+    const includeSubfolders = req.body?.includeSubfolders === true;
+    const readState = req.body?.readState === 'unread'
+        ? 'unread'
+        : req.body?.readState === 'read'
+            ? 'read'
+            : 'all';
     const cursor = req.body?.cursor === undefined ? 0 : Number(req.body.cursor);
+    const requestedScopeIndex = req.body?.scopeIndex === undefined ? 0 : Number(req.body.scopeIndex);
+    const hasRequestedScopeSnapshot = req.body?.scopeSnapshot !== undefined;
+    const requestedScopeSnapshot = Array.isArray(req.body?.scopeSnapshot)
+        ? req.body.scopeSnapshot.map((entry) => ({
+            folder: typeof entry?.folder === 'string' ? entry.folder : '',
+            maxUid: typeof entry?.maxUid === 'number' ? entry.maxUid : Number.NaN,
+            uidValidity: typeof entry?.uidValidity === 'string' ? entry.uidValidity : '',
+        }))
+        : [];
     const hasRequestedRuleIds = req.body?.ruleIds !== undefined;
     const requestedRuleIds = Array.isArray(req.body?.ruleIds)
         ? req.body.ruleIds.map((value) => typeof value === 'string' ? value : '')
@@ -1308,8 +1340,24 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
     if (!folder
         || folder.length > 512
         || !mode
+        || (req.body?.includeSubfolders !== undefined && typeof req.body.includeSubfolders !== 'boolean')
+        || (req.body?.readState !== undefined
+            && !['all', 'unread', 'read'].includes(req.body.readState))
         || !Number.isInteger(cursor)
         || cursor < 0
+        || !Number.isInteger(requestedScopeIndex)
+        || requestedScopeIndex < 0
+        || (hasRequestedScopeSnapshot
+            && (!Array.isArray(req.body.scopeSnapshot)
+                || requestedScopeSnapshot.length < 1
+                || requestedScopeSnapshot.length > MAX_RULE_RUN_SCOPE_FOLDERS
+                || requestedScopeSnapshot.some(entry => (!entry.folder
+                    || entry.folder.length > 512
+                    || /[\u0000-\u001f\u007f]/.test(entry.folder)
+                    || !Number.isInteger(entry.maxUid)
+                    || entry.maxUid < 0
+                    || !/^\d{1,64}$/.test(entry.uidValidity)))
+                || new Set(requestedScopeSnapshot.map(entry => entry.folder)).size !== requestedScopeSnapshot.length))
         || (hasRequestedRuleIds
             && (!Array.isArray(req.body.ruleIds)
                 || requestedRuleIds.length < 1
@@ -1329,18 +1377,83 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
         || (copyResolution && copyActionKeys.length === 0)
         || (!copyResolution && copyActionKeys.length > 0)
         || (copyResolution && mode !== 'apply')
-        || (cursor > 0 && (!requestedRuleRevision || !requestedUidValidity))
-        || (mode === 'apply' && (requestedMaxUid === undefined
-            || !requestedUidValidity
-            || !requestedRuleRevision))) {
+        || (cursor > 0 && (!requestedRuleRevision
+            || (!hasRequestedScopeSnapshot && !requestedUidValidity)))
+        || (requestedScopeIndex > 0 && (!hasRequestedScopeSnapshot || !requestedRuleRevision))
+        || (includeSubfolders
+            && (mode === 'apply' || cursor > 0 || requestedScopeIndex > 0)
+            && !hasRequestedScopeSnapshot)
+        || (mode === 'apply' && (!requestedRuleRevision
+            || (!hasRequestedScopeSnapshot && (requestedMaxUid === undefined
+                || !requestedUidValidity))))) {
         return res.status(400).json({ success: false, error: 'Invalid rule-run request.' });
     }
     try {
         const imap = await getPooledImap(user, pass);
         const folders = await imap.getFolders();
-        const folderPaths = new Set(folders.map((candidate) => String(candidate.path || '')));
-        if (!folderPaths.has(folder)) {
+        const scopeFolders = resolveRuleRunScope(folders, folder, includeSubfolders);
+        if (scopeFolders.length === 0) {
             return res.status(400).json({ success: false, error: 'Choose an existing source folder.' });
+        }
+        if (scopeFolders.length > MAX_RULE_RUN_SCOPE_FOLDERS) {
+            return res.status(409).json({
+                success: false,
+                error: `This folder scope contains more than ${MAX_RULE_RUN_SCOPE_FOLDERS} folders. Choose a narrower source folder.`,
+            });
+        }
+        const folderPaths = new Set(folders
+            .filter((candidate) => candidate?.disabled !== true)
+            .map((candidate) => String(candidate.path || '')));
+        if (hasRequestedScopeSnapshot
+            && (requestedScopeSnapshot.length !== scopeFolders.length
+                || requestedScopeSnapshot.some((entry, index) => entry.folder !== scopeFolders[index]))) {
+            return res.status(409).json({
+                success: false,
+                error: 'The folder scope changed since preview. Preview again before applying.',
+            });
+        }
+        let scopeSnapshot;
+        if (hasRequestedScopeSnapshot) {
+            scopeSnapshot = requestedScopeSnapshot;
+        }
+        else if (requestedMaxUid !== undefined
+            && requestedUidValidity
+            && !includeSubfolders) {
+            scopeSnapshot = [{
+                    folder,
+                    maxUid: requestedMaxUid,
+                    uidValidity: requestedUidValidity,
+                }];
+        }
+        else {
+            const scopeState = await imap.getFolderUidNext(scopeFolders);
+            if (scopeState.failedFolders.length > 0
+                || scopeFolders.some(sourceFolder => (!scopeState.uidNextByFolder.has(sourceFolder)
+                    || !scopeState.uidValidityByFolder.get(sourceFolder)))) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'One or more source folders could not be snapshotted. Try the preview again.',
+                });
+            }
+            scopeSnapshot = scopeFolders.map(sourceFolder => ({
+                folder: sourceFolder,
+                maxUid: Math.max(0, Number(scopeState.uidNextByFolder.get(sourceFolder) || 1) - 1),
+                uidValidity: String(scopeState.uidValidityByFolder.get(sourceFolder) || ''),
+            }));
+        }
+        if (requestedScopeIndex >= scopeSnapshot.length) {
+            return res.status(400).json({ success: false, error: 'Invalid rule-run request.' });
+        }
+        if (mode === 'apply' && requestedScopeIndex === 0 && cursor === 0) {
+            const currentScopeState = await imap.getFolderUidNext(scopeFolders);
+            const staleScope = currentScopeState.failedFolders.length > 0
+                || scopeSnapshot.some(entry => (currentScopeState.uidValidityByFolder.get(entry.folder) !== entry.uidValidity));
+            if (staleScope) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'A source folder changed since preview. Preview again before applying.',
+                });
+            }
         }
         const document = await getActiveRulesDocument(user, pass);
         const documentRules = Array.isArray(document.rules) ? document.rules : [];
@@ -1363,9 +1476,19 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
             });
         }
         const selectedRuleIds = selectedRuleEntries.map(entry => entry.selectionId);
+        const currentScope = scopeSnapshot[requestedScopeIndex];
         const ruleRevision = crypto_1.default
             .createHash('sha256')
-            .update(JSON.stringify({ rules: documentRules, selectedRuleIds }))
+            .update(JSON.stringify({
+            rules: documentRules,
+            selectedRuleIds,
+            scope: {
+                folder,
+                includeSubfolders,
+                readState,
+                folders: scopeSnapshot,
+            },
+        }))
             .digest('base64url');
         if (requestedRuleRevision && requestedRuleRevision !== ruleRevision) {
             return res.status(409).json({
@@ -1380,11 +1503,11 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
             id: entry.selectionId,
         }));
         const includesBodyRules = rules.some(rule => ((0, rule_semantics_1.executableRuleCriteria)(rule).some(criterion => criterion.field === 'body')));
-        const page = await imap.getRuleRunBatch(folder, cursor, requestedMaxUid, includesBodyRules ? 25 : 200, includesBodyRules);
-        if (requestedUidValidity && requestedUidValidity !== page.uidValidity) {
+        const page = await imap.getRuleRunBatch(currentScope.folder, cursor, currentScope.maxUid, includesBodyRules ? 25 : 200, includesBodyRules, readState);
+        if (currentScope.uidValidity !== page.uidValidity) {
             return res.status(409).json({
                 success: false,
-                error: 'The source folder changed since preview. Preview again before applying.',
+                error: 'A source folder changed since preview. Preview again before applying.',
             });
         }
         const plans = [];
@@ -1417,7 +1540,7 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
                 ruleMatchCounts.set(ruleId, (ruleMatchCounts.get(ruleId) || 0) + 1);
             }
             const moveFolders = evaluation.moveFolders.filter(destination => {
-                if (destination === folder)
+                if (destination === currentScope.folder)
                     return false;
                 if (folderPaths.has(destination))
                     return true;
@@ -1433,7 +1556,7 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
         }
         const reconcileAppliedMoves = async (result) => {
             if (result.movedUids.length > 0) {
-                await (0, search_index_1.deleteMailSearchRows)(user, folder, result.movedUids);
+                await (0, search_index_1.deleteMailSearchRows)(user, currentScope.folder, result.movedUids);
             }
             if (result.affected > 0)
                 await (0, search_worker_1.invalidateSearchIndexSnapshot)(user);
@@ -1447,15 +1570,15 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
         if (mode === 'apply') {
             const operationKey = crypto_1.default
                 .createHash('sha256')
-                .update(`${user}\0${folder}\0${page.uidValidity}`)
+                .update(`${user}\0${currentScope.folder}\0${page.uidValidity}`)
                 .digest('hex')
                 .slice(0, 32);
-            const ledger = new rule_run_ledger_1.RuleRunLedger(user, folder, page.uidValidity);
+            const ledger = new rule_run_ledger_1.RuleRunLedger(user, currentScope.folder, page.uidValidity);
             if (copyResolution) {
                 await ledger.resolvePending(operationKey, copyActionKeys, copyResolution);
             }
             try {
-                applyResult = await imap.applyRuleMoves(folder, plans, operationKey, ledger);
+                applyResult = await imap.applyRuleMoves(currentScope.folder, plans, operationKey, ledger);
             }
             catch (err) {
                 if (err instanceof imap_1.RuleMoveApplyError) {
@@ -1472,10 +1595,18 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
             count: ruleMatchCounts.get(entry.selectionId) || 0,
         }))
             .filter(rule => rule.count > 0);
+        const hasNextFolder = page.done && requestedScopeIndex + 1 < scopeSnapshot.length;
+        const nextScopeIndex = hasNextFolder ? requestedScopeIndex + 1 : requestedScopeIndex;
+        const nextCursor = hasNextFolder ? 0 : page.nextCursor;
         res.json({
             success: true,
             mode,
             folder,
+            sourceFolder: currentScope.folder,
+            includeSubfolders,
+            readState,
+            scopeSnapshot,
+            scopeIndex: nextScopeIndex,
             processed: page.messages.length,
             matchedMessages,
             affectedMessages: plans.length,
@@ -1491,10 +1622,10 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
                 count,
             })),
             ruleRevision,
-            cursor: page.nextCursor,
-            maxUid: page.maxUid,
-            uidValidity: page.uidValidity,
-            done: page.done,
+            cursor: nextCursor,
+            maxUid: currentScope.maxUid,
+            uidValidity: currentScope.uidValidity,
+            done: page.done && !hasNextFolder,
         });
     }
     catch (err) {

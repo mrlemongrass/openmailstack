@@ -15,10 +15,22 @@ export interface Rule {
   actions: { id: string; type: string; folder?: string }[];
 }
 
+export type RuleRunReadState = 'all' | 'unread' | 'read';
+
+export interface RuleRunScopeSnapshot {
+  folder: string;
+  maxUid: number;
+  uidValidity: string;
+}
+
 export interface RuleRunRequest {
   folder: string;
   mode: 'preview' | 'apply';
   cursor: number;
+  includeSubfolders?: boolean;
+  readState?: RuleRunReadState;
+  scopeIndex?: number;
+  scopeSnapshot?: RuleRunScopeSnapshot[];
   ruleIds?: string[];
   maxUid?: number;
   uidValidity?: string;
@@ -43,6 +55,11 @@ export interface RuleRunPageResponse {
   error?: string;
   mode: 'preview' | 'apply';
   folder: string;
+  sourceFolder?: string;
+  includeSubfolders?: boolean;
+  readState?: RuleRunReadState;
+  scopeIndex?: number;
+  scopeSnapshot?: RuleRunScopeSnapshot[];
   processed: number;
   matchedMessages: number;
   affectedMessages: number;

@@ -221,6 +221,11 @@ function SettingsLoader() {
     setRulesDirty(true);
   }, []);
 
+  const handleReplaceRules = useCallback((nextRules: Rule[], dirty = true) => {
+    setRules(nextRules);
+    setRulesDirty(dirty);
+  }, []);
+
   const handleSaveRules = useCallback(async () => {
     setSaving(true);
     try {
@@ -348,6 +353,7 @@ function SettingsLoader() {
       onUpdateRule={handleUpdateRule}
       onDeleteRule={handleDeleteRule}
       onMoveRule={handleMoveRule}
+      onReplaceRules={handleReplaceRules}
       rulesDirty={rulesDirty}
       onSaveRules={handleSaveRules}
       onAddSignature={handleAddSignature}

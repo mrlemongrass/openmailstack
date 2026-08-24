@@ -1,5 +1,41 @@
 # Implementation State
 
+## 2026-08-24 Mail Filter Duplicate Hygiene
+
+**Status: implemented and locally qualified; guarded production release is
+pending.** Mail Filters now reviews the rules currently in the editor without
+opening the mailbox or ManageSieve. Later exact condition/action copies inside
+one rule are the only automatic cleanup candidates; the first occurrence,
+order, IDs, whitespace, Unicode distinctions, mailbox-path case, and unrelated
+entries are preserved. Repeats across rules and nested `contains` patterns stay
+review-only because ordering, ANY/ALL, enablement, and stop-processing can make
+them intentional.
+
+The editor marks later exact copies inline. `Review duplicates` opens a named,
+focus-managed desktop/mobile dialog with loading, error, empty, safe-cleanup,
+and review-only states. Cleanup changes only the unsaved draft and offers Undo;
+the existing Save action remains the sole server mutation path. The browser
+proof removed one repeated condition and one repeated Move action, sent zero
+Save requests, and restored both through Undo.
+
+The authenticated `/api/rules/analyze` route accepts at most 1,000 rules and
+10,000 conditions/actions, 4,096 characters per analyzed value, and 1,000,000
+analyzed characters overall; it does not construct a ManageSieve client. Exact
+cleanup is complete inside that boundary; finding occurrences plus advisory
+overlap count and character work are separately bounded and disclose
+truncation. Advisory nested `contains` checks cover both same-rule and
+cross-rule patterns.
+
+Seven focused backend tests, five focused frontend tests, the complete backend
+suite (830 total, 823 pass, seven optional skips), the complete frontend suite
+(187/187), lint/build, desktop plus 390 px Chromium, and the complete
+integration gate pass. A 180-rule browser stress fixture rendered 540
+conditions, 360 actions, and 360 findings with a fixed action footer, no
+horizontal overflow, no console errors/warnings, and zero Save requests during
+cleanup/Undo. Light-theme warning and success feedback measures 7.09:1 and
+5.48:1 against the dialog surface. Duplicate hygiene does not diagnose a filter
+whose actual live Sieve predicate does not match a delivered message.
+
 ## 2026-08-23 Selective Existing-mail Rule Runs
 
 **Status: guarded-deployed in active mode and verified against the public

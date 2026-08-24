@@ -61,6 +61,45 @@ export interface RuleRunPageResponse {
   done: boolean;
 }
 
+export interface RuleAnalysisOccurrence {
+  ruleIndex: number;
+  ruleId: string;
+  ruleName: string;
+  ruleEnabled: boolean;
+  itemType: 'criterion' | 'action';
+  itemIndex: number;
+  itemId?: string;
+}
+
+export interface RuleAnalysisRemoval {
+  ruleIndex: number;
+  itemType: 'criterion' | 'action';
+  itemIndex: number;
+}
+
+export interface RuleAnalysisFinding {
+  id: string;
+  kind: 'exact_criterion' | 'exact_action' | 'cross_rule_criterion' | 'possible_overlap';
+  safety: 'safe' | 'review';
+  label: string;
+  explanation: string;
+  occurrences: RuleAnalysisOccurrence[];
+  omittedOccurrences?: number;
+}
+
+export interface RuleAnalysis {
+  summary: {
+    exactCriterionDuplicates: number;
+    exactActionDuplicates: number;
+    crossRuleRepeats: number;
+    possibleOverlaps: number;
+    removableItems: number;
+  };
+  removals: RuleAnalysisRemoval[];
+  findings: RuleAnalysisFinding[];
+  truncated: boolean;
+}
+
 export interface MailFolder {
   path: string;
   unseen: number;

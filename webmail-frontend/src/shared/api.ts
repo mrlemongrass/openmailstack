@@ -4,7 +4,7 @@ import type {
   SearchResponse, SearchIndexStatusResponse, SearchIndexRefreshResponse,
   SearchWorkerStatusResponse, SavedSearch,
   SearchField, SearchScope,
-  MailFolder, FolderMutationResponse, Signature, Rule, RuleRunPageResponse, RuleRunRequest,
+  MailFolder, FolderMutationResponse, Signature, Rule, RuleAnalysis, RuleRunPageResponse, RuleRunRequest,
   ContactsResponse, Contact, ContactLabel, ContactGroup,
   CalendarsResponse, Calendar, CalendarUpdateResponse, CalendarDeleteResponse,
   CalendarShare,
@@ -275,6 +275,20 @@ export async function fetchRules(): Promise<Rule[]> {
   const res = await fetch('/api/rules');
   const data = await res.json();
   return data.rules || [];
+}
+
+export async function analyzeRules(rules: Rule[], signal?: AbortSignal): Promise<RuleAnalysis> {
+  const res = await fetch('/api/rules/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rules }),
+    signal,
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success || !data.analysis) {
+    throw new Error(data.error || 'Failed to review rule duplicates.');
+  }
+  return data.analysis;
 }
 
 export async function runRulesPage(

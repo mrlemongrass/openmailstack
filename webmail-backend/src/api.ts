@@ -18,6 +18,7 @@ import {
 import { canDemoteGlobalAdmin, clearSession, createSession, hashSessionId, hasGlobalAdminAccess, requireAdminSession, requireSession } from './auth';
 import { imapConfig, normalizeMailboxUsername, schedulerConfig, serverConfig, sieveConfig, smtpConfig } from './config';
 import { compileSieve, extractJsonFromSieve, type SieveRule, type SieveRulesDocument } from './sieve-compiler';
+import { analyzeRuleDocument, exceedsRuleAnalysisLimits, RULE_ANALYSIS_LIMITS } from './rule-analysis';
 import { evaluateRulesForMessage } from './rule-engine';
 import { executableRuleCriteria } from './rule-semantics';
 import { MailboxMutationError, RuleMoveApplyError, type RuleMoveApplyResult } from './imap';
@@ -1310,6 +1311,27 @@ apiRouter.delete('/account/sessions/:id', requireAuth, async (req: any, res) => 
     } catch (err: any) {
         res.status(500).json({ success: false, error: err.message });
     }
+});
+
+apiRouter.post('/rules/analyze', requireAuth, (req: any, res) => {
+    const document = req.body;
+    if (!document || typeof document !== 'object' || !Array.isArray(document.rules)) {
+        res.status(400).json({
+            success: false,
+            code: 'INVALID_RULE_ANALYSIS_DOCUMENT',
+            error: 'A rules array is required.',
+        });
+        return;
+    }
+    if (exceedsRuleAnalysisLimits(document)) {
+        res.status(413).json({
+            success: false,
+            code: 'RULE_ANALYSIS_LIMIT',
+            error: `Rule analysis supports up to ${RULE_ANALYSIS_LIMITS.rules.toLocaleString('en-US')} rules, ${RULE_ANALYSIS_LIMITS.items.toLocaleString('en-US')} conditions or actions, and ${RULE_ANALYSIS_LIMITS.totalStringCharacters.toLocaleString('en-US')} analyzed characters. Individual values are limited to ${RULE_ANALYSIS_LIMITS.stringCharacters.toLocaleString('en-US')} characters.`,
+        });
+        return;
+    }
+    res.json({ success: true, analysis: analyzeRuleDocument(document) });
 });
 
 apiRouter.get('/rules', requireAuth, async (req: any, res) => {

@@ -42,6 +42,8 @@ const THEMES: Record<Exclude<ThemeMode, 'system'>, Record<string, string>> = {
     '--text-primary': '#ffffff',
     '--text-secondary': '#94A3B8',
     '--surface-color': '#111827',
+    '--feedback-success-text': '#a7f3d0',
+    '--feedback-warning-text': '#fde68a',
   },
   light: {
     '--bg-main': '#F6F8FB',
@@ -51,6 +53,8 @@ const THEMES: Record<Exclude<ThemeMode, 'system'>, Record<string, string>> = {
     '--text-primary': '#0F172A',
     '--text-secondary': '#475569',
     '--surface-color': '#ffffff',
+    '--feedback-success-text': '#047857',
+    '--feedback-warning-text': '#92400e',
   },
   contrast: {
     '--bg-main': '#000000',
@@ -60,6 +64,8 @@ const THEMES: Record<Exclude<ThemeMode, 'system'>, Record<string, string>> = {
     '--text-primary': '#ffffff',
     '--text-secondary': '#d4d4d8',
     '--surface-color': '#050505',
+    '--feedback-success-text': '#6ee7b7',
+    '--feedback-warning-text': '#fde68a',
   },
 };
 

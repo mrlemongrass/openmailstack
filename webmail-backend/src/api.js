@@ -51,6 +51,7 @@ const contact_utils_1 = require("./contact-utils");
 const auth_1 = require("./auth");
 const config_1 = require("./config");
 const sieve_compiler_1 = require("./sieve-compiler");
+const rule_analysis_1 = require("./rule-analysis");
 const rule_engine_1 = require("./rule-engine");
 const rule_semantics_1 = require("./rule-semantics");
 const imap_1 = require("./imap");
@@ -1180,6 +1181,26 @@ exports.apiRouter.delete('/account/sessions/:id', requireAuth, async (req, res) 
     catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
+});
+exports.apiRouter.post('/rules/analyze', requireAuth, (req, res) => {
+    const document = req.body;
+    if (!document || typeof document !== 'object' || !Array.isArray(document.rules)) {
+        res.status(400).json({
+            success: false,
+            code: 'INVALID_RULE_ANALYSIS_DOCUMENT',
+            error: 'A rules array is required.',
+        });
+        return;
+    }
+    if ((0, rule_analysis_1.exceedsRuleAnalysisLimits)(document)) {
+        res.status(413).json({
+            success: false,
+            code: 'RULE_ANALYSIS_LIMIT',
+            error: `Rule analysis supports up to ${rule_analysis_1.RULE_ANALYSIS_LIMITS.rules.toLocaleString('en-US')} rules, ${rule_analysis_1.RULE_ANALYSIS_LIMITS.items.toLocaleString('en-US')} conditions or actions, and ${rule_analysis_1.RULE_ANALYSIS_LIMITS.totalStringCharacters.toLocaleString('en-US')} analyzed characters. Individual values are limited to ${rule_analysis_1.RULE_ANALYSIS_LIMITS.stringCharacters.toLocaleString('en-US')} characters.`,
+        });
+        return;
+    }
+    res.json({ success: true, analysis: (0, rule_analysis_1.analyzeRuleDocument)(document) });
 });
 exports.apiRouter.get('/rules', requireAuth, async (req, res) => {
     const user = req.user.username;

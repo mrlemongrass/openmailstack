@@ -2185,3 +2185,23 @@ Future entry template:
 - Remaining rules gaps are explicit: Include subfolders, All/Unread/Read scope,
   and the broader existing-mail action vocabulary are not shipped in this
   tranche.
+
+## 2026-08-24 — Mail Filter Duplicate Hygiene
+
+- Added current-draft duplicate analysis without mailbox or ManageSieve access.
+  Later exact same-rule conditions/actions are safe cleanup; cross-rule repeats
+  and nested `contains` patterns remain advisory.
+- Added inline duplicate hints, a focus-managed responsive review dialog,
+  conservative client-side revalidation, unsaved cleanup, and Undo.
+- Preserved Sieve ASCII comparison semantics and exact folder paths. Analysis is
+  limited to 1,000 rules/10,000 items, 4,096 characters per value, and
+  1,000,000 analyzed characters; occurrence output and overlap count/character
+  work are bounded without omitting verified exact removals. Nested `contains`
+  review covers patterns within and across rules.
+- Locally verified 7/7 focused backend tests, 5/5 focused frontend tests, 830
+  complete backend tests (823 pass, seven optional skips), 187/187 frontend
+  tests, lint/build, complete integration, and zero-error desktop/mobile/light
+  Chromium. A 180-rule, 900-item, 360-finding browser stress case kept the
+  footer visible, had no horizontal overflow, and cleanup/Undo sent zero Save
+  requests. Light feedback contrast measured 7.09:1 warning and 5.48:1 success.
+  Guarded production release remains pending.

@@ -9897,3 +9897,69 @@ Complete the classic-Outlook scope portion of this same vertical slice: add
 Include subfolders and All/Unread/Read selection, bind both to Preview/Apply,
 and prove ordering plus stop-processing across nested folders before moving to
 the broader Mail action grammar.
+
+## 2026-08-24 — Mail Filter Duplicate Hygiene
+
+### Selected task
+
+Add a conservative cleanup workflow for long-lived Mail Filter lists so users
+can find repeated senders, subject phrases, and actions without silently
+rewriting intentional rule logic.
+
+### Goal and acceptance criteria
+
+- Analyze the rules currently in the editor without mailbox or ManageSieve
+  access.
+- Auto-remove only later exact copies inside one rule while preserving the
+  first entry, order, IDs, and all unrelated data.
+- Keep cross-rule repeats and possible `contains` overlaps review-only.
+- Mark later exact copies inline; make cleanup unsaved and undoable.
+- Bound large legacy documents, support loading/error/empty states, restore
+  focus, and remain usable on desktop and 390 px mobile.
+
+### Changes made
+
+- Added authenticated `POST /api/rules/analyze` plus a pure analyzer that follows
+  Sieve ASCII case folding without trimming whitespace, Unicode-folding values,
+  or case-folding mailbox paths.
+- Added exact condition/action findings, advisory cross-rule/substring findings,
+  deterministic removal coordinates, cross-rule nested-pattern review,
+  1,000-rule/10,000-item request limits, 4,096-character value and
+  1,000,000-character document limits, 12-occurrence display samples, and
+  count/character budgets for advisory comparisons.
+- Added `Review duplicates`, a focus-managed review dialog, inline `Already
+  listed above` hints, conservative client-side revalidation, unsaved cleanup,
+  and `Undo cleanup`.
+- Recorded the contract in the Outlook QoL research baseline and project shared
+  memory. Duplicate review is explicitly configuration hygiene, not proof that
+  a non-matching live delivery failed because of duplicate rows.
+
+### Local proof
+
+- TDD red was observed for the missing analyzer, route, cleanup helper, and UI
+  contract before implementation.
+- Focused backend: 7/7; focused frontend: 5/5.
+- Complete backend: 830 total, 823 pass, seven documented optional skips.
+- Complete frontend: 187/187; lint and production build pass.
+- Complete repository integration gate passes, including guarded-deployment and
+  rollback fixtures.
+- Real Chromium at 1440×900 and 390×844 rendered the full review workflow with
+  zero console errors/warnings and no horizontal overflow. Escape restored focus;
+  cleanup removed exactly two later copies, made zero Save requests, and Undo
+  restored the original draft. Screenshots remain ignored under
+  `output/playwright/rule-duplicates/`.
+- A light-theme long-content fixture loaded 180 rules, 540 conditions, 360
+  actions, and 360 review cards. Its 34,266 px scrolling body retained the fixed
+  cleanup footer, had zero horizontal overflow and console errors/warnings, and
+  cleanup/Undo preserved all 180 rule rows while making zero Save requests.
+  Warning/success feedback measured 7.09:1 and 5.48:1 contrast against the
+  dialog surface.
+- Independent review identified cross-rule nested-pattern coverage, light-theme
+  feedback contrast, analyzer character-work bounds, and long-filter stress as
+  release blockers. Each is fixed and awaits fixed-point re-review.
+
+### Release state and next task
+
+Guarded bridge/active deployment and live artifact/readiness proof are pending.
+After release, continue the existing Rules P0 tranche with Include subfolders
+and All/Unread/Read scope; duplicate hygiene does not replace that work.

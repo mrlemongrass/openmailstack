@@ -1,5 +1,5 @@
 import React, { useState, lazy, Suspense, type ReactNode } from 'react';
-import { ArrowDown, ArrowUp, Check, Copy, Filter, PenTool, Play, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Copy, Filter, ListChecks, PenTool, Play, Plus, Trash2 } from 'lucide-react';
 
 const ReactQuill = lazy(() => import('react-quill-new'));
 import type { AppearancePreferences, AccentColor, DensityMode, FontScale, RadiusMode, ThemeMode } from './appearance';
@@ -12,6 +12,9 @@ import { supportedTimeZones } from '../calendar/calendarTime';
 import { AccountSecurityControls } from './AccountSecurityControls';
 import { RuleRunDialog } from './RuleRunDialog';
 import { getRunnableRuleIds, getRuleRunSelectors } from './rule-run';
+import { RuleDuplicateReviewDialog } from './RuleDuplicateReviewDialog';
+import { applyRuleDuplicateCleanup, getExactRuleDuplicateIndexes } from './rule-duplicates';
+import type { RuleAnalysisRemoval } from '../shared/types';
 
 interface Rule {
   id: string;
@@ -107,6 +110,7 @@ interface SettingsContentProps {
   onUpdateRule: (id: string, updates: Partial<Rule>) => void;
   onDeleteRule: (id: string) => void;
   onMoveRule: (id: string, direction: 'up' | 'down') => void;
+  onReplaceRules: (rules: Rule[], dirty?: boolean) => void;
   rulesDirty: boolean;
   onSaveRules: () => void;
   onAddSignature: () => void;
@@ -630,21 +634,43 @@ function FiltersPane({
   onUpdateRule,
   onDeleteRule,
   onMoveRule,
+  onReplaceRules,
   onSaveRules,
   rulesDirty,
 }: SettingsContentProps) {
   const [activeRuleId, setActiveRuleId] = useState<string | null>(null);
   const [runDialogRuleIds, setRunDialogRuleIds] = useState<string[] | null>(null);
+  const [duplicateReviewOpen, setDuplicateReviewOpen] = useState(false);
+  const [cleanupUndo, setCleanupUndo] = useState<{
+    rules: Rule[];
+    wasDirty: boolean;
+    removedCount: number;
+  } | null>(null);
 
   const activeRule = rules.find(r => r.id === activeRuleId) || rules[0];
   const ruleSelectors = getRuleRunSelectors(rules);
   const enabledRuleIds = getRunnableRuleIds(rules);
+  const clearCleanupUndo = () => setCleanupUndo(null);
   const handleAddRule = () => {
+    clearCleanupUndo();
     setActiveRuleId(onAddRule());
   };
   const handleMoveRule = (id: string, direction: 'up' | 'down') => {
+    clearCleanupUndo();
     if (!activeRuleId && activeRule) setActiveRuleId(activeRule.id);
     onMoveRule(id, direction);
+  };
+  const handleDeleteRule = (id: string) => {
+    clearCleanupUndo();
+    onDeleteRule(id);
+    setActiveRuleId(null);
+  };
+  const handleApplyDuplicateCleanup = (removals: RuleAnalysisRemoval[]) => {
+    const result = applyRuleDuplicateCleanup(rules, removals);
+    setDuplicateReviewOpen(false);
+    if (result.removedCount === 0) return;
+    setCleanupUndo({ rules, wasDirty: rulesDirty, removedCount: result.removedCount });
+    onReplaceRules(result.rules, true);
   };
 
   return (
@@ -654,6 +680,15 @@ function FiltersPane({
         eyebrow="Mail"
         action={(
           <div className="settings-action-row">
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={() => setDuplicateReviewOpen(true)}
+              disabled={rules.length === 0}
+              title="Check the current draft for repeated conditions and actions"
+            >
+              <ListChecks size={17} /> Review duplicates
+            </button>
             <button
               className="btn btn-ghost"
               type="button"
@@ -672,6 +707,23 @@ function FiltersPane({
         <p className="filter-rule-save-note" role="status">
           Save your rule changes before running them on existing mail.
         </p>
+      )}
+      {cleanupUndo && rulesDirty && (
+        <div className="filter-rule-cleanup-note" role="status">
+          <span>
+            Removed {cleanupUndo.removedCount} exact {cleanupUndo.removedCount === 1 ? 'duplicate' : 'duplicates'} from this draft. Save to apply the cleanup.
+          </span>
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => {
+              onReplaceRules(cleanupUndo.rules, cleanupUndo.wasDirty);
+              setCleanupUndo(null);
+            }}
+          >
+            Undo cleanup
+          </button>
+        </div>
       )}
 
       {loading ? (
@@ -746,11 +798,11 @@ function FiltersPane({
                   key={activeRule.id}
                   rule={activeRule}
                   folders={folders}
-                  onUpdate={updates => onUpdateRule(activeRule.id, updates)}
-                  onDelete={() => {
-                    onDeleteRule(activeRule.id);
-                    setActiveRuleId(null);
+                  onUpdate={updates => {
+                    clearCleanupUndo();
+                    onUpdateRule(activeRule.id, updates);
                   }}
+                  onDelete={() => handleDeleteRule(activeRule.id)}
                 />
               </div>
               <div style={{
@@ -761,8 +813,7 @@ function FiltersPane({
               }}>
                 <button className="btn btn-ghost" type="button"
                   onClick={() => {
-                    onDeleteRule(activeRule.id);
-                    setActiveRuleId(null);
+                    handleDeleteRule(activeRule.id);
                   }}>
                   <Trash2 size={16} /> Delete Rule
                 </button>
@@ -782,6 +833,13 @@ function FiltersPane({
           rules={rules}
           initialRuleIds={runDialogRuleIds}
           onClose={() => setRunDialogRuleIds(null)}
+        />
+      )}
+      {duplicateReviewOpen && (
+        <RuleDuplicateReviewDialog
+          rules={rules}
+          onClose={() => setDuplicateReviewOpen(false)}
+          onApplyCleanup={handleApplyDuplicateCleanup}
         />
       )}
     </div>
@@ -1423,6 +1481,9 @@ function SegmentedControl<T extends string>({ options, value, onChange }: { opti
 }
 
 function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders: MailFolder[]; onUpdate: (r: Partial<Rule>) => void; onDelete: () => void }) {
+  const exactDuplicates = getExactRuleDuplicateIndexes(rule);
+  const duplicateCriteria = new Set(exactDuplicates.criteria);
+  const duplicateActions = new Set(exactDuplicates.actions);
   const addCriteria = () => {
     onUpdate({
       criteria: [...rule.criteria, { id: Math.random().toString(), field: 'subject', operator: 'contains', value: '' }],
@@ -1484,7 +1545,7 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
           of these conditions are met:
         </div>
 
-        {rule.criteria.map(criteria => (
+        {rule.criteria.map((criteria, index) => (
           <div key={criteria.id} className="condition-row">
             <select className="glass-input glass-select" value={criteria.field} onChange={event => updateCriteria(criteria.id, 'field', event.target.value)}>
               <option value="subject">Subject</option>
@@ -1497,7 +1558,10 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
               <option value="not_contains">does not contain</option>
               <option value="equals">equals</option>
             </select>
-            <input className="glass-input" value={criteria.value} onChange={event => updateCriteria(criteria.id, 'value', event.target.value)} placeholder="newsletter" />
+            <div className="rule-duplicate-value">
+              <input className="glass-input" value={criteria.value} onChange={event => updateCriteria(criteria.id, 'value', event.target.value)} placeholder="newsletter" />
+              {duplicateCriteria.has(index) && <small role="status">Already listed above</small>}
+            </div>
             <button className="btn btn-ghost" type="button" onClick={() => removeCriteria(criteria.id)} title="Remove condition" aria-label="Remove condition">
               <Trash2 size={14} />
             </button>
@@ -1511,7 +1575,7 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
       <div className="builder-section">
         <div className="builder-section-title">Then perform these actions:</div>
 
-        {rule.actions.map(action => (
+        {rule.actions.map((action, index) => (
           <div key={action.id} className="action-row">
             <select className="glass-input glass-select" value={action.type} onChange={event => updateAction(action.id, 'type', event.target.value)}>
               <option value="move">Move to Folder</option>
@@ -1524,6 +1588,7 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
                 {folders.map(folder => <option key={folder.path} value={folder.path}>{folder.path}</option>)}
               </select>
             )}
+            {duplicateActions.has(index) && <small className="rule-duplicate-inline" role="status">Already listed above</small>}
             <button className="btn btn-ghost" type="button" onClick={() => removeAction(action.id)} title="Remove action" aria-label="Remove action">
               <Trash2 size={14} />
             </button>

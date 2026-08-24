@@ -1,6 +1,6 @@
 # Outlook Quality-of-Life Migration Contract
 
-Status: `Current first-party research baseline; first Inbox Rules selection slice guarded-deployed and verified`
+Status: `Current first-party research baseline; first Inbox Rules selection slice guarded-deployed; duplicate-hygiene slice locally qualified with release pending`
 
 Research date: 2026-08-23
 
@@ -126,6 +126,49 @@ This does **not** complete the full P0 contract. `Include subfolders` and
 All/Unread/Read scope are not implemented, and the current existing-mail runner
 supports Move rules rather than the full incoming-rule action vocabulary. Those
 gaps are the next rules tranche; they must not be represented as shipped.
+
+### 2.4 OMS duplicate-hygiene contract
+
+Large long-lived rules often accumulate repeated senders, subject phrases, or
+filing actions. OMS treats cleanup as an explicit review workflow rather than
+silently rewriting the saved Sieve document:
+
+1. `Review duplicates` analyzes the rules currently in the editor, including
+   unsaved changes, without reading the mailbox or opening ManageSieve.
+2. Only later exact copies within the same rule are eligible for automatic
+   cleanup. The first condition/action, rule order, item IDs, and all unrelated
+   entries remain unchanged. Sieve's default ASCII case-insensitive comparison
+   applies to condition values; whitespace, Unicode case variants, and mailbox
+   path case are not normalized. [R5]
+3. Repeated conditions across different rules and nested `contains` patterns
+   within or across rules are advisory because rule order, ANY/ALL matching,
+   enablement, and stop-processing can make them intentional.
+4. Cleanup changes only the local draft, remains behind the ordinary Save
+   action, and exposes Undo until another edit supersedes the cleanup.
+5. Later exact copies are marked inline while editing. The review dialog has
+   named loading, error, empty, safe-cleanup, and review-only states, restores
+   focus, and remains operable on a 390 px viewport.
+6. Analysis accepts at most 1,000 rules, 10,000 conditions/actions, 4,096
+   characters per analyzed value, and 1,000,000 analyzed characters overall.
+   Exact cleanup remains complete inside that boundary, while displayed
+   occurrences plus advisory overlap count and character work are bounded and
+   disclosed when truncated.
+
+Local release-candidate evidence includes seven focused backend tests, five
+focused frontend tests, the complete 830-test backend suite (823 pass and seven
+documented optional skips), the complete 187-test frontend suite, lint/build,
+and the repository integration gate. Real Chromium covered desktop, 390 px
+mobile, and a light-theme stress fixture with 180 rules, 540 conditions, 360
+actions, and 360 rendered findings. Cleanup and Undo made zero Save requests;
+the long dialog retained its action footer, had no horizontal overflow or
+console errors/warnings, and the light-theme warning/success text measured
+7.09:1 and 5.48:1 contrast against its surface. Guarded release is still
+pending.
+
+This is configuration hygiene, not a delivery diagnostic. A message that
+misses a filter still requires examination of the actual envelope/header/body
+predicate and live Sieve execution evidence; duplicate rows alone do not imply
+server-side fallthrough.
 
 ## 3. Outlook interaction contracts by surface
 
@@ -271,6 +314,7 @@ upcoming, so parity is a moving target rather than a one-time checklist. [X1]
 [r2]: https://support.microsoft.com/en-us/outlook/mail/stop-processing-more-rules-in-outlook
 [r3]: https://support.microsoft.com/en-us/outlook/mail/edit-or-fix-a-broken-rule-in-outlook
 [r4]: https://support.microsoft.com/en-us/outlook/mail/import-or-export-a-set-of-rules-in-classic-outlook
+[r5]: https://www.rfc-editor.org/rfc/rfc5228.html
 [m1]: https://support.microsoft.com/en-us/outlook/organize-your-inbox-with-archive-sweep-and-other-tools-in-outlook-on-the-web
 [m2]: https://support.microsoft.com/en-us/outlook/working-with-message-folders-in-outlook-on-the-web
 [m3]: https://support.microsoft.com/en-us/outlook/use-categories-in-outlook

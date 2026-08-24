@@ -146,6 +146,82 @@ test('rule-run selection keeps saved order and supports legacy identities', () =
   );
 });
 
+test('duplicate cleanup removes only later exact copies and preserves the original draft', () => {
+  const {
+    applyRuleDuplicateCleanup,
+    getExactRuleDuplicateIndexes,
+  } = loadTypeScriptModule('../src/settings/rule-duplicates.ts');
+  const rules = [{
+    id: 'ads',
+    name: 'Ads',
+    enabled: true,
+    condition: 'any',
+    criteria: [
+      { id: 'sender-1', field: 'from', operator: 'contains', value: 'Deals@Example.COM' },
+      { id: 'sender-2', field: 'from', operator: 'contains', value: 'deals@example.com' },
+      { id: 'sender-space', field: 'from', operator: 'contains', value: ' deals@example.com' },
+      { id: 'unicode-1', field: 'subject', operator: 'equals', value: 'ÄDS' },
+      { id: 'unicode-2', field: 'subject', operator: 'equals', value: 'äds' },
+    ],
+    actions: [
+      { id: 'move-1', type: 'move', folder: 'INBOX.ADs' },
+      { id: 'move-2', type: 'move', folder: 'INBOX.ADs' },
+    ],
+  }];
+
+  assert.deepEqual(getExactRuleDuplicateIndexes(rules[0]), {
+    criteria: [1],
+    actions: [1],
+  });
+
+  const result = applyRuleDuplicateCleanup(rules, [
+    { ruleIndex: 0, itemType: 'criterion', itemIndex: 0 },
+    { ruleIndex: 0, itemType: 'criterion', itemIndex: 1 },
+    { ruleIndex: 0, itemType: 'action', itemIndex: 1 },
+    { ruleIndex: 0, itemType: 'action', itemIndex: 99 },
+    { ruleIndex: 99, itemType: 'criterion', itemIndex: 0 },
+  ]);
+
+  assert.equal(result.removedCount, 2);
+  assert.deepEqual(result.rules[0].criteria.map(item => item.id), [
+    'sender-1', 'sender-space', 'unicode-1', 'unicode-2',
+  ]);
+  assert.deepEqual(result.rules[0].actions.map(item => item.id), ['move-1']);
+  assert.equal(rules[0].criteria.length, 5);
+  assert.equal(rules[0].actions.length, 2);
+});
+
+test('duplicate cleanup stays deterministic across many rules and conditions', () => {
+  const { applyRuleDuplicateCleanup } = loadTypeScriptModule('../src/settings/rule-duplicates.ts');
+  const rules = Array.from({ length: 500 }, (_value, ruleIndex) => ({
+    id: `rule-${ruleIndex}`,
+    name: `Rule ${ruleIndex}`,
+    enabled: true,
+    condition: 'any',
+    criteria: [
+      { id: `keep-${ruleIndex}`, field: 'from', operator: 'contains', value: `Sender-${ruleIndex}@example.test` },
+      { id: `remove-${ruleIndex}`, field: 'from', operator: 'contains', value: `sender-${ruleIndex}@example.test` },
+      { id: `other-${ruleIndex}`, field: 'subject', operator: 'contains', value: `Campaign ${ruleIndex}` },
+    ],
+    actions: [
+      { id: `move-keep-${ruleIndex}`, type: 'move', folder: `INBOX.Archive-${ruleIndex}` },
+      { id: `move-remove-${ruleIndex}`, type: 'move', folder: `INBOX.Archive-${ruleIndex}` },
+    ],
+  }));
+  const removals = rules.flatMap((_rule, ruleIndex) => [
+    { ruleIndex, itemType: 'criterion', itemIndex: 1 },
+    { ruleIndex, itemType: 'action', itemIndex: 1 },
+  ]);
+
+  const result = applyRuleDuplicateCleanup(rules, removals);
+
+  assert.equal(result.removedCount, 1000);
+  assert.equal(result.rules.length, 500);
+  assert.ok(result.rules.every(rule => rule.criteria.length === 2 && rule.actions.length === 1));
+  assert.equal(rules[499].criteria.length, 3);
+  assert.equal(rules[499].actions.length, 2);
+});
+
 test('filters expose ordered priority, stop processing, and preview-first folder runs', () => {
   const panelSource = fs.readFileSync(
     path.join(__dirname, '../src/settings/SettingsPanel.tsx'),
@@ -153,6 +229,10 @@ test('filters expose ordered priority, stop processing, and preview-first folder
   );
   const dialogSource = fs.readFileSync(
     path.join(__dirname, '../src/settings/RuleRunDialog.tsx'),
+    'utf8',
+  );
+  const duplicateDialogSource = fs.readFileSync(
+    path.join(__dirname, '../src/settings/RuleDuplicateReviewDialog.tsx'),
     'utf8',
   );
   const indexCss = fs.readFileSync(
@@ -168,6 +248,10 @@ test('filters expose ordered priority, stop processing, and preview-first folder
   assert.match(panelSource, /Save your rule changes before running them on existing mail/);
   assert.match(panelSource, /aria-label=\{`Run \$\{rule\.name \|\| 'Untitled Rule'\} now`\}/);
   assert.match(panelSource, /<RuleRunDialog[\s\S]*rules=\{rules\}/);
+  assert.match(panelSource, /Review duplicates/);
+  assert.match(panelSource, /Already listed above/);
+  assert.match(panelSource, /Undo cleanup/);
+  assert.match(panelSource, /<RuleDuplicateReviewDialog/);
   assert.match(dialogSource, /aria-labelledby="rule-run-title"/);
   assert.match(dialogSource, /aria-label="Source folder"/);
   assert.match(dialogSource, /Rules to run/);
@@ -187,7 +271,17 @@ test('filters expose ordered priority, stop processing, and preview-first folder
   assert.match(dialogSource, /Copies are missing/);
   assert.match(dialogSource, /Copies are present/);
   assert.match(dialogSource, /Reject and discard only apply to new deliveries/);
+  assert.match(duplicateDialogSource, /aria-labelledby="rule-duplicate-review-title"/);
+  assert.match(duplicateDialogSource, /Safe cleanup/);
+  assert.match(duplicateDialogSource, /Review only/);
+  assert.match(duplicateDialogSource, /Remove exact duplicates/);
+  assert.match(duplicateDialogSource, /No duplicate conditions or actions found/);
   assert.match(indexCss, /\.filter-rule-priority-controls/);
+  assert.match(indexCss, /\.rule-duplicate-review/);
+  assert.match(
+    indexCss,
+    /\.rule-run-footnote\.warning\s*\{\s*color:\s*var\(--feedback-warning-text\)/,
+  );
   assert.match(
     indexCss,
     /@media \(max-width: 767px\)[\s\S]*\.filter-rule-list-row[\s\S]*grid-template-columns:\s*116px minmax\(0, 1fr\)/,

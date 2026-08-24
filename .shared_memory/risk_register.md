@@ -2,9 +2,18 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-08-23
+Last updated: 2026-08-24
 
 ## Resolved Risks
+
+- ✅ Mail-filter cleanup deleting intentional logic: duplicate review analyzes
+  the current draft without mailbox/ManageSieve access and auto-removes only
+  later exact same-rule copies. Cross-rule repeats and substring overlaps stay
+  advisory; cleanup is unsaved and undoable; the client re-proves each requested
+  removal against current state; large occurrence output and overlap work are
+  bounded by count and character budgets, and the route rejects oversized
+  individual/aggregate analyzed strings. Cross-rule nested patterns remain
+  advisory. This does not diagnose delivery predicate mismatches.
 
 - ✅ Direct web/ActiveSync SMTP before durable replay state: Cycles 6-8 route
   immediate, delayed, Undo, and ActiveSync SendMail through one universal

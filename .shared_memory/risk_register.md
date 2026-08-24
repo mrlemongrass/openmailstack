@@ -13,7 +13,9 @@ Last updated: 2026-08-24
   removal against current state; large occurrence output and overlap work are
   bounded by count and character budgets, and the route rejects oversized
   individual/aggregate analyzed strings. Cross-rule nested patterns remain
-  advisory. This does not diagnose delivery predicate mismatches.
+  advisory. Commit `5598534c` is guarded-deployed active with protocol gates,
+  artifact equality, and public-browser draft cleanup/Undo proven. This does
+  not diagnose delivery predicate mismatches.
 
 - ✅ Direct web/ActiveSync SMTP before durable replay state: Cycles 6-8 route
   immediate, delayed, Undo, and ActiveSync SendMail through one universal

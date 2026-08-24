@@ -9956,10 +9956,25 @@ rewriting intentional rule logic.
   dialog surface.
 - Independent review identified cross-rule nested-pattern coverage, light-theme
   feedback contrast, analyzer character-work bounds, and long-filter stress as
-  release blockers. Each is fixed and awaits fixed-point re-review.
+  release blockers. Each was fixed; fixed-point Standards and Spec re-review
+  found no residual issue.
 
 ### Release state and next task
 
-Guarded bridge/active deployment and live artifact/readiness proof are pending.
-After release, continue the existing Rules P0 tranche with Include subfolders
-and All/Unread/Read scope; duplicate hygiene does not replace that work.
+Commit `5598534c` passed guarded bridge then active deployment. Both stages
+passed public IMAPS and ActiveSync Mail/Ping/Contacts/Calendar pre/post gates
+with exact canary cleanup. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T170058Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T170835Z`.
+
+Active mode has zero restarts, valid Nginx configuration, an empty warning
+journal, expected local/public readiness and analysis-route `401`, and exact
+repository/live backend content/version plus frontend artifacts. Fresh Chromium
+loaded `https://mail.housevo.us/settings/mail_filters` from the released hashed
+assets with mocked APIs, rendered the safe/review split without horizontal
+overflow or console errors, removed exactly one duplicate condition and one
+duplicate action from the draft, and restored both with Undo while sending zero
+Save requests. No real mailbox data was read or mutated.
+
+Next, continue the existing Rules P0 tranche with Include subfolders and
+All/Unread/Read scope; duplicate hygiene does not replace that work.

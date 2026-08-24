@@ -2,14 +2,14 @@
 
 ## 2026-08-24 Mail Filter Duplicate Hygiene
 
-**Status: implemented and locally qualified; guarded production release is
-pending.** Mail Filters now reviews the rules currently in the editor without
-opening the mailbox or ManageSieve. Later exact condition/action copies inside
-one rule are the only automatic cleanup candidates; the first occurrence,
-order, IDs, whitespace, Unicode distinctions, mailbox-path case, and unrelated
-entries are preserved. Repeats across rules and nested `contains` patterns stay
-review-only because ordering, ANY/ALL, enablement, and stop-processing can make
-them intentional.
+**Status: guarded-deployed in active mode and verified against the public
+frontend artifact.** Mail Filters now reviews the rules currently in the editor
+without opening the mailbox or ManageSieve. Later exact condition/action copies
+inside one rule are the only automatic cleanup candidates; the first
+occurrence, order, IDs, whitespace, Unicode distinctions, mailbox-path case,
+and unrelated entries are preserved. Repeats across rules and nested
+`contains` patterns stay review-only because ordering, ANY/ALL, enablement, and
+stop-processing can make them intentional.
 
 The editor marks later exact copies inline. `Review duplicates` opens a named,
 focus-managed desktop/mobile dialog with loading, error, empty, safe-cleanup,
@@ -35,6 +35,18 @@ horizontal overflow, no console errors/warnings, and zero Save requests during
 cleanup/Undo. Light-theme warning and success feedback measures 7.09:1 and
 5.48:1 against the dialog surface. Duplicate hygiene does not diagnose a filter
 whose actual live Sieve predicate does not match a delivered message.
+
+Commit `5598534c` passed fixed-point Standards and Spec review, then guarded
+bridge and active releases passed public IMAPS and ActiveSync
+Mail/Ping/Contacts/Calendar pre/post gates with exact cleanup. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T170058Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T170835Z`. The
+active service has zero restarts, the warning journal is empty, Nginx validates,
+local/public readiness and unauthenticated analysis return `401`, and the live
+backend content/version plus full frontend match the repository build. A fresh
+public-browser fixture loaded the released assets and repeated the exact
+cleanup/Undo flow with zero Save requests, overflow, console errors, or mailbox
+access.
 
 ## 2026-08-23 Selective Existing-mail Rule Runs
 

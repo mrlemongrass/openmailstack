@@ -1,6 +1,6 @@
 # Outlook Quality-of-Life Migration Contract
 
-Status: `Current first-party research baseline; first Inbox Rules selection slice guarded-deployed; duplicate-hygiene slice locally qualified with release pending`
+Status: `Current first-party research baseline; first Inbox Rules selection and duplicate-hygiene slices guarded-deployed`
 
 Research date: 2026-08-23
 
@@ -154,7 +154,7 @@ silently rewriting the saved Sieve document:
    occurrences plus advisory overlap count and character work are bounded and
    disclosed when truncated.
 
-Local release-candidate evidence includes seven focused backend tests, five
+Release evidence includes seven focused backend tests, five
 focused frontend tests, the complete 830-test backend suite (823 pass and seven
 documented optional skips), the complete 187-test frontend suite, lint/build,
 and the repository integration gate. Real Chromium covered desktop, 390 px
@@ -162,8 +162,20 @@ mobile, and a light-theme stress fixture with 180 rules, 540 conditions, 360
 actions, and 360 rendered findings. Cleanup and Undo made zero Save requests;
 the long dialog retained its action footer, had no horizontal overflow or
 console errors/warnings, and the light-theme warning/success text measured
-7.09:1 and 5.48:1 contrast against its surface. Guarded release is still
-pending.
+7.09:1 and 5.48:1 contrast against its surface.
+
+Commit `5598534c` was released through the required bridge then active guarded
+path. Both stages passed public IMAPS and ActiveSync Mail, Ping, Contacts, and
+Calendar pre/post gates with exact canary cleanup. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T170058Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T170835Z`. Active
+mode has zero service restarts, an empty warning journal, valid Nginx
+configuration, expected local/public unauthenticated `401`, and repository/live
+backend-content, version, and frontend artifact equality. A fresh public browser
+loaded the released assets, rendered safe and review-only findings without
+overflow or console errors, removed exactly two draft copies, and restored them
+with Undo while making zero Save requests. Mocked API fixtures kept this visual
+check isolated from real mailbox data.
 
 This is configuration hygiene, not a delivery diagnostic. A message that
 misses a filter still requires examination of the actual envelope/header/body

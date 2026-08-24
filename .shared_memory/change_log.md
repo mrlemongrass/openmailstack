@@ -2204,4 +2204,13 @@ Future entry template:
   Chromium. A 180-rule, 900-item, 360-finding browser stress case kept the
   footer visible, had no horizontal overflow, and cleanup/Undo sent zero Save
   requests. Light feedback contrast measured 7.09:1 warning and 5.48:1 success.
-  Guarded production release remains pending.
+- Fixed-point Standards and Spec review found no residual issue. Commit
+  `5598534c` then passed guarded bridge and active public IMAPS plus ActiveSync
+  Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+  `protocol-guarded-webmail-20260824T170058Z` and
+  `protocol-guarded-webmail-20260824T170835Z`.
+- Active service health, readiness, Nginx, warning journals, and exact
+  repository/live backend-version/content plus frontend artifacts are clean. A
+  fresh public-browser fixture loaded the released assets, rendered the review
+  flow without overflow or console errors, removed two exact draft copies, and
+  restored both with Undo while issuing zero Save requests.

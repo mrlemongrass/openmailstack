@@ -242,6 +242,7 @@ const fakeImap = {
     appliedPlans.push({ folder, plans });
     if (blockNextApply) {
       blockNextApply = false;
+      const pendingUid = plans[0]?.uid || 101;
       throw new RuleMoveApplyError({
         affected: 1,
         copied: 0,
@@ -250,7 +251,7 @@ const fakeImap = {
       }, new Error('simulated uncertain copy'), false, [{
         actionKey: 'a'.repeat(64),
         operationKey: 'b'.repeat(32),
-        uid: 101,
+        uid: pendingUid,
         destination: 'Finance',
       }]);
     }
@@ -289,6 +290,9 @@ require.cache[ruleRunLedgerPath] = {
   loaded: true,
   exports: {
     RuleRunLedger: class {
+      constructor(_owner, sourceFolder) {
+        this.sourceFolder = sourceFolder;
+      }
       async pendingForSourceUids() { return []; }
       async reserve() {
         return {
@@ -301,7 +305,12 @@ require.cache[ruleRunLedgerPath] = {
       async complete() {}
       async clear() {}
       async resolvePending(operationKey, actionKeys, resolution) {
-        copyResolutions.push({ operationKey, actionKeys, resolution });
+        copyResolutions.push({
+          sourceFolder: this.sourceFolder,
+          operationKey,
+          actionKeys,
+          resolution,
+        });
         return 1;
       }
     },
@@ -587,7 +596,7 @@ test('rule-run binds read-state selection to the preview revision', async t => {
   });
 
   assert.equal(response.status, 409);
-  assert.equal(response.json.error, 'Rules or selection changed since preview. Preview again before applying.');
+  assert.equal(response.json.error, 'Rules, selection, or message scope changed since preview. Preview again before applying.');
   assert.equal(appliedPlans.length, plansBefore);
 });
 
@@ -748,7 +757,7 @@ test('rule-run apply is bound to the previewed rule selection', async t => {
   });
 
   assert.equal(response.status, 409);
-  assert.equal(response.json.error, 'Rules or selection changed since preview. Preview again before applying.');
+  assert.equal(response.json.error, 'Rules, selection, or message scope changed since preview. Preview again before applying.');
   assert.equal(appliedPlans.length, appliedBefore);
 });
 
@@ -791,7 +800,7 @@ test('rule-run rejects a stale saved-rule revision before changing mail', async 
   });
 
   assert.equal(response.status, 409);
-  assert.equal(response.json.error, 'Rules changed since preview. Preview again before applying.');
+  assert.equal(response.json.error, 'Rules or message scope changed since preview. Preview again before applying.');
 });
 
 test('rule-run reconciles search state after a retry-safe partial mailbox failure', async t => {
@@ -853,6 +862,113 @@ test('rule-run marks an uncertain copy as non-retryable to prevent duplication',
   assert.match(copyResolutions.at(-1).operationKey, /^[a-f0-9]{32}$/);
 });
 
+test('scoped rule-run reaches child-folder copy recovery for both owner resolutions', async t => {
+  const port = await startServer(t);
+  t.after(() => { blockNextApply = false; });
+
+  let previewRequest = {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['finance'],
+    includeSubfolders: true,
+  };
+  let snapshot;
+  let revision;
+  while (true) {
+    const page = await requestJson(port, previewRequest);
+    assert.equal(page.status, 200);
+    snapshot ||= page.json.scopeSnapshot;
+    revision ||= page.json.ruleRevision;
+    if (page.json.done) break;
+    previewRequest = {
+      ...previewRequest,
+      cursor: page.json.cursor,
+      scopeIndex: page.json.scopeIndex,
+      scopeSnapshot: page.json.scopeSnapshot,
+      ruleRevision: page.json.ruleRevision,
+    };
+  }
+
+  for (const resolution of ['completed', 'retry']) {
+    const firstApply = await requestJson(port, {
+      folder: 'INBOX',
+      mode: 'apply',
+      cursor: 0,
+      scopeIndex: 0,
+      scopeSnapshot: snapshot,
+      ruleRevision: revision,
+      ruleIds: ['finance'],
+      includeSubfolders: true,
+    });
+    assert.equal(firstApply.status, 200);
+    assert.equal(firstApply.json.sourceFolder, 'INBOX');
+    assert.equal(firstApply.json.scopeIndex, 1);
+
+    blockNextApply = true;
+    const interrupted = await requestJson(port, {
+      folder: 'INBOX',
+      mode: 'apply',
+      cursor: firstApply.json.cursor,
+      scopeIndex: firstApply.json.scopeIndex,
+      scopeSnapshot: snapshot,
+      ruleRevision: revision,
+      ruleIds: ['finance'],
+      includeSubfolders: true,
+    });
+    assert.equal(interrupted.status, 500);
+    assert.equal(interrupted.json.retrySafe, false);
+    assert.deepEqual(interrupted.json.pendingCopies, [{
+      actionKey: 'a'.repeat(64),
+      uid: 201,
+      destination: 'Finance',
+    }]);
+
+    const resolutionsBefore = copyResolutions.length;
+    const recoveryFolders = [];
+    let recoveryRequest = {
+      folder: 'INBOX',
+      mode: 'apply',
+      cursor: 0,
+      scopeIndex: 0,
+      scopeSnapshot: snapshot,
+      ruleRevision: revision,
+      ruleIds: ['finance'],
+      includeSubfolders: true,
+      copyResolution: resolution,
+      copyActionKeys: interrupted.json.pendingCopies.map(copy => copy.actionKey),
+    };
+    while (true) {
+      const page = await requestJson(port, recoveryRequest);
+      assert.equal(page.status, 200);
+      recoveryFolders.push(page.json.sourceFolder);
+      if (page.json.done) break;
+      recoveryRequest = {
+        ...recoveryRequest,
+        cursor: page.json.cursor,
+        scopeIndex: page.json.scopeIndex,
+      };
+    }
+
+    assert.deepEqual(recoveryFolders, [
+      'INBOX',
+      'INBOX/Projects',
+      'INBOX/Projects/2026',
+    ]);
+    assert.deepEqual(
+      copyResolutions.slice(resolutionsBefore).map(entry => ({
+        sourceFolder: entry.sourceFolder,
+        resolution: entry.resolution,
+      })),
+      [
+        { sourceFolder: 'INBOX', resolution },
+        { sourceFolder: 'INBOX/Projects', resolution },
+        { sourceFolder: 'INBOX/Projects/2026', resolution },
+      ],
+    );
+  }
+});
+
 test('rule-run rejects unknown source folders', async t => {
   const port = await startServer(t);
   const response = await requestJson(port, { folder: 'Missing', mode: 'preview' });
@@ -866,6 +982,12 @@ test('rule-run rejects malformed message-scope fields', async t => {
   const invalidBodies = [
     { folder: 'INBOX', mode: 'preview', includeSubfolders: 'yes' },
     { folder: 'INBOX', mode: 'preview', readState: 'new' },
+    {
+      folder: 'INBOX',
+      mode: 'preview',
+      scopeSnapshot: [{ folder: 'INBOX', maxUid: 999, uidValidity: '9001' }],
+      ruleRevision: 'forged-client-snapshot',
+    },
     {
       folder: 'INBOX',
       mode: 'preview',

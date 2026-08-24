@@ -1528,6 +1528,12 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             )
         )
         || (
+            mode === 'preview'
+            && cursor === 0
+            && requestedScopeIndex === 0
+            && hasRequestedScopeSnapshot
+        )
+        || (
             hasRequestedRuleIds
             && (
                 !Array.isArray(req.body.ruleIds)
@@ -1700,8 +1706,8 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             return res.status(409).json({
                 success: false,
                 error: hasRequestedRuleIds
-                    ? 'Rules or selection changed since preview. Preview again before applying.'
-                    : 'Rules changed since preview. Preview again before applying.',
+                    ? 'Rules, selection, or message scope changed since preview. Preview again before applying.'
+                    : 'Rules or message scope changed since preview. Preview again before applying.',
             });
         }
         const rules: SieveRule[] = selectedRuleEntries.map(entry => ({

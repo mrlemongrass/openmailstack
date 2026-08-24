@@ -885,18 +885,19 @@ class ImapService {
         }
     }
     async getFolderUidNext(folderPaths) {
+        const snapshot = await this.getSearchFolderSnapshot();
         const uidNextByFolder = new Map();
         const uidValidityByFolder = new Map();
         const failedFolders = [];
-        for (const folderPath of folderPaths) {
-            try {
-                const status = await this.client.status(folderPath, { uidNext: true, uidValidity: true });
-                uidNextByFolder.set(folderPath, Number(status.uidNext || 1));
-                uidValidityByFolder.set(folderPath, String(status.uidValidity || ''));
+        for (const folderPath of new Set(folderPaths)) {
+            const uidNext = snapshot.uidNextByFolder.get(folderPath);
+            const uidValidity = snapshot.uidValidityByFolder.get(folderPath);
+            if (uidNext !== undefined && uidValidity) {
+                uidNextByFolder.set(folderPath, uidNext);
+                uidValidityByFolder.set(folderPath, uidValidity);
             }
-            catch (err) {
+            else {
                 failedFolders.push(folderPath);
-                console.error(`Failed to read search coverage for folder ${folderPath}:`, err);
             }
         }
         return { uidNextByFolder, uidValidityByFolder, failedFolders };

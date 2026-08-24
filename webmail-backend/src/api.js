@@ -1358,6 +1358,10 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
                     || entry.maxUid < 0
                     || !/^\d{1,64}$/.test(entry.uidValidity)))
                 || new Set(requestedScopeSnapshot.map(entry => entry.folder)).size !== requestedScopeSnapshot.length))
+        || (mode === 'preview'
+            && cursor === 0
+            && requestedScopeIndex === 0
+            && hasRequestedScopeSnapshot)
         || (hasRequestedRuleIds
             && (!Array.isArray(req.body.ruleIds)
                 || requestedRuleIds.length < 1
@@ -1494,8 +1498,8 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
             return res.status(409).json({
                 success: false,
                 error: hasRequestedRuleIds
-                    ? 'Rules or selection changed since preview. Preview again before applying.'
-                    : 'Rules changed since preview. Preview again before applying.',
+                    ? 'Rules, selection, or message scope changed since preview. Preview again before applying.'
+                    : 'Rules or message scope changed since preview. Preview again before applying.',
             });
         }
         const rules = selectedRuleEntries.map(entry => ({

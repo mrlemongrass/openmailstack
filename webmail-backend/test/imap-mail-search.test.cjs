@@ -63,6 +63,28 @@ test('search snapshots collect UID state in one LIST-STATUS request', async () =
   assert.deepEqual(snapshot.failedFolders, ['Broken']);
 });
 
+test('rule scope snapshots use one LIST-STATUS and report only requested failures', async () => {
+  const calls = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async list(options) {
+      calls.push(options);
+      return [
+        { path: 'INBOX', flags: new Set(), status: { uidNext: 42, uidValidity: 9n } },
+        { path: 'Archive', flags: new Set(), status: { uidNext: 18, uidValidity: 10n } },
+        { path: 'Broken', flags: new Set(), status: { uidNext: 0 } },
+      ];
+    },
+  };
+
+  const snapshot = await service.getFolderUidNext(['INBOX', 'Broken', 'Missing']);
+
+  assert.deepEqual(calls, [{ statusQuery: { uidNext: true, uidValidity: true } }]);
+  assert.deepEqual([...snapshot.uidNextByFolder], [['INBOX', 42]]);
+  assert.deepEqual([...snapshot.uidValidityByFolder], [['INBOX', '9']]);
+  assert.deepEqual(snapshot.failedFolders, ['Broken', 'Missing']);
+});
+
 test('incremental indexing reports when another UID page remains', async () => {
   const fetched = [];
   const service = Object.create(ImapService.prototype);

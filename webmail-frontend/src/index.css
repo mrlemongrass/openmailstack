@@ -2506,6 +2506,49 @@ body {
   font-size: var(--font-size-2xs);
 }
 
+.rule-run-order-summary {
+  display: grid;
+  gap: 6px;
+}
+
+.rule-run-order-summary > strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.rule-run-order-summary ol {
+  max-height: 132px;
+  margin: 0;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.rule-run-order-summary li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.rule-run-order-summary li + li {
+  border-top: 1px solid var(--border-glass);
+}
+
+.rule-run-order-summary li span {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-2xs);
+  font-weight: 750;
+  text-align: center;
+}
+
 .rule-run-metrics {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

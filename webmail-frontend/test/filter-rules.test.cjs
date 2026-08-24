@@ -369,6 +369,10 @@ test('filters expose ordered priority, stop processing, and preview-first folder
   assert.match(dialogSource, /readState/);
   assert.match(dialogSource, /scopeSnapshot: preview\.scopeSnapshot/);
   assert.match(dialogSource, /Rules to run/);
+  assert.match(dialogSource, /selectedRuleEntries/);
+  assert.match(dialogSource, /Selected rule execution order/);
+  assert.match(dialogSource, /in saved order/);
+  assert.match(dialogSource, /previewScopeCount/);
   assert.match(dialogSource, /selectedRuleIds/);
   assert.match(dialogSource, /Select all/);
   assert.match(dialogSource, /Clear all/);

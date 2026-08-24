@@ -13,6 +13,12 @@ import {
 type RuleRunPhase = 'choose' | 'previewing' | 'preview' | 'applying' | 'complete';
 type PendingCopy = { actionKey: string; uid: number; destination: string };
 
+const READ_STATE_LABELS: Record<RuleRunReadState, string> = {
+  all: 'All messages',
+  unread: 'Unread messages',
+  read: 'Read messages',
+};
+
 export function RuleRunDialog({
   folders,
   rules,
@@ -51,6 +57,9 @@ export function RuleRunDialog({
   const subfolderCount = childPrefix
     ? selectableFolders.filter(item => item.path.startsWith(childPrefix)).length
     : 0;
+  const selectedRuleEntries = rules.flatMap((rule, index) => (
+    selectedRuleIds.includes(ruleSelectors[index]) ? [{ rule, index }] : []
+  ));
 
   const requestClose = useCallback(() => {
     if (phase === 'previewing') {
@@ -163,11 +172,9 @@ export function RuleRunDialog({
     counts.set(copy.destination, (counts.get(copy.destination) || 0) + 1);
     return counts;
   }, new Map());
-  const previewReadLabel = preview?.readState === 'unread'
-    ? 'Unread messages'
-    : preview?.readState === 'read'
-      ? 'Read messages'
-      : 'All messages';
+  const previewReadLabel = READ_STATE_LABELS[preview?.readState || 'all'];
+  const previewScopeCount = preview?.scopeSnapshot.length || 1;
+  const resultReadLabel = READ_STATE_LABELS[result?.readState || 'all'];
   const resultScopeCount = result?.scopeSnapshot.length || 1;
 
   return (
@@ -351,9 +358,22 @@ export function RuleRunDialog({
               <div className="rule-run-scope-summary">
                 <strong>{previewReadLabel} in {preview.folder}</strong>
                 <span>
-                  {preview.scopeSnapshot.length} folder{preview.scopeSnapshot.length === 1 ? '' : 's'} snapshotted
+                  {previewScopeCount} folder{previewScopeCount === 1 ? '' : 's'} snapshotted
                   {preview.includeSubfolders ? ', including subfolders' : ''}
                 </span>
+              </div>
+              <div className="rule-run-order-summary">
+                <strong>
+                  {selectedRuleEntries.length} rule{selectedRuleEntries.length === 1 ? '' : 's'} in saved order
+                </strong>
+                <ol aria-label="Selected rule execution order">
+                  {selectedRuleEntries.map(({ rule, index }) => (
+                    <li key={ruleSelectors[index]}>
+                      <span>{index + 1}</span>
+                      {rule.name || 'Untitled Rule'}
+                    </li>
+                  ))}
+                </ol>
               </div>
               <div className="rule-run-metrics">
                 <div><strong>{preview.processed}</strong><span>Scanned</span></div>
@@ -419,6 +439,10 @@ export function RuleRunDialog({
                 {result.appliedMessages} message{result.appliedMessages === 1 ? '' : 's'} processed with Move actions
                 {' '}across {resultScopeCount} folder{resultScopeCount === 1 ? '' : 's'}.
               </p>
+              <span>
+                {resultReadLabel} in {result.folder}
+                {result.includeSubfolders ? ' and its subfolders' : ''}.
+              </span>
               {stopped && <span>You can safely run another preview to process what remains.</span>}
             </div>
           )}

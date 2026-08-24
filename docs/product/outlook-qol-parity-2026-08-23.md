@@ -92,40 +92,56 @@ per-rule action with classic Outlook's explicit batch scope.
 
 ### 2.3 OMS implementation status
 
-The first bounded slice is implemented. The page-level `Run rules` action opens
-with every enabled saved rule selected, while a row-local `Run now` action opens
-the same dialog with only that rule selected. Disabled rules remain visible but
-cannot be selected. Selection is preserved in saved order through Preview,
-Apply, pagination, and bounded recovery.
+The selective-run and message-scope slices are implemented. The page-level
+`Run rules` action opens with every enabled saved rule selected, while a
+row-local `Run now` action opens the same dialog with only that rule selected.
+Disabled rules remain visible but cannot be selected. Users can choose any
+selectable source folder, optionally include its selectable descendants, and
+restrict the run to All, Unread, or Read messages. Selection and scope are
+preserved through Preview, Apply, pagination, and bounded recovery.
 
 The server validates the complete selection before mailbox mutation and binds
-Apply to both the full saved rule document and the selected-rule snapshot.
-Empty, duplicate, unknown, disabled, or changed selections fail closed. Legacy
-rules without IDs remain runnable, including documents with duplicate names;
-their collision-safe positional selectors are invalidated by any document
-reorder. Omitting `ruleIds` retains the previous all-enabled API behavior.
+Apply to the full saved rule document, selected-rule snapshot, read state, and
+a server-authored ordered snapshot of every folder's UID ceiling and
+UIDVALIDITY. An initial client-authored scope snapshot is rejected. Apply
+preflights every folder's UIDVALIDITY before its first mutation, and a changed
+selection, rule document, folder scope, read state, or mailbox identity fails
+closed. Legacy rules without IDs remain runnable, including documents with
+duplicate names; their collision-safe positional selectors are invalidated by
+any document reorder. Omitting `ruleIds` retains the previous all-enabled API
+behavior. Folder discovery is capped at 500 and uses one LIST-STATUS command
+rather than sequential STATUS round trips.
 
-Release evidence includes 13 focused backend route tests, three focused
-frontend contract tests, the complete 823-test backend suite (816 pass and
-seven documented optional skips), the complete 185-test frontend suite, and the
-complete repository integration gate. Desktop and 390 px browser checks cover
-run-all defaults, disabled-rule visibility, clear-all prevention, a two-rule
-selection, the exact selected-rule request, Preview results, and a row-local
-one-rule launch. The API stress regression accepts 201 selected rules.
+Release evidence includes 49 focused backend tests, six focused frontend tests,
+the complete 838-test backend suite (831 pass and seven documented optional
+skips), the complete 188-test frontend suite, lint/build, and the complete
+repository integration gate. Desktop and 390 px browser checks cover a
+top-level non-Inbox source, two descendants, Unread scope, two rules in saved
+order, exact three-page Preview and Apply requests, totals, completion copy,
+and horizontal-overflow guards. Backend regressions cover read-state IMAP
+search, one-command scope metadata, nested ordering/stop-processing, all-folder
+UIDVALIDITY preflight, revision binding, malformed and forged scope state, and
+ambiguous child-folder copy recovery for both owner resolutions.
 
-Commit `a55be94` was released through the required bridge then active guarded
-path. Both stages passed public IMAPS and ActiveSync Mail, Contacts, and Calendar
-pre/post gates; both post-gates also passed Ping. The active frontend and backend
-artifacts are byte-identical to the repository build, local and public readiness
-return the expected unauthenticated `401`, and the service has zero restarts. A
-fresh public browser loaded the released asset and rendered this dialog with no
-console errors or warnings using mocked API fixtures, so that visual check did
-not read or mutate a real mailbox.
+Commits `dcee1353` and `21b4bd8` were released through the required bridge then
+active guarded path. Both stages passed public IMAPS and ActiveSync
+Mail/Contacts/Calendar pre/post gates; both post-gates also passed Ping.
+Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T192355Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T193128Z`. The
+active frontend and backend artifacts are byte-identical to the repository
+build, local/public readiness and the protected rule-run route return the
+expected unauthenticated `401`, Nginx validates, the warning journal is empty,
+and the service has zero restarts. A fresh public browser loaded released
+assets `index-DEtIDm_z.js` and `index-DaERTbNz.css`, repeated the three-folder
+Preview/Apply flow with no overflow or fresh console/page errors, and used
+mocked APIs so it did not read or mutate a real mailbox.
 
-This does **not** complete the full P0 contract. `Include subfolders` and
-All/Unread/Read scope are not implemented, and the current existing-mail runner
-supports Move rules rather than the full incoming-rule action vocabulary. Those
-gaps are the next rules tranche; they must not be represented as shipped.
+This closes the folder/subfolder and All/Unread/Read portion of the P0 contract,
+but does **not** complete the full incoming-rule vocabulary. The existing-mail
+runner supports Move actions; Reject and Discard remain delivery-time-only.
+Broader existing-mail actions and their destructive confirmation/result
+semantics are the next rules tranche and must not be represented as shipped.
 
 ### 2.4 OMS duplicate-hygiene contract
 

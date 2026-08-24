@@ -691,15 +691,25 @@ manual evaluator share one executable criterion/action contract so Preview
 cannot stop on a rule that delivery-time Sieve would omit.
 
 `POST /api/rules/run` evaluates the active saved `webmail` script against any
-existing IMAP folder. Preview and Apply use one bounded UID snapshot and the
-same UIDVALIDITY plus SHA-256 revision of the complete saved document and the
-canonical selected-rule list. Omitting `ruleIds` remains the run-all-active
-contract. An explicit selection is resolved in saved order, rejects malformed,
-unknown, or disabled selectors before mailbox work, and uses deterministic
-index selectors whenever legacy rules have colliding missing IDs/names. The
-Filters UI exposes both a per-row Run-now action and a batch dialog with
-enabled-rule checkboxes; disabled rules remain visible but cannot run. Apply
-performs only Move actions; Reject and Discard remain delivery-time actions.
+existing selectable IMAP folder, optionally including its selectable
+descendants. The server resolves the hierarchy with the advertised delimiter,
+caps a run at 500 folders, and obtains folder UID metadata with one
+LIST-STATUS command. Initial Preview rejects a client-supplied scope snapshot;
+the server authors an ordered per-folder `{ folder, maxUid, uidValidity }`
+snapshot and returns it for every later Preview and Apply page.
+
+Preview and Apply bind that scope snapshot, All/Unread/Read state, subfolder
+choice, complete saved document, and canonical selected-rule list into the
+same SHA-256 revision. Apply preflights UIDVALIDITY for every snapshotted folder
+before the first mutation, then searches only UIDs at or below each folder's
+captured ceiling. Omitting `ruleIds` remains the run-all-active contract. An
+explicit selection is resolved in saved order, rejects malformed, unknown, or
+disabled selectors before mailbox work, and uses deterministic index selectors
+whenever legacy rules have colliding missing IDs/names. The Filters UI exposes
+both a per-row Run-now action and a batch dialog with enabled-rule checkboxes,
+source-folder selection, Include subfolders, and All/Unread/Read controls;
+disabled rules remain visible but cannot run. Apply performs only Move actions;
+Reject and Discard remain delivery-time actions.
 Continued Move matches copy into earlier destinations and move to the final
 destination.
 Copy completion is reserved and recorded by source UIDVALIDITY, UID, and
@@ -710,7 +720,10 @@ verify the displayed destination/count and explicitly resolve that exact
 pending copy group as present or missing before processing resumes. Only the
 destination group about to be copied is reserved; a pending copy also blocks a
 later edited single-Move rule for the same source UID. Copies and final moves
-are grouped by destination under one source-mailbox session.
+are grouped by destination under one source-mailbox session. In a multi-folder
+run, ledger identity, ambiguous-copy recovery, search-index cleanup, and result
+reporting use the current snapshotted source folder rather than the selected
+root.
 Large-message Body conditions use three-valued evaluation:
 known header matches can still decide `any` rules, while only genuinely
 undecidable rules are reported as skipped.

@@ -9978,3 +9978,80 @@ Save requests. No real mailbox data was read or mutated.
 
 Next, continue the existing Rules P0 tranche with Include subfolders and
 All/Unread/Read scope; duplicate hygiene does not replace that work.
+
+## 2026-08-24 — Scoped Existing-mail Rule Runs
+
+### Selected task
+
+Complete the next bounded Outlook-familiar Mail Filters slice: choose a source
+folder, optionally include its descendants, and run selected saved rules over
+All, Unread, or Read existing messages without weakening Preview/Apply safety.
+
+### Goal and acceptance criteria
+
+- Expose accessible source-folder, Include subfolders, and All/Unread/Read
+  controls on desktop and mobile.
+- Keep the selected rule list and exact message scope stable through every
+  Preview and Apply page.
+- Let only the server author the initial folder/UID snapshot; reject stale,
+  malformed, excessive, or client-forged scope state.
+- Preflight all folder identities before the first mutation and preserve
+  ordered stop-processing plus durable Move-copy recovery in child folders.
+- Avoid per-folder metadata round trips, regressions, production mailbox
+  mutation during browser QA, and unbounded hierarchy expansion.
+- Pass focused/full tests, lint/build, integration, independent review, guarded
+  release, artifact equality, live health checks, and public browser proof.
+
+### Changes made
+
+- Added source-folder selection, Include subfolders, and accessible
+  All/Unread/Read controls. Changing the root resets subfolder inclusion;
+  Preview summarizes exact scope, folder count, and selected rules in saved
+  order, while progress/completion identify the actual source scope.
+- Added server-owned ordered scope snapshots containing each folder's max UID
+  and UIDVALIDITY. Initial Preview rejects client snapshot input; subsequent
+  Preview/Apply pages must carry the authoritative snapshot and matching
+  revision.
+- Bound folder list, per-folder identity/ceiling, read state, subfolder choice,
+  full rule document, and canonical selected list into the revision. Apply
+  preflights every folder UIDVALIDITY before the first mailbox mutation.
+- Added bounded descendant resolution using the server-advertised delimiter and
+  flags, with a 500-folder cap and one LIST-STATUS metadata command instead of
+  sequential STATUS calls.
+- Threaded the current source folder through IMAP search, progress, Move-copy
+  ledger identity, ambiguous-copy recovery, search cleanup, and results.
+
+### Proof and review
+
+- TDD red was observed before backend and frontend implementation.
+- Focused backend: 49/49; focused frontend: 6/6.
+- Complete backend: 838 total, 831 pass, seven documented optional skips.
+- Complete frontend: 188/188; lint and production build passed.
+- `tests/integration/run.sh` completed with `[ok] Integration checks completed.`
+- Desktop 1440x900 and mobile 390x844 Chromium covered Projects plus two
+  descendants, Unread, two rules in saved order, exact three-page Preview and
+  Apply, truthful totals/completion, and no horizontal overflow.
+- Initial Spec/Standards review found client-authored initial snapshot input,
+  incomplete confirmation detail, misleading mismatch copy, child-folder
+  ambiguous-copy recovery, and sequential STATUS performance. Each was fixed;
+  fixed-point re-review found no residual Spec or code issue.
+
+### Release state and limits
+
+Commits `dcee1353` and `21b4bd8` passed guarded bridge then active deployment.
+Both stages passed public IMAPS and ActiveSync Mail/Contacts/Calendar pre/post
+gates plus post-deploy Ping. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T192355Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T193128Z`.
+
+Active mode has zero restarts, valid Nginx, an empty warning journal, expected
+local/public readiness and protected rule-run `401`, and byte-exact repository/
+live backend, version, and frontend artifacts. Fresh public Chromium loaded
+`index-DEtIDm_z.js` and `index-DaERTbNz.css`, repeated the three-folder Unread
+Preview/Apply with six correctly bound mocked requests, and reported no
+horizontal overflow or fresh console/page error. Browser QA did not read or
+mutate a real mailbox.
+
+Existing-mail execution still performs Move actions only. Reject and Discard
+remain delivery-time-only; broader existing-mail action grammar and its
+confirmation/result semantics are the next recommended bounded rules task.

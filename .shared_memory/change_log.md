@@ -2214,3 +2214,34 @@ Future entry template:
   fresh public-browser fixture loaded the released assets, rendered the review
   flow without overflow or console errors, removed two exact draft copies, and
   restored both with Undo while issuing zero Save requests.
+
+## 2026-08-24 — Scoped Existing-mail Rule Runs
+
+- Added source-folder selection, Include subfolders, and All/Unread/Read scope
+  to the existing saved-rule Preview/Apply workflow. Preview identifies the
+  exact scope and selected rules in saved order; progress and completion report
+  the actual folder set and read state.
+- Made the server the sole author of the initial ordered folder/maxUID/
+  UIDVALIDITY snapshot. Bound that snapshot, read state, subfolder choice,
+  selected rules, and full saved document into the revision; Apply preflights
+  every folder before the first mutation and rejects stale or forged scope.
+- Resolved selectable descendants with the advertised delimiter, capped scope
+  at 500 folders, and replaced sequential folder STATUS calls with one
+  LIST-STATUS command. Child-folder Move ledger identity, pending-copy owner
+  resolution, search cleanup, and reporting use the actual source folder.
+- Passed 49/49 focused backend tests, 6/6 focused frontend tests, the complete
+  backend suite (831 pass plus seven skips; 838 total), the complete frontend
+  suite (188/188), lint/build, complete integration, and desktop/mobile
+  Chromium. Fixed-point Spec and Standards review found no residual code issue.
+- Commits `dcee1353` and `21b4bd8` passed guarded bridge and active public IMAPS
+  plus ActiveSync Mail/Contacts/Calendar pre/post gates and post-deploy Ping.
+  Rollbacks are
+  `protocol-guarded-webmail-20260824T192355Z` and
+  `protocol-guarded-webmail-20260824T193128Z`.
+- Active service health, Nginx, readiness, protected-route authentication,
+  warning journals, and exact repository/live artifacts are clean. Public
+  Chromium loaded the released assets and completed a mocked three-folder
+  Unread Preview/Apply with six bound requests, no overflow, and zero fresh
+  console/page errors; browser QA did not access a real mailbox.
+- Existing-mail execution remains Move-only. Broader action parity is the next
+  bounded rules tranche.

@@ -1,5 +1,50 @@
 # Implementation State
 
+## 2026-08-24 Scoped Existing-mail Rule Runs
+
+**Status: guarded-deployed in active mode and verified against the public
+frontend artifact.** Mail Filters can now run a saved ordered rule selection
+against any selectable source folder, optionally including selectable
+descendants, and scope the run to All, Unread, or Read messages. Preview shows
+the exact message scope, folder count, selected-rule count/order, scanned,
+matched, and would-move totals. Apply reuses that scope and reports the current
+folder during progress plus exact folder/read-state completion copy.
+
+The initial Preview cannot supply its own scope snapshot. The server resolves
+the hierarchy from the advertised delimiter, excludes nonselectable folders,
+caps scope at 500 folders, and obtains all requested UIDNEXT/UIDVALIDITY values
+through one LIST-STATUS command. Its ordered per-folder snapshot, subfolder
+choice, read state, selected rule list, and full saved document are bound into
+the revision. Apply preflights every folder's UIDVALIDITY before the first
+mutation and searches only through each captured UID ceiling. Copy-ledger
+identity, ambiguous-copy recovery, source cleanup, and progress use the current
+child folder rather than the selected root.
+
+Focused backend verification passed 49/49 and focused frontend verification
+passed 6/6. The complete backend suite passed 831 with seven documented skips
+(838 total); the complete frontend suite passed 188/188; lint, production
+builds, and the complete integration gate passed. Fixed-point Spec review found
+no residual issue. Standards review found no residual code issue after initial
+client-snapshot ownership, confirmation detail, mismatch wording,
+child-folder recovery, and LIST-STATUS performance findings were corrected.
+
+Commits `dcee1353` and `21b4bd8` passed guarded bridge and active releases with
+public IMAPS and ActiveSync Mail/Contacts/Calendar pre/post gates plus
+post-deploy Ping.
+Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T192355Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260824T193128Z`. Active
+mode has zero restarts, valid Nginx, no warning-level release journal entries,
+expected local/public/protected-route `401`, and exact repository/live backend
+plus frontend artifacts. Public Chromium loaded the released hashed assets and
+completed a mocked three-folder Unread Preview/Apply with six correctly bound
+requests, no horizontal overflow, and zero fresh console/page errors. No real
+mailbox was read or mutated by browser QA.
+
+Existing-mail execution still applies Move actions only. Reject and Discard
+remain delivery-time actions; broader existing-mail action parity is the next
+bounded rules task.
+
 ## 2026-08-24 Mail Filter Duplicate Hygiene
 
 **Status: guarded-deployed in active mode and verified against the public

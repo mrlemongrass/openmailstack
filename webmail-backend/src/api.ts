@@ -1957,14 +1957,35 @@ async function assertFolderMutationIsUnreferenced(
     }
 }
 
-async function resetSearchIndexAfterFolderMutation(user: string) {
+async function resetSearchIndexAfterFolderMutation(user: string): Promise<boolean> {
     try {
         await purgeUserSearchIndex(user);
+        return true;
     } catch (err) {
         console.error('Failed to reset the mail search index after a folder mutation', {
             errorType: err instanceof Error ? err.name : 'UnknownError',
         });
+        return false;
     }
+}
+
+const FOLDER_MUTATION_WARNING_CODES = new Set([
+    'SUBSCRIPTIONS_NOT_RECONCILED',
+    'SEARCH_INDEX_RESET_FAILED',
+]);
+
+function folderMutationResponse(result: any, searchIndexReset: boolean) {
+    const { warnings: rawWarnings, ...payload } = result || {};
+    const warnings = Array.from(new Set([
+        ...(Array.isArray(rawWarnings)
+            ? rawWarnings.filter(warning => FOLDER_MUTATION_WARNING_CODES.has(warning))
+            : []),
+        ...(searchIndexReset ? [] : ['SEARCH_INDEX_RESET_FAILED']),
+    ]));
+    return {
+        ...payload,
+        ...(warnings.length ? { warnings } : {}),
+    };
 }
 
 apiRouter.post('/folders', requireAuth, async (req: any, res) => {
@@ -2000,8 +2021,8 @@ apiRouter.patch('/folders', requireAuth, async (req: any, res) => {
         const result = hasName
             ? await imap.renameFolder(req.body?.path, req.body?.name)
             : await imap.moveFolder(req.body?.path, req.body?.parent);
-        await resetSearchIndexAfterFolderMutation(user);
-        res.json({ success: true, ...result });
+        const searchIndexReset = await resetSearchIndexAfterFolderMutation(user);
+        res.json({ success: true, ...folderMutationResponse(result, searchIndexReset) });
     } catch (err: unknown) {
         return respondToFolderMutationFailure(res, err, action);
     }
@@ -2014,9 +2035,9 @@ apiRouter.delete('/folders', requireAuth, async (req: any, res) => {
     try {
         const imap = await getPooledImap(user, pass);
         await assertFolderMutationIsUnreferenced(user, pass, imap, req.body?.path);
-        const result = await imap.deleteFolder(req.body?.path);
-        await resetSearchIndexAfterFolderMutation(user);
-        res.json({ success: true, ...result });
+        const result = await imap.deleteFolder(req.body?.path, req.body?.permanent ?? false);
+        const searchIndexReset = await resetSearchIndexAfterFolderMutation(user);
+        res.json({ success: true, ...folderMutationResponse(result, searchIndexReset) });
     } catch (err: unknown) {
         return respondToFolderMutationFailure(res, err, 'deleted');
     }
@@ -2326,7 +2347,7 @@ apiRouter.delete('/messages/search/index', requireAuth, async (req: any, res) =>
         res.json({ success: true, deletedCount, message: `Purged ${deletedCount} index entries. Background worker will re-index automatically.` });
     } catch (err: any) {
         console.error('Failed to purge search index:', err);
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ success: false, error: 'Search cleanup could not be completed.' });
     }
 });
 

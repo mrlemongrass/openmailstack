@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Archive,
@@ -17,7 +17,12 @@ import {
   StarOff,
   Trash2,
 } from 'lucide-react';
-import type { MailFolder } from '../shared/types';
+import type {
+  FolderDeleteResult,
+  FolderMutationWarning,
+  FolderPathMutationResult,
+  MailFolder,
+} from '../shared/types';
 import { ContextMenu, type ContextMenuItem } from '../shared/components/ContextMenu';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
@@ -45,15 +50,21 @@ interface FolderSidebarProps {
   onFolderDialogChange?: (open: boolean) => void;
   onCompose: () => void;
   onCreateFolder: (parent: string | null, name: string) => Promise<string>;
-  onMoveFolder: (path: string, parent: string | null) => Promise<string>;
-  onRenameFolder: (path: string, name: string) => Promise<string>;
-  onDeleteFolder: (path: string) => Promise<void>;
+  onMoveFolder: (path: string, parent: string | null) => Promise<FolderPathMutationResult>;
+  onRenameFolder: (path: string, name: string) => Promise<FolderPathMutationResult>;
+  onDeleteFolder: (path: string, permanent: boolean) => Promise<FolderDeleteResult>;
+  onRetrySearchCleanup?: () => Promise<void>;
   quota: { usage: number; limit: number } | null;
 }
 
 interface FolderMenuState {
   node: FolderTreeNode;
   point: ContextMenuPoint;
+}
+
+interface FolderDeleteConfirmation {
+  node: FolderTreeNode;
+  permanent: boolean;
 }
 
 const ICON_MAP: Record<string, FolderIcon> = {
@@ -69,6 +80,32 @@ function parentFolderPath(node: FolderTreeNode) {
   const delimiter = node.delimiter;
   if (!delimiter || !node.fullPath.includes(delimiter)) return null;
   return node.fullPath.slice(0, node.fullPath.lastIndexOf(delimiter));
+}
+
+function trashFolderFor(folders: MailFolder[]) {
+  return folders.find(folder => folder.specialUse?.toLowerCase() === '\\trash');
+}
+
+function folderIsInTrash(node: FolderTreeNode, folders: MailFolder[]) {
+  const trash = trashFolderFor(folders);
+  const delimiter = trash?.delimiter;
+  return Boolean(
+    trash
+    && delimiter
+    && node.delimiter === delimiter
+    && node.fullPath.startsWith(`${trash.path}${delimiter}`),
+  );
+}
+
+function folderPathBelongsToTree(path: string, root: FolderTreeNode) {
+  return path === root.fullPath
+    || Boolean(root.delimiter && path.startsWith(`${root.fullPath}${root.delimiter}`));
+}
+
+function folderTreeContainsSpecialUseDescendant(node: FolderTreeNode): boolean {
+  return Object.values(node.children).some(child => (
+    Boolean(child.specialUse) || folderTreeContainsSpecialUseDescendant(child)
+  ));
 }
 
 function indexFolderTree(nodes: FolderTreeNode[]) {
@@ -118,6 +155,7 @@ export function FolderSidebar({
   onMoveFolder,
   onRenameFolder,
   onDeleteFolder,
+  onRetrySearchCleanup,
   quota,
 }: FolderSidebarProps) {
   const navigate = useNavigate();
@@ -126,7 +164,11 @@ export function FolderSidebar({
   const [newFolderParent, setNewFolderParent] = useState<string | null | undefined>(undefined);
   const [movingFolder, setMovingFolder] = useState<FolderTreeNode | null>(null);
   const [renamingFolder, setRenamingFolder] = useState<FolderTreeNode | null>(null);
-  const [deleteFolderConfirm, setDeleteFolderConfirm] = useState<FolderTreeNode | null>(null);
+  const [deleteFolderConfirm, setDeleteFolderConfirm] = useState<FolderDeleteConfirmation | null>(null);
+  const [focusAfterFolderMutation, setFocusAfterFolderMutation] = useState<{
+    path: string;
+    delimiter: string;
+  } | null>(null);
   const tree = buildFolderTree(folders);
   const foldersByPath = indexFolderTree(tree);
   const favoriteNodes = favoriteFolders.flatMap(path => {
@@ -145,6 +187,64 @@ export function FolderSidebar({
     navigate(`/mail/${encodeURIComponent(path)}`);
     onFolderNavigate?.();
   }, [navigate, onFolderNavigate]);
+  useEffect(() => {
+    if (!focusAfterFolderMutation) return;
+    const target = findFolderFocusTarget(
+      focusAfterFolderMutation.path,
+      focusAfterFolderMutation.delimiter,
+    );
+    if (!target) return;
+    target.focus();
+    const completedFocus = focusAfterFolderMutation;
+    const clearTimer = window.setTimeout(() => {
+      setFocusAfterFolderMutation(current => (
+        current === completedFocus ? null : current
+      ));
+    }, 0);
+    return () => window.clearTimeout(clearTimer);
+  }, [focusAfterFolderMutation, folders]);
+
+  const showFolderMutationOutcome = (
+    successMessage: string,
+    warnings: FolderMutationWarning[] | undefined,
+    messagesPreserved = true,
+  ) => {
+    const subscriptionWarning = warnings?.includes('SUBSCRIPTIONS_NOT_RECONCILED') || false;
+    const searchWarning = warnings?.includes('SEARCH_INDEX_RESET_FAILED') || false;
+    if (!subscriptionWarning && !searchWarning) {
+      showToast({ type: 'success', message: successMessage });
+      return;
+    }
+
+    const committedMutationGuidance = messagesPreserved
+      ? 'Messages are intact. Refresh Mail and check folder subscriptions in other mail clients'
+      : 'The folder deletion completed. Refresh Mail and check folder subscriptions in other mail clients';
+    const message = subscriptionWarning && searchWarning
+      ? `${successMessage}, but subscriptions and search cleanup need attention. ${committedMutationGuidance}, then retry search cleanup.`
+      : subscriptionWarning
+        ? `${successMessage}, but subscriptions could not be updated. ${committedMutationGuidance}.`
+        : `${successMessage}, but search cleanup did not finish. Retry search cleanup.`;
+    showToast({
+      type: 'info',
+      message,
+      duration: 9000,
+      ...(searchWarning && onRetrySearchCleanup ? {
+        actionLabel: 'Retry search cleanup',
+        onAction: async () => {
+          try {
+            await onRetrySearchCleanup();
+            showToast({ type: 'success', message: 'Search cleanup completed.' });
+          } catch (caught) {
+            showToast({
+              type: 'error',
+              message: 'Search cleanup could not be completed.',
+            });
+            throw caught;
+          }
+        },
+      } : {}),
+    });
+  };
 
   const folderMenuItems: ContextMenuItem[] = folderMenu ? [{
     id: 'open',
@@ -171,6 +271,9 @@ export function FolderSidebar({
     });
   }
   if (folderMenu && !isProtectedFolder(folderMenu.node)) {
+    const deletePermanently = folderIsInTrash(folderMenu.node, folders);
+    const hasSubfolders = Object.keys(folderMenu.node.children).length > 0;
+    const hasProtectedDescendant = folderTreeContainsSpecialUseDescendant(folderMenu.node);
     folderMenuItems.push(
       {
         id: 'rename',
@@ -195,13 +298,20 @@ export function FolderSidebar({
       },
       {
         id: 'delete',
-        label: 'Delete',
+        label: hasProtectedDescendant
+          ? 'Contains system folder'
+          : deletePermanently
+          ? hasSubfolders ? 'Delete subfolders first' : 'Delete permanently'
+          : 'Delete',
         icon: Trash2,
         danger: true,
-        disabled: !favoriteSettingsReady || folderMutationPending,
+        disabled: !favoriteSettingsReady
+          || folderMutationPending
+          || hasProtectedDescendant
+          || (deletePermanently && hasSubfolders),
         onSelect: () => {
           onFolderDialogChange?.(true);
-          setDeleteFolderConfirm(folderMenu.node);
+          setDeleteFolderConfirm({ node: folderMenu.node, permanent: deletePermanently });
         },
       },
     );
@@ -281,39 +391,58 @@ export function FolderSidebar({
   const moveSelectedFolder = async (parent: string | null) => {
     if (!movingFolder) return;
     const sourcePath = movingFolder.fullPath;
-    const nextPath = await onMoveFolder(sourcePath, parent);
+    const result = await onMoveFolder(sourcePath, parent);
+    const nextPath = result.path;
+    const destinationDelimiter = typeof result.delimiter === 'string'
+      ? result.delimiter
+      : movingFolder.delimiter;
     const nextActiveFolder = remapFolderSubtreePath(
       activeFolder,
       sourcePath,
       nextPath,
       movingFolder.delimiter,
+      destinationDelimiter,
     );
     if (nextActiveFolder !== activeFolder) navigate(`/mail/${encodeURIComponent(nextActiveFolder)}`);
-    showToast({ type: 'success', message: `Moved ${movingFolder.name}` });
+    showFolderMutationOutcome(`Moved ${movingFolder.name}`, result.warnings);
   };
 
   const renameSelectedFolder = async (name: string) => {
     if (!renamingFolder) return;
     const sourcePath = renamingFolder.fullPath;
-    const nextPath = await onRenameFolder(sourcePath, name);
+    const result = await onRenameFolder(sourcePath, name);
+    const nextPath = result.path;
     const nextActiveFolder = remapFolderSubtreePath(
       activeFolder,
       sourcePath,
       nextPath,
       renamingFolder.delimiter,
+      result.delimiter,
     );
     if (nextActiveFolder !== activeFolder) navigate(`/mail/${encodeURIComponent(nextActiveFolder)}`);
-    showToast({ type: 'success', message: `Renamed ${renamingFolder.name} to ${name}` });
+    showFolderMutationOutcome(`Renamed ${renamingFolder.name} to ${name}`, result.warnings);
   };
 
   const deleteSelectedFolder = () => {
     if (!deleteFolderConfirm) return;
-    const folder = deleteFolderConfirm;
+    const { node: folder, permanent } = deleteFolderConfirm;
     setDeleteFolderConfirm(null);
     onFolderDialogChange?.(false);
-    void onDeleteFolder(folder.fullPath).then(() => {
-      if (activeFolder === folder.fullPath) navigate('/mail/INBOX');
-      showToast({ type: 'success', message: `Deleted ${folder.name}` });
+    void onDeleteFolder(folder.fullPath, permanent).then(result => {
+      if (folderPathBelongsToTree(activeFolder, folder)) navigate('/mail/INBOX');
+      showFolderMutationOutcome(
+        result.disposition === 'trashed'
+          ? `${folder.name} moved to Trash`
+          : `${folder.name} permanently deleted`,
+        result.warnings,
+        result.disposition === 'trashed',
+      );
+      setFocusAfterFolderMutation({
+        path: result.disposition === 'trashed' ? result.folder.path : folder.fullPath,
+        delimiter: result.disposition === 'trashed'
+          ? result.folder.delimiter || folder.delimiter
+          : folder.delimiter,
+      });
     }).catch(caught => {
       showToast({
         type: 'error',
@@ -465,10 +594,14 @@ export function FolderSidebar({
       )}
       <ConfirmDialog
         open={Boolean(deleteFolderConfirm)}
-        title={`Delete ${deleteFolderConfirm?.name || 'folder'}?`}
-        message="Messages in this folder will be permanently deleted. This cannot be undone. Subfolders must be moved or deleted first."
-        confirmLabel="Delete folder"
-        danger
+        title={deleteFolderConfirm?.permanent
+          ? `Permanently delete ${deleteFolderConfirm.node.name}?`
+          : `Move ${deleteFolderConfirm?.node.name || 'folder'} to Trash?`}
+        message={deleteFolderConfirm?.permanent
+          ? 'This folder and all its messages will be permanently deleted. This cannot be undone.'
+          : 'This folder, its subfolders and messages will move to Trash. You can restore it with Move.'}
+        confirmLabel={deleteFolderConfirm?.permanent ? 'Delete permanently' : 'Move to Trash'}
+        danger={Boolean(deleteFolderConfirm?.permanent)}
         onConfirm={deleteSelectedFolder}
         onCancel={() => {
           setDeleteFolderConfirm(null);

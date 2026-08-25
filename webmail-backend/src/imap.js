@@ -46,11 +46,29 @@ const SPECIAL_USE_FLAGS = new Set([
     '\\trash',
 ]);
 const MARK_READ_UID_BATCH_SIZE = 500;
+const TRASH_FOLDER_NAME_ATTEMPTS = 100;
+const MAX_FOLDER_NAME_LENGTH = 255;
 function mailboxSpecialUse(folder) {
     if (typeof folder?.specialUse === 'string' && folder.specialUse)
         return folder.specialUse;
     return Array.from(folder?.flags || [], flag => String(flag))
         .find(flag => SPECIAL_USE_FLAGS.has(flag.toLowerCase()));
+}
+function mailboxTreeHasAmbiguousDestinationComponent(folders, sourcePath, sourceDelimiter, destinationDelimiter) {
+    if (!destinationDelimiter || destinationDelimiter === sourceDelimiter)
+        return false;
+    const sourceLeaf = sourceDelimiter && sourcePath.includes(sourceDelimiter)
+        ? sourcePath.slice(sourcePath.lastIndexOf(sourceDelimiter) + sourceDelimiter.length)
+        : sourcePath;
+    if (sourceLeaf.includes(destinationDelimiter))
+        return true;
+    if (!sourceDelimiter)
+        return false;
+    return folders.some(folder => (folder.path.startsWith(`${sourcePath}${sourceDelimiter}`)
+        && folder.path
+            .slice(sourcePath.length + sourceDelimiter.length)
+            .split(sourceDelimiter)
+            .some((component) => component.includes(destinationDelimiter))));
 }
 class ImapService {
     client;
@@ -93,23 +111,37 @@ class ImapService {
             };
         });
     }
-    async preserveSubscriptionsAfterMailboxRename(folders, sourcePath, delimiter, destinationPath, action) {
+    async preserveSubscriptionsAfterMailboxRename(folders, sourcePath, sourceDelimiter, destinationPath, destinationDelimiter, action) {
+        let reconciliationFailed = false;
         for (const folder of folders) {
             const belongsToRenamedTree = folder.path === sourcePath
-                || Boolean(delimiter && folder.path.startsWith(`${sourcePath}${delimiter}`));
+                || Boolean(sourceDelimiter && folder.path.startsWith(`${sourcePath}${sourceDelimiter}`));
             if (!belongsToRenamedTree || !folder.subscribed)
                 continue;
-            const renamedPath = `${destinationPath}${folder.path.slice(sourcePath.length)}`;
+            const renamedPath = folder.path === sourcePath
+                ? destinationPath
+                : `${destinationPath}${destinationDelimiter}${folder.path
+                    .slice(sourcePath.length + sourceDelimiter.length)
+                    .split(sourceDelimiter)
+                    .join(destinationDelimiter)}`;
             try {
-                await this.client.mailboxSubscribe(renamedPath);
-                await this.client.mailboxUnsubscribe(folder.path);
+                const subscribed = await this.client.mailboxSubscribe(renamedPath);
+                if (!subscribed) {
+                    reconciliationFailed = true;
+                    continue;
+                }
+                const unsubscribed = await this.client.mailboxUnsubscribe(folder.path);
+                if (!unsubscribed)
+                    reconciliationFailed = true;
             }
             catch (err) {
+                reconciliationFailed = true;
                 console.error(`Failed to preserve mailbox subscription after folder ${action}`, {
                     errorType: err instanceof Error ? err.name : 'UnknownError',
                 });
             }
         }
+        return reconciliationFailed ? ['SUBSCRIPTIONS_NOT_RECONCILED'] : [];
     }
     async createFolder(parentPath, requestedName) {
         if (parentPath !== null && parentPath !== undefined && typeof parentPath !== 'string') {
@@ -199,16 +231,30 @@ class ImapService {
         if (parentFolder?.flags?.has('\\Noselect')) {
             throw new MailboxMutationError('INVALID_FOLDER_DESTINATION', 409, 'That folder cannot contain subfolders.');
         }
-        const delimiter = typeof parentFolder?.delimiter === 'string'
-            ? parentFolder.delimiter
-            : sourceDelimiter;
-        if (parentFolder && !delimiter) {
+        const personalNamespace = this.client.namespace;
+        const inbox = folders.find(folder => folder.path?.toUpperCase() === 'INBOX');
+        const personalDelimiter = typeof personalNamespace?.delimiter === 'string'
+            ? personalNamespace.delimiter
+            : typeof inbox?.delimiter === 'string'
+                ? inbox.delimiter
+                : undefined;
+        if (parent === null && personalDelimiter === undefined) {
+            throw new MailboxMutationError('FOLDER_HIERARCHY_UNAVAILABLE', 409, 'This mail server did not advertise a personal folder namespace.');
+        }
+        const delimiter = parentFolder
+            ? (typeof parentFolder.delimiter === 'string' ? parentFolder.delimiter : '')
+            : personalDelimiter;
+        const sourceHasChildren = Boolean(sourceDelimiter && folders.some(folder => (folder.path.startsWith(`${source.path}${sourceDelimiter}`))));
+        if ((parentFolder || sourceHasChildren) && !delimiter) {
             throw new MailboxMutationError('FOLDER_HIERARCHY_UNAVAILABLE', 409, 'This mail server does not support subfolders here.');
         }
         if (parentFolder
             && (parentFolder.path === source.path
                 || (sourceDelimiter && parentFolder.path.startsWith(`${source.path}${sourceDelimiter}`)))) {
             throw new MailboxMutationError('INVALID_FOLDER_DESTINATION', 409, 'A folder cannot be moved into itself or one of its subfolders.');
+        }
+        if (mailboxTreeHasAmbiguousDestinationComponent(folders, source.path, sourceDelimiter, delimiter)) {
+            throw new MailboxMutationError('FOLDER_NAME_INCOMPATIBLE', 409, 'A folder in this tree uses the destination hierarchy character. Rename it before moving the folder.');
         }
         const destinationPath = parentFolder ? `${parentFolder.path}${delimiter}${leaf}` : leaf;
         if (destinationPath === source.path) {
@@ -217,8 +263,8 @@ class ImapService {
         if (folders.some(folder => folder.path === destinationPath)) {
             throw new MailboxMutationError('FOLDER_EXISTS', 409, 'A folder with that name already exists in the destination.');
         }
-        const result = await this.client.mailboxRename(source.path, parentFolder ? [parentFolder.path, leaf] : [leaf]);
-        await this.preserveSubscriptionsAfterMailboxRename(folders, source.path, sourceDelimiter, result.newPath, 'move');
+        const result = await this.client.mailboxRename(source.path, destinationPath);
+        const warnings = await this.preserveSubscriptionsAfterMailboxRename(folders, source.path, sourceDelimiter, result.newPath, delimiter, 'move');
         return {
             previousPath: source.path,
             folder: {
@@ -226,6 +272,7 @@ class ImapService {
                 delimiter,
                 unseen: Number(source.status?.unseen || 0),
             },
+            ...(warnings.length ? { warnings } : {}),
         };
     }
     async renameFolder(requestedPath, requestedName) {
@@ -275,7 +322,7 @@ class ImapService {
             throw new MailboxMutationError('FOLDER_EXISTS', 409, 'A folder with that name already exists in this location.');
         }
         const result = await this.client.mailboxRename(source.path, parentPath ? [parentPath, name] : [name]);
-        await this.preserveSubscriptionsAfterMailboxRename(folders, source.path, delimiter, result.newPath, 'rename');
+        const warnings = await this.preserveSubscriptionsAfterMailboxRename(folders, source.path, delimiter, result.newPath, delimiter, 'rename');
         return {
             previousPath: source.path,
             folder: {
@@ -283,12 +330,16 @@ class ImapService {
                 delimiter,
                 unseen: Number(source.status?.unseen || 0),
             },
+            ...(warnings.length ? { warnings } : {}),
         };
     }
-    async deleteFolder(requestedPath) {
+    async deleteFolder(requestedPath, requestedPermanent = false) {
         const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
         if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {
             throw new MailboxMutationError('INVALID_FOLDER', 400, 'Choose a valid folder to delete.');
+        }
+        if (typeof requestedPermanent !== 'boolean') {
+            throw new MailboxMutationError('INVALID_FOLDER_MUTATION', 400, 'Choose whether this folder should be moved to Trash or permanently deleted.');
         }
         if (path.toUpperCase() === 'SCHEDULED') {
             throw new MailboxMutationError('VIRTUAL_FOLDER_UNSUPPORTED', 409, 'Scheduled is a virtual folder and cannot be deleted.');
@@ -305,20 +356,90 @@ class ImapService {
         if (source.flags?.has('\\Noselect')) {
             throw new MailboxMutationError('INVALID_FOLDER', 409, 'That folder cannot be deleted.');
         }
-        const delimiter = typeof source.delimiter === 'string' ? source.delimiter : '';
-        if (delimiter && folders.some(folder => folder.path.startsWith(`${source.path}${delimiter}`))) {
-            throw new MailboxMutationError('FOLDER_HAS_CHILDREN', 409, 'Move or delete this folder’s subfolders first.');
+        const sourceDelimiter = typeof source.delimiter === 'string' ? source.delimiter : '';
+        const belongsToSourceTree = (folder) => folder.path === source.path
+            || Boolean(sourceDelimiter && folder.path.startsWith(`${source.path}${sourceDelimiter}`));
+        if (folders.some(folder => (folder.path !== source.path
+            && belongsToSourceTree(folder)
+            && Boolean(mailboxSpecialUse(folder))))) {
+            throw new MailboxMutationError('PROTECTED_FOLDER', 409, 'Folders containing system folders cannot be deleted.');
         }
-        const result = await this.client.mailboxDelete(source.path);
-        try {
-            await this.client.mailboxUnsubscribe(source.path);
+        const trash = folders.find(folder => mailboxSpecialUse(folder)?.toLowerCase() === '\\trash');
+        if (!trash || trash.flags?.has('\\Noselect')) {
+            throw new MailboxMutationError('TRASH_FOLDER_UNAVAILABLE', 409, 'Trash is unavailable. Refresh Mail or ask your administrator to configure a Trash folder.');
         }
-        catch (err) {
-            console.error('Failed to remove mailbox subscription after folder deletion', {
-                errorType: err instanceof Error ? err.name : 'UnknownError',
-            });
+        const delimiter = typeof trash.delimiter === 'string' ? trash.delimiter : '';
+        const isInTrash = Boolean(delimiter
+            && sourceDelimiter === delimiter
+            && source.path.startsWith(`${trash.path}${delimiter}`));
+        if (requestedPermanent) {
+            if (!isInTrash) {
+                throw new MailboxMutationError('PERMANENT_DELETE_REQUIRES_TRASH', 409, 'Move this folder to Trash before permanently deleting it.');
+            }
+            if (delimiter && folders.some(folder => folder.path.startsWith(`${source.path}${delimiter}`))) {
+                throw new MailboxMutationError('FOLDER_HAS_CHILDREN', 409, 'Permanently delete this folder’s subfolders first.');
+            }
+            const result = await this.client.mailboxDelete(source.path);
+            if (!result?.path) {
+                throw new MailboxMutationError('FOLDER_DELETE_NOT_CONFIRMED', 502, 'The mail server did not confirm the deletion. Refresh Mail before trying again.');
+            }
+            let subscriptionWarning = false;
+            try {
+                const unsubscribed = await this.client.mailboxUnsubscribe(source.path);
+                if (!unsubscribed)
+                    subscriptionWarning = true;
+            }
+            catch (err) {
+                subscriptionWarning = true;
+                console.error('Failed to remove mailbox subscription after permanent folder deletion', {
+                    errorType: err instanceof Error ? err.name : 'UnknownError',
+                });
+            }
+            return {
+                disposition: 'deleted',
+                deletedPath: result.path,
+                ...(subscriptionWarning
+                    ? { warnings: ['SUBSCRIPTIONS_NOT_RECONCILED'] }
+                    : {}),
+            };
         }
-        return { deletedPath: result?.path || source.path };
+        if (isInTrash) {
+            throw new MailboxMutationError('FOLDER_ALREADY_IN_TRASH', 409, 'This folder is already in Trash. Confirm permanent deletion before removing it.');
+        }
+        if (!sourceDelimiter || !delimiter) {
+            throw new MailboxMutationError('FOLDER_HIERARCHY_UNAVAILABLE', 409, 'This mail server cannot place folders beneath Trash.');
+        }
+        if (mailboxTreeHasAmbiguousDestinationComponent(folders, source.path, sourceDelimiter, delimiter)) {
+            throw new MailboxMutationError('FOLDER_NAME_INCOMPATIBLE', 409, 'A folder in this tree uses the Trash hierarchy character. Rename it before deleting the folder.');
+        }
+        const leaf = sourceDelimiter && source.path.includes(sourceDelimiter)
+            ? source.path.slice(source.path.lastIndexOf(sourceDelimiter) + sourceDelimiter.length)
+            : source.path;
+        let destinationLeaf = leaf;
+        let destinationPath = `${trash.path}${delimiter}${destinationLeaf}`;
+        for (let attempt = 2; folders.some(folder => folder.path === destinationPath); attempt += 1) {
+            if (attempt > TRASH_FOLDER_NAME_ATTEMPTS) {
+                throw new MailboxMutationError('TRASH_FOLDER_NAME_CONFLICT', 409, 'Trash already contains too many folders with this name. Rename one and try again.');
+            }
+            const suffix = ` (${attempt})`;
+            const stem = Array.from(leaf)
+                .slice(0, MAX_FOLDER_NAME_LENGTH - Array.from(suffix).length)
+                .join('');
+            destinationLeaf = `${stem}${suffix}`;
+            destinationPath = `${trash.path}${delimiter}${destinationLeaf}`;
+        }
+        const result = await this.client.mailboxRename(source.path, destinationPath);
+        const warnings = await this.preserveSubscriptionsAfterMailboxRename(folders, source.path, sourceDelimiter, result.newPath, delimiter, 'move');
+        return {
+            disposition: 'trashed',
+            previousPath: source.path,
+            folder: {
+                path: result.newPath,
+                delimiter,
+                unseen: Number(source.status?.unseen || 0),
+            },
+            ...(warnings.length ? { warnings } : {}),
+        };
     }
     async markFolderRead(requestedPath) {
         const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';

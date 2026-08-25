@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type SetStateAction } from 'react';
 import type {
-  Message, MailFolder, Signature, Rule, SavedSearch,
+  Message, MailFolder, Signature, Rule, SavedSearch, FolderPathMutationResult,
   MailUndoState,
   SearchField, SearchScope,
   SearchIndexStatusResponse, SearchWorkerStatusResponse,
@@ -520,6 +520,7 @@ export function useMail(_opts: UseMailOptions) {
         path,
         result.folder.path,
         sourceDelimiter,
+        result.folder.delimiter || sourceDelimiter,
       ));
       if (parent) setExpandedPersisted(previous => ({ ...previous, [parent]: true }));
       await fetchFolders();
@@ -528,8 +529,15 @@ export function useMail(_opts: UseMailOptions) {
         path,
         result.folder.path,
         sourceDelimiter,
+        result.folder.delimiter || sourceDelimiter,
       ), 'moved');
-      return result.folder.path;
+      return {
+        path: result.folder.path,
+        delimiter: typeof result.folder.delimiter === 'string'
+          ? result.folder.delimiter
+          : sourceDelimiter,
+        ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+      } satisfies FolderPathMutationResult;
     });
   }, [favoriteFolders, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
 
@@ -545,6 +553,7 @@ export function useMail(_opts: UseMailOptions) {
         path,
         result.folder.path,
         sourceDelimiter,
+        result.folder.delimiter || sourceDelimiter,
       ));
       await fetchFolders();
       await persistFolderMutationFavorites(remapFavoriteFolderPaths(
@@ -552,31 +561,68 @@ export function useMail(_opts: UseMailOptions) {
         path,
         result.folder.path,
         sourceDelimiter,
+        result.folder.delimiter || sourceDelimiter,
       ), 'renamed');
-      return result.folder.path;
+      return {
+        path: result.folder.path,
+        delimiter: typeof result.folder.delimiter === 'string'
+          ? result.folder.delimiter
+          : sourceDelimiter,
+        ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+      } satisfies FolderPathMutationResult;
     });
   }, [favoriteFolders, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
 
-  const deleteFolder = useCallback(async (path: string) => {
+  const deleteFolder = useCallback(async (path: string, permanent: boolean) => {
     if (!mailSettingsReady) {
       throw new Error('Wait for Favorites to finish loading before deleting folders.');
     }
     return runFolderMutation(async () => {
       const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
-      await api.deleteFolder(path);
-      setExpandedPersisted(previous => {
-        const next = { ...previous };
-        delete next[path];
-        return next;
-      });
+      const result = await api.deleteFolder(path, permanent);
+      if (result.disposition === 'trashed') {
+        const destinationDelimiter = result.folder.delimiter || sourceDelimiter;
+        const trashPath = destinationDelimiter && result.folder.path.includes(destinationDelimiter)
+          ? result.folder.path.slice(0, result.folder.path.lastIndexOf(destinationDelimiter))
+          : '';
+        setExpandedPersisted(previous => ({
+          ...remapExpandedFolderPaths(
+            previous,
+            path,
+            result.folder.path,
+            sourceDelimiter,
+            destinationDelimiter,
+          ),
+          ...(trashPath ? { [trashPath]: true } : {}),
+        }));
+      } else {
+        setExpandedPersisted(previous => Object.fromEntries(
+          Object.entries(previous).filter(([folderPath]) => (
+            folderPath !== path
+            && !(sourceDelimiter && folderPath.startsWith(`${path}${sourceDelimiter}`))
+          )),
+        ));
+      }
       await fetchFolders();
-      await persistFolderMutationFavorites(removeFavoriteFolderSubtree(
-        favoriteFolders,
-        path,
-        sourceDelimiter,
-      ), 'deleted');
+      await persistFolderMutationFavorites(
+        result.disposition === 'trashed'
+          ? remapFavoriteFolderPaths(
+              favoriteFolders,
+              path,
+              result.folder.path,
+              sourceDelimiter,
+              result.folder.delimiter || sourceDelimiter,
+            )
+          : removeFavoriteFolderSubtree(favoriteFolders, path, sourceDelimiter),
+        result.disposition === 'trashed' ? 'moved' : 'deleted',
+      );
+      return result;
     });
   }, [favoriteFolders, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
+
+  const retryFolderSearchCleanup = useCallback(async () => {
+    await api.purgeSearchIndex();
+  }, []);
 
   const toggleFavoriteFolder = useCallback(async (path: string) => {
     const folder = folders.find(candidate => candidate.path === path);
@@ -1573,7 +1619,8 @@ export function useMail(_opts: UseMailOptions) {
     checkEarlierReplySend, checkingEarlierReplySend, allowReplyRetryAfterVerifiedNonDelivery,
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
-    fetchFolders, createFolder, moveFolder, renameFolder, deleteFolder, toggleFavoriteFolder, markFolderRead,
+    fetchFolders, createFolder, moveFolder, renameFolder, deleteFolder, retryFolderSearchCleanup,
+    toggleFavoriteFolder, markFolderRead,
     fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,
     messageAction, undoAction, doSearch, snoozeMessages, cancelScheduledSend, removeScheduledMessage,
     mailSettings: _opts.mailSettings,

@@ -669,19 +669,29 @@ navigate normally.
 Authenticated `POST /api/folders` creates either a top-level folder or one child
 beneath an existing selectable IMAP folder. `PATCH /api/folders` moves a custom
 folder without renaming its leaf, including back to the hierarchy root, and
-`DELETE /api/folders` deletes a custom leaf after UI confirmation. The
-service resolves real folders and the server hierarchy delimiter from LIST,
-passes path segments to ImapFlow, and rejects invalid or duplicate names,
-missing/nonselectable parents, flat-namespace child requests, system/special-use
-folder mutation, self/descendant moves, collisions, and deletion while children
-remain. Special-use protection derives from every advertised RFC flag rather
-than only ImapFlow's one canonical alias, and the virtual top-level `SCHEDULED`
-name is reserved. Folder moves preserve subscribed paths and delete removes the
-subscription. Move/delete are blocked while an active rule or snoozed message
-references that path, then atomically clear the owner's folder-keyed search
-index after the IMAP mutation. Create/move/delete behavior is guarded-deployed and was
-exercised with a dedicated disposable canary through API, webmail, LIST, and
-LSUB create/move/delete lifecycles with exact cleanup.
+`DELETE /api/folders` binds an explicit permanent flag to the request. Ordinary
+delete renames the complete custom subtree beneath the server-advertised
+`\\Trash` mailbox, selecting a non-destructive `Name (2)` suffix on collision;
+only a custom leaf already beneath that Trash mailbox can be permanently
+deleted. Permanent subtree deletion stays disabled until children are removed.
+Trash membership requires the source and Trash entries to advertise the same
+hierarchy delimiter, and permanent deletion succeeds only after IMAP returns an
+explicit delete acknowledgement.
+The service resolves real folders plus source and destination hierarchy
+delimiters from LIST, passes an exact destination path to ImapFlow, and
+translates descendant subscription paths when namespaces use different
+delimiters. It rejects invalid or duplicate names, missing/nonselectable
+parents, flat-namespace child requests, an unavailable Trash contract,
+folder-tree components that would become ambiguous under a destination
+namespace's different hierarchy character,
+system/special-use folder mutation, trees containing a special-use descendant,
+self/descendant moves, and unsafe permanent-delete intent. Special-use
+protection derives from every advertised RFC flag rather than only ImapFlow's
+one canonical alias, and the virtual top-level `SCHEDULED` name is reserved.
+Folder Move, Rename, and recoverable Delete preserve subscribed subtree paths;
+permanent Delete removes the leaf subscription. Mutations are blocked while an
+active rule or snoozed message references that tree, then best-effort clear the
+owner's folder-keyed search index after the acknowledged IMAP mutation.
 
 Verified 2026-08-24: custom top-level folders and subfolders add Rename to the
 same accessible lifecycle menu while protected/system folders do not.

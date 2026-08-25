@@ -4,7 +4,7 @@ import type {
   SearchResponse, SearchIndexStatusResponse, SearchIndexRefreshResponse,
   SearchWorkerStatusResponse, SavedSearch,
   SearchField, SearchScope,
-  MailFolder, FolderMutationResponse, FolderMarkReadResponse, Signature, Rule, RuleAnalysis, RuleRunPageResponse, RuleRunRequest,
+  MailFolder, FolderDeleteResult, FolderMutationResponse, FolderMutationWarning, FolderMarkReadResponse, Signature, Rule, RuleAnalysis, RuleRunPageResponse, RuleRunRequest,
   ContactsResponse, Contact, ContactLabel, ContactGroup,
   CalendarsResponse, Calendar, CalendarUpdateResponse, CalendarDeleteResponse,
   CalendarShare,
@@ -50,6 +50,7 @@ export async function createFolder(parent: string | null, name: string): Promise
 export async function moveFolder(path: string, parent: string | null): Promise<{
   previousPath: string;
   folder: MailFolder;
+  warnings?: FolderMutationWarning[];
 }> {
   const res = await fetch('/api/folders', {
     method: 'PATCH',
@@ -60,12 +61,17 @@ export async function moveFolder(path: string, parent: string | null): Promise<{
   if (!res.ok || !data.success || !data.folder || !data.previousPath) {
     throw new Error(data.error || 'The folder could not be moved.');
   }
-  return { previousPath: data.previousPath, folder: data.folder };
+  return {
+    previousPath: data.previousPath,
+    folder: data.folder,
+    ...folderMutationWarnings(data.warnings),
+  };
 }
 
 export async function renameFolder(path: string, name: string): Promise<{
   previousPath: string;
   folder: MailFolder;
+  warnings?: FolderMutationWarning[];
 }> {
   const res = await fetch('/api/folders', {
     method: 'PATCH',
@@ -76,20 +82,52 @@ export async function renameFolder(path: string, name: string): Promise<{
   if (!res.ok || !data.success || !data.folder || !data.previousPath) {
     throw new Error(data.error || 'The folder could not be renamed.');
   }
-  return { previousPath: data.previousPath, folder: data.folder };
+  return {
+    previousPath: data.previousPath,
+    folder: data.folder,
+    ...folderMutationWarnings(data.warnings),
+  };
 }
 
-export async function deleteFolder(path: string): Promise<string> {
+const KNOWN_FOLDER_MUTATION_WARNINGS = new Set<FolderMutationWarning>([
+  'SUBSCRIPTIONS_NOT_RECONCILED',
+  'SEARCH_INDEX_RESET_FAILED',
+]);
+
+function folderMutationWarnings(value: unknown): { warnings?: FolderMutationWarning[] } {
+  if (!Array.isArray(value)) return {};
+  const warnings = Array.from(new Set(value.filter(
+    (warning): warning is FolderMutationWarning => (
+      typeof warning === 'string'
+      && KNOWN_FOLDER_MUTATION_WARNINGS.has(warning as FolderMutationWarning)
+    ),
+  )));
+  return warnings.length ? { warnings } : {};
+}
+
+export async function deleteFolder(path: string, permanent: boolean): Promise<FolderDeleteResult> {
   const res = await fetch('/api/folders', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ path, permanent }),
   });
   const data = await res.json().catch(() => ({ success: false })) as FolderMutationResponse;
-  if (!res.ok || !data.success || !data.deletedPath) {
-    throw new Error(data.error || 'The folder could not be deleted.');
+  if (res.ok && data.success && data.disposition === 'trashed' && data.folder && data.previousPath) {
+    return {
+      disposition: 'trashed',
+      previousPath: data.previousPath,
+      folder: data.folder,
+      ...folderMutationWarnings(data.warnings),
+    };
   }
-  return data.deletedPath;
+  if (res.ok && data.success && data.disposition === 'deleted' && data.deletedPath) {
+    return {
+      disposition: 'deleted',
+      deletedPath: data.deletedPath,
+      ...folderMutationWarnings(data.warnings),
+    };
+  }
+  throw new Error(data.error || 'The folder could not be deleted.');
 }
 
 export async function markFolderRead(path: string): Promise<{ path: string; marked: number; maxUid: number }> {
@@ -276,6 +314,14 @@ export async function fetchSearchWorkerStatus(): Promise<SearchWorkerStatusRespo
 export async function refreshSearchIndex(): Promise<SearchIndexRefreshResponse> {
   const res = await fetch('/api/messages/search/index', { method: 'POST' });
   return res.json();
+}
+
+export async function purgeSearchIndex(): Promise<void> {
+  const res = await fetch('/api/messages/search/index', { method: 'DELETE' });
+  const data = await res.json().catch(() => ({ success: false })) as { success?: boolean; error?: string };
+  if (!res.ok || !data.success) {
+    throw new Error('Search cleanup could not be completed.');
+  }
 }
 
 export async function fetchSavedSearches(): Promise<SavedSearch[]> {

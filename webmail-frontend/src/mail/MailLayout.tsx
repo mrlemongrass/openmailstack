@@ -76,6 +76,7 @@ function FolderNavigation({
       onMoveFolder={mail.moveFolder}
       onRenameFolder={mail.renameFolder}
       onDeleteFolder={mail.deleteFolder}
+      onRetrySearchCleanup={mail.retryFolderSearchCleanup}
       quota={mail.userQuota}
     />
   );

@@ -117,6 +117,7 @@ test('mobile folder drawer yields to Compose and nested folder dialogs without c
     folders: [
       { path: 'INBOX', delimiter: '/', unseen: 2, specialUse: '\\Inbox' },
       { path: 'Projects', delimiter: '/', unseen: 1 },
+      { path: 'Trash', delimiter: '/', unseen: 0, specialUse: '\\Trash' },
     ],
     activeFolder: 'INBOX',
     expandedFolders: {},
@@ -184,7 +185,7 @@ test('mobile folder drawer yields to Compose and nested folder dialogs without c
   const overlay = document.querySelector('.mobile-mail-folder-overlay');
   assert.equal(overlay.hidden, true, 'the drawer is visually and semantically suspended');
   assert.equal(visibleModalDialogs().length, 1, 'only the delete confirmation remains modal');
-  assert.match(visibleModalDialogs()[0].textContent, /Delete Projects/);
+  assert.match(visibleModalDialogs()[0].textContent, /Move Projects to Trash/);
 
   await act(async () => {
     document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

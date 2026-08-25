@@ -2,11 +2,15 @@ export function remapFolderSubtreePath(
   folderPath: string,
   sourcePath: string,
   destinationPath: string,
-  delimiter: string,
+  sourceDelimiter: string,
+  destinationDelimiter = sourceDelimiter,
 ): string {
   if (folderPath === sourcePath) return destinationPath;
-  if (delimiter && folderPath.startsWith(`${sourcePath}${delimiter}`)) {
-    return `${destinationPath}${folderPath.slice(sourcePath.length)}`;
+  if (sourceDelimiter && folderPath.startsWith(`${sourcePath}${sourceDelimiter}`)) {
+    const descendantPath = folderPath.slice(sourcePath.length + sourceDelimiter.length);
+    return `${destinationPath}${destinationDelimiter}${descendantPath
+      .split(sourceDelimiter)
+      .join(destinationDelimiter)}`;
   }
   return folderPath;
 }
@@ -15,10 +19,17 @@ export function remapExpandedFolderPaths(
   expandedFolders: Record<string, boolean>,
   sourcePath: string,
   destinationPath: string,
-  delimiter: string,
+  sourceDelimiter: string,
+  destinationDelimiter = sourceDelimiter,
 ): Record<string, boolean> {
   return Object.fromEntries(Object.entries(expandedFolders).map(([folderPath, expanded]) => [
-    remapFolderSubtreePath(folderPath, sourcePath, destinationPath, delimiter),
+    remapFolderSubtreePath(
+      folderPath,
+      sourcePath,
+      destinationPath,
+      sourceDelimiter,
+      destinationDelimiter,
+    ),
     expanded,
   ]));
 }
@@ -27,10 +38,17 @@ export function remapFavoriteFolderPaths(
   favoriteFolders: string[],
   sourcePath: string,
   destinationPath: string,
-  delimiter: string,
+  sourceDelimiter: string,
+  destinationDelimiter = sourceDelimiter,
 ): string[] {
   return [...new Set(favoriteFolders.map(folderPath => (
-    remapFolderSubtreePath(folderPath, sourcePath, destinationPath, delimiter)
+    remapFolderSubtreePath(
+      folderPath,
+      sourcePath,
+      destinationPath,
+      sourceDelimiter,
+      destinationDelimiter,
+    )
   )))];
 }
 

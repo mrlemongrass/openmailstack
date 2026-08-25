@@ -45,6 +45,7 @@ export declare class MailboxMutationError extends Error {
     statusCode: number;
     constructor(code: string, statusCode: number, message: string);
 }
+export type FolderMutationWarning = 'SUBSCRIPTIONS_NOT_RECONCILED';
 export declare class ImapService {
     client: ImapFlow;
     constructor(user: string, pass: string, useMasterCredentials?: boolean);
@@ -59,6 +60,7 @@ export declare class ImapService {
         unseen: number;
     }>;
     moveFolder(requestedPath: string, requestedParent: string | null | undefined): Promise<{
+        warnings?: "SUBSCRIPTIONS_NOT_RECONCILED"[];
         previousPath: string;
         folder: {
             path: string;
@@ -67,6 +69,7 @@ export declare class ImapService {
         };
     }>;
     renameFolder(requestedPath: string, requestedName: string): Promise<{
+        warnings?: "SUBSCRIPTIONS_NOT_RECONCILED"[];
         previousPath: string;
         folder: {
             path: string;
@@ -74,8 +77,19 @@ export declare class ImapService {
             unseen: number;
         };
     }>;
-    deleteFolder(requestedPath: string): Promise<{
+    deleteFolder(requestedPath: string, requestedPermanent?: boolean | undefined): Promise<{
+        warnings?: "SUBSCRIPTIONS_NOT_RECONCILED"[];
+        disposition: "deleted";
         deletedPath: string;
+    } | {
+        warnings?: "SUBSCRIPTIONS_NOT_RECONCILED"[];
+        disposition: "trashed";
+        previousPath: string;
+        folder: {
+            path: string;
+            delimiter: string;
+            unseen: number;
+        };
     }>;
     markFolderRead(requestedPath: string): Promise<{
         path: string;

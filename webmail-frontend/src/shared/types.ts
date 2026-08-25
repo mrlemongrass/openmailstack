@@ -125,14 +125,37 @@ export interface MailFolder {
   disabled?: boolean;
 }
 
+export type FolderMutationWarning =
+  | 'SUBSCRIPTIONS_NOT_RECONCILED'
+  | 'SEARCH_INDEX_RESET_FAILED';
+
+export interface FolderPathMutationResult {
+  path: string;
+  delimiter?: string;
+  warnings?: FolderMutationWarning[];
+}
+
 export interface FolderMutationResponse {
   success: boolean;
   folder?: MailFolder;
   previousPath?: string;
   deletedPath?: string;
+  disposition?: 'trashed' | 'deleted';
+  warnings?: FolderMutationWarning[];
   code?: string;
   error?: string;
 }
+
+export type FolderDeleteResult = {
+  disposition: 'trashed';
+  previousPath: string;
+  folder: MailFolder;
+  warnings?: FolderMutationWarning[];
+} | {
+  disposition: 'deleted';
+  deletedPath: string;
+  warnings?: FolderMutationWarning[];
+};
 
 export interface FolderMarkReadResponse {
   success: boolean;

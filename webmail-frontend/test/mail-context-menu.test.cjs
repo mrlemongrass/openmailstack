@@ -100,6 +100,10 @@ test('folder subtree state follows a rename without touching similarly prefixed 
     remapFolderSubtreePath('INBOX/Receipts-old', 'INBOX/Receipts', 'INBOX/Statements', '/'),
     'INBOX/Receipts-old',
   );
+  assert.equal(
+    remapFolderSubtreePath('Trash.Project.Child', 'Trash.Project', 'Projects/Project', '.', '/'),
+    'Projects/Project/Child',
+  );
   assert.deepEqual(
     remapExpandedFolderPaths({
       INBOX: true,
@@ -120,6 +124,16 @@ test('folder subtree state follows a rename without touching similarly prefixed 
       '/',
     ),
     ['INBOX', 'INBOX/Statements', 'INBOX/Statements/2025'],
+  );
+  assert.deepEqual(
+    remapFavoriteFolderPaths(
+      ['Trash.Project', 'Trash.Project.Child'],
+      'Trash.Project',
+      'Projects/Project',
+      '.',
+      '/',
+    ),
+    ['Projects/Project', 'Projects/Project/Child'],
   );
   assert.deepEqual(
     removeFavoriteFolderSubtree(
@@ -268,6 +282,7 @@ test('rendered message rows expose sibling controls instead of nesting them in t
 test('folder lifecycle actions use the authenticated API and refresh the tree', () => {
   const api = source('src/shared/api.ts');
   const hook = source('src/mail/hooks/useMail.ts');
+  const sidebar = source('src/mail/FolderSidebar.tsx');
 
   assert.match(api, /fetch\('\/api\/folders',\s*\{[\s\S]*method:\s*'POST'/);
   assert.match(api, /JSON\.stringify\(\{ parent, name \}\)/);
@@ -280,7 +295,13 @@ test('folder lifecycle actions use the authenticated API and refresh the tree', 
   assert.match(hook, /api\.createFolder\(parent, name\)/);
   assert.match(hook, /api\.moveFolder\(path, parent\)/);
   assert.match(hook, /api\.renameFolder\(path, name\)/);
-  assert.match(hook, /api\.deleteFolder\(path\)/);
+  assert.match(hook, /api\.deleteFolder\(path, permanent\)/);
+  assert.match(hook, /result\.disposition === 'trashed'/);
+  assert.match(hook, /path: result\.folder\.path,[\s\S]*delimiter: typeof result\.folder\.delimiter/);
+  assert.match(sidebar, /const destinationDelimiter = typeof result\.delimiter/);
+  assert.match(hook, /remapExpandedFolderPaths/);
+  assert.match(hook, /remapFavoriteFolderPaths/);
+  assert.match(hook, /removeFavoriteFolderSubtree/);
   assert.match(hook, /api\.markFolderRead\(path\)/);
   assert.match(hook, /refreshAfterFolderMarkReadRef\.current\(result\.path\)/);
   assert.match(hook, /setSelectedMessages/);
@@ -314,6 +335,86 @@ test('folder-wide mark as read client sends only the selected folder path', asyn
   assert.equal(calls[0].url, '/api/folders/mark-read');
   assert.equal(calls[0].init.method, 'POST');
   assert.deepEqual(JSON.parse(calls[0].init.body), { path: 'INBOX/Receipts' });
+});
+
+test('folder deletion binds recoverable versus permanent intent to the authenticated request', async t => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, init) => {
+    calls.push({ url, init });
+    const body = JSON.parse(init.body);
+    return {
+      ok: true,
+      async json() {
+        return body.permanent
+          ? {
+              success: true,
+              disposition: 'deleted',
+              deletedPath: body.path,
+              warnings: ['SEARCH_INDEX_RESET_FAILED', 'UNKNOWN_PRIVATE_WARNING'],
+            }
+          : {
+              success: true,
+              disposition: 'trashed',
+              previousPath: body.path,
+              folder: { path: 'Trash/Projects', delimiter: '/', unseen: 0 },
+              warnings: ['SUBSCRIPTIONS_NOT_RECONCILED'],
+            };
+      },
+    };
+  };
+  t.after(() => { global.fetch = originalFetch; });
+  const { deleteFolder } = loadTypeScriptModule('../src/shared/api.ts');
+
+  assert.deepEqual(await deleteFolder('Projects', false), {
+    disposition: 'trashed',
+    previousPath: 'Projects',
+    folder: { path: 'Trash/Projects', delimiter: '/', unseen: 0 },
+    warnings: ['SUBSCRIPTIONS_NOT_RECONCILED'],
+  });
+  assert.deepEqual(await deleteFolder('Trash/Old', true), {
+    disposition: 'deleted',
+    deletedPath: 'Trash/Old',
+    warnings: ['SEARCH_INDEX_RESET_FAILED'],
+  });
+  assert.deepEqual(calls.map(call => ({
+    url: call.url,
+    method: call.init.method,
+    body: JSON.parse(call.init.body),
+  })), [
+    { url: '/api/folders', method: 'DELETE', body: { path: 'Projects', permanent: false } },
+    { url: '/api/folders', method: 'DELETE', body: { path: 'Trash/Old', permanent: true } },
+  ]);
+});
+
+test('search cleanup retry purges the authenticated search index', async t => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: calls.length === 1,
+      async json() {
+        return calls.length === 1
+          ? { success: true, deletedCount: 4 }
+          : { success: false, error: 'private search database detail' };
+      },
+    };
+  };
+  t.after(() => { global.fetch = originalFetch; });
+  const { purgeSearchIndex } = loadTypeScriptModule('../src/shared/api.ts');
+
+  await purgeSearchIndex();
+  await assert.rejects(
+    () => purgeSearchIndex(),
+    error => error.message === 'Search cleanup could not be completed.'
+      && !/private search database detail/i.test(error.message),
+  );
+
+  assert.deepEqual(calls, [
+    { url: '/api/messages/search/index', init: { method: 'DELETE' } },
+    { url: '/api/messages/search/index', init: { method: 'DELETE' } },
+  ]);
 });
 
 test('folder-wide mark as read refreshes the current authoritative view instead of projecting UID ranges', () => {

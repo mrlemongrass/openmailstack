@@ -92,7 +92,7 @@ test('folder rename UI protects system folders and recovers from a failed rename
     if (attempt === 1) {
       return new Promise((_resolve, reject) => { rejectRename = reject; });
     }
-    return Promise.resolve('INBOX/Statements');
+    return Promise.resolve({ path: 'INBOX/Statements' });
   };
   function LocationProbe() {
     return React.createElement('output', { id: 'location' }, useLocation().pathname);

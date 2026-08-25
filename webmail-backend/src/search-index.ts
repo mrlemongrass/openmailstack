@@ -344,6 +344,24 @@ export const updateMailSearchFlags = async (
     );
 };
 
+export const markMailSearchFolderRead = async (
+    username: string,
+    folder: string,
+    uids: number[],
+) => {
+    const exactUids = [...new Set(uids.filter(uid => Number.isInteger(uid) && uid > 0))];
+    if (exactUids.length === 0) return;
+    await ensureMailSearchSchema();
+    for (let offset = 0; offset < exactUids.length; offset += 500) {
+        await pool.query(
+            `UPDATE mail_search_index
+             SET is_read = 1, indexed_at = CURRENT_TIMESTAMP
+             WHERE username = ? AND folder = ? AND uid IN (?)`,
+            [username, folder, exactUids.slice(offset, offset + 500)],
+        );
+    }
+};
+
 export const getMailSearchIndexStatus = async (username: string): Promise<MailSearchIndexStatus> => {
     await ensureMailSearchSchema();
     const [rows]: any = await pool.query(

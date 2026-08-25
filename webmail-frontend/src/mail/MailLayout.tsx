@@ -1,6 +1,10 @@
+import { useCallback, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Outlet, useParams } from 'react-router';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultLayout } from 'react-resizable-panels';
+import { Folders, X } from 'lucide-react';
 import { useMediaQuery } from '../shared/hooks/useMediaQuery';
+import { useModalFocus } from '../shared/hooks/useModalFocus';
 import { FolderSidebar } from './FolderSidebar';
 import { MessageViewer } from './MessageViewer';
 import { UndoBar } from './components/UndoBar';
@@ -40,10 +44,103 @@ function OutboundRecoveryNotice({ mail }: MailLayoutProps) {
   );
 }
 
+function FolderNavigation({
+  mail,
+  onFolderNavigate,
+  onFolderDialogChange,
+}: MailLayoutProps & {
+  onFolderNavigate?: () => void;
+  onFolderDialogChange?: (open: boolean) => void;
+}) {
+  return (
+    <FolderSidebar
+      folders={mail.folders}
+      activeFolder={mail.activeFolder}
+      expandedFolders={mail.expandedFolders}
+      favoriteFolders={mail.favoriteFolders}
+      favoriteSettingsReady={mail.favoriteSettingsReady}
+      favoriteSettingsError={mail.favoriteSettingsError}
+      folderMutationPending={mail.folderMutationPending}
+      markingReadFolder={mail.markingReadFolder}
+      onToggleExpand={(path) => mail.setExpandedFolders((previous) => ({
+        ...previous,
+        [path]: !previous[path],
+      }))}
+      onToggleFavorite={mail.toggleFavoriteFolder}
+      onMarkFolderRead={mail.markFolderRead}
+      onRetryFavoriteSettings={mail.retryFavoriteSettings}
+      onFolderNavigate={onFolderNavigate}
+      onFolderDialogChange={onFolderDialogChange}
+      onCompose={() => mail.startCompose()}
+      onCreateFolder={mail.createFolder}
+      onMoveFolder={mail.moveFolder}
+      onRenameFolder={mail.renameFolder}
+      onDeleteFolder={mail.deleteFolder}
+      quota={mail.userQuota}
+    />
+  );
+}
+
+function MobileFolderDrawer({
+  mail,
+  open,
+  onClose,
+}: MailLayoutProps & { open: boolean; onClose: () => void }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const closeDrawer = useCallback(() => {
+    setFolderDialogOpen(false);
+    onClose();
+  }, [onClose]);
+  useModalFocus({
+    dialogRef,
+    open,
+    active: open && !folderDialogOpen,
+    onClose: closeDrawer,
+  });
+  if (!open) return null;
+
+  return createPortal(
+    <div
+      className="mobile-mail-folder-overlay"
+      hidden={folderDialogOpen}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) closeDrawer();
+      }}
+    >
+      <aside
+        ref={dialogRef}
+        className="mobile-mail-folder-drawer glass-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Mail folders"
+        tabIndex={-1}
+      >
+        <header className="mobile-mail-folder-heading">
+          <span><Folders size={18} aria-hidden="true" /> Folders</span>
+          <button type="button" className="btn btn-ghost" aria-label="Close folders" onClick={closeDrawer}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="mobile-mail-folder-content">
+          <FolderNavigation
+            mail={mail}
+            onFolderNavigate={closeDrawer}
+            onFolderDialogChange={setFolderDialogOpen}
+          />
+        </div>
+      </aside>
+    </div>,
+    document.body,
+  );
+}
+
 export function MailLayout({ mail }: MailLayoutProps) {
   const isMobile = useMediaQuery('(max-width: 767px)');
   const { uid } = useParams<{ uid: string }>();
   const showViewer = !!uid;
+  const [mobileFoldersOpen, setMobileFoldersOpen] = useState(false);
+  const closeMobileFolders = useCallback(() => setMobileFoldersOpen(false), []);
 
   // Persist layout sizes — matches original app pattern
   const webmailPanelLayout = useDefaultLayout({
@@ -56,6 +153,17 @@ export function MailLayout({ mail }: MailLayoutProps) {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative' }}>
         <OutboundRecoveryNotice mail={mail} />
         {showViewer ? <MessageViewer mail={mail} /> : <Outlet />}
+        <button
+          type="button"
+          className="mobile-mail-folder-trigger"
+          aria-label="Open folders"
+          aria-haspopup="dialog"
+          aria-expanded={mobileFoldersOpen}
+          onClick={() => setMobileFoldersOpen(true)}
+        >
+          <Folders size={18} aria-hidden="true" />
+          <span>Folders</span>
+        </button>
         {!showViewer && (
           <button
             onClick={() => mail.startCompose()}
@@ -74,6 +182,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
             </svg>
           </button>
         )}
+        <MobileFolderDrawer mail={mail} open={mobileFoldersOpen} onClose={closeMobileFolders} />
         <UndoBar mailUndo={mail.mailUndo} onUndo={mail.undoAction} onDismiss={() => mail.setMailUndo(null)} />
       </div>
     );
@@ -91,15 +200,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
       >
         <Panel id="webmail-sidebar" defaultSize="20%" minSize="10%" maxSize="35%">
           <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, overflow: 'hidden' }}>
-            <FolderSidebar folders={mail.folders} activeFolder={mail.activeFolder}
-              expandedFolders={mail.expandedFolders}
-              onToggleExpand={(path) => mail.setExpandedFolders((prev) => ({ ...prev, [path]: !prev[path] }))}
-              onCompose={() => mail.startCompose()}
-              onCreateFolder={mail.createFolder}
-              onMoveFolder={mail.moveFolder}
-              onRenameFolder={mail.renameFolder}
-              onDeleteFolder={mail.deleteFolder}
-              quota={mail.userQuota} />
+            <FolderNavigation mail={mail} />
           </div>
         </Panel>
 

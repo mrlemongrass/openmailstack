@@ -30,6 +30,7 @@ import {
     getMaxIndexedUid,
     getMailSearchIndexStatus,
     listSavedMailSearches,
+    markMailSearchFolderRead,
     searchMailIndex,
     updateMailSearchFlags,
     upsertMailSearchRows,
@@ -110,6 +111,18 @@ async function getPooledImap(user: string, pass: string): Promise<any> {
     _imapPool = pool;
   }
   return _imapPool.getImapConnection(user, pass);
+}
+
+async function withDedicatedImap<T>(
+  user: string,
+  pass: string,
+  operation: (imap: any) => Promise<T>,
+): Promise<T> {
+  if (!_imapPool) {
+    const pool = require('./imap-pool');
+    _imapPool = pool;
+  }
+  return _imapPool.withDedicatedImapConnection(user, pass, operation);
 }
 
 import * as promClient from 'prom-client';
@@ -2006,6 +2019,52 @@ apiRouter.delete('/folders', requireAuth, async (req: any, res) => {
         res.json({ success: true, ...result });
     } catch (err: unknown) {
         return respondToFolderMutationFailure(res, err, 'deleted');
+    }
+});
+
+apiRouter.post('/folders/mark-read', requireAuth, async (req: any, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+
+    try {
+        const result = await withDedicatedImap<{
+            path: string;
+            marked: number;
+            maxUid: number;
+            markedUids: number[];
+        }>(
+            user,
+            pass,
+            imap => imap.markFolderRead(req.body?.path),
+        );
+        try {
+            await markMailSearchFolderRead(user, result.path, result.markedUids);
+        } catch (err) {
+            console.error('Failed to update the mail search index after marking a folder as read', {
+                errorType: err instanceof Error ? err.name : 'UnknownError',
+            });
+        }
+        res.json({
+            success: true,
+            path: result.path,
+            marked: result.marked,
+            maxUid: result.maxUid,
+        });
+    } catch (err: unknown) {
+        if (err instanceof MailboxMutationError) {
+            return res.status(err.statusCode).json({
+                success: false,
+                code: err.code,
+                error: err.message,
+            });
+        }
+        console.error('Failed to mark folder as read', {
+            errorType: err instanceof Error ? err.name : 'UnknownError',
+        });
+        return res.status(500).json({
+            success: false,
+            error: 'The folder could not be marked as read. Please try again.',
+        });
     }
 });
 

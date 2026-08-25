@@ -101,6 +101,7 @@ test('mail settings and identities fall back independently', async () => {
     compose: { defaultMode: 'rich', defaultFont: 'system', attachmentReminder: true, undoSendSeconds: 10 },
     reading: { threaded: false, density: 'cozy', previewPane: 'right', snippets: true, externalImages: 'ask', markReadDelaySeconds: 1 },
     spam: { blockedSenders: [], safeSenders: [] },
+    folders: { favorites: [] },
     signatures: [],
   };
   const runtime = loadTypeScriptModule('../src/mail/mail-runtime-settings.ts', {
@@ -113,6 +114,14 @@ test('mail settings and identities fall back independently', async () => {
 
   assert.deepEqual(await runtime.loadMailSettingsOrDefault(async () => loadedSettings), loadedSettings);
   assert.deepEqual(await runtime.loadMailSettingsOrDefault(async () => { throw new Error('offline'); }), defaultMailSettings);
+  assert.deepEqual(await runtime.loadMailSettingsRuntimeState(async () => loadedSettings), {
+    settings: loadedSettings,
+    ready: true,
+  });
+  assert.deepEqual(await runtime.loadMailSettingsRuntimeState(async () => { throw new Error('offline'); }), {
+    settings: defaultMailSettings,
+    ready: false,
+  });
   assert.deepEqual(await runtime.loadMailIdentitiesOrDefault(async () => { throw new Error('offline'); }), {
     name: '', address: '', aliases: [],
   });
@@ -169,8 +178,14 @@ test('unimplemented mail controls are absent while inline Send and Archive remai
   assert.match(viewer, /onSendAndArchive=\{async \(\) =>/);
   assert.match(viewer, /filterEmailRemoteContent\(sanitized, allowRemoteContent\)/);
   assert.match(viewer, /scheduleDelayedMarkRead\(mail\.mailSettings\.reading\.markReadDelaySeconds/);
-  assert.match(mailRoutes, /loadMailSettingsOrDefault\(\(\) => getUserSettings\('mail'\)\)/);
+  assert.match(mailRoutes, /loadMailSettingsRuntimeState\(\(\) => getUserSettings\('mail'\)\)/);
+  assert.match(mailRoutes, /mailSettingsError/);
+  assert.match(mailRoutes, /retryMailSettings/);
   assert.match(mailRoutes, /loadMailIdentitiesOrDefault\(fetchIdentities\)/);
+
+  const folderSidebar = read('../src/mail/FolderSidebar.tsx');
+  assert.match(folderSidebar, /role="alert"/);
+  assert.match(folderSidebar, /Retry/);
 });
 
 test('undo send uses the supported POST contract and draft saves carry stable identity', () => {

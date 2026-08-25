@@ -91,6 +91,13 @@ async function getPooledImap(user, pass) {
     }
     return _imapPool.getImapConnection(user, pass);
 }
+async function withDedicatedImap(user, pass, operation) {
+    if (!_imapPool) {
+        const pool = require('./imap-pool');
+        _imapPool = pool;
+    }
+    return _imapPool.withDedicatedImapConnection(user, pass, operation);
+}
 const promClient = __importStar(require("prom-client"));
 promClient.collectDefaultMetrics({ prefix: 'openmailstack_' });
 const apiRequestsCounter = new promClient.Counter({
@@ -1762,6 +1769,43 @@ exports.apiRouter.delete('/folders', requireAuth, async (req, res) => {
     }
     catch (err) {
         return respondToFolderMutationFailure(res, err, 'deleted');
+    }
+});
+exports.apiRouter.post('/folders/mark-read', requireAuth, async (req, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+    try {
+        const result = await withDedicatedImap(user, pass, imap => imap.markFolderRead(req.body?.path));
+        try {
+            await (0, search_index_1.markMailSearchFolderRead)(user, result.path, result.markedUids);
+        }
+        catch (err) {
+            console.error('Failed to update the mail search index after marking a folder as read', {
+                errorType: err instanceof Error ? err.name : 'UnknownError',
+            });
+        }
+        res.json({
+            success: true,
+            path: result.path,
+            marked: result.marked,
+            maxUid: result.maxUid,
+        });
+    }
+    catch (err) {
+        if (err instanceof imap_1.MailboxMutationError) {
+            return res.status(err.statusCode).json({
+                success: false,
+                code: err.code,
+                error: err.message,
+            });
+        }
+        console.error('Failed to mark folder as read', {
+            errorType: err instanceof Error ? err.name : 'UnknownError',
+        });
+        return res.status(500).json({
+            success: false,
+            error: 'The folder could not be marked as read. Please try again.',
+        });
     }
 });
 exports.apiRouter.get('/folders', requireAuth, async (req, res) => {

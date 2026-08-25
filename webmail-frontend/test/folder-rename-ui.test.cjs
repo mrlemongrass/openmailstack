@@ -79,8 +79,13 @@ test('folder rename UI protects system folders and recovers from a failed rename
   const { MemoryRouter, useLocation } = require('react-router');
   const { FolderSidebar } = require('../src/mail/FolderSidebar.tsx');
   const calls = [];
+  const favoriteCalls = [];
+  const markReadCalls = [];
+  let resolveMarkRead;
+  let resolveFavoriteSave;
   let rejectRename;
   let attempt = 0;
+  let finishFavoriteSettingsLoad;
   const onRenameFolder = (folderPath, name) => {
     calls.push([folderPath, name]);
     attempt += 1;
@@ -91,6 +96,61 @@ test('folder rename UI protects system folders and recovers from a failed rename
   };
   function LocationProbe() {
     return React.createElement('output', { id: 'location' }, useLocation().pathname);
+  }
+  function SidebarHarness(props) {
+    const [markingReadFolder, setMarkingReadFolder] = React.useState(null);
+    return React.createElement(FolderSidebar, {
+      ...props,
+      markingReadFolder,
+      onMarkFolderRead: async folderPath => {
+        setMarkingReadFolder(folderPath);
+        try {
+          return await props.onMarkFolderRead(folderPath);
+        } finally {
+          setMarkingReadFolder(null);
+        }
+      },
+    });
+  }
+  function SidebarWithFavoriteSettings(props) {
+    const [favoriteSettings, setFavoriteSettings] = React.useState({
+      ready: false,
+      error: 'Favorites could not be loaded.',
+      folders: [],
+    });
+    const [folderMutationPending, setFolderMutationPending] = React.useState(false);
+    const [expandedFolders, setExpandedFolders] = React.useState(props.expandedFolders);
+    finishFavoriteSettingsLoad = () => setFavoriteSettings({
+      ready: true,
+      error: '',
+      folders: ['INBOX/Receipts'],
+    });
+    return React.createElement(SidebarHarness, {
+      ...props,
+      favoriteFolders: favoriteSettings.folders,
+      favoriteSettingsReady: favoriteSettings.ready,
+      favoriteSettingsError: favoriteSettings.error,
+      folderMutationPending,
+      expandedFolders,
+      onToggleExpand: folderPath => setExpandedFolders(current => ({
+        ...current,
+        [folderPath]: !current[folderPath],
+      })),
+      onToggleFavorite: async folderPath => {
+        setFolderMutationPending(true);
+        setFavoriteSettings(current => ({
+          ...current,
+          folders: current.folders.includes(folderPath)
+            ? current.folders.filter(candidate => candidate !== folderPath)
+            : [...current.folders, folderPath],
+        }));
+        try {
+          await props.onToggleFavorite(folderPath);
+        } finally {
+          setFolderMutationPending(false);
+        }
+      },
+    });
   }
   const root = createRoot(document.getElementById('root'));
 
@@ -105,7 +165,7 @@ test('folder rename UI protects system folders and recovers from a failed rename
     root.render(React.createElement(MemoryRouter, {
       initialEntries: ['/mail/INBOX%2FReceipts%2F2025'],
     }, React.createElement(React.Fragment, null,
-      React.createElement(FolderSidebar, {
+      React.createElement(SidebarWithFavoriteSettings, {
         folders: [
           { path: 'INBOX', delimiter: '/', unseen: 3 },
           { path: 'INBOX/Receipts', delimiter: '/', unseen: 1 },
@@ -114,8 +174,15 @@ test('folder rename UI protects system folders and recovers from a failed rename
           { path: 'Sent', delimiter: '/', unseen: 0, specialUse: '\\Sent' },
         ],
         activeFolder: 'INBOX/Receipts/2025',
-        expandedFolders: { INBOX: true, 'INBOX/Receipts': true },
-        onToggleExpand: () => undefined,
+        expandedFolders: { INBOX: false, 'INBOX/Receipts': true },
+        onToggleFavorite: folderPath => {
+          favoriteCalls.push(folderPath);
+          return new Promise(resolve => { resolveFavoriteSave = resolve; });
+        },
+        onMarkFolderRead: folderPath => {
+          markReadCalls.push(folderPath);
+          return new Promise(resolve => { resolveMarkRead = () => resolve(3); });
+        },
         onCompose: () => undefined,
         onCreateFolder: async () => '',
         onMoveFolder: async () => '',
@@ -132,8 +199,36 @@ test('folder rename UI protects system folders and recovers from a failed rename
   const menuItem = label => Array.from(document.querySelectorAll('[role="menuitem"]'))
     .find(button => button.textContent.trim() === label);
 
+  assert.match(document.querySelector('[role="alert"]').textContent, /Favorites could not be loaded/);
+  await act(async () => click(actionButton('Actions for Projects'), dom.window));
+  assert.equal(menuItem('Rename…').disabled, true, 'rename waits until Favorites are known');
+  assert.equal(menuItem('Move…').disabled, true, 'move waits until Favorites are known');
+  assert.equal(menuItem('Delete').disabled, true, 'delete waits until Favorites are known');
+  await act(async () => {
+    document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    finishFavoriteSettingsLoad();
+  });
+
+  const favorites = document.querySelector('[aria-label="Favorite folders"]');
+  assert.ok(favorites, 'saved Favorites render as a distinct shortcut section');
+  assert.match(favorites.textContent, /Receipts/);
+
   await act(async () => click(actionButton('Actions for INBOX'), dom.window));
   assert.equal(menuItem('Rename…'), undefined, 'INBOX must not expose Rename');
+  assert.ok(menuItem('Mark all as read'), 'INBOX exposes the folder-wide read action');
+  assert.ok(menuItem('Add to Favorites'), 'non-favorite folders can be added');
+  await act(async () => click(menuItem('Mark all as read'), dom.window));
+  assert.deepEqual(markReadCalls, ['INBOX']);
+  const markReadStatuses = Array.from(document.querySelectorAll('[role="status"]'))
+    .filter(element => element.textContent.includes('Marking INBOX as read'));
+  assert.equal(markReadStatuses.length, 1, 'folder-wide progress has one live announcement');
+  assert.ok(
+    document.querySelector('.folder-row-pending[aria-hidden="true"]'),
+    'folder-wide progress remains visibly attached to the row after the context menu closes',
+  );
+  await act(async () => resolveMarkRead());
+
+  await act(async () => click(actionButton('Actions for INBOX'), dom.window));
   await act(async () => {
     document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   });
@@ -146,6 +241,30 @@ test('folder rename UI protects system folders and recovers from a failed rename
 
   await act(async () => click(actionButton('Actions for Receipts'), dom.window));
   assert.ok(menuItem('Rename…'), 'a custom subfolder exposes Rename');
+  assert.ok(menuItem('Remove from Favorites'), 'favorite folders expose the inverse action');
+  await act(async () => {
+    click(menuItem('Remove from Favorites'), dom.window);
+    await new Promise(resolve => dom.window.setTimeout(resolve, 0));
+  });
+  assert.deepEqual(favoriteCalls, ['INBOX/Receipts']);
+  assert.doesNotMatch(favorites.textContent, /Receipts/, 'the removed shortcut unmounts');
+  assert.equal(
+    document.activeElement?.getAttribute('data-mail-folder-path'),
+    'INBOX',
+    'a collapsed subtree falls back to its nearest rendered ancestor',
+  );
+
+  await act(async () => click(actionButton('Actions for Projects'), dom.window));
+  assert.equal(menuItem('Rename…').disabled, true, 'rename waits for the Favorite save');
+  assert.equal(menuItem('Move…').disabled, true, 'move waits for the Favorite save');
+  assert.equal(menuItem('Delete').disabled, true, 'delete waits for the Favorite save');
+  await act(async () => {
+    document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    resolveFavoriteSave();
+  });
+
+  await act(async () => click(actionButton('Expand INBOX'), dom.window));
+  await act(async () => click(actionButton('Actions for Receipts'), dom.window));
   await act(async () => click(menuItem('Rename…'), dom.window));
 
   const dialog = document.querySelector('[role="dialog"]');
@@ -180,4 +299,50 @@ test('folder rename UI protects system folders and recovers from a failed rename
     document.getElementById('location').textContent,
     '/mail/INBOX%2FStatements%2F2025',
   );
+});
+
+test('mark-all-read toolbar stays globally disabled while naming only the active folder as busy', t => {
+  const restoreTypeScriptLoader = installTypeScriptLoader();
+  t.after(restoreTypeScriptLoader);
+  const React = require('react');
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const { MailToolbar } = require('../src/mail/MailToolbar.tsx');
+  const props = {
+    selectedCount: 0,
+    totalCount: 3,
+    searchQuery: '',
+    searchField: 'all',
+    searchScope: 'folder',
+    isSearchActive: false,
+    selectionDisabled: false,
+    activeFolder: 'INBOX',
+    folders: [],
+    onSearchChange: () => undefined,
+    onSearchSubmit: () => undefined,
+    onSearchFieldChange: () => undefined,
+    onSearchScopeChange: () => undefined,
+    onClearSearch: () => undefined,
+    onSelectAll: () => undefined,
+    onBulkAction: () => undefined,
+    onMoveSelected: () => undefined,
+    onMarkAllRead: () => undefined,
+  };
+
+  const currentFolder = renderToStaticMarkup(React.createElement(MailToolbar, {
+    ...props,
+    markAllReadPending: true,
+    markAllReadDisabled: true,
+  }));
+  assert.match(currentFolder, /disabled=""[^>]*aria-busy="true"/);
+  assert.match(currentFolder, />Marking read…<\/button>/);
+
+  const otherFolder = renderToStaticMarkup(React.createElement(MailToolbar, {
+    ...props,
+    markAllReadPending: false,
+    markAllReadDisabled: true,
+  }));
+  assert.match(otherFolder, /disabled=""/);
+  assert.doesNotMatch(otherFolder, /aria-busy="true"/);
+  assert.match(otherFolder, /title="Another folder is being marked as read"/);
+  assert.match(otherFolder, />Mark all read<\/button>/);
 });

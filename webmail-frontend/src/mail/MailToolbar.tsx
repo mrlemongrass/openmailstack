@@ -24,6 +24,8 @@ interface MailToolbarProps {
   onBulkAction: (action: string) => void;
   onMoveSelected: (targetFolder: string) => void;
   onMarkAllRead?: () => void;
+  markAllReadPending?: boolean;
+  markAllReadDisabled?: boolean;
 }
 
 const SEARCH_HINTS = [
@@ -37,7 +39,7 @@ const SEARCH_HINTS = [
   { syntax: 'after:2026-01-01', desc: 'Messages after date' },
 ];
 
-export function MailToolbar({ selectedCount, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, draftMode = false, activeFolder, folders, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMoveSelected, onMarkAllRead }: MailToolbarProps) {
+export function MailToolbar({ selectedCount, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, draftMode = false, activeFolder, folders, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMoveSelected, onMarkAllRead, markAllReadPending = false, markAllReadDisabled = false }: MailToolbarProps) {
   const allSelected = selectedCount > 0 && selectedCount === totalCount;
   const [showHints, setShowHints] = useState(false);
   const [showMoveTo, setShowMoveTo] = useState(false);
@@ -89,8 +91,15 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, searchFiel
         )}
         {onMarkAllRead && totalCount > 0 && (
           <button className="btn btn-ghost" onClick={onMarkAllRead}
-            style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }} title="Mark all as read">
-            Mark all read
+            disabled={markAllReadDisabled || markAllReadPending}
+            aria-busy={markAllReadPending}
+            style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+            title={markAllReadPending
+              ? 'Marking folder as read'
+              : markAllReadDisabled
+                ? 'Another folder is being marked as read'
+                : 'Mark all as read'}>
+            {markAllReadPending ? 'Marking read…' : 'Mark all read'}
           </button>
         )}
         {showHints && !searchQuery && (

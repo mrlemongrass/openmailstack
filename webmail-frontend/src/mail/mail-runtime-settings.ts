@@ -16,6 +16,7 @@ function normalizeMailSettings(settings: MailUserSettings | null | undefined): M
     compose: { ...defaultMailSettings.compose, ...loaded.compose },
     reading: { ...defaultMailSettings.reading, ...loaded.reading },
     spam: { ...defaultMailSettings.spam, ...loaded.spam },
+    folders: { ...defaultMailSettings.folders, ...loaded.folders },
     signatures: Array.isArray(loaded.signatures) ? loaded.signatures : [],
   };
 }
@@ -23,10 +24,16 @@ function normalizeMailSettings(settings: MailUserSettings | null | undefined): M
 export async function loadMailSettingsOrDefault(
   loader: () => Promise<MailUserSettings>,
 ): Promise<MailUserSettings> {
+  return (await loadMailSettingsRuntimeState(loader)).settings;
+}
+
+export async function loadMailSettingsRuntimeState(
+  loader: () => Promise<MailUserSettings>,
+): Promise<{ settings: MailUserSettings; ready: boolean }> {
   try {
-    return normalizeMailSettings(await loader());
+    return { settings: normalizeMailSettings(await loader()), ready: true };
   } catch {
-    return defaultMailSettings;
+    return { settings: defaultMailSettings, ready: false };
   }
 }
 

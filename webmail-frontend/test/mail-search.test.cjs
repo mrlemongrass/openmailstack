@@ -268,6 +268,17 @@ test('mail toolbar exposes field and folder-scope controls', () => {
   }));
   assert.doesNotMatch(disabledMarkup, /title="Move to folder"/);
   assert.doesNotMatch(disabledMarkup, /2 selected/);
+
+  const pendingMarkup = renderToStaticMarkup(React.createElement(toolbarModule.exports.MailToolbar, {
+    ...toolbarProps,
+    selectedCount: 0,
+    isSearchActive: false,
+    onMarkAllRead: () => undefined,
+    markAllReadPending: true,
+  }));
+  assert.match(pendingMarkup, /aria-busy="true"/);
+  assert.match(pendingMarkup, /disabled=""/);
+  assert.match(pendingMarkup, /Marking read…/);
 });
 
 test('move picker renders destinations and completes a selected-folder workflow', () => {

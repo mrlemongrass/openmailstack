@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getImapConnection = getImapConnection;
+exports.withDedicatedImapConnection = withDedicatedImapConnection;
 exports.releaseConnection = releaseConnection;
 exports.closeAllConnections = closeAllConnections;
 const imap_1 = require("./imap");
@@ -38,6 +39,35 @@ async function getImapConnection(user, pass) {
     };
     pool.set(key, entry);
     return imap;
+}
+/** Run selected-mailbox work on a short-lived client that cannot race the shared pool. */
+async function withDedicatedImapConnection(user, pass, operation) {
+    const imap = new imap_1.ImapService(user, pass);
+    let connected = false;
+    try {
+        await imap.connect();
+        connected = true;
+        return await operation(imap);
+    }
+    finally {
+        if (connected) {
+            try {
+                await imap.logout();
+            }
+            catch {
+                try {
+                    imap.close();
+                }
+                catch { /* connection cleanup is best effort */ }
+            }
+        }
+        else {
+            try {
+                imap.close();
+            }
+            catch { /* connection cleanup is best effort */ }
+        }
+    }
 }
 /** Close and remove a pooled connection. */
 async function closeConnection(key) {

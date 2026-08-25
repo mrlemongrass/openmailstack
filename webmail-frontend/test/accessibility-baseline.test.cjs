@@ -38,3 +38,14 @@ test('the Notes editor is a focus-managed named modal', () => {
   assert.match(modal, /aria-label=\{note\.id \? `Edit note/);
   assert.match(modal, /aria-label="Close note editor"/);
 });
+
+test('mobile Mail exposes a focus-managed touch folder drawer', () => {
+  const layout = source('src/mail/MailLayout.tsx');
+
+  assert.match(layout, /aria-label="Open folders"/);
+  assert.match(layout, /role="dialog"/);
+  assert.match(layout, /aria-label="Mail folders"/);
+  assert.match(layout, /active: open && !folderDialogOpen/);
+  assert.match(layout, /onFolderNavigate=\{closeDrawer\}/);
+  assert.match(layout, /onFolderDialogChange=\{setFolderDialogOpen\}/);
+});

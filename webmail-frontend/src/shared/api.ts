@@ -4,7 +4,7 @@ import type {
   SearchResponse, SearchIndexStatusResponse, SearchIndexRefreshResponse,
   SearchWorkerStatusResponse, SavedSearch,
   SearchField, SearchScope,
-  MailFolder, FolderMutationResponse, Signature, Rule, RuleAnalysis, RuleRunPageResponse, RuleRunRequest,
+  MailFolder, FolderMutationResponse, FolderMarkReadResponse, Signature, Rule, RuleAnalysis, RuleRunPageResponse, RuleRunRequest,
   ContactsResponse, Contact, ContactLabel, ContactGroup,
   CalendarsResponse, Calendar, CalendarUpdateResponse, CalendarDeleteResponse,
   CalendarShare,
@@ -90,6 +90,26 @@ export async function deleteFolder(path: string): Promise<string> {
     throw new Error(data.error || 'The folder could not be deleted.');
   }
   return data.deletedPath;
+}
+
+export async function markFolderRead(path: string): Promise<{ path: string; marked: number; maxUid: number }> {
+  const res = await fetch('/api/folders/mark-read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  const data = await res.json().catch(() => ({ success: false })) as FolderMarkReadResponse;
+  if (
+    !res.ok
+    || !data.success
+    || typeof data.path !== 'string'
+    || typeof data.marked !== 'number'
+    || !Number.isInteger(data.maxUid)
+    || (data.maxUid ?? -1) < 0
+  ) {
+    throw new Error(data.error || 'The folder could not be marked as read.');
+  }
+  return { path: data.path, marked: data.marked, maxUid: data.maxUid as number };
 }
 
 export async function fetchMessages(folder: string, olderThan?: number): Promise<MessageListResponse> {

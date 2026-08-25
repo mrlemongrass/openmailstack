@@ -7,6 +7,9 @@ process.env.OMS_DB_PASSWORD ||= 'folder-management-route-test';
 const username = 'folders@example.test';
 const folderCalls = [];
 const messageActionCalls = [];
+const markFolderReadCalls = [];
+const dedicatedImapCalls = [];
+const markReadIndexCalls = [];
 const purgeCalls = [];
 let activeRules = { rules: [] };
 let snoozeFolders = [];
@@ -29,6 +32,7 @@ let renameFolder = async (path, name) => ({
   folder: { path: `${path.slice(0, path.lastIndexOf('/') + 1)}${name}`, delimiter: '/', unseen: 0 },
 });
 let deleteFolder = async path => ({ deletedPath: path });
+let runMarkFolderRead = async path => ({ path, marked: 3, maxUid: 42, markedUids: [11, 21, 42] });
 let runMessageAction = async (_folder, _uids, _action, targetFolder) => ({
   targetFolder,
   uidMap: new Map([[41, 84]]),
@@ -41,6 +45,15 @@ db.pool.query = async sql => {
     return [snoozeFolders.map(original_folder => ({ original_folder })), []];
   }
   throw new Error('Unexpected database query in folder management test');
+};
+
+const searchIndexPath = require.resolve('../src/search-index.js');
+const searchIndex = require(searchIndexPath);
+require.cache[searchIndexPath].exports = {
+  ...searchIndex,
+  async markMailSearchFolderRead(owner, folder, uids) {
+    markReadIndexCalls.push({ owner, folder, uids });
+  },
 };
 
 const managesievePath = require.resolve('../src/managesieve.js');
@@ -78,6 +91,15 @@ require.cache[imapPoolPath] = {
   filename: imapPoolPath,
   loaded: true,
   exports: {
+    async withDedicatedImapConnection(user, pass, operation) {
+      dedicatedImapCalls.push({ user, pass });
+      return operation({
+        async markFolderRead(path) {
+          markFolderReadCalls.push(path);
+          return runMarkFolderRead(path);
+        },
+      });
+    },
     getImapConnection: async () => ({
       async getFolders() { return mutationFolders; },
       async createChildFolder(parent, name) {
@@ -99,6 +121,10 @@ require.cache[imapPoolPath] = {
       async deleteFolder(path) {
         folderCalls.push({ action: 'delete', path });
         return deleteFolder(path);
+      },
+      async markFolderRead(path) {
+        markFolderReadCalls.push(path);
+        return runMarkFolderRead(path);
       },
       async messageAction(folder, uids, action, targetFolder) {
         messageActionCalls.push({ folder, uids, action, targetFolder });
@@ -401,6 +427,38 @@ test('message move rejects a missing destination before reaching IMAP', async t 
   assert.deepEqual(messageActionCalls, []);
 });
 
+test('folder-wide mark as read reaches IMAP once and returns the exact unread count', async t => {
+  markFolderReadCalls.length = 0;
+  dedicatedImapCalls.length = 0;
+  markReadIndexCalls.length = 0;
+  runMarkFolderRead = async path => ({
+    path: 'INBOX',
+    marked: 3,
+    maxUid: 502,
+    markedUids: [11, 207, 501],
+  });
+  const port = await withServer(t);
+
+  const response = await postJson(port, '/api/folders/mark-read', {
+    path: 'INBOX',
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.json, {
+    success: true,
+    path: 'INBOX',
+    marked: 3,
+    maxUid: 502,
+  });
+  assert.deepEqual(markFolderReadCalls, ['INBOX']);
+  assert.deepEqual(dedicatedImapCalls, [{ user: username, pass: 'test-only' }]);
+  assert.deepEqual(markReadIndexCalls, [{
+    owner: username,
+    folder: 'INBOX',
+    uids: [11, 207, 501],
+  }]);
+});
+
 test('message action failures do not expose upstream IMAP details', async t => {
   messageActionCalls.length = 0;
   runMessageAction = async () => { throw new Error('private IMAP host and mailbox detail'); };
@@ -693,6 +751,130 @@ test('IMAP folder rename rejects protected, invalid, conflicting, and unchanged 
     () => service.renameFolder('Missing', 'Present'),
     error => error instanceof MailboxMutationError && error.code === 'FOLDER_NOT_FOUND',
   );
+});
+
+test('IMAP folder-wide mark as read is bounded to the mailbox UID ceiling captured at click time', async () => {
+  const calls = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async list() {
+      calls.push(['list']);
+      return [{ path: 'INBOX', delimiter: '/', flags: new Set() }];
+    },
+    mailbox: null,
+    async getMailboxLock(path) {
+      calls.push(['lock', path]);
+      this.mailbox = { uidNext: 503 };
+      return { release: () => calls.push(['release']) };
+    },
+    async search(query, options) {
+      calls.push(['search', query, options]);
+      return [11, 207, 501];
+    },
+    async messageFlagsAdd(sequence, flags, options) {
+      calls.push(['flags-add', sequence, flags, options]);
+    },
+    async mailboxClose() {
+      calls.push(['close']);
+    },
+  };
+
+  const result = await service.markFolderRead('INBOX');
+
+  assert.deepEqual(result, {
+    path: 'INBOX',
+    marked: 3,
+    maxUid: 502,
+    markedUids: [11, 207, 501],
+  });
+  assert.deepEqual(calls, [
+    ['list'],
+    ['lock', 'INBOX'],
+    ['search', { uid: '1:502', seen: false }, { uid: true }],
+    ['flags-add', '11,207,501', ['\\Seen'], { uid: true }],
+    ['release'],
+  ]);
+});
+
+test('IMAP folder-wide mark as read skips STORE when no unread messages exist and rejects invalid targets', async () => {
+  const calls = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async list() {
+      return [
+        { path: 'INBOX', delimiter: '/', flags: new Set() },
+        { path: 'Container', delimiter: '/', flags: new Set(['\\Noselect']) },
+      ];
+    },
+    mailbox: null,
+    async getMailboxLock(path) {
+      calls.push(['lock', path]);
+      this.mailbox = { uidNext: 8 };
+      return { release: () => calls.push(['release']) };
+    },
+    async search() {
+      calls.push(['search']);
+      return [];
+    },
+    async messageFlagsAdd() {
+      calls.push(['flags-add']);
+    },
+  };
+
+  assert.deepEqual(await service.markFolderRead('INBOX'), {
+    path: 'INBOX',
+    marked: 0,
+    maxUid: 7,
+    markedUids: [],
+  });
+  assert.deepEqual(calls, [['lock', 'INBOX'], ['search'], ['release']]);
+  await assert.rejects(
+    () => service.markFolderRead('SCHEDULED'),
+    error => error instanceof MailboxMutationError && error.code === 'VIRTUAL_FOLDER_UNSUPPORTED',
+  );
+  await assert.rejects(
+    () => service.markFolderRead('Container'),
+    error => error instanceof MailboxMutationError && error.code === 'INVALID_FOLDER',
+  );
+  await assert.rejects(
+    () => service.markFolderRead('Missing'),
+    error => error instanceof MailboxMutationError && error.code === 'FOLDER_NOT_FOUND',
+  );
+  await assert.rejects(
+    () => service.markFolderRead('Bad\u0000Path'),
+    error => error instanceof MailboxMutationError && error.code === 'INVALID_FOLDER',
+  );
+});
+
+test('IMAP folder-wide mark as read stores only searched unread UIDs in bounded batches', async () => {
+  const flagSequences = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    mailbox: null,
+    async list() {
+      return [{ path: 'Bulk', delimiter: '/', flags: new Set() }];
+    },
+    async getMailboxLock() {
+      this.mailbox = { uidNext: 700 };
+      return { release() {} };
+    },
+    async search() {
+      return Array.from({ length: 501 }, (_, index) => index + 1);
+    },
+    async messageFlagsAdd(sequence) {
+      flagSequences.push(sequence);
+    },
+  };
+
+  assert.deepEqual(await service.markFolderRead('Bulk'), {
+    path: 'Bulk',
+    marked: 501,
+    maxUid: 699,
+    markedUids: Array.from({ length: 501 }, (_, index) => index + 1),
+  });
+  assert.equal(flagSequences.length, 2);
+  assert.equal(flagSequences[0].split(',').length, 500);
+  assert.equal(flagSequences[1], '501');
 });
 
 test('IMAP spam actions honor the server-designated special-use Junk folder', async () => {

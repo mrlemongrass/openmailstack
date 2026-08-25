@@ -47,7 +47,17 @@ test('normalizeSettings returns safe mail settings', () => {
     ],
     identity: { defaultFrom: ' sender@example.com ', replyTo: ' reply@example.com ', alwaysBccSelf: true },
     compose: { defaultMode: 'plain', defaultFont: 'mono', attachmentReminder: false, undoSendSeconds: 30 },
-    reading: { threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 }
+    reading: { threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 },
+    folders: {
+      favorites: [
+        'INBOX',
+        ' Projects/Travel ',
+        'INBOX',
+        'Bad\u0000Path',
+        'x'.repeat(1025),
+        42,
+      ],
+    },
   });
 
   assert.deepEqual(normalized, {
@@ -58,7 +68,8 @@ test('normalizeSettings returns safe mail settings', () => {
     identity: { defaultFrom: 'sender@example.com', replyTo: 'reply@example.com', alwaysBccSelf: true },
     compose: { defaultMode: 'plain', defaultFont: 'mono', attachmentReminder: false, undoSendSeconds: 30 },
     reading: { threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 },
-    spam: { blockedSenders: [], safeSenders: [] }
+    spam: { blockedSenders: [], safeSenders: [] },
+    folders: { favorites: ['INBOX', 'Projects/Travel'] }
   });
 });
 

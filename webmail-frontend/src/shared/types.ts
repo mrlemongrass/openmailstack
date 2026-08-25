@@ -134,6 +134,15 @@ export interface FolderMutationResponse {
   error?: string;
 }
 
+export interface FolderMarkReadResponse {
+  success: boolean;
+  path?: string;
+  marked?: number;
+  maxUid?: number;
+  code?: string;
+  error?: string;
+}
+
 export interface FolderTreeNode {
   name: string;
   fullPath: string;

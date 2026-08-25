@@ -48,6 +48,31 @@ export async function getImapConnection(user: string, pass: string): Promise<Ima
   return imap;
 }
 
+/** Run selected-mailbox work on a short-lived client that cannot race the shared pool. */
+export async function withDedicatedImapConnection<T>(
+  user: string,
+  pass: string,
+  operation: (imap: ImapService) => Promise<T>,
+): Promise<T> {
+  const imap = new ImapService(user, pass);
+  let connected = false;
+  try {
+    await imap.connect();
+    connected = true;
+    return await operation(imap);
+  } finally {
+    if (connected) {
+      try {
+        await imap.logout();
+      } catch {
+        try { imap.close(); } catch { /* connection cleanup is best effort */ }
+      }
+    } else {
+      try { imap.close(); } catch { /* connection cleanup is best effort */ }
+    }
+  }
+}
+
 /** Close and remove a pooled connection. */
 async function closeConnection(key: string): Promise<void> {
   const entry = pool.get(key);

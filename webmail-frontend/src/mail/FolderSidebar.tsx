@@ -8,9 +8,13 @@ import {
   FolderOpen,
   FolderPlus,
   Inbox,
+  LoaderCircle,
+  MailCheck,
   MoreHorizontal,
+  RefreshCw,
   Send,
   Star,
+  StarOff,
   Trash2,
 } from 'lucide-react';
 import type { MailFolder } from '../shared/types';
@@ -28,7 +32,17 @@ interface FolderSidebarProps {
   folders: MailFolder[];
   activeFolder: string;
   expandedFolders: Record<string, boolean>;
+  favoriteFolders: string[];
+  favoriteSettingsReady?: boolean;
+  favoriteSettingsError?: string;
+  folderMutationPending?: boolean;
+  markingReadFolder?: string | null;
   onToggleExpand: (path: string) => void;
+  onToggleFavorite: (path: string) => Promise<void>;
+  onMarkFolderRead: (path: string) => Promise<number>;
+  onRetryFavoriteSettings?: () => void;
+  onFolderNavigate?: () => void;
+  onFolderDialogChange?: (open: boolean) => void;
   onCompose: () => void;
   onCreateFolder: (parent: string | null, name: string) => Promise<string>;
   onMoveFolder: (path: string, parent: string | null) => Promise<string>;
@@ -57,11 +71,48 @@ function parentFolderPath(node: FolderTreeNode) {
   return node.fullPath.slice(0, node.fullPath.lastIndexOf(delimiter));
 }
 
+function indexFolderTree(nodes: FolderTreeNode[]) {
+  const byPath = new Map<string, FolderTreeNode>();
+  const visit = (node: FolderTreeNode) => {
+    byPath.set(node.fullPath, node);
+    Object.values(node.children).forEach(visit);
+  };
+  nodes.forEach(visit);
+  return byPath;
+}
+
+function findFolderFocusTarget(path: string, delimiter: string) {
+  const targets = Array.from(
+    document.querySelectorAll<HTMLButtonElement>('[data-mail-folder-path]'),
+  );
+  const exact = targets.find(button => button.dataset.mailFolderPath === path);
+  if (exact) return exact;
+  const ancestor = targets
+    .filter(button => {
+      const candidate = button.dataset.mailFolderPath;
+      return Boolean(candidate && delimiter && path.startsWith(`${candidate}${delimiter}`));
+    })
+    .sort((left, right) => (
+      (right.dataset.mailFolderPath?.length || 0) - (left.dataset.mailFolderPath?.length || 0)
+    ))[0];
+  return ancestor || document.querySelector<HTMLButtonElement>('[data-mail-folder-focus-fallback]');
+}
+
 export function FolderSidebar({
   folders,
   activeFolder,
   expandedFolders,
+  favoriteFolders,
+  favoriteSettingsReady = true,
+  favoriteSettingsError = '',
+  folderMutationPending = false,
+  markingReadFolder = null,
   onToggleExpand,
+  onToggleFavorite,
+  onMarkFolderRead,
+  onRetryFavoriteSettings,
+  onFolderNavigate,
+  onFolderDialogChange,
   onCompose,
   onCreateFolder,
   onMoveFolder,
@@ -77,17 +128,29 @@ export function FolderSidebar({
   const [renamingFolder, setRenamingFolder] = useState<FolderTreeNode | null>(null);
   const [deleteFolderConfirm, setDeleteFolderConfirm] = useState<FolderTreeNode | null>(null);
   const tree = buildFolderTree(folders);
+  const foldersByPath = indexFolderTree(tree);
+  const favoriteNodes = favoriteFolders.flatMap(path => {
+    const node = foldersByPath.get(path);
+    return node?.exists && !node.disabled && node.fullPath.toUpperCase() !== 'SCHEDULED' ? [node] : [];
+  });
   const closeFolderMenu = useCallback(() => setFolderMenu(null), []);
-  const closeNewFolderDialog = useCallback(() => setNewFolderParent(undefined), []);
+  const closeNewFolderDialog = useCallback(() => {
+    setNewFolderParent(undefined);
+    onFolderDialogChange?.(false);
+  }, [onFolderDialogChange]);
   const openFolderMenu = useCallback((node: FolderTreeNode, point: ContextMenuPoint) => {
     setFolderMenu({ node, point });
   }, []);
+  const navigateToFolder = useCallback((path: string) => {
+    navigate(`/mail/${encodeURIComponent(path)}`);
+    onFolderNavigate?.();
+  }, [navigate, onFolderNavigate]);
 
   const folderMenuItems: ContextMenuItem[] = folderMenu ? [{
     id: 'open',
     label: 'Open',
     icon: FolderOpen,
-    onSelect: () => navigate(`/mail/${encodeURIComponent(folderMenu.node.fullPath)}`),
+    onSelect: () => navigateToFolder(folderMenu.node.fullPath),
   }] : [];
   if (
     folderMenu
@@ -101,7 +164,10 @@ export function FolderSidebar({
       label: 'New subfolder',
       icon: FolderPlus,
       separatorBefore: true,
-      onSelect: () => setNewFolderParent(folderMenu.node.fullPath),
+      onSelect: () => {
+        onFolderDialogChange?.(true);
+        setNewFolderParent(folderMenu.node.fullPath);
+      },
     });
   }
   if (folderMenu && !isProtectedFolder(folderMenu.node)) {
@@ -111,20 +177,93 @@ export function FolderSidebar({
         label: 'Rename…',
         icon: Edit2,
         separatorBefore: true,
-        onSelect: () => setRenamingFolder(folderMenu.node),
+        disabled: !favoriteSettingsReady || folderMutationPending,
+        onSelect: () => {
+          onFolderDialogChange?.(true);
+          setRenamingFolder(folderMenu.node);
+        },
       },
       {
         id: 'move',
         label: 'Move…',
         icon: FolderInput,
-        onSelect: () => setMovingFolder(folderMenu.node),
+        disabled: !favoriteSettingsReady || folderMutationPending,
+        onSelect: () => {
+          onFolderDialogChange?.(true);
+          setMovingFolder(folderMenu.node);
+        },
       },
       {
         id: 'delete',
         label: 'Delete',
         icon: Trash2,
         danger: true,
-        onSelect: () => setDeleteFolderConfirm(folderMenu.node),
+        disabled: !favoriteSettingsReady || folderMutationPending,
+        onSelect: () => {
+          onFolderDialogChange?.(true);
+          setDeleteFolderConfirm(folderMenu.node);
+        },
+      },
+    );
+  }
+  if (
+    folderMenu
+    && folderMenu.node.exists
+    && !folderMenu.node.disabled
+    && folderMenu.node.fullPath.toUpperCase() !== 'SCHEDULED'
+  ) {
+    const selectedNode = folderMenu.node;
+    const isFavorite = favoriteFolders.includes(selectedNode.fullPath);
+    folderMenuItems.push(
+      {
+        id: 'mark-all-read',
+        label: markingReadFolder === selectedNode.fullPath ? 'Marking as read…' : 'Mark all as read',
+        icon: MailCheck,
+        separatorBefore: true,
+        disabled: selectedNode.unseen === 0 || Boolean(markingReadFolder),
+        onSelect: () => {
+          void onMarkFolderRead(selectedNode.fullPath).then(marked => {
+            showToast({
+              type: 'success',
+              message: marked === 1
+                ? `1 message marked as read in ${selectedNode.name}`
+                : `${marked} messages marked as read in ${selectedNode.name}`,
+            });
+          }).catch(caught => {
+            showToast({
+              type: 'error',
+              message: caught instanceof Error ? caught.message : 'The folder could not be marked as read.',
+            });
+          });
+        },
+      },
+      {
+        id: 'favorite',
+        label: !favoriteSettingsReady
+          ? 'Favorites unavailable'
+          : folderMutationPending
+            ? 'Folder change in progress…'
+          : isFavorite ? 'Remove from Favorites' : 'Add to Favorites',
+        icon: isFavorite ? StarOff : Star,
+        disabled: !favoriteSettingsReady || folderMutationPending,
+        focusAfterSelect: isFavorite
+          ? () => findFolderFocusTarget(selectedNode.fullPath, selectedNode.delimiter)
+          : undefined,
+        onSelect: () => {
+          void onToggleFavorite(selectedNode.fullPath).then(() => {
+            showToast({
+              type: 'success',
+              message: isFavorite
+                ? `${selectedNode.name} removed from Favorites`
+                : `${selectedNode.name} added to Favorites`,
+            });
+          }).catch(caught => {
+            showToast({
+              type: 'error',
+              message: caught instanceof Error ? caught.message : 'Favorites could not be updated.',
+            });
+          });
+        },
       },
     );
   }
@@ -171,6 +310,7 @@ export function FolderSidebar({
     if (!deleteFolderConfirm) return;
     const folder = deleteFolderConfirm;
     setDeleteFolderConfirm(null);
+    onFolderDialogChange?.(false);
     void onDeleteFolder(folder.fullPath).then(() => {
       if (activeFolder === folder.fullPath) navigate('/mail/INBOX');
       showToast({ type: 'success', message: `Deleted ${folder.name}` });
@@ -184,34 +324,89 @@ export function FolderSidebar({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 12 }}>
-      <button className="btn btn-primary" onClick={onCompose} style={{ width: '100%', marginBottom: 16 }}>
+      <button className="btn btn-primary" onClick={() => {
+        onFolderNavigate?.();
+        onCompose();
+      }} style={{ width: '100%', marginBottom: 16 }}>
         <Edit2 size={16} /> Compose
       </button>
-      <div className="mail-folder-list-heading">
-        <span>Folders</span>
-        <button
-          type="button"
-          className="mail-folder-add-button"
-          aria-label="New folder"
-          title="New folder"
-          onClick={() => setNewFolderParent(null)}
-        >
-          <FolderPlus size={16} aria-hidden="true" />
-        </button>
-      </div>
       <nav aria-label="Mail folders" style={{ flex: 1, overflowY: 'auto' }}>
-        {tree.map(node => (
-          <FolderItem
-            key={node.fullPath}
-            node={node}
-            activeFolder={activeFolder}
-            expandedFolders={expandedFolders}
-            onToggleExpand={onToggleExpand}
-            onOpenContextMenu={openFolderMenu}
-            contextMenuPath={folderMenu?.node.fullPath || null}
-            depth={0}
-          />
-        ))}
+        {markingReadFolder && (
+          <span className="visually-hidden" role="status" aria-live="polite">
+            {`Marking ${foldersByPath.get(markingReadFolder)?.name || markingReadFolder} as read`}
+          </span>
+        )}
+        <section className="mail-folder-section" aria-label="Favorite folders">
+          <div className="mail-folder-list-heading">
+            <span className="mail-folder-list-heading-label">
+              <Star size={13} aria-hidden="true" /> Favorites
+            </span>
+          </div>
+          {!favoriteSettingsReady && favoriteSettingsError && (
+            <div className="mail-folder-settings-state mail-folder-settings-state--error" role="alert">
+              <span>{favoriteSettingsError}</span>
+              <button type="button" className="btn btn-ghost" onClick={onRetryFavoriteSettings}>
+                <RefreshCw size={13} aria-hidden="true" /> Retry
+              </button>
+            </div>
+          )}
+          {!favoriteSettingsReady && !favoriteSettingsError && (
+            <div className="mail-folder-settings-state" role="status">Loading Favorites…</div>
+          )}
+          {favoriteSettingsReady && folderMutationPending && (
+            <div className="mail-folder-settings-state" role="status">Folder change in progress…</div>
+          )}
+          {favoriteSettingsReady && favoriteNodes.length === 0 && (
+            <div className="mail-folder-settings-state">Add folders from their actions menu.</div>
+          )}
+          {favoriteSettingsReady && favoriteNodes.map(node => (
+            <FolderItem
+              key={node.fullPath}
+              node={node}
+              activeFolder={activeFolder}
+              expandedFolders={expandedFolders}
+              onToggleExpand={onToggleExpand}
+              onOpenContextMenu={openFolderMenu}
+              contextMenuPath={folderMenu?.node.fullPath || null}
+              onNavigate={onFolderNavigate}
+              markingReadFolder={markingReadFolder}
+              depth={0}
+              flat
+            />
+          ))}
+        </section>
+        <section className="mail-folder-section" aria-label="All folders">
+          <div className="mail-folder-list-heading">
+            <span>Folders</span>
+            <button
+              type="button"
+              className="mail-folder-add-button"
+              aria-label="New folder"
+              title="New folder"
+              data-mail-folder-focus-fallback
+              onClick={() => {
+                onFolderDialogChange?.(true);
+                setNewFolderParent(null);
+              }}
+            >
+              <FolderPlus size={16} aria-hidden="true" />
+            </button>
+          </div>
+          {tree.map(node => (
+            <FolderItem
+              key={node.fullPath}
+              node={node}
+              activeFolder={activeFolder}
+              expandedFolders={expandedFolders}
+              onToggleExpand={onToggleExpand}
+              onOpenContextMenu={openFolderMenu}
+              contextMenuPath={folderMenu?.node.fullPath || null}
+              onNavigate={onFolderNavigate}
+              markingReadFolder={markingReadFolder}
+              depth={0}
+            />
+          ))}
+        </section>
       </nav>
       {quota && (
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-glass)',
@@ -249,7 +444,10 @@ export function FolderSidebar({
           folders={moveDestinations}
           includeTopLevel={parentFolderPath(movingFolder) !== null}
           onSelect={moveSelectedFolder}
-          onClose={() => setMovingFolder(null)}
+          onClose={() => {
+            setMovingFolder(null);
+            onFolderDialogChange?.(false);
+          }}
         />
       )}
       {renamingFolder && (
@@ -259,7 +457,10 @@ export function FolderSidebar({
           currentName={renamingFolder.name}
           parent={parentFolderPath(renamingFolder)}
           onRename={renameSelectedFolder}
-          onClose={() => setRenamingFolder(null)}
+          onClose={() => {
+            setRenamingFolder(null);
+            onFolderDialogChange?.(false);
+          }}
         />
       )}
       <ConfirmDialog
@@ -269,7 +470,10 @@ export function FolderSidebar({
         confirmLabel="Delete folder"
         danger
         onConfirm={deleteSelectedFolder}
-        onCancel={() => setDeleteFolderConfirm(null)}
+        onCancel={() => {
+          setDeleteFolderConfirm(null);
+          onFolderDialogChange?.(false);
+        }}
       />
     </div>
   );
@@ -282,7 +486,10 @@ function FolderItem({
   onToggleExpand,
   onOpenContextMenu,
   contextMenuPath,
+  onNavigate,
+  markingReadFolder,
   depth,
+  flat = false,
 }: {
   node: FolderTreeNode;
   activeFolder: string;
@@ -290,17 +497,24 @@ function FolderItem({
   onToggleExpand: (path: string) => void;
   onOpenContextMenu: (node: FolderTreeNode, point: ContextMenuPoint) => void;
   contextMenuPath: string | null;
+  onNavigate?: () => void;
+  markingReadFolder?: string | null;
   depth: number;
+  flat?: boolean;
 }) {
   const navigate = useNavigate();
   const folderButtonRef = useRef<HTMLButtonElement>(null);
   const isExpanded = expandedFolders[node.fullPath];
-  const hasChildren = Object.keys(node.children).length > 0;
+  const hasChildren = !flat && Object.keys(node.children).length > 0;
   const IconComp = ICON_MAP[node.name] || FolderOpen;
   const isActive = activeFolder === node.fullPath;
   const displayName = node.name === 'SCHEDULED' ? 'Scheduled' : node.name;
+  const markingRead = markingReadFolder === node.fullPath;
 
-  const handleNavigate = () => navigate(`/mail/${encodeURIComponent(node.fullPath)}`);
+  const handleNavigate = () => {
+    navigate(`/mail/${encodeURIComponent(node.fullPath)}`);
+    onNavigate?.();
+  };
   const openKeyboardMenu = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (!((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu')) return;
     event.preventDefault();
@@ -353,7 +567,8 @@ function FolderItem({
         <button
           ref={folderButtonRef}
           type="button"
-          aria-label={`${displayName}${node.unseen > 0 ? `, ${node.unseen} unread` : ''}`}
+          data-mail-folder-path={flat ? undefined : node.fullPath}
+          aria-label={`${displayName}${node.unseen > 0 ? `, ${node.unseen} unread` : ''}${markingRead ? ', marking as read' : ''}`}
           aria-current={isActive ? 'page' : undefined}
           aria-haspopup="menu"
           aria-expanded={contextMenuPath === node.fullPath}
@@ -386,6 +601,11 @@ function FolderItem({
             fontSize: '0.7rem',
             fontWeight: 600,
           }}>{node.unseen}</span>
+        )}
+        {markingRead && (
+          <span className="folder-row-pending" aria-hidden="true">
+            <LoaderCircle size={14} aria-hidden="true" />
+          </span>
         )}
         <button
           type="button"
@@ -426,6 +646,8 @@ function FolderItem({
           onToggleExpand={onToggleExpand}
           onOpenContextMenu={onOpenContextMenu}
           contextMenuPath={contextMenuPath}
+          onNavigate={onNavigate}
+          markingReadFolder={markingReadFolder}
           depth={depth + 1}
         />
       ))}

@@ -22,3 +22,25 @@ export function remapExpandedFolderPaths(
     expanded,
   ]));
 }
+
+export function remapFavoriteFolderPaths(
+  favoriteFolders: string[],
+  sourcePath: string,
+  destinationPath: string,
+  delimiter: string,
+): string[] {
+  return [...new Set(favoriteFolders.map(folderPath => (
+    remapFolderSubtreePath(folderPath, sourcePath, destinationPath, delimiter)
+  )))];
+}
+
+export function removeFavoriteFolderSubtree(
+  favoriteFolders: string[],
+  sourcePath: string,
+  delimiter: string,
+): string[] {
+  return favoriteFolders.filter(folderPath => (
+    folderPath !== sourcePath
+    && !(delimiter && folderPath.startsWith(`${sourcePath}${delimiter}`))
+  ));
+}

@@ -50,6 +50,7 @@ function loadMailLayoutModule() {
       };
     }
     if (id === '../shared/hooks/useMediaQuery') return { useMediaQuery: () => false };
+    if (id === '../shared/hooks/useModalFocus') return { useModalFocus: () => undefined };
     if (id === './FolderSidebar') return { FolderSidebar: () => React.createElement('nav') };
     if (id === './MessageViewer') return { MessageViewer: () => React.createElement('article') };
     if (id === './components/UndoBar') return { UndoBar: () => null };

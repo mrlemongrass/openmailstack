@@ -83,6 +83,7 @@ const SPECIAL_USE_FLAGS = new Set([
     '\\sent',
     '\\trash',
 ]);
+const MARK_READ_UID_BATCH_SIZE = 500;
 
 function mailboxSpecialUse(folder: any): string | undefined {
     if (typeof folder?.specialUse === 'string' && folder.specialUse) return folder.specialUse;
@@ -544,6 +545,67 @@ export class ImapService {
             });
         }
         return { deletedPath: result?.path || source.path };
+    }
+
+    async markFolderRead(requestedPath: string) {
+        const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+        if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {
+            throw new MailboxMutationError('INVALID_FOLDER', 400, 'Choose a valid folder to mark as read.');
+        }
+        if (path.toUpperCase() === 'SCHEDULED') {
+            throw new MailboxMutationError(
+                'VIRTUAL_FOLDER_UNSUPPORTED',
+                409,
+                'Scheduled messages cannot be marked as read.',
+            );
+        }
+
+        const folders = await this.client.list();
+        const source = folders.find(folder => (
+            folder.path === path
+            || (path.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')
+        ));
+        if (!source) {
+            throw new MailboxMutationError(
+                'FOLDER_NOT_FOUND',
+                404,
+                'The folder no longer exists. Refresh Mail and try again.',
+            );
+        }
+        if (source.flags?.has('\\Noselect')) {
+            throw new MailboxMutationError('INVALID_FOLDER', 409, 'That folder cannot contain messages.');
+        }
+
+        const lock = await this.client.getMailboxLock(source.path);
+        try {
+            const mailbox = this.client.mailbox;
+            if (!mailbox) throw new Error('The folder could not be selected.');
+            const maxUid = Math.max(0, Math.trunc(Number(mailbox.uidNext || 0)) - 1);
+            if (maxUid === 0) return { path: source.path, marked: 0, maxUid, markedUids: [] };
+
+            const found = await this.client.search(
+                { uid: `1:${maxUid}`, seen: false },
+                { uid: true },
+            );
+            const unreadUids = [...new Set(Array.isArray(found)
+                ? found.filter(uid => Number.isInteger(uid) && uid > 0 && uid <= maxUid)
+                : [])].sort((left, right) => left - right);
+            for (let offset = 0; offset < unreadUids.length; offset += MARK_READ_UID_BATCH_SIZE) {
+                await this.client.messageFlagsAdd(
+                    unreadUids.slice(offset, offset + MARK_READ_UID_BATCH_SIZE).join(','),
+                    ['\\Seen'],
+                    { uid: true },
+                );
+            }
+            return {
+                path: source.path,
+                marked: unreadUids.length,
+                maxUid,
+                markedUids: unreadUids,
+            };
+        } finally {
+            lock.release();
+        }
     }
 
     async getMessageIdentities(folderPath: string) {

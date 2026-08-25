@@ -34,6 +34,9 @@ export interface MailSettings {
         blockedSenders: string[];
         safeSenders: string[];
     };
+    folders: {
+        favorites: string[];
+    };
 }
 
 export interface CalendarSettings {
@@ -101,6 +104,9 @@ export const settingsDefaults = {
         spam: {
             blockedSenders: [],
             safeSenders: [],
+        },
+        folders: {
+            favorites: [],
         },
     } satisfies MailSettings,
     calendar: {
@@ -217,6 +223,21 @@ const stringArray = (value: unknown, maxItems: number, maxLength: number): strin
     )].slice(0, maxItems);
 };
 
+const folderPathArray = (value: unknown): string[] => {
+    if (!Array.isArray(value)) return [];
+    const seen = new Set<string>();
+    const paths: string[] = [];
+    for (const item of value) {
+        if (typeof item !== 'string') continue;
+        const path = item.trim();
+        if (!path || path.length > 1024 || /[\u0000-\u001f\u007f]/u.test(path) || seen.has(path)) continue;
+        seen.add(path);
+        paths.push(path);
+        if (paths.length === 100) break;
+    }
+    return paths;
+};
+
 function normalizeSignatures(value: unknown): MailSettings['signatures'] {
     if (!Array.isArray(value)) return [];
 
@@ -270,6 +291,7 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
         const reading = isObject(source.reading) ? source.reading : {};
         const identity = isObject(source.identity) ? source.identity : {};
         const compose = isObject(source.compose) ? source.compose : {};
+        const folders = isObject(source.folders) ? source.folders : {};
         return {
             signatures: normalizeSignatures(source.signatures),
             identity: {
@@ -294,6 +316,9 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
             spam: {
                 blockedSenders: stringArray(isObject(source.spam) ? source.spam.blockedSenders : undefined, 500, 255),
                 safeSenders: stringArray(isObject(source.spam) ? source.spam.safeSenders : undefined, 500, 255),
+            },
+            folders: {
+                favorites: folderPathArray(folders.favorites),
             },
         };
     }

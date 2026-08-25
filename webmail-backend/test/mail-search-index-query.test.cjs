@@ -21,7 +21,7 @@ require.cache[dbPath] = {
   paths: [],
 };
 
-const { searchMailIndex } = require('../src/search-index.js');
+const { markMailSearchFolderRead, searchMailIndex } = require('../src/search-index.js');
 
 const searchSelect = () => executed.find(call => (
   call.text.startsWith('SELECT folder, uid,') && call.text.includes('FROM mail_search_index')
@@ -98,4 +98,29 @@ test('InnoDB stopwords use LIKE so accepted searches are not silently empty', as
   assert.match(call.text, /body_text LIKE/);
   assert.doesNotMatch(call.text, /IN BOOLEAN MODE/);
   assert.ok(call.params.includes('%the%'));
+});
+
+test('folder-wide mark as read updates only the exact unread UIDs captured before concurrent flag changes', async () => {
+  executed.length = 0;
+
+  await markMailSearchFolderRead('search@example.test', 'INBOX/Receipts', [11, 207, 501]);
+
+  const update = executed.find(call => call.text.startsWith('UPDATE mail_search_index'));
+  assert.ok(update, 'search index flags should be updated');
+  assert.match(update.text, /SET is_read = 1/);
+  assert.match(update.text, /username = \? AND folder = \? AND uid IN \(\?\)/);
+  assert.deepEqual(update.params, ['search@example.test', 'INBOX/Receipts', [11, 207, 501]]);
+  assert.ok(!update.params[2].includes(5), 'an older message marked unread after SEARCH is not projected as read');
+});
+
+test('exact folder-wide read index updates stay inside bounded UID batches', async () => {
+  executed.length = 0;
+  const uids = Array.from({ length: 501 }, (_, index) => index + 1);
+
+  await markMailSearchFolderRead('search@example.test', 'Bulk', uids);
+
+  const updates = executed.filter(call => call.text.startsWith('UPDATE mail_search_index'));
+  assert.equal(updates.length, 2);
+  assert.equal(updates[0].params[2].length, 500);
+  assert.deepEqual(updates[1].params[2], [501]);
 });

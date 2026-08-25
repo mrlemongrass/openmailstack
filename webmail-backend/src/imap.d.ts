@@ -77,6 +77,12 @@ export declare class ImapService {
     deleteFolder(requestedPath: string): Promise<{
         deletedPath: string;
     }>;
+    markFolderRead(requestedPath: string): Promise<{
+        path: string;
+        marked: number;
+        maxUid: number;
+        markedUids: number[];
+    }>;
     getMessageIdentities(folderPath: string): Promise<any[]>;
     getSearchFolderSnapshot(): Promise<{
         folderPaths: string[];

@@ -31,6 +31,9 @@ export interface MailSettings {
         blockedSenders: string[];
         safeSenders: string[];
     };
+    folders: {
+        favorites: string[];
+    };
 }
 export interface CalendarSettings {
     defaultCalendarId: number | null;
@@ -92,6 +95,9 @@ export declare const settingsDefaults: {
         spam: {
             blockedSenders: any[];
             safeSenders: any[];
+        };
+        folders: {
+            favorites: any[];
         };
     };
     calendar: {

@@ -36,6 +36,9 @@ export interface MailUserSettings {
     blockedSenders: string[];
     safeSenders: string[];
   };
+  folders: {
+    favorites: string[];
+  };
 }
 
 export interface CalendarUserSettings {
@@ -93,6 +96,9 @@ export const defaultMailSettings: MailUserSettings = {
   spam: {
     blockedSenders: [],
     safeSenders: [],
+  },
+  folders: {
+    favorites: [],
   },
 };
 

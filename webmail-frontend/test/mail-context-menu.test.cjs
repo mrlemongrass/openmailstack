@@ -86,7 +86,9 @@ test('folder tree preserves an authoritative empty delimiter for flat namespaces
 
 test('folder subtree state follows a rename without touching similarly prefixed siblings', () => {
   const {
+    removeFavoriteFolderSubtree,
     remapExpandedFolderPaths,
+    remapFavoriteFolderPaths,
     remapFolderSubtreePath,
   } = loadTypeScriptModule('../src/mail/folder-mutation-state.ts');
 
@@ -109,6 +111,23 @@ test('folder subtree state follows a rename without touching similarly prefixed 
       'INBOX/Statements': true,
       'INBOX/Statements/2025': false,
     },
+  );
+  assert.deepEqual(
+    remapFavoriteFolderPaths(
+      ['INBOX', 'INBOX/Receipts', 'INBOX/Receipts/2025', 'INBOX/Statements'],
+      'INBOX/Receipts',
+      'INBOX/Statements',
+      '/',
+    ),
+    ['INBOX', 'INBOX/Statements', 'INBOX/Statements/2025'],
+  );
+  assert.deepEqual(
+    removeFavoriteFolderSubtree(
+      ['INBOX', 'INBOX/Receipts', 'INBOX/Receipts/2025', 'INBOX/Receipts-old'],
+      'INBOX/Receipts',
+      '/',
+    ),
+    ['INBOX', 'INBOX/Receipts-old'],
   );
 });
 
@@ -150,11 +169,38 @@ test('folders expose top-level creation and guarded lifecycle actions from the s
   assert.match(sidebar, /isProtectedFolder/);
   assert.match(sidebar, /RenameFolderDialog/);
   assert.match(sidebar, /onRenameFolder/);
+  assert.match(sidebar, /role="status"/);
+  assert.match(sidebar, /Marking .* as read/);
+  assert.match(sidebar, /Folder change in progress/);
+  assert.doesNotMatch(sidebar, /Updating Favorites|Updating folder shortcuts/);
+  assert.match(sidebar, /className="folder-row-pending" aria-hidden="true"/);
+  assert.match(sidebar, /onFolderDialogChange/);
   assert.match(dialogs, /role="dialog"/);
   assert.match(dialogs, /aria-modal="true"/);
   assert.match(dialogs, /Folder name/);
   assert.match(dialogs, /Rename folder/);
   assert.match(dialogs, /Top level/);
+});
+
+test('message toolbar distinguishes a global mark-all-read lock from current-folder progress', () => {
+  const list = source('src/mail/MessageList.tsx');
+  const toolbar = source('src/mail/MailToolbar.tsx');
+
+  assert.match(list, /markAllReadPending=\{mail\.markingReadFolder === decodedFolder\}/);
+  assert.match(list, /markAllReadDisabled=\{Boolean\(mail\.markingReadFolder\)\}/);
+  assert.match(toolbar, /markAllReadDisabled/);
+  assert.match(toolbar, /Another folder is being marked as read/);
+});
+
+test('mobile folder drawer suspends for nested dialogs and uses defined visual tokens', () => {
+  const layout = source('src/mail/MailLayout.tsx');
+  const styles = source('src/index.css');
+
+  assert.match(layout, /active: open && !folderDialogOpen/);
+  assert.match(layout, /hidden=\{folderDialogOpen\}/);
+  assert.match(layout, /onFolderDialogChange=\{setFolderDialogOpen\}/);
+  assert.match(styles, /\.mobile-mail-folder-overlay\[hidden\][\s\S]*display:\s*none/);
+  assert.doesNotMatch(styles, /var\(--(?:bg-elevated|shadow-lg|radius-xl)\)/);
 });
 
 test('message rows expose a context menu without replacing their normal open behavior', () => {
@@ -230,10 +276,62 @@ test('folder lifecycle actions use the authenticated API and refresh the tree', 
   assert.match(api, /JSON\.stringify\(\{ path, name \}\)/);
   assert.match(api, /method:\s*'DELETE'/);
   assert.match(api, /JSON\.stringify\(\{ path \}\)/);
+  assert.match(api, /'\/api\/folders\/mark-read'/);
   assert.match(hook, /api\.createFolder\(parent, name\)/);
   assert.match(hook, /api\.moveFolder\(path, parent\)/);
   assert.match(hook, /api\.renameFolder\(path, name\)/);
   assert.match(hook, /api\.deleteFolder\(path\)/);
+  assert.match(hook, /api\.markFolderRead\(path\)/);
+  assert.match(hook, /refreshAfterFolderMarkReadRef\.current\(result\.path\)/);
+  assert.match(hook, /setSelectedMessages/);
+  assert.doesNotMatch(hook, /reconcileFolderMarkReadState|result\.maxUid/);
+  assert.match(hook, /persistFavoriteFolders/);
   assert.match(hook, /case 'move': return 'Message moved\.'/);
   assert.match(hook, /await fetchFolders\(\)/);
+});
+
+test('folder-wide mark as read client sends only the selected folder path', async t => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      async json() {
+        return { success: true, path: 'INBOX/Receipts', marked: 38, maxUid: 502 };
+      },
+    };
+  };
+  t.after(() => { global.fetch = originalFetch; });
+  const { markFolderRead } = loadTypeScriptModule('../src/shared/api.ts');
+
+  assert.deepEqual(await markFolderRead('INBOX/Receipts'), {
+    path: 'INBOX/Receipts',
+    marked: 38,
+    maxUid: 502,
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/folders/mark-read');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { path: 'INBOX/Receipts' });
+});
+
+test('folder-wide mark as read refreshes the current authoritative view instead of projecting UID ranges', () => {
+  const hook = source('src/mail/hooks/useMail.ts');
+
+  assert.match(hook, /if \(isSearchActive\)[\s\S]*return doSearch\(searchQuery, searchScope, searchField\)/);
+  assert.match(hook, /mailboxPathsEqual\(activeFolder, path\)[\s\S]*setSelectedMessages\(\[\]\)[\s\S]*return fetchMessages\('reset'\)/);
+  assert.match(hook, /const foldersRefreshed = await fetchFolders\(\)/);
+  assert.match(hook, /if \(!foldersRefreshed \|\| !viewRefreshed\)/);
+  assert.match(hook, /Messages were marked as read, but Mail could not refresh/);
+  assert.doesNotMatch(hook, /message\.uid <= result\.maxUid|message\.uid > result\.maxUid/);
+});
+
+test('mail refresh retry preserves an active search view', () => {
+  const list = source('src/mail/MessageList.tsx');
+
+  assert.match(
+    list,
+    /if \(isSearchActive\)[\s\S]*mail\.doSearch\(mail\.searchQuery, mail\.searchScope, mail\.searchField\)[\s\S]*else[\s\S]*fetchMessages\(\)/,
+  );
 });

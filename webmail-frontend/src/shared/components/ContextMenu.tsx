@@ -15,6 +15,7 @@ export interface ContextMenuItem {
   disabled?: boolean;
   danger?: boolean;
   separatorBefore?: boolean;
+  focusAfterSelect?: () => HTMLElement | null;
   onSelect: () => void;
 }
 
@@ -79,6 +80,7 @@ export function ContextMenu({ label, point, items, onClose }: ContextMenuProps) 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       onClose();
       return;
     }
@@ -129,6 +131,9 @@ export function ContextMenu({ label, point, items, onClose }: ContextMenuProps) 
               onClick={() => {
                 onClose();
                 item.onSelect();
+                if (item.focusAfterSelect) {
+                  window.setTimeout(() => item.focusAfterSelect?.()?.focus(), 0);
+                }
               }}
             >
               {Icon && <Icon size={16} aria-hidden="true" />}

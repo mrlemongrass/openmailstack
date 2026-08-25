@@ -27,7 +27,11 @@ import { createDraftSaveCoordinator } from '../draft-save-coordinator';
 import { draftComposeState, hydrateDraftAttachments } from '../draft-resume';
 import { outboundIdentityFields } from '../outbound-identity';
 import { reopenRestoredScheduledDraft } from '../scheduled-undo-draft';
-import { remapExpandedFolderPaths } from '../folder-mutation-state';
+import {
+  removeFavoriteFolderSubtree,
+  remapExpandedFolderPaths,
+  remapFavoriteFolderPaths,
+} from '../folder-mutation-state';
 import {
   checkProtectedOutboundSendAttempt,
   createBrowserOutboundSendAttemptCoordinator,
@@ -40,6 +44,10 @@ import {
 
 interface UseMailOptions {
   mailSettings: MailUserSettings;
+  mailSettingsReady: boolean;
+  mailSettingsError: string;
+  onRetryMailSettings: () => void;
+  onMailSettingsChange: (settings: MailUserSettings) => Promise<void>;
   isThreaded: boolean;
   userIdentities: UserIdentities;
 }
@@ -156,6 +164,9 @@ function applyFolderScopedAction(
 }
 
 export function useMail(_opts: UseMailOptions) {
+  const mailSettings = _opts.mailSettings;
+  const mailSettingsReady = _opts.mailSettingsReady;
+  const onMailSettingsChange = _opts.onMailSettingsChange;
   // Folder state
   const [folders, setFolders] = useState<MailFolder[]>([]);
   const [activeFolder, setActiveFolder] = useState('INBOX');
@@ -166,6 +177,26 @@ export function useMail(_opts: UseMailOptions) {
       return saved ? JSON.parse(saved) : {};
     } catch { return {}; }
   });
+  const configuredFavoriteFolders = mailSettings.folders?.favorites;
+  const favoriteFolders = useMemo(
+    () => configuredFavoriteFolders || [],
+    [configuredFavoriteFolders],
+  );
+  const [folderMutationPending, setFolderMutationPending] = useState(false);
+  const folderMutationPendingRef = useRef(false);
+  const runFolderMutation = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
+    if (folderMutationPendingRef.current) {
+      throw new Error('Wait for the current folder change to finish.');
+    }
+    folderMutationPendingRef.current = true;
+    setFolderMutationPending(true);
+    try {
+      return await operation();
+    } finally {
+      folderMutationPendingRef.current = false;
+      setFolderMutationPending(false);
+    }
+  }, []);
 
   // Persist expanded state to localStorage
   const setExpandedPersisted = useCallback((updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
@@ -206,6 +237,9 @@ export function useMail(_opts: UseMailOptions) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [mailPaginationError, setMailPaginationError] = useState('');
+  const [markingReadFolder, setMarkingReadFolder] = useState<string | null>(null);
+  const markingReadFolderRef = useRef<string | null>(null);
+  const refreshAfterFolderMarkReadRef = useRef<(path: string) => Promise<boolean>>(async () => true);
 
   // Undo
   const [mailUndo, setMailUndo] = useState<MailUndoState | null>(null);
@@ -435,7 +469,12 @@ export function useMail(_opts: UseMailOptions) {
       const folderList = await api.fetchFolders();
       setFolders(folderList);
       setMailError('');
-    } catch (e: unknown) { setMailError(errorMessage(e, 'Failed to load folders')); console.error('Failed to fetch folders', e); }
+      return true;
+    } catch (e: unknown) {
+      setMailError(errorMessage(e, 'Failed to load folders'));
+      console.error('Failed to fetch folders', e);
+      return false;
+    }
   }, []);
 
   const createFolder = useCallback(async (parent: string | null, name: string) => {
@@ -445,42 +484,139 @@ export function useMail(_opts: UseMailOptions) {
     return folder.path;
   }, [fetchFolders, setExpandedPersisted]);
 
+  const persistFavoriteFolders = useCallback(async (favorites: string[]) => {
+    if (!mailSettingsReady) {
+      throw new Error('Favorites are still loading. Try again in a moment.');
+    }
+    await onMailSettingsChange({
+      ...mailSettings,
+      folders: { favorites },
+    });
+  }, [mailSettings, mailSettingsReady, onMailSettingsChange]);
+
+  const persistFolderMutationFavorites = useCallback(async (
+    nextFavorites: string[],
+    action: 'moved' | 'renamed' | 'deleted',
+  ) => {
+    if (nextFavorites.length === favoriteFolders.length
+      && nextFavorites.every((path, index) => path === favoriteFolders[index])) return;
+    try {
+      await persistFavoriteFolders(nextFavorites);
+    } catch (error) {
+      console.error(`Failed to preserve Favorites after folder ${action}`, error);
+      setMailError(`The folder was ${action}, but Favorites could not be updated. Add it again from the folder menu.`);
+    }
+  }, [favoriteFolders, persistFavoriteFolders]);
+
   const moveFolder = useCallback(async (path: string, parent: string | null) => {
-    const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
-    const result = await api.moveFolder(path, parent);
-    setExpandedPersisted(previous => remapExpandedFolderPaths(
-      previous,
-      path,
-      result.folder.path,
-      sourceDelimiter,
-    ));
-    if (parent) setExpandedPersisted(previous => ({ ...previous, [parent]: true }));
-    await fetchFolders();
-    return result.folder.path;
-  }, [fetchFolders, folders, setExpandedPersisted]);
+    if (!mailSettingsReady) {
+      throw new Error('Wait for Favorites to finish loading before moving folders.');
+    }
+    return runFolderMutation(async () => {
+      const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
+      const result = await api.moveFolder(path, parent);
+      setExpandedPersisted(previous => remapExpandedFolderPaths(
+        previous,
+        path,
+        result.folder.path,
+        sourceDelimiter,
+      ));
+      if (parent) setExpandedPersisted(previous => ({ ...previous, [parent]: true }));
+      await fetchFolders();
+      await persistFolderMutationFavorites(remapFavoriteFolderPaths(
+        favoriteFolders,
+        path,
+        result.folder.path,
+        sourceDelimiter,
+      ), 'moved');
+      return result.folder.path;
+    });
+  }, [favoriteFolders, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
 
   const renameFolder = useCallback(async (path: string, name: string) => {
-    const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
-    const result = await api.renameFolder(path, name);
-    setExpandedPersisted(previous => remapExpandedFolderPaths(
-      previous,
-      path,
-      result.folder.path,
-      sourceDelimiter,
-    ));
-    await fetchFolders();
-    return result.folder.path;
-  }, [fetchFolders, folders, setExpandedPersisted]);
+    if (!mailSettingsReady) {
+      throw new Error('Wait for Favorites to finish loading before renaming folders.');
+    }
+    return runFolderMutation(async () => {
+      const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
+      const result = await api.renameFolder(path, name);
+      setExpandedPersisted(previous => remapExpandedFolderPaths(
+        previous,
+        path,
+        result.folder.path,
+        sourceDelimiter,
+      ));
+      await fetchFolders();
+      await persistFolderMutationFavorites(remapFavoriteFolderPaths(
+        favoriteFolders,
+        path,
+        result.folder.path,
+        sourceDelimiter,
+      ), 'renamed');
+      return result.folder.path;
+    });
+  }, [favoriteFolders, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
 
   const deleteFolder = useCallback(async (path: string) => {
-    await api.deleteFolder(path);
-    setExpandedPersisted(previous => {
-      const next = { ...previous };
-      delete next[path];
-      return next;
+    if (!mailSettingsReady) {
+      throw new Error('Wait for Favorites to finish loading before deleting folders.');
+    }
+    return runFolderMutation(async () => {
+      const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
+      await api.deleteFolder(path);
+      setExpandedPersisted(previous => {
+        const next = { ...previous };
+        delete next[path];
+        return next;
+      });
+      await fetchFolders();
+      await persistFolderMutationFavorites(removeFavoriteFolderSubtree(
+        favoriteFolders,
+        path,
+        sourceDelimiter,
+      ), 'deleted');
     });
-    await fetchFolders();
-  }, [fetchFolders, setExpandedPersisted]);
+  }, [favoriteFolders, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
+
+  const toggleFavoriteFolder = useCallback(async (path: string) => {
+    const folder = folders.find(candidate => candidate.path === path);
+    if (!folder || folder.disabled || path.toUpperCase() === 'SCHEDULED') {
+      throw new Error('That folder cannot be added to Favorites.');
+    }
+    if (!favoriteFolders.includes(path) && favoriteFolders.length >= 100) {
+      throw new Error('Favorites can include up to 100 folders. Remove one before adding another.');
+    }
+    const nextFavorites = favoriteFolders.includes(path)
+      ? favoriteFolders.filter(candidate => candidate !== path)
+      : [...favoriteFolders, path];
+    await runFolderMutation(() => persistFavoriteFolders(nextFavorites));
+  }, [favoriteFolders, folders, persistFavoriteFolders, runFolderMutation]);
+
+  const markFolderRead = useCallback(async (path: string) => {
+    if (markingReadFolderRef.current) {
+      throw new Error(
+        markingReadFolderRef.current === path
+          ? 'This folder is already being marked as read.'
+          : 'Wait for the current mark-all-read action to finish.',
+      );
+    }
+    markingReadFolderRef.current = path;
+    setMarkingReadFolder(path);
+    try {
+      const result = await api.markFolderRead(path);
+      const foldersRefreshed = await fetchFolders();
+      const viewRefreshed = await refreshAfterFolderMarkReadRef.current(result.path);
+      if (!foldersRefreshed || !viewRefreshed) {
+        const message = 'Messages were marked as read, but Mail could not refresh the current view. Use Refresh to try again.';
+        setMailError(message);
+        throw new Error(message);
+      }
+      return result.marked;
+    } finally {
+      markingReadFolderRef.current = null;
+      setMarkingReadFolder(null);
+    }
+  }, [fetchFolders]);
 
   const invalidateOlderMessageRequest = useCallback(() => {
     olderMessageRequestIdRef.current += 1;
@@ -505,7 +641,7 @@ export function useMail(_opts: UseMailOptions) {
     try {
       const data = await api.fetchMessages(folder);
       if (data.messages) {
-        if (requestId !== messageRequestIdRef.current || activeFolderRef.current !== folder) return;
+        if (requestId !== messageRequestIdRef.current || activeFolderRef.current !== folder) return true;
         const refreshed = data.messages.map((message) => mergeMessageDetails(
           message,
           messageDetailLoaderRef.current.cached(folder, message.uid),
@@ -520,11 +656,15 @@ export function useMail(_opts: UseMailOptions) {
           setMailMoreAvailable(Boolean(data.moreAvailable));
         }
       }
+      return true;
     } catch (e: unknown) {
       if (requestId === messageRequestIdRef.current && activeFolderRef.current === folder) {
         setMailError(errorMessage(e, 'Failed to load messages'));
+        console.error('Failed to fetch messages', e);
+        return false;
       }
       console.error('Failed to fetch messages', e);
+      return true;
     } finally {
       if (requestId === messageRequestIdRef.current) setMailLoading(false);
     }
@@ -1228,8 +1368,7 @@ export function useMail(_opts: UseMailOptions) {
       setSearchLoading(false);
       setSearchError('');
       setSearchInfo('');
-      await fetchMessages('reset');
-      return;
+      return fetchMessages('reset');
     }
     const folder = activeFolder;
     messageRequestIdRef.current += 1;
@@ -1249,20 +1388,36 @@ export function useMail(_opts: UseMailOptions) {
         limit: 100,
         signal: requestController.signal,
       });
-      if (requestId !== searchRequestIdRef.current || activeFolderRef.current !== folder) return;
+      if (requestId !== searchRequestIdRef.current || activeFolderRef.current !== folder) return true;
       if (result.messages) setMessages(result.messages);
       setSearchInfo(result.partial ? 'Some folders could not be searched. Results may be incomplete.' : '');
+      return true;
     } catch (e: unknown) {
-      if (isMailSearchAbort(e)) return;
+      if (isMailSearchAbort(e)) return true;
       if (requestId === searchRequestIdRef.current && activeFolderRef.current === folder) {
         setSearchError(errorMessage(e, 'Search failed'));
+        return false;
       }
+      return true;
     }
     finally {
       searchRequestCoordinatorRef.current.complete(requestController);
       if (requestId === searchRequestIdRef.current) setSearchLoading(false);
     }
   }, [activeFolder, fetchMessages, invalidateOlderMessageRequest, searchField, setMessages]);
+
+  useEffect(() => {
+    refreshAfterFolderMarkReadRef.current = async path => {
+      if (isSearchActive) {
+        return doSearch(searchQuery, searchScope, searchField);
+      }
+      if (mailboxPathsEqual(activeFolder, path)) {
+        setSelectedMessages([]);
+        return fetchMessages('reset');
+      }
+      return true;
+    };
+  }, [activeFolder, doSearch, fetchMessages, isSearchActive, searchField, searchQuery, searchScope]);
 
   const resetSearchState = useCallback(() => {
     searchInputControllerRef.current?.cancel();
@@ -1383,6 +1538,10 @@ export function useMail(_opts: UseMailOptions) {
 
   return {
     folders, activeFolder, setActiveFolder, expandedFolders, setExpandedFolders: setExpandedPersisted,
+    favoriteFolders, favoriteSettingsReady: mailSettingsReady, folderMutationPending,
+    favoriteSettingsError: _opts.mailSettingsError,
+    retryFavoriteSettings: _opts.onRetryMailSettings,
+    markingReadFolder,
     messages, setMessages, selectedMessages, setSelectedMessages,
     viewingThread, setViewingThread,
     mailLowestUid, mailMoreAvailable,
@@ -1414,7 +1573,8 @@ export function useMail(_opts: UseMailOptions) {
     checkEarlierReplySend, checkingEarlierReplySend, allowReplyRetryAfterVerifiedNonDelivery,
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
-    fetchFolders, createFolder, moveFolder, renameFolder, deleteFolder, fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,
+    fetchFolders, createFolder, moveFolder, renameFolder, deleteFolder, toggleFavoriteFolder, markFolderRead,
+    fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,
     messageAction, undoAction, doSearch, snoozeMessages, cancelScheduledSend, removeScheduledMessage,
     mailSettings: _opts.mailSettings,
   };

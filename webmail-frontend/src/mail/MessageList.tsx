@@ -73,6 +73,7 @@ export function MessageList({ mail, density }: MessageListProps) {
   const scheduledFolder = decodedFolder.toUpperCase() === 'SCHEDULED';
   const draftFolder = isDraftFolder(decodedFolder);
   const selectionDisabled = crossFolderSearch || scheduledFolder;
+  const activeFolderDetails = mail.folders.find(candidate => candidate.path === decodedFolder);
 
   useEffect(() => {
     if (decodedFolder !== activeFolder) {
@@ -287,7 +288,15 @@ export function MessageList({ mail, density }: MessageListProps) {
   }
 
   if (mail.mailError) {
-    return <ErrorBanner error={mail.mailError} onRetry={() => { mail.setMailError(''); mail.fetchFolders(); mail.fetchMessages(); }} />;
+    return <ErrorBanner error={mail.mailError} onRetry={() => {
+      mail.setMailError('');
+      void fetchFolders();
+      if (isSearchActive) {
+        void mail.doSearch(mail.searchQuery, mail.searchScope, mail.searchField);
+      } else {
+        void fetchMessages();
+      }
+    }} />;
   }
 
   if (!mail.mailLoading && mail.messages.length === 0) {
@@ -376,13 +385,24 @@ export function MessageList({ mail, density }: MessageListProps) {
             });
           }
         }}
-        onMarkAllRead={selectionDisabled || draftFolder ? undefined : () => {
-          const allUids = mail.messages.map((m) => m.uid);
-          if (allUids.length > 0) {
-            mail.messageAction('read', allUids);
-            showToast({ type: 'success', message: `${allUids.length} messages marked as read` });
-          }
-        }}
+        onMarkAllRead={selectionDisabled || draftFolder || mail.isSearchActive
+          || !activeFolderDetails || activeFolderDetails.unseen === 0
+          ? undefined
+          : () => {
+            void mail.markFolderRead(decodedFolder).then(marked => {
+              showToast({
+                type: 'success',
+                message: marked === 1 ? '1 message marked as read' : `${marked} messages marked as read`,
+              });
+            }).catch(caught => {
+              showToast({
+                type: 'error',
+                message: caught instanceof Error ? caught.message : 'The folder could not be marked as read.',
+              });
+            });
+          }}
+        markAllReadPending={mail.markingReadFolder === decodedFolder}
+        markAllReadDisabled={Boolean(mail.markingReadFolder)}
       />}
       <div ref={parentRef} style={{ flex: 1, overflow: 'auto' }}>
         <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>

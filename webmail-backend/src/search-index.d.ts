@@ -38,6 +38,7 @@ export declare const updateMailSearchFlags: (username: string, folder: string, u
     isRead?: boolean;
     isStarred?: boolean;
 }) => Promise<void>;
+export declare const markMailSearchFolderRead: (username: string, folder: string, uids: number[]) => Promise<void>;
 export declare const getMailSearchIndexStatus: (username: string) => Promise<MailSearchIndexStatus>;
 export declare const getMaxIndexedUid: (username: string, folder: string) => Promise<number>;
 export declare const listSavedMailSearches: (username: string) => Promise<any>;

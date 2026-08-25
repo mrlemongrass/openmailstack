@@ -1,37 +1,78 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Routes, Route } from 'react-router';
 import { MailLayout } from './MailLayout';
 import { MessageList } from './MessageList';
 import { ComposeModal } from './ComposeModal';
 import { useMail } from './hooks/useMail';
 import { useAppearance } from '../shared/hooks/useAppearance';
-import { defaultMailSettings, getUserSettings, type MailUserSettings } from '../settings/settingsApi';
+import {
+  defaultMailSettings,
+  getUserSettings,
+  saveUserSettings,
+  type MailUserSettings,
+} from '../settings/settingsApi';
 import { fetchIdentities } from '../shared/api';
 import type { UserIdentities } from '../shared/types';
 import {
   EMPTY_USER_IDENTITIES,
   loadMailIdentitiesOrDefault,
-  loadMailSettingsOrDefault,
+  loadMailSettingsRuntimeState,
 } from './mail-runtime-settings';
 
 export function MailRoutes() {
   const { appearance } = useAppearance();
   const density = (appearance.density as 'compact' | 'cozy' | 'comfortable') || 'cozy';
   const [mailSettings, setMailSettings] = useState<MailUserSettings>(defaultMailSettings);
+  const [mailSettingsReady, setMailSettingsReady] = useState(false);
+  const [mailSettingsError, setMailSettingsError] = useState('');
   const [userIdentities, setUserIdentities] = useState<UserIdentities>(EMPTY_USER_IDENTITIES);
-  const mail = useMail({ mailSettings, isThreaded: false, userIdentities });
+  const mailSettingsRequestIdRef = useRef(0);
+  const persistMailSettings = useCallback(async (nextSettings: MailUserSettings) => {
+    const previousSettings = mailSettings;
+    setMailSettings(nextSettings);
+    try {
+      const savedSettings = await saveUserSettings('mail', nextSettings);
+      setMailSettings(savedSettings);
+    } catch (error) {
+      setMailSettings(current => current === nextSettings ? previousSettings : current);
+      throw error;
+    }
+  }, [mailSettings]);
+  const retryMailSettings = useCallback(() => {
+    const requestId = ++mailSettingsRequestIdRef.current;
+    setMailSettingsReady(false);
+    setMailSettingsError('');
+    void loadMailSettingsRuntimeState(() => getUserSettings('mail')).then(result => {
+      if (requestId !== mailSettingsRequestIdRef.current) return;
+      setMailSettings(result.settings);
+      setMailSettingsReady(result.ready);
+      setMailSettingsError(result.ready ? '' : 'Favorites could not be loaded.');
+    });
+  }, []);
+  const mail = useMail({
+    mailSettings,
+    mailSettingsReady,
+    mailSettingsError,
+    onRetryMailSettings: retryMailSettings,
+    onMailSettingsChange: persistMailSettings,
+    isThreaded: false,
+    userIdentities,
+  });
   const { startCompose } = mail;
 
   useEffect(() => {
     let cancelled = false;
-    void loadMailSettingsOrDefault(() => getUserSettings('mail')).then(settings => {
-      if (!cancelled) setMailSettings(settings);
+    queueMicrotask(() => {
+      if (!cancelled) retryMailSettings();
     });
     void loadMailIdentitiesOrDefault(fetchIdentities).then(identities => {
       if (!cancelled) setUserIdentities(identities);
     });
-    return () => { cancelled = true; };
-  }, []);
+    return () => {
+      cancelled = true;
+      mailSettingsRequestIdRef.current += 1;
+    };
+  }, [retryMailSettings]);
 
   // Listen for cross-suite compose events + check for pending compose on mount
   useEffect(() => {

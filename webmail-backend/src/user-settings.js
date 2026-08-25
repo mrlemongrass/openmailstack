@@ -33,6 +33,9 @@ exports.settingsDefaults = {
             blockedSenders: [],
             safeSenders: [],
         },
+        folders: {
+            favorites: [],
+        },
     },
     calendar: {
         defaultCalendarId: null,
@@ -130,6 +133,24 @@ const stringArray = (value, maxItems, maxLength) => {
             .map(v => typeof v === 'string' ? v.trim().toLowerCase().slice(0, maxLength) : '')
             .filter(v => v !== ''))].slice(0, maxItems);
 };
+const folderPathArray = (value) => {
+    if (!Array.isArray(value))
+        return [];
+    const seen = new Set();
+    const paths = [];
+    for (const item of value) {
+        if (typeof item !== 'string')
+            continue;
+        const path = item.trim();
+        if (!path || path.length > 1024 || /[\u0000-\u001f\u007f]/u.test(path) || seen.has(path))
+            continue;
+        seen.add(path);
+        paths.push(path);
+        if (paths.length === 100)
+            break;
+    }
+    return paths;
+};
 function normalizeSignatures(value) {
     if (!Array.isArray(value))
         return [];
@@ -181,6 +202,7 @@ function normalizeSettings(namespace, value) {
         const reading = isObject(source.reading) ? source.reading : {};
         const identity = isObject(source.identity) ? source.identity : {};
         const compose = isObject(source.compose) ? source.compose : {};
+        const folders = isObject(source.folders) ? source.folders : {};
         return {
             signatures: normalizeSignatures(source.signatures),
             identity: {
@@ -205,6 +227,9 @@ function normalizeSettings(namespace, value) {
             spam: {
                 blockedSenders: stringArray(isObject(source.spam) ? source.spam.blockedSenders : undefined, 500, 255),
                 safeSenders: stringArray(isObject(source.spam) ? source.spam.safeSenders : undefined, 500, 255),
+            },
+            folders: {
+                favorites: folderPathArray(folders.favorites),
             },
         };
     }

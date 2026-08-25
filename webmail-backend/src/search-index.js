@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.searchMailIndex = exports.deleteSavedMailSearch = exports.createSavedMailSearch = exports.listSavedMailSearches = exports.getMaxIndexedUid = exports.getMailSearchIndexStatus = exports.updateMailSearchFlags = exports.deleteMailSearchRows = exports.upsertMailSearchRows = exports.ensureMailSearchSchema = void 0;
+exports.searchMailIndex = exports.deleteSavedMailSearch = exports.createSavedMailSearch = exports.listSavedMailSearches = exports.getMaxIndexedUid = exports.getMailSearchIndexStatus = exports.markMailSearchFolderRead = exports.updateMailSearchFlags = exports.deleteMailSearchRows = exports.upsertMailSearchRows = exports.ensureMailSearchSchema = void 0;
 const db_1 = require("./db");
 let schemaPromise = null;
 const ensureMailSearchSchema = async () => {
@@ -294,6 +294,18 @@ const updateMailSearchFlags = async (username, folder, uids, updates) => {
          WHERE username = ? AND folder = ? AND uid IN (?)`, [...params, username, folder, uids]);
 };
 exports.updateMailSearchFlags = updateMailSearchFlags;
+const markMailSearchFolderRead = async (username, folder, uids) => {
+    const exactUids = [...new Set(uids.filter(uid => Number.isInteger(uid) && uid > 0))];
+    if (exactUids.length === 0)
+        return;
+    await (0, exports.ensureMailSearchSchema)();
+    for (let offset = 0; offset < exactUids.length; offset += 500) {
+        await db_1.pool.query(`UPDATE mail_search_index
+             SET is_read = 1, indexed_at = CURRENT_TIMESTAMP
+             WHERE username = ? AND folder = ? AND uid IN (?)`, [username, folder, exactUids.slice(offset, offset + 500)]);
+    }
+};
+exports.markMailSearchFolderRead = markMailSearchFolderRead;
 const getMailSearchIndexStatus = async (username) => {
     await (0, exports.ensureMailSearchSchema)();
     const [rows] = await db_1.pool.query('SELECT COUNT(*) AS indexedCount, MAX(indexed_at) AS lastIndexedAt FROM mail_search_index WHERE username = ?', [username]);

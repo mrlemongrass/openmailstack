@@ -97,6 +97,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
               onCompose={() => mail.startCompose()}
               onCreateFolder={mail.createFolder}
               onMoveFolder={mail.moveFolder}
+              onRenameFolder={mail.renameFolder}
               onDeleteFolder={mail.deleteFolder}
               quota={mail.userQuota} />
           </div>

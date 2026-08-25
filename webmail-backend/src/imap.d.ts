@@ -52,12 +52,21 @@ export declare class ImapService {
     logout(): Promise<void>;
     close(): void;
     getFolders(): Promise<any[]>;
+    private preserveSubscriptionsAfterMailboxRename;
     createFolder(parentPath: string | null | undefined, requestedName: string): Promise<{
         path: string;
         delimiter: string;
         unseen: number;
     }>;
     moveFolder(requestedPath: string, requestedParent: string | null | undefined): Promise<{
+        previousPath: string;
+        folder: {
+            path: string;
+            delimiter: string;
+            unseen: number;
+        };
+    }>;
+    renameFolder(requestedPath: string, requestedName: string): Promise<{
         previousPath: string;
         folder: {
             path: string;

@@ -1731,15 +1731,23 @@ exports.apiRouter.post('/folders', requireAuth, async (req, res) => {
 exports.apiRouter.patch('/folders', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
+    const hasName = Object.prototype.hasOwnProperty.call(req.body || {}, 'name');
+    const hasParent = Object.prototype.hasOwnProperty.call(req.body || {}, 'parent');
+    const action = hasName ? 'renamed' : 'moved';
     try {
+        if (hasName && hasParent) {
+            throw new imap_1.MailboxMutationError('INVALID_FOLDER_MUTATION', 400, 'Rename or move the folder in one step, not both.');
+        }
         const imap = await getPooledImap(user, pass);
         await assertFolderMutationIsUnreferenced(user, pass, imap, req.body?.path);
-        const result = await imap.moveFolder(req.body?.path, req.body?.parent);
+        const result = hasName
+            ? await imap.renameFolder(req.body?.path, req.body?.name)
+            : await imap.moveFolder(req.body?.path, req.body?.parent);
         await resetSearchIndexAfterFolderMutation(user);
         res.json({ success: true, ...result });
     }
     catch (err) {
-        return respondToFolderMutationFailure(res, err, 'moved');
+        return respondToFolderMutationFailure(res, err, action);
     }
 });
 exports.apiRouter.delete('/folders', requireAuth, async (req, res) => {

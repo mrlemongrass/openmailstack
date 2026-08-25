@@ -18,8 +18,9 @@ import { ContextMenu, type ContextMenuItem } from '../shared/components/ContextM
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
 import type { ContextMenuPoint } from '../shared/context-menu-navigation';
-import { FolderDestinationDialog, NewFolderDialog } from './components/FolderDialogs';
+import { FolderDestinationDialog, NewFolderDialog, RenameFolderDialog } from './components/FolderDialogs';
 import { buildFolderTree, type FolderTreeNode } from './mail-folder-tree';
+import { remapFolderSubtreePath } from './folder-mutation-state';
 
 type FolderIcon = React.ComponentType<{ size?: number }>;
 
@@ -31,6 +32,7 @@ interface FolderSidebarProps {
   onCompose: () => void;
   onCreateFolder: (parent: string | null, name: string) => Promise<string>;
   onMoveFolder: (path: string, parent: string | null) => Promise<string>;
+  onRenameFolder: (path: string, name: string) => Promise<string>;
   onDeleteFolder: (path: string) => Promise<void>;
   quota: { usage: number; limit: number } | null;
 }
@@ -63,6 +65,7 @@ export function FolderSidebar({
   onCompose,
   onCreateFolder,
   onMoveFolder,
+  onRenameFolder,
   onDeleteFolder,
   quota,
 }: FolderSidebarProps) {
@@ -71,6 +74,7 @@ export function FolderSidebar({
   const [folderMenu, setFolderMenu] = useState<FolderMenuState | null>(null);
   const [newFolderParent, setNewFolderParent] = useState<string | null | undefined>(undefined);
   const [movingFolder, setMovingFolder] = useState<FolderTreeNode | null>(null);
+  const [renamingFolder, setRenamingFolder] = useState<FolderTreeNode | null>(null);
   const [deleteFolderConfirm, setDeleteFolderConfirm] = useState<FolderTreeNode | null>(null);
   const tree = buildFolderTree(folders);
   const closeFolderMenu = useCallback(() => setFolderMenu(null), []);
@@ -103,10 +107,16 @@ export function FolderSidebar({
   if (folderMenu && !isProtectedFolder(folderMenu.node)) {
     folderMenuItems.push(
       {
+        id: 'rename',
+        label: 'Rename…',
+        icon: Edit2,
+        separatorBefore: true,
+        onSelect: () => setRenamingFolder(folderMenu.node),
+      },
+      {
         id: 'move',
         label: 'Move…',
         icon: FolderInput,
-        separatorBefore: true,
         onSelect: () => setMovingFolder(folderMenu.node),
       },
       {
@@ -133,13 +143,28 @@ export function FolderSidebar({
     if (!movingFolder) return;
     const sourcePath = movingFolder.fullPath;
     const nextPath = await onMoveFolder(sourcePath, parent);
-    if (
-      activeFolder === sourcePath
-      || (movingFolder.delimiter && activeFolder.startsWith(`${sourcePath}${movingFolder.delimiter}`))
-    ) {
-      navigate(`/mail/${encodeURIComponent(`${nextPath}${activeFolder.slice(sourcePath.length)}`)}`);
-    }
+    const nextActiveFolder = remapFolderSubtreePath(
+      activeFolder,
+      sourcePath,
+      nextPath,
+      movingFolder.delimiter,
+    );
+    if (nextActiveFolder !== activeFolder) navigate(`/mail/${encodeURIComponent(nextActiveFolder)}`);
     showToast({ type: 'success', message: `Moved ${movingFolder.name}` });
+  };
+
+  const renameSelectedFolder = async (name: string) => {
+    if (!renamingFolder) return;
+    const sourcePath = renamingFolder.fullPath;
+    const nextPath = await onRenameFolder(sourcePath, name);
+    const nextActiveFolder = remapFolderSubtreePath(
+      activeFolder,
+      sourcePath,
+      nextPath,
+      renamingFolder.delimiter,
+    );
+    if (nextActiveFolder !== activeFolder) navigate(`/mail/${encodeURIComponent(nextActiveFolder)}`);
+    showToast({ type: 'success', message: `Renamed ${renamingFolder.name} to ${name}` });
   };
 
   const deleteSelectedFolder = () => {
@@ -225,6 +250,16 @@ export function FolderSidebar({
           includeTopLevel={parentFolderPath(movingFolder) !== null}
           onSelect={moveSelectedFolder}
           onClose={() => setMovingFolder(null)}
+        />
+      )}
+      {renamingFolder && (
+        <RenameFolderDialog
+          key={renamingFolder.fullPath}
+          path={renamingFolder.fullPath}
+          currentName={renamingFolder.name}
+          parent={parentFolderPath(renamingFolder)}
+          onRename={renameSelectedFolder}
+          onClose={() => setRenamingFolder(null)}
         />
       )}
       <ConfirmDialog

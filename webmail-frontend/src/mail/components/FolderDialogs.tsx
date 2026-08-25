@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FolderInput, FolderPlus, Search } from 'lucide-react';
+import { FolderInput, FolderPlus, Pencil, Search } from 'lucide-react';
 import type { MailFolder } from '../../shared/types';
 import { useModalFocus } from '../../shared/hooks/useModalFocus';
 import { useToast } from '../../shared/components/Toast';
@@ -86,6 +86,112 @@ export function NewFolderDialog({ parent, onCreate, onClose }: NewFolderDialogPr
             <button type="button" className="btn btn-ghost" disabled={saving} onClick={handleClose}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={saving || !name.trim()}>
               {saving ? 'Creating…' : 'Create'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+interface RenameFolderDialogProps {
+  path: string;
+  currentName: string;
+  parent: string | null;
+  onRename: (name: string) => Promise<void>;
+  onClose: () => void;
+}
+
+export function RenameFolderDialog({
+  path,
+  currentName,
+  parent,
+  onRename,
+  onClose,
+}: RenameFolderDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [name, setName] = useState(currentName);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const handleClose = useCallback(() => {
+    if (!saving) onClose();
+  }, [onClose, saving]);
+  useModalFocus({ dialogRef, open: true, onClose: handleClose });
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError('Enter a name for the folder.');
+      return;
+    }
+    if (trimmedName === currentName) {
+      setError('Enter a different folder name.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await onRename(trimmedName);
+      onClose();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The folder could not be renamed.');
+      setSaving(false);
+    }
+  };
+
+  return createPortal(
+    <div className="mail-dialog-overlay" onMouseDown={event => {
+      if (event.target === event.currentTarget) handleClose();
+    }}>
+      <div
+        ref={dialogRef}
+        className="glass-panel mail-folder-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rename-folder-title"
+        aria-describedby="rename-folder-description"
+        aria-busy={saving}
+        tabIndex={-1}
+      >
+        <div className="mail-folder-dialog-heading">
+          <span className="mail-folder-dialog-icon"><Pencil size={19} aria-hidden="true" /></span>
+          <div>
+            <h2 id="rename-folder-title">Rename folder</h2>
+            <p id="rename-folder-description">
+              {parent
+                ? <>Keep <strong>{path}</strong> inside <strong>{parent}</strong>.</>
+                : <>Keep <strong>{path}</strong> at the top level.</>}
+            </p>
+          </div>
+        </div>
+        <form onSubmit={submit}>
+          <label className="mail-folder-dialog-field">
+            <span>Folder name</span>
+            <input
+              className="glass-input"
+              value={name}
+              onFocus={event => event.currentTarget.select()}
+              onChange={event => {
+                setName(event.target.value);
+                if (error) setError('');
+              }}
+              maxLength={255}
+              autoComplete="off"
+              disabled={saving}
+              required
+            />
+          </label>
+          {error && <div className="mail-folder-dialog-error" role="alert">{error}</div>}
+          <div className="mail-folder-dialog-actions">
+            <button type="button" className="btn btn-ghost" disabled={saving} onClick={handleClose}>Cancel</button>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={saving || !name.trim() || name.trim() === currentName}
+            >
+              {saving ? 'Renaming…' : 'Rename'}
             </button>
           </div>
         </form>

@@ -84,6 +84,34 @@ test('folder tree preserves an authoritative empty delimiter for flat namespaces
   assert.deepEqual(Object.keys(tree[0].children), []);
 });
 
+test('folder subtree state follows a rename without touching similarly prefixed siblings', () => {
+  const {
+    remapExpandedFolderPaths,
+    remapFolderSubtreePath,
+  } = loadTypeScriptModule('../src/mail/folder-mutation-state.ts');
+
+  assert.equal(
+    remapFolderSubtreePath('INBOX/Receipts/2025', 'INBOX/Receipts', 'INBOX/Statements', '/'),
+    'INBOX/Statements/2025',
+  );
+  assert.equal(
+    remapFolderSubtreePath('INBOX/Receipts-old', 'INBOX/Receipts', 'INBOX/Statements', '/'),
+    'INBOX/Receipts-old',
+  );
+  assert.deepEqual(
+    remapExpandedFolderPaths({
+      INBOX: true,
+      'INBOX/Receipts': true,
+      'INBOX/Receipts/2025': false,
+    }, 'INBOX/Receipts', 'INBOX/Statements', '/'),
+    {
+      INBOX: true,
+      'INBOX/Statements': true,
+      'INBOX/Statements/2025': false,
+    },
+  );
+});
+
 test('the shared context menu exposes desktop and keyboard menu semantics', () => {
   const menu = source('src/shared/components/ContextMenu.tsx');
   const confirmation = source('src/shared/components/ConfirmDialog.tsx');
@@ -115,13 +143,17 @@ test('folders expose top-level creation and guarded lifecycle actions from the s
   assert.match(sidebar, /aria-haspopup="menu"/);
   assert.match(sidebar, /New folder/);
   assert.match(sidebar, /New subfolder/);
+  assert.match(sidebar, /Rename…/);
   assert.match(sidebar, /Move/);
   assert.match(sidebar, /Delete/);
   assert.match(sidebar, /ConfirmDialog/);
   assert.match(sidebar, /isProtectedFolder/);
+  assert.match(sidebar, /RenameFolderDialog/);
+  assert.match(sidebar, /onRenameFolder/);
   assert.match(dialogs, /role="dialog"/);
   assert.match(dialogs, /aria-modal="true"/);
   assert.match(dialogs, /Folder name/);
+  assert.match(dialogs, /Rename folder/);
   assert.match(dialogs, /Top level/);
 });
 
@@ -195,10 +227,12 @@ test('folder lifecycle actions use the authenticated API and refresh the tree', 
   assert.match(api, /JSON\.stringify\(\{ parent, name \}\)/);
   assert.match(api, /method:\s*'PATCH'/);
   assert.match(api, /JSON\.stringify\(\{ path, parent \}\)/);
+  assert.match(api, /JSON\.stringify\(\{ path, name \}\)/);
   assert.match(api, /method:\s*'DELETE'/);
   assert.match(api, /JSON\.stringify\(\{ path \}\)/);
   assert.match(hook, /api\.createFolder\(parent, name\)/);
   assert.match(hook, /api\.moveFolder\(path, parent\)/);
+  assert.match(hook, /api\.renameFolder\(path, name\)/);
   assert.match(hook, /api\.deleteFolder\(path\)/);
   assert.match(hook, /case 'move': return 'Message moved\.'/);
   assert.match(hook, /await fetchFolders\(\)/);

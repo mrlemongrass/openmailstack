@@ -137,6 +137,29 @@ export class ImapService {
         });
     }
 
+    private async preserveSubscriptionsAfterMailboxRename(
+        folders: any[],
+        sourcePath: string,
+        delimiter: string,
+        destinationPath: string,
+        action: 'move' | 'rename',
+    ) {
+        for (const folder of folders) {
+            const belongsToRenamedTree = folder.path === sourcePath
+                || Boolean(delimiter && folder.path.startsWith(`${sourcePath}${delimiter}`));
+            if (!belongsToRenamedTree || !folder.subscribed) continue;
+            const renamedPath = `${destinationPath}${folder.path.slice(sourcePath.length)}`;
+            try {
+                await this.client.mailboxSubscribe(renamedPath);
+                await this.client.mailboxUnsubscribe(folder.path);
+            } catch (err) {
+                console.error(`Failed to preserve mailbox subscription after folder ${action}`, {
+                    errorType: err instanceof Error ? err.name : 'UnknownError',
+                });
+            }
+        }
+    }
+
     async createFolder(parentPath: string | null | undefined, requestedName: string) {
         if (parentPath !== null && parentPath !== undefined && typeof parentPath !== 'string') {
             throw new MailboxMutationError('INVALID_PARENT_FOLDER', 400, 'Choose a valid parent folder.');
@@ -341,20 +364,122 @@ export class ImapService {
             source.path,
             parentFolder ? [parentFolder.path, leaf] : [leaf],
         );
-        for (const folder of folders) {
-            const isMovedFolder = folder.path === source.path
-                || Boolean(sourceDelimiter && folder.path.startsWith(`${source.path}${sourceDelimiter}`));
-            if (!isMovedFolder || !folder.subscribed) continue;
-            const renamedPath = `${result.newPath}${folder.path.slice(source.path.length)}`;
-            try {
-                await this.client.mailboxSubscribe(renamedPath);
-                await this.client.mailboxUnsubscribe(folder.path);
-            } catch (err) {
-                console.error('Failed to preserve mailbox subscription after folder move', {
-                    errorType: err instanceof Error ? err.name : 'UnknownError',
-                });
+        await this.preserveSubscriptionsAfterMailboxRename(
+            folders,
+            source.path,
+            sourceDelimiter,
+            result.newPath,
+            'move',
+        );
+        return {
+            previousPath: source.path,
+            folder: {
+                path: result.newPath,
+                delimiter,
+                unseen: Number(source.status?.unseen || 0),
+            },
+        };
+    }
+
+    async renameFolder(requestedPath: string, requestedName: string) {
+        const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+        const name = typeof requestedName === 'string' ? requestedName.trim() : '';
+        if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {
+            throw new MailboxMutationError('INVALID_FOLDER', 400, 'Choose a valid folder to rename.');
+        }
+        if (!name || Array.from(name).length > 255 || /[\u0000-\u001f\u007f]/u.test(name)) {
+            throw new MailboxMutationError(
+                'INVALID_FOLDER_NAME',
+                400,
+                'Enter a folder name between 1 and 255 characters.',
+            );
+        }
+        if (path.toUpperCase() === 'SCHEDULED') {
+            throw new MailboxMutationError(
+                'VIRTUAL_FOLDER_UNSUPPORTED',
+                409,
+                'Scheduled is a virtual folder and cannot be renamed.',
+            );
+        }
+
+        const folders = await this.client.list();
+        const source = folders.find(folder => (
+            folder.path === path
+            || (path.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')
+        ));
+        if (!source) {
+            throw new MailboxMutationError(
+                'FOLDER_NOT_FOUND',
+                404,
+                'The folder no longer exists. Refresh Mail and try again.',
+            );
+        }
+        if (source.path.toUpperCase() === 'INBOX' || mailboxSpecialUse(source)) {
+            throw new MailboxMutationError(
+                'PROTECTED_FOLDER',
+                409,
+                'System folders cannot be renamed.',
+            );
+        }
+        if (source.flags?.has('\\Noselect')) {
+            throw new MailboxMutationError('INVALID_FOLDER', 409, 'That folder cannot be renamed.');
+        }
+
+        const delimiter = typeof source.delimiter === 'string' ? source.delimiter : '';
+        if (delimiter && name.includes(delimiter)) {
+            throw new MailboxMutationError(
+                'INVALID_FOLDER_NAME',
+                400,
+                `Folder names cannot contain "${delimiter}".`,
+            );
+        }
+        const parentPath = delimiter && source.path.includes(delimiter)
+            ? source.path.slice(0, source.path.lastIndexOf(delimiter))
+            : null;
+        if (parentPath === null) {
+            if (name.toUpperCase() === 'INBOX') {
+                throw new MailboxMutationError(
+                    'PROTECTED_FOLDER',
+                    409,
+                    'Inbox is reserved and cannot be used as a top-level folder name.',
+                );
+            }
+            if (name.toUpperCase() === 'SCHEDULED') {
+                throw new MailboxMutationError(
+                    'VIRTUAL_FOLDER_UNSUPPORTED',
+                    409,
+                    'Scheduled is reserved and cannot be used as a top-level folder name.',
+                );
             }
         }
+
+        const destinationPath = parentPath ? `${parentPath}${delimiter}${name}` : name;
+        if (destinationPath === source.path) {
+            throw new MailboxMutationError(
+                'FOLDER_NAME_UNCHANGED',
+                409,
+                'Enter a different folder name.',
+            );
+        }
+        if (folders.some(folder => folder.path === destinationPath)) {
+            throw new MailboxMutationError(
+                'FOLDER_EXISTS',
+                409,
+                'A folder with that name already exists in this location.',
+            );
+        }
+
+        const result = await this.client.mailboxRename(
+            source.path,
+            parentPath ? [parentPath, name] : [name],
+        );
+        await this.preserveSubscriptionsAfterMailboxRename(
+            folders,
+            source.path,
+            delimiter,
+            result.newPath,
+            'rename',
+        );
         return {
             previousPath: source.path,
             folder: {

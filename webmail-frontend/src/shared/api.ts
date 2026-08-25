@@ -63,6 +63,22 @@ export async function moveFolder(path: string, parent: string | null): Promise<{
   return { previousPath: data.previousPath, folder: data.folder };
 }
 
+export async function renameFolder(path: string, name: string): Promise<{
+  previousPath: string;
+  folder: MailFolder;
+}> {
+  const res = await fetch('/api/folders', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, name }),
+  });
+  const data = await res.json().catch(() => ({ success: false })) as FolderMutationResponse;
+  if (!res.ok || !data.success || !data.folder || !data.previousPath) {
+    throw new Error(data.error || 'The folder could not be renamed.');
+  }
+  return { previousPath: data.previousPath, folder: data.folder };
+}
+
 export async function deleteFolder(path: string): Promise<string> {
   const res = await fetch('/api/folders', {
     method: 'DELETE',

@@ -27,6 +27,7 @@ import { createDraftSaveCoordinator } from '../draft-save-coordinator';
 import { draftComposeState, hydrateDraftAttachments } from '../draft-resume';
 import { outboundIdentityFields } from '../outbound-identity';
 import { reopenRestoredScheduledDraft } from '../scheduled-undo-draft';
+import { remapExpandedFolderPaths } from '../folder-mutation-state';
 import {
   checkProtectedOutboundSendAttempt,
   createBrowserOutboundSendAttemptCoordinator,
@@ -447,15 +448,26 @@ export function useMail(_opts: UseMailOptions) {
   const moveFolder = useCallback(async (path: string, parent: string | null) => {
     const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
     const result = await api.moveFolder(path, parent);
-    setExpandedPersisted(previous => Object.fromEntries(
-      Object.entries(previous).map(([folderPath, expanded]) => [
-        folderPath === path || folderPath.startsWith(`${path}${sourceDelimiter}`)
-          ? `${result.folder.path}${folderPath.slice(path.length)}`
-          : folderPath,
-        expanded,
-      ]),
+    setExpandedPersisted(previous => remapExpandedFolderPaths(
+      previous,
+      path,
+      result.folder.path,
+      sourceDelimiter,
     ));
     if (parent) setExpandedPersisted(previous => ({ ...previous, [parent]: true }));
+    await fetchFolders();
+    return result.folder.path;
+  }, [fetchFolders, folders, setExpandedPersisted]);
+
+  const renameFolder = useCallback(async (path: string, name: string) => {
+    const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
+    const result = await api.renameFolder(path, name);
+    setExpandedPersisted(previous => remapExpandedFolderPaths(
+      previous,
+      path,
+      result.folder.path,
+      sourceDelimiter,
+    ));
     await fetchFolders();
     return result.folder.path;
   }, [fetchFolders, folders, setExpandedPersisted]);
@@ -1402,7 +1414,7 @@ export function useMail(_opts: UseMailOptions) {
     checkEarlierReplySend, checkingEarlierReplySend, allowReplyRetryAfterVerifiedNonDelivery,
     signatures, setSignatures, rules, setRules,
     userQuota, loadedImagesForMsg, setLoadedImagesForMsg,
-    fetchFolders, createFolder, moveFolder, deleteFolder, fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,
+    fetchFolders, createFolder, moveFolder, renameFolder, deleteFolder, fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,
     messageAction, undoAction, doSearch, snoozeMessages, cancelScheduledSend, removeScheduledMessage,
     mailSettings: _opts.mailSettings,
   };

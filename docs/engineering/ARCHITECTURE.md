@@ -679,10 +679,21 @@ than only ImapFlow's one canonical alias, and the virtual top-level `SCHEDULED`
 name is reserved. Folder moves preserve subscribed paths and delete removes the
 subscription. Move/delete are blocked while an active rule or snoozed message
 references that path, then atomically clear the owner's folder-keyed search
-index after the IMAP mutation. This behavior is guarded-deployed and was
+index after the IMAP mutation. Create/move/delete behavior is guarded-deployed and was
 exercised with a dedicated disposable canary through API, webmail, LIST, and
-LSUB create/move/delete lifecycles with exact cleanup. Folder rename remains
-unimplemented.
+LSUB create/move/delete lifecycles with exact cleanup.
+
+Verified 2026-08-24: custom top-level folders and subfolders add Rename to the
+same accessible lifecycle menu while protected/system folders do not.
+Authenticated `PATCH /api/folders` accepts either a destination parent or a new
+leaf name, rejects combined mutations, and preserves the current parent during
+rename. The IMAP path protects reserved names and collisions, preserves
+subscriptions across the renamed subtree, applies the existing rule/snooze
+reference blocker, and clears the folder-keyed search index after success. The
+web client keeps renamed expansion keys and an active descendant route coherent;
+the focus-managed dialog starts with the current leaf selected and retains
+server failures for correction and retry. Rename uses the same guarded bridge
+and frontend release path as other mail-runtime changes.
 
 Verified 2026-07-30: Mail Filters preserve array order as user-visible priority.
 Each executable rule stops later processing unless `stopProcessing=false`;

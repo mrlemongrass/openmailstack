@@ -24,6 +24,10 @@ let moveFolder = async (path, parent) => ({
   previousPath: path,
   folder: { path: parent ? `${parent}/${path.split('/').at(-1)}` : path.split('/').at(-1), delimiter: '/', unseen: 0 },
 });
+let renameFolder = async (path, name) => ({
+  previousPath: path,
+  folder: { path: `${path.slice(0, path.lastIndexOf('/') + 1)}${name}`, delimiter: '/', unseen: 0 },
+});
 let deleteFolder = async path => ({ deletedPath: path });
 let runMessageAction = async (_folder, _uids, _action, targetFolder) => ({
   targetFolder,
@@ -87,6 +91,10 @@ require.cache[imapPoolPath] = {
       async moveFolder(path, parent) {
         folderCalls.push({ action: 'move', path, parent });
         return moveFolder(path, parent);
+      },
+      async renameFolder(path, name) {
+        folderCalls.push({ action: 'rename', path, name });
+        return renameFolder(path, name);
       },
       async deleteFolder(path) {
         folderCalls.push({ action: 'delete', path });
@@ -232,6 +240,55 @@ test('authenticated users can move and delete a custom folder', async t => {
   assert.deepEqual(purgeCalls, [username, username]);
 });
 
+test('authenticated users can rename a custom folder without changing its parent', async t => {
+  folderCalls.length = 0;
+  purgeCalls.length = 0;
+  activeRules = { rules: [] };
+  snoozeFolders = [];
+  mutationFolders = [{ path: 'Projects/Travel', delimiter: '/' }];
+  purgeSearchIndex = async owner => { purgeCalls.push(owner); return 0; };
+  renameFolder = async () => ({
+    previousPath: 'Projects/Travel',
+    folder: { path: 'Projects/Trips', delimiter: '/', unseen: 2 },
+  });
+  const port = await withServer(t);
+
+  const response = await requestJson(port, 'PATCH', '/api/folders', {
+    path: 'Projects/Travel',
+    name: 'Trips',
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.json, {
+    success: true,
+    previousPath: 'Projects/Travel',
+    folder: { path: 'Projects/Trips', delimiter: '/', unseen: 2 },
+  });
+  assert.deepEqual(folderCalls, [
+    { action: 'rename', path: 'Projects/Travel', name: 'Trips' },
+  ]);
+  assert.deepEqual(purgeCalls, [username]);
+});
+
+test('folder PATCH rejects a combined move and rename before IMAP mutation', async t => {
+  folderCalls.length = 0;
+  purgeCalls.length = 0;
+  activeRules = { rules: [] };
+  snoozeFolders = [];
+  const port = await withServer(t);
+
+  const response = await requestJson(port, 'PATCH', '/api/folders', {
+    path: 'Projects/Travel',
+    parent: 'Archive',
+    name: 'Trips',
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.json.code, 'INVALID_FOLDER_MUTATION');
+  assert.deepEqual(folderCalls, []);
+  assert.deepEqual(purgeCalls, []);
+});
+
 test('committed folder mutations still succeed when best-effort search cleanup fails', async t => {
   folderCalls.length = 0;
   activeRules = { rules: [] };
@@ -254,7 +311,7 @@ test('committed folder mutations still succeed when best-effort search cleanup f
   assert.doesNotMatch(response.text, /private search database detail/i);
 });
 
-test('folder move and delete reject rule or snooze path references before IMAP mutation', async t => {
+test('folder rename, move, and delete reject rule or snooze path references before IMAP mutation', async t => {
   folderCalls.length = 0;
   purgeCalls.length = 0;
   purgeSearchIndex = async owner => { purgeCalls.push(owner); return 0; };
@@ -268,6 +325,10 @@ test('folder move and delete reject rule or snooze path references before IMAP m
   snoozeFolders = [];
   const port = await withServer(t);
 
+  const renamed = await requestJson(port, 'PATCH', '/api/folders', {
+    path: 'Projects/Travel',
+    name: 'Trips',
+  });
   const moved = await requestJson(port, 'PATCH', '/api/folders', {
     path: 'Projects/Travel',
     parent: 'Archive',
@@ -279,6 +340,8 @@ test('folder move and delete reject rule or snooze path references before IMAP m
     path: 'Archive/Travel',
   });
 
+  assert.equal(renamed.status, 409);
+  assert.equal(renamed.json.code, 'FOLDER_IN_USE');
   assert.equal(moved.status, 409);
   assert.equal(moved.json.code, 'FOLDER_IN_USE');
   assert.equal(deleted.status, 409);
@@ -506,6 +569,129 @@ test('IMAP folder moves preserve the leaf name and prevent unsafe destinations',
   await assert.rejects(
     () => service.moveFolder('Projects/Travel', { path: 'Archive' }),
     error => error instanceof MailboxMutationError && error.code === 'INVALID_FOLDER_DESTINATION',
+  );
+});
+
+test('IMAP folder rename changes only the leaf and preserves subtree subscriptions', async () => {
+  const calls = [];
+  const folders = [
+    { path: 'Projects', delimiter: '/' },
+    { path: 'Projects/Travel', delimiter: '/', subscribed: true, status: { unseen: 2 } },
+    { path: 'Projects/Travel/2026', delimiter: '/', subscribed: true },
+  ];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async list() { return folders; },
+    async mailboxRename(path, segments) {
+      calls.push(['rename', path, segments]);
+      return { path, newPath: segments.join('/') };
+    },
+    async mailboxSubscribe(path) { calls.push(['subscribe', path]); return true; },
+    async mailboxUnsubscribe(path) { calls.push(['unsubscribe', path]); return true; },
+  };
+
+  const renamed = await service.renameFolder('Projects/Travel', 'Trips');
+
+  assert.deepEqual(calls, [
+    ['rename', 'Projects/Travel', ['Projects', 'Trips']],
+    ['subscribe', 'Projects/Trips'],
+    ['unsubscribe', 'Projects/Travel'],
+    ['subscribe', 'Projects/Trips/2026'],
+    ['unsubscribe', 'Projects/Travel/2026'],
+  ]);
+  assert.deepEqual(renamed, {
+    previousPath: 'Projects/Travel',
+    folder: { path: 'Projects/Trips', delimiter: '/', unseen: 2 },
+  });
+});
+
+test('IMAP folder rename supports a custom top-level folder', async () => {
+  const calls = [];
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async list() {
+      return [
+        { path: 'INBOX', delimiter: '/' },
+        { path: 'Projects', delimiter: '/', subscribed: true, status: { unseen: 4 } },
+      ];
+    },
+    async mailboxRename(path, segments) {
+      calls.push(['rename', path, segments]);
+      return { path, newPath: segments.join('/') };
+    },
+    async mailboxSubscribe(path) { calls.push(['subscribe', path]); return true; },
+    async mailboxUnsubscribe(path) { calls.push(['unsubscribe', path]); return true; },
+  };
+
+  const renamed = await service.renameFolder('Projects', 'Work');
+
+  assert.deepEqual(calls, [
+    ['rename', 'Projects', ['Work']],
+    ['subscribe', 'Work'],
+    ['unsubscribe', 'Projects'],
+  ]);
+  assert.deepEqual(renamed, {
+    previousPath: 'Projects',
+    folder: { path: 'Work', delimiter: '/', unseen: 4 },
+  });
+});
+
+test('IMAP folder rename rejects protected, invalid, conflicting, and unchanged names', async () => {
+  const service = Object.create(ImapService.prototype);
+  service.client = {
+    async list() {
+      return [
+        { path: 'INBOX', delimiter: '/' },
+        { path: 'Old Sent', delimiter: '/', flags: new Set(['\\Sent']) },
+        { path: 'Projects/Travel', delimiter: '/' },
+        { path: 'Projects/Trips', delimiter: '/' },
+        { path: 'Travel', delimiter: '/' },
+      ];
+    },
+    async mailboxRename() {
+      throw new Error('mailboxRename must not be called for rejected input');
+    },
+  };
+
+  await assert.rejects(
+    () => service.renameFolder('INBOX', 'Primary'),
+    error => error instanceof MailboxMutationError && error.code === 'PROTECTED_FOLDER',
+  );
+  await assert.rejects(
+    () => service.renameFolder('Old Sent', 'Sent 2'),
+    error => error instanceof MailboxMutationError && error.code === 'PROTECTED_FOLDER',
+  );
+  await assert.rejects(
+    () => service.renameFolder('Projects/Travel', '   '),
+    error => error instanceof MailboxMutationError && error.code === 'INVALID_FOLDER_NAME',
+  );
+  await assert.rejects(
+    () => service.renameFolder('Projects/Travel', 'Bad\u0000Name'),
+    error => error instanceof MailboxMutationError && error.code === 'INVALID_FOLDER_NAME',
+  );
+  await assert.rejects(
+    () => service.renameFolder('Projects/Travel', 'Reports/2026'),
+    error => error instanceof MailboxMutationError && error.code === 'INVALID_FOLDER_NAME',
+  );
+  await assert.rejects(
+    () => service.renameFolder('Projects/Travel', 'Trips'),
+    error => error instanceof MailboxMutationError && error.code === 'FOLDER_EXISTS',
+  );
+  await assert.rejects(
+    () => service.renameFolder('Projects/Travel', 'Travel'),
+    error => error instanceof MailboxMutationError && error.code === 'FOLDER_NAME_UNCHANGED',
+  );
+  await assert.rejects(
+    () => service.renameFolder('Travel', 'scheduled'),
+    error => error instanceof MailboxMutationError && error.code === 'VIRTUAL_FOLDER_UNSUPPORTED',
+  );
+  await assert.rejects(
+    () => service.renameFolder('Travel', 'inbox'),
+    error => error instanceof MailboxMutationError && error.code === 'PROTECTED_FOLDER',
+  );
+  await assert.rejects(
+    () => service.renameFolder('Missing', 'Present'),
+    error => error instanceof MailboxMutationError && error.code === 'FOLDER_NOT_FOUND',
   );
 });
 

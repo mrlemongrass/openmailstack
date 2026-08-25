@@ -214,12 +214,15 @@ server-side fallthrough.
 #### 3.1.1 OMS folder-tree implementation status
 
 The P0 folder tree now supports top-level and nested creation, Rename, Move,
-confirmation-gated permanent Delete, account-persistent Favorites, and true
-folder-wide Mark all as read. The same commands are reachable by native right
-click, keyboard context-menu gestures, and a visible touch/overflow action;
-protected and special-use mailboxes expose only their safe subset. Favorites
-follow an OMS Move or Rename, disappear after an OMS Delete, and fail closed
-with Retry when settings cannot load.
+recoverable Delete, account-persistent Favorites, and true folder-wide Mark all
+as read. Ordinary Delete moves the complete folder subtree and its messages
+beneath the server-advertised Trash mailbox, using a collision-safe suffix when
+needed. A custom Trash leaf can be deleted permanently only through a separate
+irreversible confirmation; Trash parents require leaf-by-leaf cleanup. The same
+commands are reachable by native right click, keyboard context-menu gestures,
+and a visible touch/overflow action; protected and special-use mailboxes expose
+only their safe subset. Favorites and expanded state follow OMS Move, Rename,
+and recoverable Delete, while permanent Delete removes the affected state.
 
 Mark all as read is a bounded server mutation rather than an action against
 only the currently loaded page. The server snapshots the selected mailbox's
@@ -229,29 +232,37 @@ serializes the action globally, exposes persistent row and accessible status,
 reloads the authoritative folder/search view, and reports an acknowledged
 mutation separately if that reload fails. Retry preserves an active search.
 
-Commit `f1f50e30630ecc81bd6b98d27e9a67543509804a` passed all 850 backend
-tests (843 pass and seven documented optional skips), all 198 frontend tests,
-lint, both production builds, the complete integration gate, and fixed-point
+Recoverable deletion resolves source and Trash hierarchy contracts from IMAP
+LIST, preserves subtree subscriptions, rejects delimiter-ambiguous cross-
+namespace names before RENAME, and fails closed when Trash is unavailable or a
+permanent delete lacks explicit server acknowledgement. Active rule and snooze
+references still block a lifecycle mutation. Search cleanup is best-effort
+after the acknowledged mailbox change; partial success is reported without
+rolling back or exposing private server details, and search cleanup has an
+explicit retry.
+
+Commit `9a73f7101e814d8878499b88e4d6252486beefe3` passed all 861 backend tests
+(854 pass and seven documented optional skips), all 201 frontend tests, lint,
+both production builds, the complete integration gate, and exact-commit
 Spec/Standards review with no findings. Guarded bridge and active releases both
 passed public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar pre/post gates.
 Rollbacks are
-`/var/backups/openmailstack/protocol-guarded-webmail-20260825T174250Z` and
-`/var/backups/openmailstack/protocol-guarded-webmail-20260825T175018Z`.
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T231400Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T232122Z`.
 
-A dedicated live canary created a top-level mailbox, appended three unread and
-one read message, marked exactly the three pre-snapshot messages, proved a
-later append remained unread through fresh IMAP and the webmail list endpoint,
-persisted/reloaded the Favorite, restored the exact prior settings, deleted the
-folder, and proved no LIST residue. Released-asset Chromium at 1440x900 and
-390x844 exercised native folder and message right click, Favorites add/remove,
-Mark all as read progress/counts, the mobile drawer/menu, and Compose focus
-isolation with zero console errors or warnings.
+A dedicated live canary created and subscribed a three-level folder tree,
+appended two messages, forced a Trash-name collision, moved the entire subtree
+to the production dot-delimited Trash, restored it to the mailbox root, moved
+it to Trash again, verified the permanent subtree guard, deleted only leaves,
+and proved zero LIST residue. Released-asset Chromium at 1440x900 and 390x844
+verified recoverable/permanent confirmation copy, protected-tree and Trash-
+parent guards, post-mutation focus, partial-success retry, viewport fit, and
+zero console errors or warnings.
 
-This is not full Outlook parity. Folder Delete remains permanent after an
-explicit warning; recoverable folder deletion is the next destructive-action
-design. Categories, Pin/Flag, Rules-from-message, Sweep/Block/Ignore, richer
-message Reply/Forward context actions, Favorites ordering, and Search Folders
-remain separate bounded slices.
+This is not full Outlook parity. Categories, Pin/Flag, Rules-from-message,
+Sweep/Block/Ignore, richer message Reply/Forward context actions, Favorites
+ordering, folder color/empty commands, and Search Folders remain separate
+bounded slices.
 
 ### 3.2 Calendar
 

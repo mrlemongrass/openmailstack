@@ -1,5 +1,48 @@
 # Implementation State
 
+## 2026-08-25 Recoverable Mail Folder Deletion
+
+**Status: guarded-deployed in active mode and verified against the public API
+plus a dedicated protocol-canary mailbox.** Ordinary custom-folder Delete now
+renames the complete subtree beneath the server-advertised `\\Trash` mailbox,
+preserving messages and selecting a bounded `Name (2)` suffix on collision.
+The confirmation explains that the folder, descendants, and messages move to
+Trash and can be restored with Move. Only a custom Trash leaf with a compatible
+source/Trash hierarchy contract offers `Delete permanently`; parents require
+leaf-by-leaf cleanup and use an irreversible warning.
+
+Backend safety resolves exact LIST paths and delimiters, protects INBOX,
+special-use/nonselectable folders and trees containing special-use descendants,
+blocks active rule or pending-snooze references, rejects missing/flat Trash
+contracts, delimiter-ambiguous cross-namespace names, and unacknowledged IMAP
+deletes. Subscriptions are remapped only after the destination subscribe is
+acknowledged. Favorites, expanded state, routes, search state, and mutation
+focus reconcile across differing source/destination delimiters. Post-commit
+subscription or search-cleanup failures produce bounded partial-success
+feedback; search cleanup can be retried without exposing backend details.
+
+Commit `9a73f7101e814d8878499b88e4d6252486beefe3` passed all 861 backend tests
+(854 pass, seven documented optional skips), all 201 frontend tests, frontend
+lint, both builds, `git diff --check`, and the complete integration gate.
+Exact-commit Spec and Standards re-review found no residual issue. Guarded
+bridge and active releases passed public IMAPS plus ActiveSync
+Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T231400Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T232122Z`.
+
+All six services are active with zero restarts, the warning journal is empty,
+local/public auth and the protected Delete route return expected unauthenticated
+`401`, and repository/live backend and full frontend artifacts are exact. A
+live canary created/subscribed a three-level tree, seeded two messages, forced a
+Trash collision, moved/restored/moved the tree, verified permanent-delete
+boundaries, removed leaves, and proved zero residue. Released-asset Chromium at
+1440x900 and 390x844 passed confirmation, guard, focus, retry, viewport, and
+console checks.
+
+External IMAP renames still cannot atomically rewrite web-only Favorites.
+Folder Empty, color, Favorites ordering, Categories, Pin/Flag, and richer
+message Reply/Forward actions remain separate Outlook-parity slices.
+
 ## 2026-08-25 Mail Folder Favorites And Folder-wide Mark-read
 
 **Status: guarded-deployed in active mode and verified against the public
@@ -43,10 +86,9 @@ restored, and no LIST residue remained. Released-asset Chromium at 1440x900 and
 Mark-all-read locking/counts, mobile modal isolation, and focus restoration with
 zero console errors/warnings.
 
-Delete remains permanent after explicit confirmation; recoverable folder
-deletion is the next folder-tree safety slice. External IMAP renames cannot
-atomically rewrite the web-only Favorite setting, so missing paths are hidden
-until the user removes/re-adds the renamed mailbox.
+Recoverable folder deletion shipped in the later 2026-08-25 slice. External
+IMAP renames cannot atomically rewrite the web-only Favorite setting, so missing
+paths are hidden until the user removes/re-adds the renamed mailbox.
 
 ## 2026-08-24 Mail Folder Rename Lifecycle
 
@@ -94,7 +136,8 @@ closed dialog, no overflow, and zero console errors/warnings.
 Renaming deliberately remains unavailable while an active rule or pending
 snooze refers to the tree; OpenMailStack does not silently rewrite those
 semantic references. Folder Favorites and Mark all as read shipped in the
-2026-08-25 follow-on slice; recoverable deletion remains separate work.
+2026-08-25 follow-on slice; recoverable deletion shipped in the later
+2026-08-25 safety slice.
 
 ## 2026-08-24 Scoped Existing-mail Rule Runs
 

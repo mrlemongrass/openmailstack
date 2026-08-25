@@ -6,10 +6,22 @@ Last updated: 2026-08-25
 
 ## Resolved Risks
 
+- ✅ Permanent-only folder deletion and unsafe Trash inference: ordinary Delete
+  now moves the complete custom subtree beneath the advertised Trash mailbox,
+  preserves messages/subscriptions and reconciles client folder state. Only an
+  acknowledged custom Trash leaf can be permanently deleted after a separate
+  warning. Missing/flat or mixed hierarchy contracts, delimiter-ambiguous
+  cross-namespace names, protected descendants, active rules/snoozes, Trash
+  parents, and unacknowledged IMAP deletion fail closed. Commit `9a73f71` is
+  guarded-deployed active with exact artifacts, clean service/API checks,
+  desktop/mobile browser proof, and a reversible live canary that moved and
+  restored a subscribed three-level tree with two messages and zero residue.
+
 - ✅ Folder Favorites drift during OMS lifecycle changes and page-only
   mark-read behavior: account settings now persist a bounded exact-path
   Favorites list, lifecycle mutations share one lock, and Move/Rename/Delete
-  remap or remove the affected subtree. Folder-wide mark-read snapshots
+  remap or remove the affected subtree according to recoverable/permanent
+  disposition. Folder-wide mark-read snapshots
   `UIDNEXT - 1`, mutates exact unread UIDs through a dedicated IMAP session,
   updates exact search-index membership, and authoritatively reloads the active
   folder/search view with truthful partial-success recovery. Commit `f1f50e3`
@@ -169,12 +181,11 @@ Last updated: 2026-08-25
 
 ## Remaining High-Priority Risks
 
-- 🟡 Folder Delete remains permanent after an explicit confirmation. Design a
-  recoverable mailbox-trash/grace-period contract before calling the complete
-  folder tree fully Outlook-familiar. Favorites are web settings rather than an
-  IMAP attribute, so a rename performed by an external client cannot
-  atomically remap them; the UI filters missing paths until the user
-  removes/re-adds the renamed folder.
+- 🟡 Favorites are web settings rather than an IMAP attribute, so a rename
+  performed by an external client cannot atomically remap them; the UI filters
+  missing paths until the user removes/re-adds the renamed folder. Folder Empty,
+  color, and Favorites ordering remain incomplete Outlook-familiar lifecycle
+  affordances.
 
 - 🔴 Physical Apple release evidence: the first final-runtime iPad SendMail is
   proven end-to-end through one durable row, one SMTP acceptance, and one

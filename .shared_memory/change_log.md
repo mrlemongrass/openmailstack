@@ -2308,3 +2308,26 @@ Future entry template:
   mobile focus/viewport checks, and zero console errors/warnings.
 - Permanent confirmed folder deletion remains the next safety slice; broader
   Outlook message action grammar and Favorites ordering remain follow-ons.
+
+## 2026-08-25 — Recoverable Mail Folder Deletion
+
+- Replaced permanent-by-default custom-folder Delete with a complete subtree
+  move beneath advertised Trash, bounded collision suffixing, honest restore
+  guidance, and permanent deletion limited to separately confirmed Trash
+  leaves.
+- Preserved subscriptions and web folder state across mixed delimiters; added
+  fail-closed protection for unavailable/flat/ambiguous namespaces, Trash-path
+  lookalikes, protected descendants, semantic references, and missing IMAP
+  delete acknowledgements.
+- Added bounded partial-success/retry feedback for subscription and search
+  cleanup without exposing backend details.
+- Commit `9a73f71` passed 861 backend tests (854 pass, seven skips), 201 frontend
+  tests, lint/build, complete integration, and exact-commit Spec/Standards
+  review with no findings.
+- Guarded bridge/active releases passed public IMAPS and ActiveSync
+  Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+  `protocol-guarded-webmail-20260825T231400Z` and
+  `protocol-guarded-webmail-20260825T232122Z`.
+- Live three-level subtree/message/collision/restore/permanent-boundary cleanup,
+  six-service health, zero restarts, auth boundaries, exact artifacts, and
+  desktop/mobile Chromium checks passed.

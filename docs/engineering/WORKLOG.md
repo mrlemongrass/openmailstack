@@ -10230,3 +10230,73 @@ Folder Delete remains permanent behind explicit confirmation. Recoverable
 deletion is the next folder-tree safety design; Categories, Pin/Flag,
 Rules-from-message, Sweep/Block/Ignore, richer Reply/Forward context actions,
 Favorites ordering, and Search Folders remain separate Outlook-parity slices.
+
+## 2026-08-25 — Recoverable Mail Folder Deletion
+
+### Selected task
+
+Replace permanent-by-default custom-folder deletion with Outlook-familiar,
+recoverable Trash semantics while retaining a narrowly explicit permanent
+operation for Trash leaves.
+
+### Goal and acceptance criteria
+
+- Move an ordinary custom folder, all descendants, and messages beneath the
+  server-advertised Trash mailbox with collision-safe naming.
+- Reserve permanent deletion for an explicitly confirmed custom Trash leaf;
+  protect system folders and require Trash subtrees to be removed leaf first.
+- Fail closed for unusable or ambiguous hierarchy contracts and require an
+  explicit IMAP acknowledgement before reporting permanent success.
+- Reconcile subscriptions, Favorites, expansion, active routes, focus, and
+  search state; report post-commit partial failures with safe recovery.
+- Pass complete tests/review, guarded release, a reversible live mailbox
+  canary, service/artifact checks, and desktop/mobile browser verification.
+
+### Changes made
+
+- `DELETE /api/folders` now binds explicit recoverable/permanent intent.
+  Recoverable Delete performs an exact IMAP subtree rename under `\\Trash` and
+  selects `Name (2)` through a bounded collision search. Permanent Delete is
+  limited to acknowledged leaves already beneath the same delimiter contract.
+- Added fail-closed checks for missing/flat Trash, protected or nonselectable
+  trees, special-use descendants, active rule/snooze references, mixed-
+  delimiter Trash lookalikes, destination-delimiter ambiguity, and absent
+  mailbox-delete acknowledgement.
+- Subscription reconciliation checks ImapFlow boolean results, subscribes new
+  paths before removing old subscriptions, and reports partial success. Search
+  cleanup failures remain post-commit warnings with a bounded authenticated
+  retry.
+- The folder UI uses recoverable and irreversible confirmation copy, disables
+  unsafe actions, remaps Favorites/expanded/route state across delimiters, and
+  restores focus to the surviving destination or parent.
+
+### Proof and release
+
+- Focused lifecycle verification: 35/35 backend and 18/18 frontend tests.
+- Complete backend: 861 total, 854 pass, seven documented optional skips.
+- Complete frontend: 201/201; lint and production build passed.
+- `git diff --check` and `tests/integration/run.sh` passed, with final output
+  `[ok] Integration checks completed.`
+- Exact-commit Spec and Standards review returned no findings after mixed-
+  delimiter, subscription-result, error-boundary, and acknowledgement edges
+  were corrected.
+- Commit `9a73f7101e814d8878499b88e4d6252486beefe3` passed guarded bridge and active
+  public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar pre/post gates.
+  Rollbacks are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260825T231400Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260825T232122Z`.
+- A live production-canary mailbox created/subscribed a three-level tree,
+  appended two messages, forced a dot-delimited Trash collision, moved and
+  restored the subtree, verified permanent-delete boundaries, cleaned leaves,
+  and proved zero LIST residue.
+- All six services are active with `NRestarts=0`; warning journal, auth
+  boundaries, and repository/live backend plus full frontend artifact equality
+  are clean. Released-asset Chromium at 1440x900 and 390x844 passed
+  confirmation, guard, focus, retry, viewport, and zero-console-error checks.
+
+### Residual limits and next task
+
+External-client folder renames cannot atomically remap web-only Favorites.
+Folder Empty/color/order remain future lifecycle slices. The next recommended
+message slice is consistent Reply, Reply all, Forward, Flag, and Pin actions in
+row, reading-pane, bulk, and context surfaces.

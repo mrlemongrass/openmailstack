@@ -1,5 +1,53 @@
 # Implementation State
 
+## 2026-08-24 Mail Folder Rename Lifecycle
+
+**Status: guarded-deployed in active mode and verified against the public
+frontend plus a dedicated live protocol-canary mailbox.** Custom selectable
+folders now expose `Rename…` between `New subfolder…` and `Move…` in both the
+right-click menu and visible overflow menu. The focus-managed dialog starts
+with the leaf name selected, keeps the parent fixed, reports bounded server
+errors in place, and supports retry. A successful rename follows the folder
+through the expanded tree and remaps an active folder or descendant route.
+
+Authenticated `PATCH /api/folders` now has disjoint rename `{path, name}` and
+move `{path, parent}` contracts and rejects a combined request. Rename is
+leaf-only: it preserves the server-advertised delimiter and parent, rejects
+empty/oversized/control-character/delimiter names, missing or unchanged paths,
+collisions, top-level `INBOX`/`Scheduled`, `INBOX` itself, special-use folders,
+and nonselectable folders. It also blocks a folder tree referenced by an active
+mail rule or pending snooze, purges folder-keyed search state, and preserves
+subscriptions for the renamed folder and every descendant.
+
+Focused backend verification passed 20/20 and focused frontend verification
+passed 11/11. The complete backend suite passed 836 with seven documented
+optional skips (843 total); the complete frontend suite passed 190/190; lint,
+both production builds, whitespace, and the complete integration gate passed.
+Fixed-point Standards and Spec review found no residual issue after protected
+top-level names, rendered UI behavior, validation edges, shared path remapping,
+and documentation were tightened.
+
+Commit `547f1a82` passed guarded bridge and active releases with public IMAPS
+and ActiveSync Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T035812Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T040535Z`. Active
+mode has zero restarts, valid Nginx, no warning-level release journal entries,
+expected local/public/protected-route `401`, and exact repository/live backend,
+version, and frontend artifacts.
+
+A dedicated live canary created, subscribed, renamed, verified, and deleted a
+three-level folder tree with zero final LIST/LSUB residue. The first harness
+attempt assumed `/`; production advertises `.`, so the exact random tree was
+recovered and the passing harness now derives the delimiter from the server.
+No user mailbox was touched. Public Chromium loaded the released hashed assets
+and proved the exact rename payload, descendant-route and expansion remap,
+closed dialog, no overflow, and zero console errors/warnings.
+
+Renaming deliberately remains unavailable while an active rule or pending
+snooze refers to the tree; OpenMailStack does not silently rewrite those
+semantic references. Folder Favorites, Mark all as read, and recoverable
+deletion remain separate folder-tree QoL work.
+
 ## 2026-08-24 Scoped Existing-mail Rule Runs
 
 **Status: guarded-deployed in active mode and verified against the public

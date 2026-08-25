@@ -10055,3 +10055,88 @@ mutate a real mailbox.
 Existing-mail execution still performs Move actions only. Reject and Discard
 remain delivery-time-only; broader existing-mail action grammar and its
 confirmation/result semantics are the next recommended bounded rules task.
+
+## 2026-08-24 — Mail Folder Rename Lifecycle
+
+### Selected task
+
+Add the tester-requested Outlook-familiar Rename action to custom folders and
+subfolders without allowing protected mailbox changes or breaking descendant
+navigation, subscriptions, rules, snoozes, or live protocol clients.
+
+### Goal and acceptance criteria
+
+- Expose `Rename…` alongside Open, New subfolder, Move, and Delete for custom
+  folders in both right-click and visible overflow menus.
+- Prefill and select the current leaf name, keep its parent fixed, preserve user
+  input on a server error, and support retry.
+- Rename top-level custom folders and nested subtrees using the server's actual
+  hierarchy delimiter; update active descendant routes and expanded state.
+- Reject protected, special-use, nonselectable, missing, unchanged, colliding,
+  invalid, rule-referenced, and snooze-referenced targets without mutation.
+- Preserve subtree subscriptions, purge stale folder search state, and pass
+  focused/full tests, review, guarded rollout, a live disposable canary, and
+  public-browser verification.
+
+### Changes made
+
+- Added a focus-managed, portaled Rename dialog with selected prefilled input,
+  fixed-parent copy, loading/error/retry states, and a custom-folder-only action
+  in both menu entry points.
+- Added a shared folder-path mutation helper so Move and Rename consistently
+  remap expanded descendants; Rename also follows an active folder or active
+  descendant route after success.
+- Split authenticated `PATCH /api/folders` into exclusive rename `{path, name}`
+  and move `{path, parent}` shapes. The route reuses active-rule/snooze guards
+  and clears folder-keyed search state.
+- Added leaf-only IMAP rename validation, protected/special/nonselectable checks,
+  collision/no-op detection, delimiter-safe path construction, and shared
+  subscription migration for the complete renamed subtree.
+- Added rendered JSDOM coverage using `jsdom@26.1.0` plus backend route/IMAP,
+  frontend state, and source-contract regressions.
+
+### Proof and review
+
+- TDD red was observed for the missing IMAP method, the route misclassifying
+  `{name}` as Move, and the missing frontend action before implementation.
+- Focused backend: 20/20; focused frontend: 11/11.
+- Complete backend: 843 total, 836 pass, seven documented optional skips.
+- Complete frontend: 190/190; lint and both production builds passed.
+- `git diff --check` and `tests/integration/run.sh` passed, the latter ending
+  with `[ok] Integration checks completed.`
+- Initial Standards/Spec review found the lowercase top-level `inbox` edge,
+  source-only UI coverage, stale documentation, duplicated remap logic, and
+  missing empty/control-character cases. Those were fixed; fixed-point
+  re-review found no residual issue.
+- Local Chromium at 1440×900 proved protected-INBOX versus custom-folder menu
+  contents, dialog focus/selection, exact request, route/expansion remapping,
+  and zero console errors. The rendered regression also proves loading,
+  server-failure, retained input, retry, and success behavior.
+
+### Release state and limits
+
+Commit `547f1a82e9661a071c768b794355c3d31b9f0a5c` passed guarded bridge and
+active releases. Both stages passed public IMAPS plus ActiveSync
+Mail/Ping/Contacts/Calendar pre/post gates with exact cleanup. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T035812Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T040535Z`.
+
+Active mode has `NRestarts=0`, valid Nginx, no warning-level release journal
+entries, expected local/public readiness and protected-route `401`, and exact
+repository/live backend, version, and frontend artifacts. A dedicated protocol
+canary created, subscribed, renamed, verified, and deleted a three-level folder
+tree with zero final LIST/LSUB residue. Its first harness attempt assumed `/`
+while live Dovecot advertises `.`; the exact random tree was recovered and the
+passing canary now derives the delimiter. No user mailbox was touched.
+
+Fresh public Chromium loaded `index-Dml5Ltoh.js`, `routes-BNzxb0UP.js`, and
+`index-DaERTbNz.css`, submitted
+`{path:"INBOX/Receipts",name:"Statements"}`, followed the active descendant to
+`/mail/INBOX%2FStatements%2F2025`, retained expanded
+`INBOX/Statements`, closed the dialog, matched the 1440 px viewport, and
+reported zero console errors/warnings.
+
+Active rule and pending-snooze references intentionally block rename rather
+than being silently rewritten. The next recommended folder-tree QoL slice is
+Favorites plus Mark all as read; recoverable Delete semantics should follow as
+a separate destructive-action design.

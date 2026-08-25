@@ -6,6 +6,18 @@ Last updated: 2026-08-24
 
 ## Resolved Risks
 
+- ✅ Folder identity drift during rename: custom selectable folders now use a
+  leaf-only server rename that preserves the advertised hierarchy delimiter,
+  remaps active/expanded frontend paths, purges folder-keyed search state, and
+  migrates subscriptions for the whole subtree. Protected/special/nonselectable
+  folders, collisions, invalid names, combined Move/Rename requests, and active
+  rule or pending-snooze references fail closed. Commit `547f1a82` is
+  guarded-deployed active with exact artifact equality, public-browser proof,
+  and a dedicated subscribed three-level live canary ending with zero LIST/LSUB
+  residue. Live canaries must derive the server delimiter; production advertises
+  `.`, not the `/` used by browser fixtures. Semantic rule/snooze reference
+  rewriting remains deliberately out of scope.
+
 - ✅ Mail-filter cleanup deleting intentional logic: duplicate review analyzes
   the current draft without mailbox/ManageSieve access and auto-removes only
   later exact same-rule copies. Cross-rule repeats and substring overlaps stay

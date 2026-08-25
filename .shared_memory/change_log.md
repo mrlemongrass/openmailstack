@@ -2245,3 +2245,34 @@ Future entry template:
   console/page errors; browser QA did not access a real mailbox.
 - Existing-mail execution remains Move-only. Broader action parity is the next
   bounded rules tranche.
+
+## 2026-08-24 — Mail Folder Rename Lifecycle
+
+- Added `Rename…` to custom-folder right-click and overflow menus, with a
+  focus-managed dialog that selects the existing leaf name, keeps the parent
+  fixed, presents bounded errors, and retries without losing input.
+- Added disjoint `{path, name}` rename and `{path, parent}` move API contracts.
+  Leaf-only rename preserves the advertised delimiter, moves subtree
+  subscriptions, purges folder-keyed search state, remaps active/expanded UI
+  paths, and rejects protected/special/nonselectable folders, invalid or
+  reserved names, collisions, no-ops, mixed mutations, and active rule/snooze
+  references.
+- Passed 20/20 focused backend tests, 11/11 focused frontend tests, all 843
+  backend tests (836 pass, seven optional skips), all 190 frontend tests,
+  frontend lint, both production builds, whitespace, and the complete
+  integration gate. Fixed-point Standards and Spec re-review found no residual
+  issue.
+- Commit `547f1a82` passed guarded bridge and active public IMAPS plus ActiveSync
+  Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+  `protocol-guarded-webmail-20260825T035812Z` and
+  `protocol-guarded-webmail-20260825T040535Z`; active health, Nginx, warning
+  journals, readiness, authentication boundaries, and repository/live artifact
+  equality are clean.
+- A dedicated live mailbox canary created, subscribed, renamed, and removed a
+  three-level tree with zero final LIST/LSUB residue. An initial harness-only
+  `/` delimiter assumption was recovered exactly; the passing canary derives
+  production's advertised `.` delimiter. No user mailbox was touched.
+- Fresh public Chromium loaded the released assets and proved the exact
+  `{path:"INBOX/Receipts",name:"Statements"}` request, descendant route and
+  expansion remap, closed dialog, viewport-safe layout, and zero console
+  errors/warnings.

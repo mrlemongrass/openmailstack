@@ -1,5 +1,53 @@
 # Implementation State
 
+## 2026-08-25 Mail Folder Favorites And Folder-wide Mark-read
+
+**Status: guarded-deployed in active mode and verified against the public
+frontend plus a dedicated protocol-canary mailbox.** The folder sidebar now has
+an account-persistent flat Favorites section. Custom and safe system folders can
+be added or removed through native right click, keyboard context-menu gestures,
+or the visible actions button. Favorites use normalized
+`mail.folders.favorites` settings (exact paths, bounded at 100), fail closed
+with visible Retry when settings cannot load, and share the folder lifecycle
+mutation lock. OMS Move/Rename remaps a favorited subtree and OMS Delete removes
+it without changing similarly prefixed siblings.
+
+Folder menus and the message toolbar expose true Mark all as read. Authenticated
+`POST /api/folders/mark-read` uses a dedicated short-lived IMAP connection,
+locks the selected mailbox, snapshots `UIDNEXT - 1`, searches unread UIDs at or
+below the ceiling, and applies `\\Seen` to those exact UIDs in 500-UID batches.
+The internal UID membership, not an inferred range, updates the derived search
+index; only folder/count/ceiling are returned publicly. The frontend serializes
+the mutation globally, keeps persistent per-row progress plus one live status,
+and authoritatively reloads folder counts and the active folder or search. If
+IMAP succeeds but refresh fails, the UI reports partial success and Retry
+preserves the current search view.
+
+Commit `f1f50e30630ecc81bd6b98d27e9a67543509804a` passed all 850 backend
+tests (843 pass, seven documented optional skips), all 198 frontend tests,
+frontend lint, both production builds, `git diff --check`, and the complete
+repository integration gate. Fixed-point Spec and Standards re-review found no
+residual issue. Guarded bridge and active releases passed public IMAPS plus
+ActiveSync Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T174250Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T175018Z`.
+
+Active mode has zero restarts, valid Nginx, no warning-level release journal
+entries, expected local/public/protected-route `401`, and byte-identical
+repository/live backend and frontend entry artifacts. A dedicated live canary
+created and removed a top-level folder, proved three pre-snapshot unread
+messages became read, a later append stayed unread, the webmail list endpoint
+reloaded those flags, Favorites survived reload, exact prior settings were
+restored, and no LIST residue remained. Released-asset Chromium at 1440x900 and
+390x844 exercised native folder/message right click, Favorites add/remove,
+Mark-all-read locking/counts, mobile modal isolation, and focus restoration with
+zero console errors/warnings.
+
+Delete remains permanent after explicit confirmation; recoverable folder
+deletion is the next folder-tree safety slice. External IMAP renames cannot
+atomically rewrite the web-only Favorite setting, so missing paths are hidden
+until the user removes/re-adds the renamed mailbox.
+
 ## 2026-08-24 Mail Folder Rename Lifecycle
 
 **Status: guarded-deployed in active mode and verified against the public
@@ -45,8 +93,8 @@ closed dialog, no overflow, and zero console errors/warnings.
 
 Renaming deliberately remains unavailable while an active rule or pending
 snooze refers to the tree; OpenMailStack does not silently rewrite those
-semantic references. Folder Favorites, Mark all as read, and recoverable
-deletion remain separate folder-tree QoL work.
+semantic references. Folder Favorites and Mark all as read shipped in the
+2026-08-25 follow-on slice; recoverable deletion remains separate work.
 
 ## 2026-08-24 Scoped Existing-mail Rule Runs
 

@@ -10140,3 +10140,93 @@ Active rule and pending-snooze references intentionally block rename rather
 than being silently rewritten. The next recommended folder-tree QoL slice is
 Favorites plus Mark all as read; recoverable Delete semantics should follow as
 a separate destructive-action design.
+
+## 2026-08-25 — Mail Folder Favorites And Folder-wide Mark-read
+
+### Selected task
+
+Complete the next bounded Outlook-familiar folder-tree slice: persistent
+Favorites and true folder-wide Mark all as read, while tightening the mobile,
+keyboard, progress, focus, and failure contracts around the existing context
+menus.
+
+### Goal and acceptance criteria
+
+- Persist a bounded Favorite folder list per account and expose it through
+  right click, keyboard, visible desktop actions, and mobile touch controls.
+- Keep Favorites coherent through OMS Move, Rename, and Delete without losing
+  unrelated settings or allowing overlapping folder mutations.
+- Mark every unread message that existed at action start, not only the loaded
+  page, while leaving later arrivals unread and updating only exact derived
+  search-index identities.
+- Prevent duplicate concurrent runs, keep progress visible after the menu
+  closes, announce it once, and reload authoritative folder/search data.
+- Fail honestly if settings or post-mutation refresh fails; Retry must preserve
+  an active search rather than replacing it with ordinary folder data.
+- Pass focused/full tests, review, guarded release, a reversible authenticated
+  canary, active health/artifact checks, and released desktop/mobile browser QA.
+
+### Changes made
+
+- Extended normalized mail settings with `folders.favorites`, preserving exact
+  case and order while trimming, deduplicating, rejecting control characters,
+  and capping the list at 100 paths.
+- Added the flat Favorites section and Add/Remove actions. Settings load errors
+  fail closed with visible Retry. Move/Rename remap a Favorite subtree and
+  Delete removes it; lifecycle and settings writes share a ref-backed mutation
+  lock.
+- Added `POST /api/folders/mark-read` and a dedicated IMAP lease. The server
+  locks the mailbox, captures `UIDNEXT - 1`, finds exact unread UIDs through
+  that ceiling, applies `\\Seen` in 500-UID batches, returns folder/count/
+  ceiling, and updates the search index from exact internal UID membership.
+- Added global mark-read serialization, a persistent folder-row spinner, one
+  live status, authoritative current-folder/search reload, partial-success
+  copy when refresh fails, and search-preserving Retry.
+- Tightened keyboard/mobile focus behavior so the drawer yields to nested
+  dialogs and Compose, Escape returns predictably, and context menus remain
+  viewport-contained.
+
+### Proof and review
+
+- TDD red was observed for the missing refresh-result contract and the
+  search-preserving Retry branch before each fix.
+- Complete backend: 850 total, 843 pass, seven documented optional skips.
+- Complete frontend: 198/198; lint and production build passed.
+- `git diff --check` and `tests/integration/run.sh` passed, the latter ending
+  with `[ok] Integration checks completed.`
+- Initial fixed-point review found two recovery-state issues: an acknowledged
+  IMAP mutation could be followed by a swallowed view-refresh failure, and its
+  Retry could replace an active search with folder data. Both were corrected;
+  final Spec and Standards review returned no findings.
+- Released-asset Chromium at 1440x900 and 390x844 exercised native folder and
+  message right click, exact menu contents, Favorites add/remove persistence,
+  Mark-all-read lock/counts, bounded mobile drawer/menu, nested confirmation,
+  Compose isolation, and focus restoration with zero console errors/warnings.
+
+### Release state and limits
+
+Commit `f1f50e30630ecc81bd6b98d27e9a67543509804a` passed guarded bridge and
+active releases. Both stages passed public IMAPS plus ActiveSync
+Mail/Ping/Contacts/Calendar pre/post gates with exact cleanup. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T174250Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T175018Z`.
+
+All six services are active, `openmailstack.service` has `NRestarts=0`, Nginx
+validates, the release warning journal is empty, local/public auth and the
+protected mark-read route return expected unauthenticated `401`, and repository
+and live backend/frontend entry artifacts are byte-identical.
+
+A dedicated live canary created a top-level folder, appended three unread plus
+one read message, marked exactly the three pre-snapshot messages, proved a
+later append remained unread using a fresh IMAP verifier and the actual webmail
+list endpoint, persisted/reloaded the Favorite, restored the exact prior mail
+settings, deleted the folder, and proved zero LIST residue. The first harness
+check reused a mailbox session opened before the cross-connection STORE and
+observed stale flags; fresh IMAP plus the user-facing API proved the committed
+state, so future canaries must not treat one stale long-lived session as the
+authority.
+
+Folder Delete remains permanent behind explicit confirmation. Recoverable
+deletion is the next folder-tree safety design; Categories, Pin/Flag,
+Rules-from-message, Sweep/Block/Ignore, richer Reply/Forward context actions,
+Favorites ordering, and Search Folders remain separate Outlook-parity slices.

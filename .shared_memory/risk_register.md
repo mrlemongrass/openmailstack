@@ -2,9 +2,20 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
 ## Resolved Risks
+
+- ✅ Folder Favorites drift during OMS lifecycle changes and page-only
+  mark-read behavior: account settings now persist a bounded exact-path
+  Favorites list, lifecycle mutations share one lock, and Move/Rename/Delete
+  remap or remove the affected subtree. Folder-wide mark-read snapshots
+  `UIDNEXT - 1`, mutates exact unread UIDs through a dedicated IMAP session,
+  updates exact search-index membership, and authoritatively reloads the active
+  folder/search view with truthful partial-success recovery. Commit `f1f50e3`
+  is guarded-deployed with public protocol gates, a reversible live mailbox
+  canary, exact artifact equality, and zero-error desktop/mobile released-asset
+  browser proof.
 
 - ✅ Folder identity drift during rename: custom selectable folders now use a
   leaf-only server rename that preserves the advertised hierarchy delimiter,
@@ -158,6 +169,13 @@ Last updated: 2026-08-24
 
 ## Remaining High-Priority Risks
 
+- 🟡 Folder Delete remains permanent after an explicit confirmation. Design a
+  recoverable mailbox-trash/grace-period contract before calling the complete
+  folder tree fully Outlook-familiar. Favorites are web settings rather than an
+  IMAP attribute, so a rename performed by an external client cannot
+  atomically remap them; the UI filters missing paths until the user
+  removes/re-adds the renamed folder.
+
 - 🔴 Physical Apple release evidence: the first final-runtime iPad SendMail is
   proven end-to-end through one durable row, one SMTP acceptance, and one
   server Sent copy. Sent folders/items now appear, the Settings account error
@@ -222,6 +240,14 @@ Last updated: 2026-08-24
 - Recovery codes are intentionally shown once and app passwords cannot be retrieved. Account-recovery/support procedures must not weaken those boundaries.
 
 Operational/release risks:
+
+- Cross-connection IMAP flag verification must not trust a session that was
+  already selected before another connection's STORE. The 2026-08-25
+  folder-mark-read canary observed a stale result on that verifier while a
+  fresh TLS IMAP session and the actual webmail list endpoint both returned the
+  committed flags. Use a fresh verifier plus the user-facing API, then prove
+  exact canary cleanup; do not infer mutation failure or success from one stale
+  long-lived session.
 
 - `/etc/openmailstack/protocol-smoke.env` is a persistent production canary
   credential and must remain `root:root 0600`; never print, commit, or copy it

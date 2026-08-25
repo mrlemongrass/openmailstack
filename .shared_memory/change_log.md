@@ -2276,3 +2276,35 @@ Future entry template:
   `{path:"INBOX/Receipts",name:"Statements"}` request, descendant route and
   expansion remap, closed dialog, viewport-safe layout, and zero console
   errors/warnings.
+
+## 2026-08-25 — Mail Folder Favorites And Folder-wide Mark-read
+
+- Added an account-persistent flat Favorites section with add/remove actions in
+  native right-click, keyboard, and visible overflow menus. Settings loading
+  fails closed with Retry; OMS Move/Rename/Delete remap or remove affected
+  Favorite subtrees under the same serialized lifecycle lock.
+- Added authenticated `POST /api/folders/mark-read`. A dedicated short-lived
+  IMAP connection locks the folder, snapshots its UID ceiling, marks the exact
+  unread UIDs in bounded batches, and updates only those search-index rows.
+  Later arrivals remain unread.
+- Added global duplicate-action lockout, persistent folder-row progress, one
+  live announcement, authoritative folder/search refresh, truthful
+  mutation-succeeded/view-refresh-failed recovery, search-preserving Retry,
+  and mobile drawer/dialog/Compose focus isolation.
+- Passed all 850 backend tests (843 pass, seven optional skips), all 198
+  frontend tests, lint, both builds, whitespace, complete integration, and
+  fixed-point Spec/Standards review with no findings.
+- Commit `f1f50e3` passed guarded bridge and active public IMAPS plus ActiveSync
+  Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+  `protocol-guarded-webmail-20260825T174250Z` and
+  `protocol-guarded-webmail-20260825T175018Z`; active services, zero restarts,
+  Nginx, warning journal, auth boundaries, and backend/frontend entry artifact
+  equality are clean.
+- A dedicated live canary created and exactly removed a top-level folder,
+  marked three pre-snapshot unread messages, left a later append unread,
+  confirmed the webmail list view, persisted/reloaded then restored Favorites,
+  and proved zero LIST residue. Released-asset Chromium at 1440x900 and 390x844
+  passed native folder/message right click, Favorite add/remove, mark-all-read,
+  mobile focus/viewport checks, and zero console errors/warnings.
+- Permanent confirmed folder deletion remains the next safety slice; broader
+  Outlook message action grammar and Favorites ordering remain follow-ons.

@@ -695,6 +695,28 @@ the focus-managed dialog starts with the current leaf selected and retains
 server failures for correction and retry. Rename uses the same guarded bridge
 and frontend release path as other mail-runtime changes.
 
+Verified 2026-08-25: account-persistent Folder Favorites and true folder-wide
+Mark all as read complete the next folder-tree QoL slice. Favorites are stored
+in the normalized `mail.folders.favorites` setting, capped at 100 exact mailbox
+paths, exposed as a flat section, and available through both right click and
+the visible folder actions button. Move and Rename remap a favorited subtree;
+Delete removes it. Favorite and lifecycle writes share one mutation lock so
+overlapping settings and IMAP changes cannot silently overwrite each other.
+Settings load failures fail closed with an explicit Retry path rather than
+starting from a destructive empty default.
+
+Authenticated `POST /api/folders/mark-read` uses a dedicated short-lived IMAP
+session. It locks the selected mailbox, captures `UIDNEXT - 1`, finds unread
+UIDs at or below that ceiling, and adds `\\Seen` to those exact UIDs in bounded
+batches. Only that exact membership updates the derived search index; the
+public response exposes the folder, count, and ceiling but not the internal UID
+list. The browser then reloads authoritative folder counts plus the active
+folder or search view. A successful IMAP mutation followed by a failed refresh
+is reported truthfully as partial success with view-preserving Retry guidance.
+The global in-flight lock, persistent row progress, one live announcement,
+keyboard context-menu gestures, and focus-isolated mobile drawer/dialog flow
+prevent duplicate work and competing modal surfaces.
+
 Verified 2026-07-30: Mail Filters preserve array order as user-visible priority.
 Each executable rule stops later processing unless `stopProcessing=false`;
 legacy rules without the field retain stop behavior. The Sieve compiler and

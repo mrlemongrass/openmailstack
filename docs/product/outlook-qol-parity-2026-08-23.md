@@ -1,6 +1,6 @@
 # Outlook Quality-of-Life Migration Contract
 
-Status: `Current first-party research baseline; first Inbox Rules selection and duplicate-hygiene slices guarded-deployed`
+Status: `Current first-party research baseline; Inbox Rules and core folder-tree QoL slices guarded-deployed`
 
 Research date: 2026-08-23
 
@@ -210,6 +210,48 @@ server-side fallthrough.
 | Repeated workflows | Quick Steps combine multiple message actions, can be ordered, described, and assigned shortcuts; web/new and classic expose different depths. [M8] | A later OMS automation surface should compose existing safe message actions instead of inventing another rules engine. Always disclose irreversible steps because Microsoft notes Quick Steps may be non-undoable. |
 | Personalization and keyboard | Outlook web can use Outlook, Gmail, or Yahoo shortcut schemes, show a shortcut reference, and supports mail/calendar/People navigation. Outlook.com also documents configurable message-list, reading, and compose actions. [M9][M10] | Provide a documented shortcut layer, visible focus, `Shift+?` help, and configurable common actions. Keep browser-reserved shortcuts honest. |
 | Classic/new differences | Microsoft's current comparison marks Rules and Quick Steps as only partially available in new Outlook, while several web-style capabilities such as pin, snooze, Sweep, category favorites, and undo/schedule send favor new Outlook. [X1] | Do not use either client as an absolute ceiling. Prioritize the durable workflows that users miss when moving between them. |
+
+#### 3.1.1 OMS folder-tree implementation status
+
+The P0 folder tree now supports top-level and nested creation, Rename, Move,
+confirmation-gated permanent Delete, account-persistent Favorites, and true
+folder-wide Mark all as read. The same commands are reachable by native right
+click, keyboard context-menu gestures, and a visible touch/overflow action;
+protected and special-use mailboxes expose only their safe subset. Favorites
+follow an OMS Move or Rename, disappear after an OMS Delete, and fail closed
+with Retry when settings cannot load.
+
+Mark all as read is a bounded server mutation rather than an action against
+only the currently loaded page. The server snapshots the selected mailbox's
+UID ceiling, marks the exact unread UIDs in that snapshot, updates only those
+search-index identities, and lets later arrivals remain unread. The client
+serializes the action globally, exposes persistent row and accessible status,
+reloads the authoritative folder/search view, and reports an acknowledged
+mutation separately if that reload fails. Retry preserves an active search.
+
+Commit `f1f50e30630ecc81bd6b98d27e9a67543509804a` passed all 850 backend
+tests (843 pass and seven documented optional skips), all 198 frontend tests,
+lint, both production builds, the complete integration gate, and fixed-point
+Spec/Standards review with no findings. Guarded bridge and active releases both
+passed public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar pre/post gates.
+Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T174250Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260825T175018Z`.
+
+A dedicated live canary created a top-level mailbox, appended three unread and
+one read message, marked exactly the three pre-snapshot messages, proved a
+later append remained unread through fresh IMAP and the webmail list endpoint,
+persisted/reloaded the Favorite, restored the exact prior settings, deleted the
+folder, and proved no LIST residue. Released-asset Chromium at 1440x900 and
+390x844 exercised native folder and message right click, Favorites add/remove,
+Mark all as read progress/counts, the mobile drawer/menu, and Compose focus
+isolation with zero console errors or warnings.
+
+This is not full Outlook parity. Folder Delete remains permanent after an
+explicit warning; recoverable folder deletion is the next destructive-action
+design. Categories, Pin/Flag, Rules-from-message, Sweep/Block/Ignore, richer
+message Reply/Forward context actions, Favorites ordering, and Search Folders
+remain separate bounded slices.
 
 ### 3.2 Calendar
 

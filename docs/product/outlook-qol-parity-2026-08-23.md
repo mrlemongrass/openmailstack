@@ -293,8 +293,12 @@ All compose entry points share one recipient/threading contract. Reply honors
 `Reply-To`; Reply all preserves display names, excludes the signed-in user's
 configured identities, and de-duplicates recipients; reply thread headers
 inherit the parent's chain and survive Draft save/resume, direct inline reply,
-rich-editor handoff, and send. Newly authored textarea content submits as MIME
-plain text so forwarded mailbox addresses and line breaks remain literal, while
+full-editor handoff, and send. Reply preparation waits for an authoritative
+sending-identity response; loading or failure produces a visible Retry instead
+of deriving recipients from an empty fallback. Inline Reply locks Send, Send &
+Archive, and full-editor handoff synchronously through preparation and send so
+rapid clicks cannot start competing pipelines. Newly authored textarea content
+submits as MIME plain text so forwarded mailbox addresses and line breaks remain literal, while
 resumed HTML-only Drafts retain an API-projected source body mode. Settings
 advertises Plain text as the only currently available compose format. One
 shared latest-intent coordinator spans context, reading-pane, new-message, and

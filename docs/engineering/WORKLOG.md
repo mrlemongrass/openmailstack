@@ -10405,6 +10405,8 @@ context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
   honor `Reply-To`, preserve quoted display names, exclude the owner's
   identities, de-duplicate recipients, avoid repeated subject prefixes, and
   preserve `In-Reply-To`/`References` through draft save, resume, and send.
+- Do not derive Reply or Reply all recipients until the authenticated identity
+  set is authoritative; distinguish loading/failure and offer a visible retry.
 - Expose Flag/Unflag from the row, context menu, reading pane, keyboard, and
   bulk toolbar while retaining the existing IMAP `\Flagged` wire contract.
 - Prevent rapid duplicate single-message mutations, report failures visibly,
@@ -10419,7 +10421,7 @@ context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
   `Reply-To`, understands commas inside
   quoted display names and angle addresses, removes configured owner aliases
   case-insensitively, and creates stable reply thread headers.
-- Routed context-menu, reading-pane, inline quick-reply/rich-editor handoff, and
+- Routed context-menu, reading-pane, inline quick-reply/full-editor handoff, and
   `R`/`A`/`F` shortcut paths through the same builder. The inline expansion is
   truthfully labelled `Open full editor`, not Rich editor. Reply headers inherit
   a parent's `In-Reply-To` when no `References` chain exists and survive both
@@ -10440,12 +10442,17 @@ context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
   guard, failed optimistic-update rollback, and a two-row mobile
   reading toolbar so no action is clipped or requires hidden horizontal
   discovery.
+- Added an authoritative sending-identity runtime state. Reply paths fail closed
+  with a visible Retry while identities are loading or unavailable, preventing
+  self-addressed Sent replies and owner leakage into Reply all. Inline Reply now
+  acquires a synchronous action lock before message-detail preparation and
+  holds it through send, preventing rapid Send/Send & Archive/full-editor races.
 
 ### Proof before release
 
 - TDD established missing compose-action, threading, context, row, reading-
   pane, bulk, and mobile-layout contracts before implementation.
-- Complete frontend: 211/211; lint, production TypeScript/Vite build, and
+- Complete frontend: 212/212; lint, production TypeScript/Vite build, and
   `git diff --check` passed.
 - Complete backend: 861 passed, 7 optional integration tests skipped, 0 failed;
   the real MIME regression proves HTML and plain source projection.
@@ -10454,7 +10461,9 @@ context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
   with latest intent winning,
   plain-text Forward quoting/persistence, inline-reply text handoff
   to a threaded full-editor Reply, a direct inline Reply with exact Reply-To/subject/
-  thread headers, context-menu keyboard focus return, Flag success, forced
+  thread headers, a synchronous double-Send attempt held to one delayed request,
+  failed sending-identity load with visible Retry and successful recovery,
+  context-menu keyboard focus return, Flag success, forced
   Unflag failure/rollback/retry, bulk Flag/Unflag, and all eleven mobile reading-
   pane action bounds, and the honest plain-only compose Settings surface. The
   only console errors were the deliberately forced

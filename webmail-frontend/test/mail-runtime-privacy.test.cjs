@@ -135,6 +135,34 @@ test('mail settings and identities fall back independently', async () => {
   })), {
     name: 'Owner', address: 'owner@example.com', aliases: [{ address: 'legacy@example.com' }],
   });
+
+  let resolveIdentities;
+  let delayedIdentityLoadSettled = false;
+  const delayedIdentityLoad = runtime.loadMailIdentitiesRuntimeState(() => new Promise(resolve => {
+    resolveIdentities = resolve;
+  })).then(result => {
+    delayedIdentityLoadSettled = true;
+    return result;
+  });
+  await Promise.resolve();
+  assert.equal(delayedIdentityLoadSettled, false);
+  resolveIdentities({ name: 'Owner', address: 'owner@example.com', aliases: [] });
+  assert.deepEqual(await delayedIdentityLoad, {
+    identities: { name: 'Owner', address: 'owner@example.com', aliases: [] },
+    ready: true,
+  });
+  assert.deepEqual(await runtime.loadMailIdentitiesRuntimeState(async () => {
+    throw new Error('offline');
+  }), {
+    identities: { name: '', address: '', aliases: [] },
+    ready: false,
+  });
+  assert.deepEqual(await runtime.loadMailIdentitiesRuntimeState(async () => ({
+    name: 'Owner', address: '', aliases: [{ address: 'alias@example.com' }],
+  })), {
+    identities: { name: 'Owner', address: '', aliases: [{ address: 'alias@example.com' }] },
+    ready: false,
+  });
 });
 
 test('compose sender remains valid as identities arrive and are revoked', () => {
@@ -187,7 +215,11 @@ test('unimplemented mail controls are absent while inline Send and Archive remai
   assert.match(mailRoutes, /loadMailSettingsRuntimeState\(\(\) => getUserSettings\('mail'\)\)/);
   assert.match(mailRoutes, /mailSettingsError/);
   assert.match(mailRoutes, /retryMailSettings/);
-  assert.match(mailRoutes, /loadMailIdentitiesOrDefault\(fetchIdentities\)/);
+  assert.match(mailRoutes, /loadMailIdentitiesRuntimeState\(fetchIdentities\)/);
+  assert.match(mailRoutes, /userIdentitiesReady/);
+  assert.match(mailRoutes, /userIdentitiesError/);
+  assert.match(hook, /action !== 'forward'[\s\S]*!_opts\.userIdentitiesReady[\s\S]*return 'identities-unavailable'/);
+  assert.match(viewer, /!mail\.userIdentitiesReady \|\| composeIdentities\.length === 0/);
 
   const folderSidebar = read('../src/mail/FolderSidebar.tsx');
   assert.match(folderSidebar, /role="alert"/);

@@ -15,7 +15,7 @@ import { fetchIdentities } from '../shared/api';
 import type { UserIdentities } from '../shared/types';
 import {
   EMPTY_USER_IDENTITIES,
-  loadMailIdentitiesOrDefault,
+  loadMailIdentitiesRuntimeState,
   loadMailSettingsRuntimeState,
 } from './mail-runtime-settings';
 
@@ -26,7 +26,10 @@ export function MailRoutes() {
   const [mailSettingsReady, setMailSettingsReady] = useState(false);
   const [mailSettingsError, setMailSettingsError] = useState('');
   const [userIdentities, setUserIdentities] = useState<UserIdentities>(EMPTY_USER_IDENTITIES);
+  const [userIdentitiesReady, setUserIdentitiesReady] = useState(false);
+  const [userIdentitiesError, setUserIdentitiesError] = useState('');
   const mailSettingsRequestIdRef = useRef(0);
+  const userIdentitiesRequestIdRef = useRef(0);
   const persistFavoriteSettings = useCallback(async (folders: MailUserSettings['folders']) => {
     const savedSettings = await saveMailFavoriteSettings(folders);
     setMailSettings(current => ({ ...current, folders: savedSettings.folders }));
@@ -42,6 +45,17 @@ export function MailRoutes() {
       setMailSettingsError(result.ready ? '' : 'Favorites could not be loaded.');
     });
   }, []);
+  const retryUserIdentities = useCallback(async () => {
+    const requestId = ++userIdentitiesRequestIdRef.current;
+    setUserIdentitiesReady(false);
+    setUserIdentitiesError('');
+    const result = await loadMailIdentitiesRuntimeState(fetchIdentities);
+    if (requestId !== userIdentitiesRequestIdRef.current) return;
+    setUserIdentities(result.identities);
+    setUserIdentitiesReady(result.ready);
+    setUserIdentitiesError(result.ready ? '' : 'Sending identities could not be loaded.');
+    if (!result.ready) throw new Error('Sending identities could not be loaded.');
+  }, []);
   const mail = useMail({
     mailSettings,
     mailSettingsReady,
@@ -50,22 +64,25 @@ export function MailRoutes() {
     onFavoriteSettingsChange: persistFavoriteSettings,
     isThreaded: false,
     userIdentities,
+    userIdentitiesReady,
+    userIdentitiesError,
+    onRetryUserIdentities: retryUserIdentities,
   });
   const { startCompose } = mail;
 
   useEffect(() => {
     let cancelled = false;
     queueMicrotask(() => {
-      if (!cancelled) retryMailSettings();
-    });
-    void loadMailIdentitiesOrDefault(fetchIdentities).then(identities => {
-      if (!cancelled) setUserIdentities(identities);
+      if (cancelled) return;
+      retryMailSettings();
+      void retryUserIdentities().catch(() => undefined);
     });
     return () => {
       cancelled = true;
       mailSettingsRequestIdRef.current += 1;
+      userIdentitiesRequestIdRef.current += 1;
     };
-  }, [retryMailSettings]);
+  }, [retryMailSettings, retryUserIdentities]);
 
   // Listen for cross-suite compose events + check for pending compose on mount
   useEffect(() => {

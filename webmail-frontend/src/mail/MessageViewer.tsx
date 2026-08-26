@@ -27,6 +27,8 @@ import {
   type MessageComposeAction,
 } from './message-compose-actions';
 
+class ReplyIdentitiesUnavailableError extends Error {}
+
 export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const { showToast } = useToast();
   const { folder, uid } = useParams<{ folder: string; uid: string }>();
@@ -89,10 +91,26 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
       if (result === 'missing-reply-address') {
         showToast({ type: 'error', message: 'This message does not have a reply address.' });
       }
+      if (result === 'identities-unavailable') {
+        showToast({
+          type: 'error',
+          message: mail.userIdentitiesError || 'Sending identities are still loading. Try again.',
+          actionLabel: 'Retry',
+          onAction: mail.retryUserIdentities,
+        });
+      }
     } finally {
       setPreparingComposeAction(null);
     }
-  }, [message, prepareMessageCompose, preparingComposeAction, showToast, sourceFolder]);
+  }, [
+    mail.retryUserIdentities,
+    mail.userIdentitiesError,
+    message,
+    prepareMessageCompose,
+    preparingComposeAction,
+    showToast,
+    sourceFolder,
+  ]);
   const toggleMessageFlag = useCallback(async () => {
     if (!message || flaggingMessage) return;
     setFlaggingMessage(true);
@@ -253,6 +271,15 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   };
 
   const showReplyFailure = (error: unknown) => {
+    if (error instanceof ReplyIdentitiesUnavailableError) {
+      showToast({
+        type: 'error',
+        message: error.message,
+        actionLabel: 'Retry',
+        onAction: mail.retryUserIdentities,
+      });
+      return;
+    }
     if (error instanceof UncertainSendBlockedError && error.reason === 'delivery_uncertain') {
       showToast({
         type: 'error',
@@ -302,6 +329,11 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     });
   };
   const sendInlineReply = async () => {
+    if (!mail.userIdentitiesReady || composeIdentities.length === 0) {
+      throw new ReplyIdentitiesUnavailableError(
+        mail.userIdentitiesError || 'Sending identities are still loading. Try again.',
+      );
+    }
     const fullMessage = message.bodyLoaded
       ? message
       : await fetchMessageBody(message.uid, sourceFolder);
@@ -609,8 +641,12 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         sendNotice={inlineReplyHasRecovery ? mail.replySendNotice : null}
         checkingEarlierSend={inlineReplyHasRecovery && mail.checkingEarlierReplySend}
         onReplyTextChange={mail.setReplyText}
-        onSend={() => {
-          void sendInlineReply().then(showReplyFeedback).catch(showReplyFailure);
+        onSend={async () => {
+          try {
+            showReplyFeedback(await sendInlineReply());
+          } catch (error) {
+            showReplyFailure(error);
+          }
         }}
         onSendAndArchive={async () => {
           try {
@@ -651,10 +687,10 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
                 : 'The protected reply attempt could not be cleared.',
             });
           });
-            }}
-            onOpenFullCompose={() => {
-              void startMessageCompose('reply', mail.replyText || '');
-            }}
+        }}
+        onOpenFullCompose={async () => {
+          await startMessageCompose('reply', mail.replyText || '');
+        }}
       />}
       {scheduledRemovable && scheduledId && (
         <ConfirmDialog

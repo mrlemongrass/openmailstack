@@ -772,6 +772,15 @@ latest-intent coordinator for list, reading-pane, keyboard, new-message, and
 Draft-resume entry points. A newer intent invalidates older body fetch or Draft
 attachment hydration work before it can claim the composer.
 
+Reply preparation is fail-closed until `/api/user/identities` has returned an
+authoritative primary identity. Loading and failure are distinct runtime states;
+Reply and Reply all do not derive recipients from an empty fallback, and their
+visible failure notice offers a bounded identity reload. Forward remains
+available because it does not derive recipients from the owner's identity set.
+Inline Reply applies the same readiness gate before detail loading and holds one
+synchronous action lock across preparation and send, so rapid Send, Send &
+Archive, or full-editor clicks cannot start competing pipelines.
+
 The active Compose UI is a textarea, so newly authored bodies are persisted and
 submitted as MIME `text` rather than `html`. This keeps typed/forwarded angle-
 bracket mailbox addresses and line breaks literal. The message-detail API

@@ -40,9 +40,17 @@ export async function loadMailSettingsRuntimeState(
 export async function loadMailIdentitiesOrDefault(
   loader: () => Promise<UserIdentities>,
 ): Promise<UserIdentities> {
+  return (await loadMailIdentitiesRuntimeState(loader)).identities;
+}
+
+export async function loadMailIdentitiesRuntimeState(
+  loader: () => Promise<UserIdentities>,
+): Promise<{ identities: UserIdentities; ready: boolean }> {
   try {
     const identities = await loader();
-    if (!identities || typeof identities !== 'object') return EMPTY_USER_IDENTITIES;
+    if (!identities || typeof identities !== 'object') {
+      return { identities: EMPTY_USER_IDENTITIES, ready: false };
+    }
     const aliases = Array.isArray(identities.aliases)
       ? (identities.aliases as unknown[]).flatMap(alias => {
           if (typeof alias === 'string') return alias ? [{ address: alias }] : [];
@@ -55,13 +63,14 @@ export async function loadMailIdentitiesOrDefault(
           }];
         })
       : [];
-    return {
+    const normalized = {
       name: typeof identities.name === 'string' ? identities.name : '',
       address: typeof identities.address === 'string' ? identities.address : '',
       aliases,
     };
+    return { identities: normalized, ready: Boolean(normalized.address.trim()) };
   } catch {
-    return EMPTY_USER_IDENTITIES;
+    return { identities: EMPTY_USER_IDENTITIES, ready: false };
   }
 }
 

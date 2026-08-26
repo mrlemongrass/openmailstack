@@ -56,6 +56,9 @@ interface UseMailOptions {
   onFavoriteSettingsChange: (folders: MailUserSettings['folders']) => Promise<void>;
   isThreaded: boolean;
   userIdentities: UserIdentities;
+  userIdentitiesReady: boolean;
+  userIdentitiesError: string;
+  onRetryUserIdentities: () => Promise<void>;
 }
 
 interface PendingFavoritePersistence {
@@ -1556,6 +1559,9 @@ export function useMail(_opts: UseMailOptions) {
     body = '',
   ) => {
     const requestId = composePreparationCoordinatorRef.current.begin();
+    if (action !== 'forward' && (!_opts.userIdentitiesReady || identities.length === 0)) {
+      return 'identities-unavailable' as const;
+    }
     const fullMessage = message.bodyLoaded
       ? message
       : await fetchMessageBody(message.uid, folderPath);
@@ -1570,7 +1576,7 @@ export function useMail(_opts: UseMailOptions) {
     return startCompose(body ? { ...draft, body } : draft, requestId)
       ? 'started' as const
       : 'superseded' as const;
-  }, [fetchMessageBody, identities, startCompose]);
+  }, [_opts.userIdentitiesReady, fetchMessageBody, identities, startCompose]);
 
   // Pre-fetch message bodies in the background (non-blocking, silent)
   const prefetchBodies = useCallback((uids: number[], folderPath: string) => {
@@ -1907,6 +1913,9 @@ export function useMail(_opts: UseMailOptions) {
     savedSearches,
     showSearchHints, setShowSearchHints,
     isComposing, setIsComposing, startCompose, prepareMessageCompose, resumeDraft, composeDocked, setComposeDocked,
+    userIdentitiesReady: _opts.userIdentitiesReady,
+    userIdentitiesError: _opts.userIdentitiesError,
+    retryUserIdentities: _opts.onRetryUserIdentities,
     showCc, setShowCc, showBcc, setShowBcc,
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc,
     composeReplyTo, setComposeReplyTo,

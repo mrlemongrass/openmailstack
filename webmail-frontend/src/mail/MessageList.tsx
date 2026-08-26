@@ -216,6 +216,14 @@ export function MessageList({ mail, density }: MessageListProps) {
       if (result === 'missing-reply-address') {
         showToast({ type: 'error', message: 'This message does not have a reply address.' });
       }
+      if (result === 'identities-unavailable') {
+        showToast({
+          type: 'error',
+          message: mail.userIdentitiesError || 'Sending identities are still loading. Try again.',
+          actionLabel: 'Retry',
+          onAction: mail.retryUserIdentities,
+        });
+      }
     } finally {
       if (statusRequestId === composeStatusRequestRef.current) setPreparingComposeAction(null);
     }

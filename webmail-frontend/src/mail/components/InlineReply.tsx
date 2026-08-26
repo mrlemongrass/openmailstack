@@ -1,5 +1,5 @@
 import { Send, Maximize2, Archive } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Spinner } from '../../shared/components/Spinner';
 
 interface InlineReplyProps {
@@ -7,9 +7,9 @@ interface InlineReplyProps {
   replyText: string;
   replySending: boolean;
   onReplyTextChange: (text: string) => void;
-  onSend: () => void;
-  onSendAndArchive: () => void;
-  onOpenFullCompose: () => void;
+  onSend: () => void | Promise<void>;
+  onSendAndArchive: () => void | Promise<void>;
+  onOpenFullCompose: () => void | Promise<void>;
   showSendAndArchive?: boolean;
   sendPhase?: 'idle' | 'pending' | 'retryable' | 'uncertain' | 'blocked';
   sendNotice?: { tone: 'info' | 'warning'; message: string } | null;
@@ -24,8 +24,21 @@ export function InlineReply({
   checkingEarlierSend = false, onCheckEarlierSend, onVerifiedNonDelivery,
 }: InlineReplyProps) {
   const [expanded, setExpanded] = useState(false);
+  const [replyActionPending, setReplyActionPending] = useState(false);
+  const replyActionPendingRef = useRef(false);
   const sendBlocked = sendPhase === 'uncertain' || sendPhase === 'blocked';
-  const replyBusy = replySending || checkingEarlierSend;
+  const replyBusy = replySending || replyActionPending || checkingEarlierSend;
+  const runReplyAction = async (action: () => void | Promise<void>) => {
+    if (replyActionPendingRef.current) return;
+    replyActionPendingRef.current = true;
+    setReplyActionPending(true);
+    try {
+      await action();
+    } finally {
+      replyActionPendingRef.current = false;
+      setReplyActionPending(false);
+    }
+  };
 
   return (
     <div className="inline-reply-box" style={{
@@ -48,7 +61,7 @@ export function InlineReply({
               <button
                 type="button"
                 className="btn btn-ghost"
-                disabled={checkingEarlierSend}
+                disabled={replyBusy}
                 onClick={onCheckEarlierSend}
               >
                 {checkingEarlierSend ? <><Spinner size={12} /> Checking...</> : 'Check earlier send'}
@@ -57,7 +70,7 @@ export function InlineReply({
                 <button
                   type="button"
                   className="btn btn-ghost"
-                  disabled={checkingEarlierSend}
+                  disabled={replyBusy}
                   onClick={onVerifiedNonDelivery}
                 >
                   I verified it was not delivered
@@ -83,19 +96,23 @@ export function InlineReply({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
         <div className="inline-reply-actions">
           <button className="btn btn-primary" disabled={!replyText.trim() || replyBusy || sendBlocked}
-            onClick={onSend} style={{ fontSize: '0.85rem', padding: '6px 14px' }}>
+            onClick={() => { void runReplyAction(onSend).catch(() => undefined); }}
+            style={{ fontSize: '0.85rem', padding: '6px 14px' }}>
             <Send size={14} /> {replySending
               ? <><Spinner size={12} /> Sending...</>
-              : sendBlocked ? 'Do not resend' : 'Send'}
+              : replyActionPending ? <><Spinner size={12} /> Preparing...</>
+                : sendBlocked ? 'Do not resend' : 'Send'}
           </button>
           {showSendAndArchive && (
             <button className="btn btn-ghost" disabled={!replyText.trim() || replyBusy || sendBlocked}
-              onClick={onSendAndArchive} style={{ fontSize: '0.8rem' }} title="Send & Archive">
+              onClick={() => { void runReplyAction(onSendAndArchive).catch(() => undefined); }}
+              style={{ fontSize: '0.8rem' }} title="Send & Archive">
               <Archive size={14} /> Send & Archive
             </button>
           )}
           <button className="btn btn-ghost" disabled={replyBusy || sendBlocked}
-            onClick={onOpenFullCompose} style={{ fontSize: '0.8rem' }}>
+            onClick={() => { void runReplyAction(onOpenFullCompose).catch(() => undefined); }}
+            style={{ fontSize: '0.8rem' }}>
             <Maximize2 size={14} /> Open full editor
           </button>
         </div>

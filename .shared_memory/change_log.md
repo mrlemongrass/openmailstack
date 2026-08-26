@@ -2369,7 +2369,7 @@ Future entry template:
 - Added one compose-intent builder that honors `Reply-To`, preserves quoted
   display names, excludes owner aliases, de-duplicates recipients, normalizes
   subject prefixes, carries thread headers through Draft/save/send, and
-  preserves typed inline-reply text when opening the rich editor. Inline Send
+  preserves typed inline-reply text when opening the full editor. Inline Send
   now uses the same exact recipient/subject/threading result, and a missing
   parent References chain inherits its In-Reply-To value.
 - Corrected newly authored textarea content to submit as MIME plain text rather
@@ -2384,8 +2384,14 @@ Future entry template:
   sequencing that also covers delayed Draft hydration and new-message entry,
   optimistic rollback, dynamic bulk Unflag, and a wrapped mobile reading toolbar
   with all eleven actions proven inside a 390 px viewport.
-- Local candidate proof: 211/211 frontend tests; 861 backend passes with 7
+- Reply recipient derivation now fails closed until authenticated sending
+  identities are authoritative, with distinct loading/failure feedback and a
+  visible Retry. Inline Reply synchronously locks Send, Send & Archive, and
+  full-editor handoff through preparation and send so rapid clicks cannot start
+  competing pipelines.
+- Local candidate proof: 212/212 frontend tests; 861 backend passes with 7
   optional integration skips and no failures; lint, production build,
   whitespace, the complete repository integration gate, desktop/mobile
-  Chromium flows, and expected-only forced-failure console output. Guarded live
-  release remains pending.
+  Chromium flows including duplicate inline-send and failed-identity recovery,
+  and expected-only forced-failure console output. Guarded live release remains
+  pending.

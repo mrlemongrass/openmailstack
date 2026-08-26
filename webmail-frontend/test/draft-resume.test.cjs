@@ -99,6 +99,8 @@ test('Drafts viewer opens the real composer without reply controls and sends sta
   assert.match(hook, /formData\.append\('references',\s*composeReferences\)/);
   assert.match(viewer, /Edit draft/);
   assert.match(viewer, /!isScheduled && !isDraft && <InlineReply/);
+  assert.match(viewer, /onOpenFullCompose=\{\(\) => \{[\s\S]*startMessageCompose\('reply', mail\.replyText \|\| ''\)/);
+  assert.doesNotMatch(viewer, /onOpenFullCompose=\{\(\) => \{[\s\S]{0,250}mail\.startCompose/);
   assert.match(row, /isDraft \? \([\s\S]*Delete draft[\s\S]*: !isScheduled &&/);
   assert.match(toolbar, /draftMode \? \([\s\S]*onBulkAction\('delete'\)[\s\S]*Delete/);
   assert.match(cache, /cc:\s*detail\.cc[\s\S]*bcc:\s*detail\.bcc[\s\S]*replyTo:\s*detail\.replyTo[\s\S]*draftId:\s*detail\.draftId/);

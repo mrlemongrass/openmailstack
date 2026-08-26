@@ -75,7 +75,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   );
   const messageIsRead = message?.isRead ?? true;
   const messageIsScheduled = Boolean(message?.is_scheduled);
-  const startMessageCompose = useCallback(async (action: MessageComposeAction) => {
+  const startMessageCompose = useCallback(async (action: MessageComposeAction, body = '') => {
     if (!message || preparingComposeAction) return;
     setPreparingComposeAction(action);
     try {
@@ -98,7 +98,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         showToast({ type: 'error', message: 'This message does not have a reply address.' });
         return;
       }
-      startCompose(draft);
+      startCompose(body ? { ...draft, body } : draft);
     } finally {
       setPreparingComposeAction(null);
     }
@@ -651,16 +651,10 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
                 : 'The protected reply attempt could not be cleared.',
             });
           });
-        }}
-        onOpenFullCompose={() => {
-          if (message) {
-            mail.startCompose({
-              to: message.from,
-              subject: `Re: ${message.subject}`,
-              body: mail.replyText || '',
-            });
-          }
-        }}
+            }}
+            onOpenFullCompose={() => {
+              void startMessageCompose('reply', mail.replyText || '');
+            }}
       />}
       {scheduledRemovable && scheduledId && (
         <ConfirmDialog

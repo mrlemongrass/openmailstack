@@ -10436,10 +10436,11 @@ context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
 - Complete frontend: 206/206; lint, production TypeScript/Vite build, and
   `git diff --check` passed.
 - Mocked Chromium at 1440x900 and 390x844 exercised Reply all recipient
-  semantics, Forward quoting, context-menu keyboard focus return, Flag success,
-  forced Unflag failure/rollback/retry, bulk Flag/Unflag, and all eleven mobile
-  reading-pane action bounds. The only console errors were the deliberately
-  forced `503` and its handled action failure; there were no page errors.
+  semantics, Forward quoting, inline-reply text handoff to a threaded rich
+  Reply, context-menu keyboard focus return, Flag success, forced Unflag
+  failure/rollback/retry, bulk Flag/Unflag, and all eleven mobile reading-pane
+  action bounds. The only console errors were the deliberately forced `503` and
+  its handled action failure; there were no page errors.
 - The complete repository integration gate passed and ended with
   `[ok] Integration checks completed.` Fixed-point Spec/Standards review remains
   a release gate for this candidate.

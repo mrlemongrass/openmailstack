@@ -2368,7 +2368,8 @@ Future entry template:
   menus and aligned row, reading-pane, keyboard, and bulk action surfaces.
 - Added one compose-intent builder that honors `Reply-To`, preserves quoted
   display names, excludes owner aliases, de-duplicates recipients, normalizes
-  subject prefixes, and carries thread headers through Draft/save/send.
+  subject prefixes, carries thread headers through Draft/save/send, and
+  preserves typed inline-reply text when opening the rich editor.
 - Preserved the existing `star`/`unstar` API as the IMAP `\Flagged` wire
   contract while changing user-facing language and icons to Flag/Unflag.
 - Added duplicate guards, visible failures, optimistic rollback, dynamic bulk

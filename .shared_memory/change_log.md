@@ -2393,5 +2393,15 @@ Future entry template:
   optional integration skips and no failures; lint, production build,
   whitespace, the complete repository integration gate, desktop/mobile
   Chromium flows including duplicate inline-send and failed-identity recovery,
-  and expected-only forced-failure console output. Guarded live release remains
-  pending.
+  expected-only forced-failure console output, and final Spec/Standards reviews
+  with no findings.
+- Commit `36f55adc` passed guarded bridge and active public IMAPS plus
+  ActiveSync Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+  `protocol-guarded-webmail-20260826T164203Z` and
+  `protocol-guarded-webmail-20260826T164939Z`.
+- All six services are active with zero restarts; application warning and
+  all-service error journals are empty; local/public boundaries and exact
+  backend/version/frontend artifacts are clean. Released-asset Chromium passed
+  the complete desktop/mobile action flow with no unexpected console or page
+  errors. Only fixture APIs were used, so browser QA did not mutate a real
+  mailbox.

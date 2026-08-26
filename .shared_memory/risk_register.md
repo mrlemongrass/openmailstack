@@ -199,11 +199,13 @@ Last updated: 2026-08-25
   only Drafts retain their API-projected MIME body mode. Settings exposes only
   the implemented Plain text composer. Shared latest-intent sequencing prevents
   stale body fetches or Draft hydration from replacing a newer compose action.
+  Reply recipient derivation also waits for authoritative identities, and a
+  synchronous inline lock prevents duplicate preparation/send pipelines.
   Flag uses existing IMAP
   `\Flagged` storage, rolls failed optimistic changes back, and all eleven
   reading-pane actions fit visibly at 390 px. Pin, forwarded attachments, HTML-
   preserving Forward, and full RFC group/comment parsing remain explicit follow-
-  ups.
+  ups. Commit `36f55adc` is live behind retained guarded rollbacks.
 
 ## Remaining High-Priority Risks
 

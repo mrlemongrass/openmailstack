@@ -282,8 +282,8 @@ canary proved the live server preserves the generation across external rename.
 
 #### 3.1.2 OMS message-action implementation status
 
-The next P0 action-grammar slice adds Reply, Reply all, Forward, and Flag/Unflag
-consistently across ordinary-message context menus, rows, the reading pane,
+The deployed P0 action-grammar slice adds Reply, Reply all, Forward, and
+Flag/Unflag consistently across ordinary-message context menus, rows, the reading pane,
 keyboard shortcuts, and bulk selection where the action is meaningful. Right
 click remains an accelerator: visible row/reading/bulk controls and `R`, `A`,
 `F`, and `S` shortcuts provide keyboard/touch alternatives. Draft and virtual

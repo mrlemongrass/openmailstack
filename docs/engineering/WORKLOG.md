@@ -10448,7 +10448,7 @@ context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
   acquires a synchronous action lock before message-detail preparation and
   holds it through send, preventing rapid Send/Send & Archive/full-editor races.
 
-### Proof before release
+### Proof and review
 
 - TDD established missing compose-action, threading, context, row, reading-
   pane, bulk, and mobile-layout contracts before implementation.
@@ -10469,8 +10469,9 @@ context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
   only console errors were the deliberately forced
   `503` and its handled action failure; there were no page errors.
 - The complete repository integration gate passed and ended with
-  `[ok] Integration checks completed.` Fixed-point Spec/Standards review remains
-  a release gate for this candidate.
+  `[ok] Integration checks completed.` Exact-commit Spec and Standards re-review
+  returned no findings after identity readiness, inline preparation locking,
+  and current full-editor terminology were corrected.
 
 ### Residual limits and release state
 
@@ -10480,5 +10481,26 @@ Forward currently quotes loaded plain text; it does not yet clone original
 attachments, and HTML-only messages use the existing safe placeholder instead
 of re-injecting their markup into Compose. The bounded address parser covers
 quoted display names and angle addresses, not every obsolete RFC group/comment
-form. This candidate is not live until guarded deployment and production
-verification complete.
+form. Attachment-preserving Forward is the next recommended correctness slice.
+
+Commit `36f55adc098916f39faf0dfa055c84fc417d08e3` is live after guarded bridge
+and active deployment. Both stages passed public IMAPS plus ActiveSync
+Mail/Ping/Contacts/Calendar pre/post gates with exact cleanup. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260826T164203Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260826T164939Z`.
+
+All six services are active/running with `NRestarts=0`; Nginx validates; the
+application warning journal and all-service error journal are empty. The broad
+warning journal contained only unrelated Postfix reverse-DNS warnings from
+external scanners. Local/public auth return `401`, public identities remains
+protected with `401`, and the public app returns `200`. Checksum dry-runs found
+no backend or frontend artifact delta; repository, backend, legacy-admin, live
+frontend, and public `index.html` versions/hashes match. The public entry serves
+`index-cSBHZo3D.js`, `react-D0JuimcS.js`, and `index-DnkyOgjT.css`.
+
+Fresh Chromium loaded those released assets and repeated the desktop/mobile
+menu, Reply all, latest-intent, plain Forward, inline full-editor, rapid
+double-Send, Flag rollback/retry, identity failure/recovery, keyboard-focus,
+Settings-truthfulness, and 390 px geometry checks. There were no unexpected
+console errors or page errors. API fixtures prevented real mailbox mutation;
+the guarded protocol canaries completed their own exact cleanup.

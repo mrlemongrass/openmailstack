@@ -1247,9 +1247,18 @@ React frontend:
   context, reading-pane, new-message, and Draft hydration work, so slow
   preparation cannot overwrite a newer draft. Draft/Scheduled
   menus remain bounded.
+- Reply and Reply all fail closed until `/api/user/identities` has supplied an
+  authoritative primary identity. Loading/failure feedback offers one bounded
+  Retry instead of deriving recipients from an empty fallback. Inline Reply
+  acquires a synchronous action lock before detail loading and holds it through
+  send, preventing competing Send, Send & Archive, or full-editor pipelines.
 - The mobile reading toolbar wraps at 767 px. Browser geometry at 390x844
   proved all eleven controls are visible without page overflow or horizontal
   discovery.
+- Commit `36f55adc` is deployed. Guarded bridge/active rollback snapshots are
+  `protocol-guarded-webmail-20260826T164203Z` and
+  `protocol-guarded-webmail-20260826T164939Z`; both public protocol gates and
+  released-asset browser verification passed.
 
 Validation:
 

@@ -2347,9 +2347,17 @@ Future entry template:
   before IMAP mutation.
 - Passed 866 backend tests (859 pass, seven optional skips), 202 frontend tests,
   lint/build, complete integration, installed-MariaDB temporary-table proof,
-  and final Spec/Standards review with no findings. Chromium passed delayed-list, confirmed-rename,
-  unavailable-removal, exact PATCH, desktop/mobile viewport, and zero-console-
-  warning/error checks.
+  and final Spec/Standards review with no findings. Chromium passed delayed-
+  list, confirmed-rename, unavailable-removal, exact PATCH, desktop/mobile
+  viewport, and zero-console-warning/error checks.
 - Residual: IMAP rename and SQL Favorites persistence are not cross-system
   atomic. `UIDVALIDITY` remains confirmation-only; automatic remapping needs a
   stable identifier such as RFC 8474 `MAILBOXID` or a proven Dovecot GUID.
+- Commit `81c1699` passed guarded bridge and active public IMAPS plus ActiveSync
+  Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+  `protocol-guarded-webmail-20260826T020928Z` and
+  `protocol-guarded-webmail-20260826T021706Z`.
+- All six services, zero restarts, Nginx, warning journal, local/public auth
+  boundaries, protected Favorites route, and exact backend/VERSION/frontend
+  artifacts are clean. A public-IMAPS canary proved `UIDVALIDITY` preservation
+  across external rename and zero final LIST residue.

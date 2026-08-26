@@ -2,7 +2,7 @@
 
 ## 2026-08-25 External Folder Rename Favorite Repair
 
-**Status: release candidate verified locally; guarded release pending.**
+**Status: guarded-deployed in active mode and verified.**
 Favorites now retain a normalized positive `UIDVALIDITY` for each exact folder
 path. After the latest folder LIST succeeds, one missing Favorite with exactly
 one matching generation is presented as an external-rename candidate with
@@ -34,6 +34,17 @@ This does not make an IMAP rename and SQL settings update atomic. `UIDVALIDITY`
 is only a user-confirmed heuristic because it is not a global mailbox identity.
 Automatic remapping remains gated on RFC 8474 `MAILBOXID` or a safely proven
 Dovecot GUID integration.
+
+Commit `81c16990108a530075007262af2f146b9961fe70` passed guarded bridge and
+active public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar pre/post gates.
+Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260826T020928Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260826T021706Z`. All six
+services are active with zero backend restarts, valid Nginx, an empty recent
+warning journal, expected local/public/protected-route `401`, and exact full
+backend source, VERSION, and frontend distribution artifacts. A dedicated
+public-IMAPS canary proved one positive generation survived an external rename
+and left zero LIST residue without touching user data.
 
 ## 2026-08-25 Recoverable Mail Folder Deletion
 

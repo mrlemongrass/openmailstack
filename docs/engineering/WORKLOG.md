@@ -10371,6 +10371,20 @@ repair, never to remap automatically. Truly automatic external-rename repair
 remains gated on a stable server identity such as RFC 8474 `MAILBOXID` (or a
 carefully proven Dovecot GUID bridge) plus an owner-scoped reconciliation path.
 
-The release candidate is locally verified. Guarded bridge/active deployment,
-live artifact and service checks, rollback paths, release commit, and push are
-recorded after the release completes.
+Commit `81c16990108a530075007262af2f146b9961fe70` passed guarded bridge and
+active deployment. Both stages passed public IMAPS plus ActiveSync
+Mail/Ping/Contacts/Calendar pre/post gates with exact cleanup. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260826T020928Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260826T021706Z`.
+
+All six services are active, `openmailstack.service` has `NRestarts=0`, Nginx
+validates, the recent warning journal is empty, and local/public auth plus the
+new protected Favorites PATCH return expected unauthenticated `401`. Repository
+and live full backend source, packaged version, and frontend distribution are
+byte-identical; the public entry advertises `index-WMV8VFkA.js` and
+`index-Dr1BHIza.css`.
+
+A dedicated public-IMAPS canary created a disposable folder, captured its
+positive `UIDVALIDITY`, renamed it externally, proved the renamed path retained
+the exact generation, deleted it, and proved zero LIST residue. No user mailbox
+or persisted Favorite was touched.

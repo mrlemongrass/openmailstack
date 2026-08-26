@@ -35,7 +35,10 @@ Last updated: 2026-08-25
   while missing and ambiguous matches remain visible for review. Move, Rename,
   and Delete bind the displayed source generation and reject stale path reuse
   before IMAP mutation. Scoped/atomic Favorites persistence prevents unrelated
-  or stale Mail-settings writes from reverting a repair.
+  or stale Mail-settings writes from reverting a repair. Commit `81c1699` is
+  guarded-deployed active with exact artifacts, clean service/API checks, and a
+  zero-residue public-IMAPS canary proving the live server preserves a positive
+  generation across external rename.
 
 - ✅ Folder identity drift during rename: custom selectable folders now use a
   leaf-only server rename that preserves the advertised hierarchy delimiter,

@@ -275,6 +275,11 @@ IMAP surface does not expose a standards-based stable mailbox identifier, and
 remains a later server-capability slice based on RFC 8474 `MAILBOXID` or an
 equivalently proven server GUID.
 
+Commit `81c16990108a530075007262af2f146b9961fe70` is guarded-deployed active.
+Both bridge and active stages passed public IMAPS plus ActiveSync
+Mail/Ping/Contacts/Calendar pre/post gates, and a zero-residue public-IMAPS
+canary proved the live server preserves the generation across external rename.
+
 This is not full Outlook parity. Categories, Pin/Flag, Rules-from-message,
 Sweep/Block/Ignore, richer message Reply/Forward context actions, Favorites
 ordering, folder color/empty commands, and Search Folders remain separate

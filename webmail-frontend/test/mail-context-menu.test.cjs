@@ -336,6 +336,7 @@ test('mobile folder drawer suspends for nested dialogs and uses defined visual t
 test('message rows expose a context menu without replacing their normal open behavior', () => {
   const row = source('src/mail/MessageRow.tsx');
   const list = source('src/mail/MessageList.tsx');
+  const hook = source('src/mail/hooks/useMail.ts');
 
   assert.match(row, /onContextMenu=/);
   assert.match(row, /event\.shiftKey && event\.key === 'F10'/);
@@ -347,6 +348,11 @@ test('message rows expose a context menu without replacing their normal open beh
   assert.match(list, /id: 'forward'/);
   assert.match(list, /buildMessageComposeDraft/);
   assert.match(list, /fetchMessageBody/);
+  assert.match(list, /composePreparationRequestRef/);
+  assert.match(list, /const requestId = \+\+composePreparationRequestRef\.current/);
+  assert.match(list, /if \(requestId !== composePreparationRequestRef\.current\) return/);
+  assert.match(list, /Preparing \{composeActionLabel\(preparingComposeAction\)\}/);
+  assert.match(hook, /if \(isComposingRef\.current\) return false;[\s\S]*isComposingRef\.current = true/);
   assert.match(list, /Mark (?:as )?unread|Mark (?:as )?read/);
   assert.match(list, /message\.isStarred \? 'Unflag' : 'Flag'/);
   assert.match(list, /Archive/);
@@ -356,6 +362,7 @@ test('message rows expose a context menu without replacing their normal open beh
   assert.match(list, /messageAction\('spam'/);
   assert.match(list, /Snooze until tomorrow/);
   assert.match(list, /Delete/);
+  assert.match(list, /flaggedMessageUids\.has\(uid\)/);
 });
 
 test('rendered message rows expose sibling controls instead of nesting them in the open control', () => {

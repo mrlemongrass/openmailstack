@@ -10,6 +10,7 @@ export interface DraftComposeState {
   references: string;
   subject: string;
   body: string;
+  mode: 'rich' | 'plain';
   attachments: File[];
   draftId: string | null;
   draftUid: string;
@@ -49,6 +50,7 @@ export async function hydrateDraftAttachments(
 }
 
 export function draftComposeState(message: Message, attachments: File[]): DraftComposeState {
+  const hasPlainTextBody = typeof message.text === 'string';
   return {
     from: mailboxAddress(message.from || ''),
     to: message.to || '',
@@ -58,7 +60,8 @@ export function draftComposeState(message: Message, attachments: File[]): DraftC
     inReplyTo: message.inReplyTo || '',
     references: (message.references || []).join(' '),
     subject: /^\(no subject\)$/i.test(message.subject || '') ? '' : message.subject || '',
-    body: message.text || message.html || '',
+    body: hasPlainTextBody ? message.text || '' : message.html || '',
+    mode: hasPlainTextBody ? 'plain' : message.html ? 'rich' : 'plain',
     attachments,
     draftId: message.draftId || null,
     draftUid: String(message.uid),

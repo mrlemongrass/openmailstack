@@ -2369,13 +2369,18 @@ Future entry template:
 - Added one compose-intent builder that honors `Reply-To`, preserves quoted
   display names, excludes owner aliases, de-duplicates recipients, normalizes
   subject prefixes, carries thread headers through Draft/save/send, and
-  preserves typed inline-reply text when opening the rich editor.
+  preserves typed inline-reply text when opening the rich editor. Inline Send
+  now uses the same exact recipient/subject/threading result, and a missing
+  parent References chain inherits its In-Reply-To value.
+- Corrected newly authored textarea content to submit as MIME plain text rather
+  than HTML, preserving forwarded angle-bracket addresses and line breaks while
+  retaining the source format of resumed HTML-only Drafts.
 - Preserved the existing `star`/`unstar` API as the IMAP `\Flagged` wire
   contract while changing user-facing language and icons to Flag/Unflag.
-- Added duplicate guards, visible failures, optimistic rollback, dynamic bulk
-  Unflag, and a wrapped mobile reading toolbar with all eleven actions proven
-  inside a 390 px viewport.
-- Local candidate proof: 206/206 frontend tests, lint, production build,
+- Added duplicate guards, visible failures, latest-intent compose sequencing,
+  optimistic rollback, dynamic bulk Unflag, and a wrapped mobile reading toolbar
+  with all eleven actions proven inside a 390 px viewport.
+- Local candidate proof: 208/208 frontend tests, lint, production build,
   whitespace, the complete repository integration gate, desktop/mobile
   Chromium flows, and expected-only forced-failure console output. Guarded live
   release remains pending.

@@ -10418,29 +10418,38 @@ context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
   message detail before composing, honors `Reply-To`, understands commas inside
   quoted display names and angle addresses, removes configured owner aliases
   case-insensitively, and creates stable reply thread headers.
-- Routed context-menu, reading-pane, and `R`/`A`/`F` shortcut paths through the
-  same builder. Reply headers now survive both autosaved/resumed Drafts and
-  immediate or delayed send payloads.
+- Routed context-menu, reading-pane, inline quick-reply/rich-editor handoff, and
+  `R`/`A`/`F` shortcut paths through the same builder. Reply headers now inherit
+  a parent's `In-Reply-To` when no `References` chain exists and survive both
+  autosaved/resumed Drafts and immediate or delayed send payloads.
+- Newly authored textarea content now saves and sends as MIME plain text rather
+  than being mislabelled as HTML. This preserves forwarded angle-bracket
+  addresses and line breaks; resumed HTML-only Drafts retain their existing HTML
+  body mode rather than being silently reformatted.
 - Replaced message-facing Star language with Outlook-familiar Flag/Unflag while
   deliberately preserving internal `star`/`unstar` API values for backend and
   IMAP compatibility. Bulk selection changes to Unflag only when every selected
   message is flagged.
 - Added visible mutation/preparation failures, single-message duplicate guards,
-  failed optimistic-update rollback, and a two-row mobile reading toolbar so no
-  action is clipped or requires hidden horizontal discovery.
+  latest-intent sequencing for overlapping compose preparation, an authoritative
+  composer-open guard, failed optimistic-update rollback, and a two-row mobile
+  reading toolbar so no action is clipped or requires hidden horizontal
+  discovery.
 
 ### Proof before release
 
 - TDD established missing compose-action, threading, context, row, reading-
   pane, bulk, and mobile-layout contracts before implementation.
-- Complete frontend: 206/206; lint, production TypeScript/Vite build, and
+- Complete frontend: 208/208; lint, production TypeScript/Vite build, and
   `git diff --check` passed.
 - Mocked Chromium at 1440x900 and 390x844 exercised Reply all recipient
-  semantics, Forward quoting, inline-reply text handoff to a threaded rich
-  Reply, context-menu keyboard focus return, Flag success, forced Unflag
-  failure/rollback/retry, bulk Flag/Unflag, and all eleven mobile reading-pane
-  action bounds. The only console errors were the deliberately forced `503` and
-  its handled action failure; there were no page errors.
+  semantics, a delayed Reply versus Forward race with latest intent winning,
+  plain-text Forward quoting/persistence, inline-reply text handoff
+  to a threaded rich Reply, a direct inline Reply with exact Reply-To/subject/
+  thread headers, context-menu keyboard focus return, Flag success, forced
+  Unflag failure/rollback/retry, bulk Flag/Unflag, and all eleven mobile reading-
+  pane action bounds. The only console errors were the deliberately forced
+  `503` and its handled action failure; there were no page errors.
 - The complete repository integration gate passed and ended with
   `[ok] Integration checks completed.` Fixed-point Spec/Standards review remains
   a release gate for this candidate.

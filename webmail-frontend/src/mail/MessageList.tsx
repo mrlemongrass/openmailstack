@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate, useParams } from 'react-router';
 import { addDays, startOfDay, setHours } from 'date-fns';
@@ -48,6 +48,11 @@ interface MessageListProps {
   density: 'compact' | 'cozy' | 'comfortable';
 }
 
+function composeActionLabel(action: MessageComposeAction): string {
+  if (action === 'reply-all') return 'Reply all';
+  return action === 'forward' ? 'Forward' : 'Reply';
+}
+
 export function MessageList({ mail, density }: MessageListProps) {
   const { showToast } = useToast();
   const { folder } = useParams<{ folder: string }>();
@@ -55,11 +60,13 @@ export function MessageList({ mail, density }: MessageListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const flaggingRef = useRef<Set<string>>(new Set());
+  const composePreparationRequestRef = useRef(0);
   const [messageMenu, setMessageMenu] = useState<{
     message: Message;
     point: ContextMenuPoint;
   } | null>(null);
   const [movingMessage, setMovingMessage] = useState<Message | null>(null);
+  const [preparingComposeAction, setPreparingComposeAction] = useState<MessageComposeAction | null>(null);
   const decodedFolder = folder ? decodeURIComponent(folder) : 'INBOX';
   const {
     activeFolder,
@@ -81,6 +88,9 @@ export function MessageList({ mail, density }: MessageListProps) {
   const draftFolder = isDraftFolder(decodedFolder);
   const selectionDisabled = crossFolderSearch || scheduledFolder;
   const activeFolderDetails = mail.folders.find(candidate => candidate.path === decodedFolder);
+  const flaggedMessageUids = useMemo(() => new Set(
+    mail.messages.filter(message => message.isStarred).map(message => message.uid),
+  ), [mail.messages]);
 
   useEffect(() => {
     if (decodedFolder !== activeFolder) {
@@ -91,9 +101,11 @@ export function MessageList({ mail, density }: MessageListProps) {
   }, [activeFolder, decodedFolder, resetSearchState, setActiveFolder, setSelectedMessages]);
 
   useEffect(() => {
+    composePreparationRequestRef.current += 1;
     parentRef.current?.scrollTo({ top: 0 });
     setMessageMenu(null);
     setMovingMessage(null);
+    setPreparingComposeAction(null);
   }, [decodedFolder]);
 
   useEffect(() => {
@@ -191,27 +203,34 @@ export function MessageList({ mail, density }: MessageListProps) {
     navigate(`/mail/${encodeURIComponent(messageFolder(message, decodedFolder))}/${message.uid}`);
   };
   const startMessageCompose = async (action: MessageComposeAction, message: Message) => {
+    const requestId = ++composePreparationRequestRef.current;
+    setPreparingComposeAction(action);
     const folderPath = messageFolder(message, decodedFolder);
-    const fullMessage = message.bodyLoaded
-      ? message
-      : await mail.fetchMessageBody(message.uid, folderPath);
-    if (!fullMessage) {
-      showToast({
-        type: 'error',
-        message: `${action === 'forward' ? 'Forward' : 'Reply'} could not be prepared. Try again.`,
-      });
-      return;
+    try {
+      const fullMessage = message.bodyLoaded
+        ? message
+        : await mail.fetchMessageBody(message.uid, folderPath);
+      if (requestId !== composePreparationRequestRef.current) return;
+      if (!fullMessage) {
+        showToast({
+          type: 'error',
+          message: `${action === 'forward' ? 'Forward' : 'Reply'} could not be prepared. Try again.`,
+        });
+        return;
+      }
+      const draft = buildMessageComposeDraft(
+        action,
+        fullMessage,
+        (mail.composeIdentities || []).map((identity: { address: string }) => identity.address),
+      );
+      if (action !== 'forward' && !draft.to) {
+        showToast({ type: 'error', message: 'This message does not have a reply address.' });
+        return;
+      }
+      mail.startCompose(draft);
+    } finally {
+      if (requestId === composePreparationRequestRef.current) setPreparingComposeAction(null);
     }
-    const draft = buildMessageComposeDraft(
-      action,
-      fullMessage,
-      (mail.composeIdentities || []).map((identity: { address: string }) => identity.address),
-    );
-    if (action !== 'forward' && !draft.to) {
-      showToast({ type: 'error', message: 'This message does not have a reply address.' });
-      return;
-    }
-    mail.startCompose(draft);
   };
   const runMessageAction = (action: string, message: Message) => {
     const folderPath = messageFolder(message, decodedFolder);
@@ -413,6 +432,17 @@ export function MessageList({ mail, density }: MessageListProps) {
           {mail.searchInfo}
         </div>
       )}
+      {preparingComposeAction && (
+        <div role="status" aria-live="polite" style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 16px', fontSize: '0.8rem',
+          color: 'var(--accent-primary)', background: 'rgba(59,130,246,0.08)',
+          borderBottom: '1px solid rgba(59,130,246,0.15)',
+        }}>
+          <Loader size={14} style={{ animation: 'spin 1s linear infinite' }} />
+          Preparing {composeActionLabel(preparingComposeAction)}…
+        </div>
+      )}
       {scheduledFolder ? (
         <div role="status" aria-live="polite" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
@@ -424,9 +454,8 @@ export function MessageList({ mail, density }: MessageListProps) {
         </div>
       ) : <MailToolbar
         selectedCount={mail.selectedMessages.length}
-        allSelectedFlagged={mail.selectedMessages.length > 0 && mail.selectedMessages.every(uid => (
-          Boolean(mail.messages.find(message => message.uid === uid)?.isStarred)
-        ))}
+        allSelectedFlagged={mail.selectedMessages.length > 0
+          && mail.selectedMessages.every(uid => flaggedMessageUids.has(uid))}
         totalCount={mail.messages.length}
         activeFolder={mail.activeFolder}
         searchQuery={mail.searchQuery}

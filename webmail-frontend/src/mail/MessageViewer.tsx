@@ -312,13 +312,22 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
       } : undefined,
     });
   };
-  const sendInlineReply = () => {
-    const to = message.from?.match(/<(.+?)>/)?.at(1) || message.from;
+  const sendInlineReply = async () => {
+    const fullMessage = message.bodyLoaded
+      ? message
+      : await fetchMessageBody(message.uid, sourceFolder);
+    if (!fullMessage) throw new Error('Reply could not be prepared. Try again.');
+    const draft = buildMessageComposeDraft(
+      'reply',
+      fullMessage,
+      (composeIdentities || []).map((identity: { address: string }) => identity.address),
+    );
+    if (!draft.to) throw new Error('This message does not have a reply address.');
     return mail.sendReply(
-      to,
-      message.subject || '',
-      message.messageId || '',
-      (message.references || []).join(' '),
+      draft.to,
+      draft.subject,
+      draft.inReplyTo || '',
+      draft.references || '',
     );
   };
   const inlineReplyScope = message.messageId || (message.references || []).join(' ');
@@ -602,7 +611,8 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         )}
       </div>
       {!isScheduled && !isDraft && <InlineReply
-        replyTo={message.from?.replace(/<.+?>/, '').trim() || message.from || ''}
+        replyTo={(message.replyTo || message.from)?.replace(/<.+?>/, '').trim()
+          || message.replyTo || message.from || ''}
         replyText={mail.replyText || ''}
         replySending={mail.replySending}
         sendPhase={inlineReplyHasRecovery ? mail.replySendPhase : 'idle'}

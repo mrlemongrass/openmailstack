@@ -112,8 +112,14 @@ export function buildMessageComposeDraft(
 
   const recipients = replyRecipients(message, ownAddresses);
   const inReplyTo = message.messageId?.trim() || '';
+  const inheritedReferences = (message.references || [])
+    .map(reference => reference.trim())
+    .filter(Boolean);
+  if (inheritedReferences.length === 0 && message.inReplyTo?.trim()) {
+    inheritedReferences.push(message.inReplyTo.trim());
+  }
   const references = [...new Set([
-    ...(message.references || []).map(reference => reference.trim()),
+    ...inheritedReferences,
     inReplyTo,
   ].filter(Boolean))].join(' ');
   return {

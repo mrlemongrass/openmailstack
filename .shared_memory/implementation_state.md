@@ -1230,14 +1230,20 @@ React frontend:
   keyboard entry points. It loads full details, honors `Reply-To`, handles
   quoted commas/angle addresses, excludes configured owner identities,
   de-duplicates recipients, normalizes subject prefixes, and creates
-  `In-Reply-To`/`References` state.
+  `In-Reply-To`/`References` state. A missing parent `References` chain inherits
+  its `In-Reply-To` before appending the parent Message-ID.
 - `useMail.ts` fingerprints, drafts, resumes, resets, and sends the reply thread
-  headers. Message-facing Flag/Unflag continues to use internal
-  `star`/`unstar` API actions backed by IMAP `\Flagged`.
+  headers, including inline quick replies. Newly authored textarea content uses
+  MIME plain text so forwarded `<mailbox>` addresses are not parsed as HTML;
+  resumed HTML-only Drafts preserve their source body mode. Message-facing
+  Flag/Unflag continues to use internal `star`/`unstar` API actions backed by
+  IMAP `\Flagged`.
 - Rows provide accessible Flag/Unflag, ordinary context menus lead with the
   Reply family, the reading pane and `R`/`A`/`F`/`S` shortcuts share the same
   logic, and bulk selection dynamically changes Flag to Unflag when all
-  selected messages are flagged. Draft/Scheduled menus remain bounded.
+  selected messages are flagged. Slow overlapping compose preparation uses
+  latest-intent sequencing and cannot overwrite a newer draft. Draft/Scheduled
+  menus remain bounded.
 - The mobile reading toolbar wraps at 767 px. Browser geometry at 390x844
   proved all eleven controls are visible without page overflow or horizontal
   discovery.

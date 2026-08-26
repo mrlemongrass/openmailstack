@@ -193,11 +193,15 @@ Last updated: 2026-08-25
 - ✅ Mail Reply/Flag action drift: context-menu, reading-pane, keyboard, row,
   and bulk paths now share one compose/action contract. Reply honors
   `Reply-To`, Reply all excludes owner identities and de-duplicates quoted
-  address lists, and thread headers survive Draft/send lifecycles. Flag uses
-  existing IMAP `\Flagged` storage, rolls failed optimistic changes back, and
-  all eleven reading-pane actions fit visibly at 390 px. Pin, forwarded
-  attachments, HTML-preserving Forward, and full RFC group/comment parsing
-  remain explicit follow-ups.
+  address lists, inline Send shares that contract, and complete thread headers
+  survive Draft/send lifecycles. Newly authored textarea content submits as MIME
+  plain text, preserving forwarded address syntax and line breaks; resumed HTML-
+  only Drafts retain their format. Latest-intent sequencing prevents stale body
+  fetches from replacing a newer compose action. Flag uses existing IMAP
+  `\Flagged` storage, rolls failed optimistic changes back, and all eleven
+  reading-pane actions fit visibly at 390 px. Pin, forwarded attachments, HTML-
+  preserving Forward, and full RFC group/comment parsing remain explicit follow-
+  ups.
 
 ## Remaining High-Priority Risks
 

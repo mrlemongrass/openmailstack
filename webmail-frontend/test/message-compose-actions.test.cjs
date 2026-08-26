@@ -65,6 +65,21 @@ test('reply all preserves quoted display names, excludes own identities, and de-
   );
 });
 
+test('reply inherits In-Reply-To when the parent has no References chain', () => {
+  const { buildMessageComposeDraft } = loadModule();
+
+  const draft = buildMessageComposeDraft('reply', {
+    ...message,
+    references: [],
+    inReplyTo: '<grandparent@example.test>',
+  }, ['owner@example.test']);
+
+  assert.equal(
+    draft.references,
+    '<grandparent@example.test> <quarterly-plan@example.test>',
+  );
+});
+
 test('forward creates one forward prefix and quotes loaded plain text without recipients', () => {
   const { buildMessageComposeDraft } = loadModule();
   const draft = buildMessageComposeDraft('forward', { ...message, subject: 'Fwd: Quarterly plan' }, []);

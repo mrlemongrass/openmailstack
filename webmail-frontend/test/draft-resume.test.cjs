@@ -58,10 +58,24 @@ test('draft resume restores all composer fields and stable identity', () => {
     references: '<root@example.test> <parent@example.test>',
     subject: 'Quarterly draft',
     body: 'Preserve this body',
+    mode: 'plain',
     attachments: [attachmentFile],
     draftId: 'draft-resume-fixture',
     draftUid: '901',
   });
+});
+
+test('HTML-only Drafts retain their body format when resumed', () => {
+  const { draftComposeState } = loadModule();
+
+  const state = draftComposeState({
+    ...draft,
+    text: undefined,
+    html: '<p>Preserve <strong>this HTML</strong></p>',
+  }, []);
+
+  assert.equal(state.mode, 'rich');
+  assert.equal(state.body, '<p>Preserve <strong>this HTML</strong></p>');
 });
 
 test('draft attachments hydrate from the encoded message-scoped endpoint', async () => {
@@ -97,8 +111,13 @@ test('Drafts viewer opens the real composer without reply controls and sends sta
   assert.match(hook, /formData\.append\('draftUid',\s*currentDraft\.draftUid\)/);
   assert.match(hook, /formData\.append\('inReplyTo',\s*composeInReplyTo\)/);
   assert.match(hook, /formData\.append\('references',\s*composeReferences\)/);
+  assert.match(hook, /const composeBodyField = composeMode === 'rich' \? 'html' : 'text'/);
+  assert.match(hook, /formData\.append\(composeBodyField,\s*composeBody\)/);
+  assert.match(hook, /setComposeMode\(state\.mode\)/);
+  assert.match(hook, /formData\.append\('subject',\s*subject\)/);
   assert.match(viewer, /Edit draft/);
   assert.match(viewer, /!isScheduled && !isDraft && <InlineReply/);
+  assert.match(viewer, /const sendInlineReply = async \(\) => \{[\s\S]*buildMessageComposeDraft\([\s\S]*'reply',[\s\S]*mail\.sendReply\(/);
   assert.match(viewer, /onOpenFullCompose=\{\(\) => \{[\s\S]*startMessageCompose\('reply', mail\.replyText \|\| ''\)/);
   assert.doesNotMatch(viewer, /onOpenFullCompose=\{\(\) => \{[\s\S]{0,250}mail\.startCompose/);
   assert.match(row, /isDraft \? \([\s\S]*Delete draft[\s\S]*: !isScheduled &&/);

@@ -342,7 +342,7 @@ export function useMail(_opts: UseMailOptions) {
   const [composeSignature, setComposeSignature] = useState('none');
   const [composeAttachments, setComposeAttachments] = useState<File[]>([]);
   const [composeAttachmentRevision, setComposeAttachmentRevision] = useState(0);
-  const [composeMode, setComposeMode] = useState<'rich' | 'plain'>('rich');
+  const [composeMode, setComposeMode] = useState<'rich' | 'plain'>('plain');
   const [draftUid, setDraftUid] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftSaveStatus, setDraftSaveStatus] = useState<'saving' | 'saved' | 'error' | null>(null);
@@ -451,11 +451,12 @@ export function useMail(_opts: UseMailOptions) {
       composeCc,
       composeSubject || '(no subject)',
       composeBody,
+      composeMode,
       composeInReplyTo,
       composeReferences,
       attachments,
     ]);
-  }, [composeAttachmentRevision, composeAttachments, composeBcc, composeBody, composeCc, composeFrom,
+  }, [composeAttachmentRevision, composeAttachments, composeBcc, composeBody, composeCc, composeFrom, composeMode,
     composeInReplyTo, composeReferences, composeReplyTo, composeSubject, composeTo,
     _opts.mailSettings.identity.alwaysBccSelf,
     _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
@@ -493,7 +494,8 @@ export function useMail(_opts: UseMailOptions) {
     inReplyTo?: string;
     references?: string;
   } = {}) => {
-    if (isComposing) return;
+    if (isComposingRef.current) return false;
+    isComposingRef.current = true;
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current);
       draftTimerRef.current = null;
@@ -518,12 +520,13 @@ export function useMail(_opts: UseMailOptions) {
     setComposeAttachments([]);
     setComposeFrom('');
     setComposeSignature('none');
-    setComposeMode('rich');
+    setComposeMode('plain');
     setShowCc(Boolean(initial.cc));
     setShowBcc(Boolean(initial.bcc));
     setComposeDocked(false);
     setIsComposing(true);
-  }, [isComposing]);
+    return true;
+  }, []);
 
   // ---- Data fetching (must be before handleSend) ----
   const fetchFolders = useCallback(async () => {
@@ -977,7 +980,8 @@ export function useMail(_opts: UseMailOptions) {
         formData.append('to', composeTo);
         if (composeCc) formData.append('cc', composeCc);
         formData.append('subject', composeSubject || '(no subject)');
-        formData.append('html', composeBody);
+        const composeBodyField = composeMode === 'rich' ? 'html' : 'text';
+        formData.append(composeBodyField, composeBody);
         if (composeInReplyTo) formData.append('inReplyTo', composeInReplyTo);
         if (composeReferences) formData.append('references', composeReferences);
         if (currentDraft.draftId) formData.append('draftId', currentDraft.draftId);
@@ -994,7 +998,7 @@ export function useMail(_opts: UseMailOptions) {
       if (saveRevision === draftSaveRevisionRef.current) setDraftSaveStatus('error');
       return false;
     }
-  }, [composeAttachments, composeBcc, composeBody, composeCc, composeFrom, composeInReplyTo,
+  }, [composeAttachments, composeBcc, composeBody, composeCc, composeFrom, composeInReplyTo, composeMode,
     composeReferences, composeReplyTo, composeSubject, composeTo, _opts.mailSettings.identity.alwaysBccSelf,
     _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
 
@@ -1042,7 +1046,7 @@ export function useMail(_opts: UseMailOptions) {
     setComposeBody(state.body);
     setComposeAttachments(state.attachments);
     setComposeSignature('none');
-    setComposeMode('rich');
+    setComposeMode(state.mode);
     setShowCc(Boolean(state.cc));
     setShowBcc(Boolean(state.bcc));
     setComposeDocked(false);
@@ -1101,7 +1105,10 @@ export function useMail(_opts: UseMailOptions) {
       draftTimerRef.current = null;
     }
     const saved = await saveCurrentDraft();
-    if (saved) setIsComposing(false);
+    if (saved) {
+      isComposingRef.current = false;
+      setIsComposing(false);
+    }
     return saved;
   }, [saveCurrentDraft]);
 
@@ -1111,11 +1118,13 @@ export function useMail(_opts: UseMailOptions) {
     setComposeInReplyTo(''); setComposeReferences('');
     setComposeSubject(''); setComposeBody('');
     setComposeFrom(''); setComposeSignature('none');
+    setComposeMode('plain');
     setComposeAttachments([]);
     setDraftUid(null); setDraftId(null);
     draftSaveCoordinatorRef.current.reset();
     setDraftSaveStatus(null);
     setShowCc(false); setShowBcc(false);
+    isComposingRef.current = false;
     setIsComposing(false);
     void Promise.all([fetchFolders(), fetchMessages()]);
   }, [fetchFolders, fetchMessages]);
@@ -1153,7 +1162,8 @@ export function useMail(_opts: UseMailOptions) {
       formData.append('to', composeTo);
       if (composeCc) formData.append('cc', composeCc);
       formData.append('subject', composeSubject || '(no subject)');
-      formData.append('html', composeBody);
+      const composeBodyField = composeMode === 'rich' ? 'html' : 'text';
+      formData.append(composeBodyField, composeBody);
       if (composeInReplyTo) formData.append('inReplyTo', composeInReplyTo);
       if (composeReferences) formData.append('references', composeReferences);
       formData.append('draftId', currentDraft.draftId);
@@ -1259,7 +1269,7 @@ export function useMail(_opts: UseMailOptions) {
       setSending(false);
     }
   }, [composeFrom, composeInReplyTo, composeReferences, composeReplyTo, composeTo, composeCc, composeBcc,
-    composeSubject, composeBody, composeAttachments,
+    composeSubject, composeBody, composeMode, composeAttachments,
     finishComposeAfterConfirmedSend, saveCurrentDraft,
     _opts.mailSettings.compose.undoSendSeconds, _opts.mailSettings.identity.alwaysBccSelf,
     _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
@@ -1351,7 +1361,7 @@ export function useMail(_opts: UseMailOptions) {
       if (identityFields.replyTo) formData.append('replyTo', identityFields.replyTo);
       if (identityFields.bcc) formData.append('bcc', identityFields.bcc);
       formData.append('to', to);
-      formData.append('subject', subject.startsWith('Re:') ? subject : `Re: ${subject}`);
+      formData.append('subject', subject);
       formData.append('body', replyText);
       formData.append('inReplyTo', inReplyTo);
       formData.append('references', references);

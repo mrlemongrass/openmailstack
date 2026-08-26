@@ -338,6 +338,7 @@ test('message rows expose a context menu without replacing their normal open beh
   const list = source('src/mail/MessageList.tsx');
   const viewer = source('src/mail/MessageViewer.tsx');
   const hook = source('src/mail/hooks/useMail.ts');
+  const composeActions = source('src/mail/message-compose-actions.ts');
 
   assert.match(row, /onContextMenu=/);
   assert.match(row, /event\.shiftKey && event\.key === 'F10'/);
@@ -347,13 +348,22 @@ test('message rows expose a context menu without replacing their normal open beh
   assert.match(list, /id: 'reply'/);
   assert.match(list, /id: 'reply-all'/);
   assert.match(list, /id: 'forward'/);
-  assert.match(hook, /buildMessageComposeDraft/);
+  assert.match(composeActions, /buildMessageComposeDraft/);
   assert.match(hook, /fetchMessageBody/);
   assert.match(list, /mail\.prepareMessageCompose\(action, message, folderPath\)/);
   assert.match(viewer, /prepareMessageCompose[\s\S]*prepareMessageCompose\(action, message, sourceFolder, body\)/);
-  assert.match(list, /Preparing \{composeActionLabel\(preparingComposeAction\)\}/);
+  assert.match(list, /Preparing \{messageComposeActionLabel\(preparingComposeAction\)\}/);
   assert.match(hook, /const prepareMessageCompose = useCallback[\s\S]*composePreparationCoordinatorRef\.current\.begin\(\)/);
-  assert.match(hook, /startCompose\(body \? \{ \.\.\.draft, body \} : draft, requestId\)/);
+  assert.match(hook, /prepareMessageComposeAction\(\{/);
+  assert.match(hook, /hydrateForwardContent\(summaryMessage, sourceFolder, fetch, preparationSignal\)/);
+  assert.match(hook, /setComposeAttachments\(initial\.attachments \|\| \[\]\)/);
+  assert.match(hook, /composePreparationErrorToast/);
+  assert.match(hook, /attachments-count-exceeded[\s\S]*too many attachments[\s\S]*smaller selection/);
+  assert.match(hook, /attachments-size-exceeded[\s\S]*forwarding limit[\s\S]*smaller selection/);
+  assert.match(hook, /message-size-exceeded[\s\S]*too large to prepare for forwarding/);
+  assert.match(list, /typeof result === 'object'[\s\S]*showToast\(\{ type: 'error', \.\.\.result \}\)/);
+  assert.match(viewer, /typeof result === 'object'[\s\S]*showToast\(\{ type: 'error', \.\.\.result \}\)/);
+  assert.match(viewer, /role="status"[\s\S]*Preparing \{messageComposeActionLabel\(preparingComposeAction\)\}/);
   assert.match(hook, /const claimComposeIntent = useCallback[\s\S]*isComposingRef\.current = true/);
   assert.match(list, /Mark (?:as )?unread|Mark (?:as )?read/);
   assert.match(list, /message\.isStarred \? 'Unflag' : 'Flag'/);

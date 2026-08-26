@@ -307,9 +307,17 @@ cannot replace the newer draft. User-facing Flag maps to IMAP `\Flagged` through
 internal `star`/`unstar` API. Failed optimistic changes roll back and explain the
 failure, and the mobile reading toolbar wraps so no command is clipped at 390 px.
 
+Forward now preserves the original message's visible attachments. One bounded,
+message-scoped preparation request returns authoritative From/To/Cc/Date/body
+metadata plus every file; Compose opens only when that set is complete, shows
+`Preparing Forward…` while it loads, and then uses the normal attachment,
+autosave, and send pipeline. A newer compose action cancels superseded work.
+Permanent source, count, per-file, or aggregate limits fail closed with recovery
+guidance instead of opening a partial Forward.
+
 This is not full Outlook parity. Categories, Pin, Rules-from-message,
 Sweep/Block/Ignore, Favorites ordering, folder color/empty commands, Search
-Folders, attachment-preserving Forward, and richer RFC address parsing remain
+Folders, richer RFC address parsing, and rich-source Forward editing remain
 separate bounded slices.
 
 ### 3.2 Calendar

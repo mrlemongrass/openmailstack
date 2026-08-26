@@ -25,9 +25,14 @@ import { createMailSearchInputController } from '../mail-search-input';
 import { createMailSearchRequestCoordinator, isMailSearchAbort } from '../mail-search-request';
 import { mailIdentities, selectComposeFrom } from '../mail-runtime-settings';
 import { createDraftSaveCoordinator } from '../draft-save-coordinator';
-import { draftComposeState, hydrateDraftAttachments } from '../draft-resume';
+import { draftComposeState, hydrateDraftAttachments, hydrateForwardContent } from '../draft-resume';
 import { createComposePreparationCoordinator } from '../compose-preparation-coordinator';
-import { buildMessageComposeDraft, type MessageComposeAction } from '../message-compose-actions';
+import {
+  messageComposeActionLabel,
+  prepareMessageComposeAction,
+  type MessageComposeAction,
+  type MessageComposePreparationStatus,
+} from '../message-compose-actions';
 import { outboundIdentityFields } from '../outbound-identity';
 import { reopenRestoredScheduledDraft } from '../scheduled-undo-draft';
 import {
@@ -155,6 +160,54 @@ function protectedSendCheckFeedback(
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
+
+interface ComposePreparationErrorToast {
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void | Promise<void>;
+}
+
+const composePreparationErrorToast = (
+  status: MessageComposePreparationStatus,
+  action: MessageComposeAction,
+  identitiesError: string,
+  retryIdentities: () => Promise<void>,
+): ComposePreparationErrorToast | null => {
+  if (status === 'unavailable') {
+    return { message: `${messageComposeActionLabel(action)} could not be prepared. Try again.` };
+  }
+  if (status === 'attachments-unavailable') {
+    return {
+      message: 'The original message and its attachments could not be prepared, so the Forward was not opened. Try again.',
+    };
+  }
+  if (status === 'attachments-count-exceeded') {
+    return {
+      message: 'This message has too many attachments to prepare for forwarding. Download the files you need and attach a smaller selection to a new message.',
+    };
+  }
+  if (status === 'attachments-size-exceeded') {
+    return {
+      message: 'The original attachments exceed this server\'s forwarding limit. Download the files you need and attach a smaller selection to a new message.',
+    };
+  }
+  if (status === 'message-size-exceeded') {
+    return {
+      message: 'This message is too large to prepare for forwarding in webmail. Download its attachments individually, or use another IMAP client for the original message.',
+    };
+  }
+  if (status === 'missing-reply-address') {
+    return { message: 'This message does not have a reply address.' };
+  }
+  if (status === 'identities-unavailable') {
+    return {
+      message: identitiesError || 'Sending identities are still loading. Try again.',
+      actionLabel: 'Retry',
+      onAction: retryIdentities,
+    };
+  }
+  return null;
+};
 
 function mergeFolderMutationWarnings(
   warnings: FolderMutationWarning[] | undefined,
@@ -506,6 +559,7 @@ export function useMail(_opts: UseMailOptions) {
     body?: string;
     inReplyTo?: string;
     references?: string;
+    attachments?: File[];
   } = {}, preparationRequestId?: number) => {
     const requestId = preparationRequestId ?? composePreparationCoordinatorRef.current.begin();
     if (!claimComposeIntent(requestId)) return false;
@@ -530,7 +584,7 @@ export function useMail(_opts: UseMailOptions) {
     setComposeReferences(initial.references || '');
     setComposeSubject(initial.subject || '');
     setComposeBody(initial.body || '');
-    setComposeAttachments([]);
+    setComposeAttachments(initial.attachments || []);
     setComposeFrom('');
     setComposeSignature('none');
     setComposeMode('plain');
@@ -1017,12 +1071,21 @@ export function useMail(_opts: UseMailOptions) {
 
   const resumeDraft = useCallback(async (message: Message, folder: string) => {
     const requestId = composePreparationCoordinatorRef.current.begin();
+    const preparationSignal = composePreparationCoordinatorRef.current.signal(requestId);
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current);
       draftTimerRef.current = null;
     }
     await draftSaveCoordinatorRef.current.flush();
-    const attachments = await hydrateDraftAttachments(message, folder);
+    let attachments: File[];
+    try {
+      attachments = await hydrateDraftAttachments(message, folder, fetch, preparationSignal);
+    } catch (error) {
+      if (!composePreparationCoordinatorRef.current.isCurrent(requestId)) {
+        return { senderChanged: false, opened: false };
+      }
+      throw error;
+    }
     const state = draftComposeState(message, attachments);
     const restoredFrom = selectComposeFrom(
       state.from,
@@ -1559,24 +1622,35 @@ export function useMail(_opts: UseMailOptions) {
     body = '',
   ) => {
     const requestId = composePreparationCoordinatorRef.current.begin();
-    if (action !== 'forward' && (!_opts.userIdentitiesReady || identities.length === 0)) {
-      return 'identities-unavailable' as const;
-    }
-    const fullMessage = message.bodyLoaded
-      ? message
-      : await fetchMessageBody(message.uid, folderPath);
-    if (!composePreparationCoordinatorRef.current.isCurrent(requestId)) return 'superseded' as const;
-    if (!fullMessage) return 'unavailable' as const;
-    const draft = buildMessageComposeDraft(
+    const preparationSignal = composePreparationCoordinatorRef.current.signal(requestId);
+    const status = await prepareMessageComposeAction({
       action,
-      fullMessage,
-      identities.map(identity => identity.address),
-    );
-    if (action !== 'forward' && !draft.to) return 'missing-reply-address' as const;
-    return startCompose(body ? { ...draft, body } : draft, requestId)
-      ? 'started' as const
-      : 'superseded' as const;
-  }, [_opts.userIdentitiesReady, fetchMessageBody, identities, startCompose]);
+      message,
+      folderPath,
+      body,
+      identitiesReady: _opts.userIdentitiesReady,
+      ownAddresses: identities.map(identity => identity.address),
+      isCurrent: () => composePreparationCoordinatorRef.current.isCurrent(requestId),
+      loadMessage: fetchMessageBody,
+      loadForwardContent: (summaryMessage, sourceFolder) => (
+        hydrateForwardContent(summaryMessage, sourceFolder, fetch, preparationSignal)
+      ),
+      openCompose: initial => startCompose(initial, requestId),
+    });
+    return composePreparationErrorToast(
+      status,
+      action,
+      _opts.userIdentitiesError,
+      _opts.onRetryUserIdentities,
+    ) || status;
+  }, [
+    _opts.onRetryUserIdentities,
+    _opts.userIdentitiesError,
+    _opts.userIdentitiesReady,
+    fetchMessageBody,
+    identities,
+    startCompose,
+  ]);
 
   // Pre-fetch message bodies in the background (non-blocking, silent)
   const prefetchBodies = useCallback((uids: number[], folderPath: string) => {

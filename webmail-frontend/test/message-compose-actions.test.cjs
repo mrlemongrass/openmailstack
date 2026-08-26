@@ -92,3 +92,115 @@ test('forward creates one forward prefix and quotes loaded plain text without re
   assert.match(draft.body, /To: Owner <owner@example\.test>, "Doe, Jane" <jane@example\.test>/);
   assert.match(draft.body, /> First line\n> Second line/);
 });
+
+test('forward preparation opens Compose once with every hydrated attachment', async () => {
+  const { prepareMessageComposeAction } = loadModule();
+  const files = [
+    new File(['pdf'], 'plan.pdf', { type: 'application/pdf' }),
+    new File(['csv'], 'forecast.csv', { type: 'text/csv' }),
+  ];
+  const opened = [];
+
+  const result = await prepareMessageComposeAction({
+    action: 'forward',
+    message: { ...message, bodyLoaded: true },
+    folderPath: 'INBOX',
+    body: '',
+    identitiesReady: true,
+    ownAddresses: [],
+    isCurrent: () => true,
+    loadMessage: async () => { throw new Error('loaded detail should be reused'); },
+    loadForwardContent: async () => ({
+      message: { ...message, text: 'Hydrated original body', bodyLoaded: true },
+      attachments: files,
+    }),
+    openCompose: initial => { opened.push(initial); return true; },
+  });
+
+  assert.equal(result, 'started');
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].subject, 'Fwd: Quarterly plan');
+  assert.match(opened[0].body, /> Hydrated original body/);
+  assert.deepEqual(opened[0].attachments, files);
+});
+
+test('forward preparation fails closed when an attachment batch is incomplete', async () => {
+  const { prepareMessageComposeAction } = loadModule();
+  let opened = false;
+
+  const result = await prepareMessageComposeAction({
+    action: 'forward',
+    message: { ...message, bodyLoaded: true },
+    folderPath: 'INBOX',
+    body: '',
+    identitiesReady: true,
+    ownAddresses: [],
+    isCurrent: () => true,
+    loadMessage: async () => undefined,
+    loadForwardContent: async () => { throw new Error('incomplete batch'); },
+    openCompose: () => { opened = true; return true; },
+  });
+
+  assert.equal(result, 'attachments-unavailable');
+  assert.equal(opened, false);
+});
+
+test('forward preparation preserves permanent attachment limit reasons', async () => {
+  const { prepareMessageComposeAction } = loadModule();
+  const baseInput = {
+    action: 'forward',
+    message: { ...message, bodyLoaded: true },
+    folderPath: 'INBOX',
+    body: '',
+    identitiesReady: true,
+    ownAddresses: [],
+    isCurrent: () => true,
+    loadMessage: async () => undefined,
+    openCompose: () => { throw new Error('limited Forward must not open Compose'); },
+  };
+
+  for (const [code, expected] of [
+    ['ATTACHMENT_COUNT_LIMIT', 'attachments-count-exceeded'],
+    ['ATTACHMENT_FILE_SIZE_LIMIT', 'attachments-size-exceeded'],
+    ['ATTACHMENT_TOTAL_SIZE_LIMIT', 'attachments-size-exceeded'],
+    ['MESSAGE_SOURCE_LIMIT', 'message-size-exceeded'],
+  ]) {
+    const result = await prepareMessageComposeAction({
+      ...baseInput,
+      loadForwardContent: async () => {
+        throw Object.assign(new Error('permanent attachment limit'), { code });
+      },
+    });
+    assert.equal(result, expected);
+  }
+});
+
+test('a newer compose intent wins while Forward attachments are still loading', async () => {
+  const { prepareMessageComposeAction } = loadModule();
+  let current = true;
+  let releaseAttachments;
+  let opened = false;
+  const pendingAttachments = new Promise(resolve => { releaseAttachments = resolve; });
+
+  const preparation = prepareMessageComposeAction({
+    action: 'forward',
+    message: { ...message, bodyLoaded: true },
+    folderPath: 'INBOX',
+    body: '',
+    identitiesReady: true,
+    ownAddresses: [],
+    isCurrent: () => current,
+    loadMessage: async () => undefined,
+    loadForwardContent: () => pendingAttachments,
+    openCompose: () => { opened = true; return true; },
+  });
+
+  current = false;
+  releaseAttachments({
+    message: { ...message, bodyLoaded: true },
+    attachments: [new File(['pdf'], 'plan.pdf', { type: 'application/pdf' })],
+  });
+
+  assert.equal(await preparation, 'superseded');
+  assert.equal(opened, false);
+});

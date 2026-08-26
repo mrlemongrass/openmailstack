@@ -10504,3 +10504,60 @@ double-Send, Flag rollback/retry, identity failure/recovery, keyboard-focus,
 Settings-truthfulness, and 390 px geometry checks. There were no unexpected
 console errors or page errors. API fixtures prevented real mailbox mutation;
 the guarded protocol canaries completed their own exact cleanup.
+
+## 2026-08-26 — Attachment-preserving Forward
+
+### Selected task
+
+Close the next Outlook-familiar correctness gap: Forward must carry every
+visible original attachment through the ordinary Compose autosave/send path,
+without opening a partial draft or allowing stale preparation to replace a
+newer compose intent.
+
+### Changes made
+
+- Added one authenticated, message-scoped Forward preparation response with
+  authoritative subject/From/To/Cc/Date/body metadata plus all visible files.
+  It uses a dedicated IMAP connection, a 75 MiB source ceiling, at most 100
+  files, the configured per-file upload limit, and an aggregate ceiling of the
+  smaller of 50 MiB or twice that upload limit.
+- Validation completes before multipart headers are sent. Response writes honor
+  backpressure and stop on disconnect; typed `413` results distinguish source,
+  count, per-file, and aggregate limits.
+- Forward shows `Preparing Forward…`, skips the unrelated detail-loader path,
+  fails closed on missing/mismatched multipart data, carries authoritative Cc,
+  and opens Compose only with the complete file set. Superseding compose intent
+  aborts the request.
+- Individual download and Draft resume select only the requested decoded IMAP
+  body part, independently bounded at 75 MiB. BODYSTRUCTURE ordering mirrors
+  Mailparser for AMP HTML, delivery-status, embedded messages, and related
+  parts; eligible non-multipart roots use the complete `TEXT` section. Draft
+  hydration runs four requests at most and aborts its siblings after one fails.
+
+### Proof and review
+
+- Complete frontend: 221/221; lint and production TypeScript/Vite build passed.
+- Complete backend: 871 passed, seven documented optional integration skips,
+  zero failed (878 total); generated JS/declarations match TypeScript.
+- The complete repository integration gate ended with
+  `[ok] Integration checks completed.` `git diff --check` passed.
+- Mocked Chromium proved visible preparation, authoritative Cc/body, two files
+  attached once, two-file autosave once, and Compose opening while the ordinary
+  detail request remained deliberately stalled. A typed permanent limit kept
+  Compose closed and displayed actionable guidance. The successful flow had no
+  console warnings/errors; the failure flow logged only the expected HTTP 413.
+  Browser QA used fixture APIs and did not touch a real mailbox.
+- Fixed-point Spec and Standards reviews returned no findings after MIME
+  ordering, root `.eml`, authoritative headers, and sibling cancellation were
+  corrected.
+
+### Residual limits and release state
+
+HTML-only source messages still use the safe placeholder because Compose is a
+plain-text editor; rich-source forwarding is a separate surface. Forward is
+intentionally bounded and directs oversized-message recovery to individual
+downloads or another IMAP client. Categories remains the next recommended
+Outlook-parity slice.
+
+The candidate is fully validated; guarded bridge and active deployment are
+pending.

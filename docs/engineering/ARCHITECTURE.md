@@ -767,10 +767,32 @@ Message-ID is appended. `useMail.ts` retains those headers in the compose
 fingerprint and carries them through Draft save, resume, full-compose send, and
 the inline quick-reply path.
 
-`useMail.prepareMessageCompose()` owns full-detail loading and one shared
+`useMail.prepareMessageCompose()` owns Reply full-detail loading and one shared
 latest-intent coordinator for list, reading-pane, keyboard, new-message, and
-Draft-resume entry points. A newer intent invalidates older body fetch or Draft
-attachment hydration work before it can claim the composer.
+Draft-resume entry points. Forward bypasses the ordinary detail loader and uses
+one dedicated preparation response containing authoritative
+subject/From/To/Cc/Date/body metadata and all visible attachments. A newer
+intent aborts older detail, Forward, or Draft hydration requests before they
+can claim the composer.
+
+Authenticated `GET /api/folders/:folder/messages/:uid/attachments` prepares a
+Forward on a dedicated IMAP connection, reads at most 75 MiB plus one sentinel
+byte of source, parses it once, validates every file before sending response
+headers, and emits one backpressure-aware multipart response. The bundle is
+limited to 100 visible files, the configured upload limit per decoded file,
+and the smaller of 50 MiB or twice that upload limit in aggregate. Disconnects
+stop writes, and typed `413` responses distinguish source, count, per-file, and
+aggregate limits. The browser shows `Preparing Forward…`, requires metadata and
+file counts to agree, and opens Compose only with the complete set; the normal
+Compose autosave/send path then owns those files.
+
+Individual attachment recovery and Draft resume use the message's
+BODYSTRUCTURE ordering and request only the selected decoded IMAP body part,
+bounded at 75 MiB plus one sentinel byte independently of total source size.
+The BODYSTRUCTURE classifier mirrors Mailparser's default text-part grammar,
+including delivery-status and AMP HTML behavior, and maps eligible single-part
+roots to the complete IMAP `TEXT` section. Draft resume schedules at most four part requests and
+cancels its in-flight siblings after the first definitive failure.
 
 Reply preparation is fail-closed until `/api/user/identities` has returned an
 authoritative primary identity. Loading and failure are distinct runtime states;

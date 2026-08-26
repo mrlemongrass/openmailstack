@@ -60,3 +60,18 @@ test('a new-message intent supersedes delayed draft hydration', () => {
   assert.equal(coordinator.claim(newMessageIntent), true);
   assert.equal(coordinator.claim(delayedDraftIntent), false);
 });
+
+test('superseding or claiming a compose intent aborts its in-flight preparation work', () => {
+  const { createComposePreparationCoordinator } = loadModule();
+  const coordinator = createComposePreparationCoordinator();
+  const firstIntent = coordinator.begin();
+  const firstSignal = coordinator.signal(firstIntent);
+
+  const secondIntent = coordinator.begin();
+  const secondSignal = coordinator.signal(secondIntent);
+
+  assert.equal(firstSignal.aborted, true);
+  assert.equal(secondSignal.aborted, false);
+  assert.equal(coordinator.claim(secondIntent), true);
+  assert.equal(secondSignal.aborted, true);
+});

@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const http = require('node:http');
 const test = require('node:test');
 
@@ -14,6 +15,11 @@ const cancellations = [];
 const removals = [];
 const aborts = [];
 const scheduledQueries = [];
+const messageFetches = [];
+const dedicatedImapCalls = [];
+const attachmentPartDownloads = [];
+const incompleteSourceFolders = new Set();
+const oversizedAttachmentFolders = new Set();
 let scheduledRows = [];
 let smtpResult = { messageId: '<accepted@example.test>' };
 let draftDeleteError = null;
@@ -58,6 +64,60 @@ nodemailer.createTransport = () => ({
 });
 
 const imapPool = require('../src/imap-pool.js');
+
+const attachmentMessageSource = folder => {
+  if (folder === 'Race/Alpha' || folder === 'Race/Beta') {
+    const label = folder.endsWith('Alpha') ? 'alpha' : 'beta';
+    return Buffer.from([
+      'From: Alice <alice@example.test>',
+      'To: Owner <owner@example.test>',
+      `Subject: ${label} attachment`,
+      'MIME-Version: 1.0',
+      'Content-Type: multipart/mixed; boundary="oms-race"',
+      '',
+      '--oms-race',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      label,
+      '--oms-race',
+      'Content-Type: text/plain',
+      `Content-Disposition: attachment; filename="${label}.txt"`,
+      '',
+      `${label} contents`,
+      '--oms-race--',
+      '',
+    ].join('\r\n'));
+  }
+  return Buffer.from([
+    'From: Alice <alice@example.test>',
+    'To: Owner <owner@example.test>',
+    'Cc: Project Team <team@example.test>',
+    'Date: Tue, 25 Aug 2026 18:30:00 +0000',
+    'Subject: Attachment bundle',
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/mixed; boundary="oms-bundle"',
+    '',
+    '--oms-bundle',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    'Please forward both files.',
+    '--oms-bundle',
+    'Content-Type: application/pdf',
+    'Content-Disposition: attachment; filename="plan.pdf"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    'cGRmIGNvbnRlbnRz',
+    '--oms-bundle',
+    'Content-Type: text/csv',
+    'Content-Disposition: attachment; filename="forecast.csv"',
+    '',
+    'a,b',
+    '1,2',
+    '--oms-bundle--',
+    '',
+  ].join('\r\n'));
+};
+
 imapPool.getImapConnection = async () => ({
   client: {
     async mailboxCreate() {},
@@ -77,7 +137,50 @@ imapPool.getImapConnection = async () => ({
     draftEvents.push(['delete', uids]);
     if (draftDeleteError) throw draftDeleteError;
   },
+  async getMessageByUid(folder, uid) {
+    throw new Error(`Selected-mailbox read used the shared pool: ${folder}/${uid}`);
+  },
 });
+
+imapPool.withDedicatedImapConnection = async (user, pass, operation) => {
+  const connectionId = dedicatedImapCalls.length + 1;
+  dedicatedImapCalls.push({ user, pass, connectionId });
+  return operation({
+    async getMessageByUid(folder, uid, maxSourceBytes) {
+      messageFetches.push({ folder, uid, maxSourceBytes, connectionId });
+      await new Promise(resolve => setImmediate(resolve));
+      const source = attachmentMessageSource(folder);
+      return {
+        source,
+        size: source.length,
+        sourceComplete: !incompleteSourceFolders.has(folder),
+      };
+    },
+    async getAttachmentByUid(folder, uid, attachmentId, maxDecodedBytes) {
+      attachmentPartDownloads.push({ folder, uid, attachmentId, maxDecodedBytes, connectionId });
+      if (oversizedAttachmentFolders.has(folder)) {
+        return {
+          messageFound: true,
+          attachment: {
+            filename: 'oversized.bin',
+            contentType: 'application/octet-stream',
+            content: Buffer.alloc(0),
+            tooLarge: true,
+          },
+        };
+      }
+      const attachments = [
+        { filename: 'plan.pdf', contentType: 'application/pdf', content: Buffer.from('pdf contents') },
+        { filename: 'forecast.csv', contentType: 'text/csv', content: Buffer.from('a,b\r\n1,2') },
+      ];
+      const attachment = attachments[attachmentId];
+      return {
+        messageFound: true,
+        ...(attachment ? { attachment: { ...attachment, tooLarge: false } } : {}),
+      };
+    },
+  });
+};
 
 const userSettings = require('../src/user-settings.js');
 userSettings.getUserSettings = async () => ({ autoCreateFromSent: false });
@@ -159,7 +262,15 @@ scheduled.removeTerminalScheduledEmail = async (_pool, id, owner) => {
 
 const originalSetInterval = global.setInterval;
 global.setInterval = () => ({ unref() {} });
-const { apiRouter } = require('../src/api.js');
+const {
+  apiRouter,
+  ATTACHMENT_BUNDLE_MAX_COUNT,
+  ATTACHMENT_BUNDLE_MAX_DECODED_BYTES,
+  ATTACHMENT_SOURCE_MAX_BYTES,
+  ATTACHMENT_DOWNLOAD_MAX_BYTES,
+  validateAttachmentBundleLimits,
+  writeAttachmentResponseChunk,
+} = require('../src/api.js');
 global.setInterval = originalSetInterval;
 
 let idempotencySequence = 0;
@@ -197,6 +308,20 @@ const getJson = (port, path, options = {}) => new Promise((resolve, reject) => {
       status: response.statusCode,
       headers: response.headers,
       json: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+    }));
+  });
+  request.on('error', reject);
+  request.end();
+});
+
+const getRaw = (port, path) => new Promise((resolve, reject) => {
+  const request = http.request({ hostname: '127.0.0.1', port, path }, response => {
+    const chunks = [];
+    response.on('data', chunk => chunks.push(chunk));
+    response.on('end', () => resolve({
+      status: response.statusCode,
+      headers: response.headers,
+      body: Buffer.concat(chunks),
     }));
   });
   request.on('error', reject);
@@ -683,6 +808,202 @@ test('message and attachment routes reject numeric-prefix UID ambiguity', async 
   );
   assert.equal(attachmentResponse.status, 400);
   assert.equal(attachmentResponse.json.error, 'Invalid attachment request');
+});
+
+test('attachment batch fetches and parses one MIME source for every visible file', async t => {
+  messageFetches.length = 0;
+  dedicatedImapCalls.length = 0;
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const response = await getRaw(
+    server.address().port,
+    '/api/folders/Projects%2F2026/messages/42/attachments',
+  );
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-type'], /^multipart\/form-data; boundary=/);
+  assert.deepEqual(messageFetches, [{
+    folder: 'Projects/2026',
+    uid: 42,
+    maxSourceBytes: ATTACHMENT_SOURCE_MAX_BYTES + 1,
+    connectionId: 1,
+  }]);
+  assert.equal(dedicatedImapCalls.length, 1);
+
+  const parsed = await new Response(response.body, {
+    headers: { 'Content-Type': response.headers['content-type'] },
+  }).formData();
+  const message = JSON.parse(parsed.get('message'));
+  assert.equal(message.subject, 'Attachment bundle');
+  assert.equal(message.from, '"Alice" <alice@example.test>');
+  assert.equal(message.to, '"Owner" <owner@example.test>');
+  assert.equal(message.cc, '"Project Team" <team@example.test>');
+  assert.equal(message.date, '2026-08-25T18:30:00.000Z');
+  assert.equal(message.text.trim(), 'Please forward both files.');
+  assert.equal(message.html, '');
+  assert.deepEqual(message.attachments.map(attachment => [attachment.filename, attachment.contentType]), [
+    ['plan.pdf', 'application/pdf'],
+    ['forecast.csv', 'text/csv'],
+  ]);
+  const attachments = parsed.getAll('attachments');
+  assert.deepEqual(attachments.map(file => [file.name, file.type]), [
+    ['plan.pdf', 'application/pdf'],
+    ['forecast.csv', 'text/csv'],
+  ]);
+  assert.equal(await attachments[0].text(), 'pdf contents');
+  assert.equal(await attachments[1].text(), 'a,b\r\n1,2');
+});
+
+test('individual attachment download is decoded-part-bounded on a dedicated connection', async t => {
+  attachmentPartDownloads.length = 0;
+  dedicatedImapCalls.length = 0;
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const response = await getRaw(
+    server.address().port,
+    '/api/folders/Projects%2F2026/messages/42/attachments/0?download=1',
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.body.toString('utf8'), 'pdf contents');
+  assert.deepEqual(attachmentPartDownloads, [{
+    folder: 'Projects/2026',
+    uid: 42,
+    attachmentId: 0,
+    maxDecodedBytes: ATTACHMENT_DOWNLOAD_MAX_BYTES,
+    connectionId: 1,
+  }]);
+  assert.equal(dedicatedImapCalls.length, 1);
+});
+
+test('concurrent attachment batches stay isolated to their requested folders', async t => {
+  messageFetches.length = 0;
+  dedicatedImapCalls.length = 0;
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const responses = await Promise.all([
+    getRaw(server.address().port, '/api/folders/Race%2FAlpha/messages/42/attachments'),
+    getRaw(server.address().port, '/api/folders/Race%2FBeta/messages/42/attachments'),
+  ]);
+  const batches = await Promise.all(responses.map(async response => {
+    assert.equal(response.status, 200);
+    const parsed = await new Response(response.body, {
+      headers: { 'Content-Type': response.headers['content-type'] },
+    }).formData();
+    const file = parsed.get('attachments');
+    return [file.name, await file.text()];
+  }));
+
+  assert.deepEqual(batches, [
+    ['alpha.txt', 'alpha contents'],
+    ['beta.txt', 'beta contents'],
+  ]);
+  assert.equal(dedicatedImapCalls.length, 2);
+  assert.equal(new Set(messageFetches.map(fetch => fetch.connectionId)).size, 2);
+});
+
+test('attachment batches reject bounded source, count, and decoded-byte overflow before transfer', async t => {
+  assert.throws(
+    () => validateAttachmentBundleLimits(Array.from(
+      { length: ATTACHMENT_BUNDLE_MAX_COUNT + 1 },
+      () => ({ content: { length: 1 } }),
+    )),
+    /too many attachments/i,
+  );
+  assert.throws(
+    () => validateAttachmentBundleLimits([{
+      content: { length: (25 * 1024 * 1024) + 1 },
+    }]),
+    /attachment.*too large/i,
+  );
+  const aggregatePartBytes = Math.ceil((ATTACHMENT_BUNDLE_MAX_DECODED_BYTES + 1) / 3);
+  assert.throws(
+    () => validateAttachmentBundleLimits(Array.from(
+      { length: 3 },
+      () => ({ content: { length: aggregatePartBytes } }),
+    )),
+    /attachment.*too large/i,
+  );
+
+  incompleteSourceFolders.add('Oversized');
+  t.after(() => incompleteSourceFolders.delete('Oversized'));
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  app.use('/api', apiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+
+  const response = await getRaw(
+    server.address().port,
+    '/api/folders/Oversized/messages/42/attachments',
+  );
+  assert.equal(response.status, 413);
+  assert.match(response.headers['content-type'], /^application\/json/);
+  assert.equal(JSON.parse(response.body.toString('utf8')).code, 'MESSAGE_SOURCE_LIMIT');
+
+  const sourceIndependentResponse = await getRaw(
+    server.address().port,
+    '/api/folders/Oversized/messages/42/attachments/0?download=1',
+  );
+  assert.equal(sourceIndependentResponse.status, 200);
+  assert.equal(sourceIndependentResponse.body.toString('utf8'), 'pdf contents');
+
+  oversizedAttachmentFolders.add('OversizedPart');
+  t.after(() => oversizedAttachmentFolders.delete('OversizedPart'));
+  const oversizedPartResponse = await getRaw(
+    server.address().port,
+    '/api/folders/OversizedPart/messages/42/attachments/0?download=1',
+  );
+  assert.equal(oversizedPartResponse.status, 413);
+  assert.match(oversizedPartResponse.headers['content-type'], /^application\/json/);
+  assert.equal(
+    JSON.parse(oversizedPartResponse.body.toString('utf8')).code,
+    'ATTACHMENT_DOWNLOAD_SIZE_LIMIT',
+  );
+});
+
+test('attachment response chunks wait for drain and reject a disconnected response', async () => {
+  const drainingResponse = new EventEmitter();
+  drainingResponse.destroyed = false;
+  drainingResponse.write = () => false;
+  const pendingDrain = writeAttachmentResponseChunk(drainingResponse, Buffer.from('bounded'));
+  assert.equal(drainingResponse.listenerCount('drain'), 1);
+  assert.equal(drainingResponse.listenerCount('close'), 1);
+  assert.equal(drainingResponse.listenerCount('error'), 1);
+  drainingResponse.emit('drain');
+  await pendingDrain;
+  assert.equal(drainingResponse.listenerCount('drain'), 0);
+  assert.equal(drainingResponse.listenerCount('close'), 0);
+  assert.equal(drainingResponse.listenerCount('error'), 0);
+
+  const closedResponse = new EventEmitter();
+  closedResponse.destroyed = false;
+  closedResponse.write = () => false;
+  const pendingClose = writeAttachmentResponseChunk(closedResponse, Buffer.from('bounded'));
+  closedResponse.destroyed = true;
+  closedResponse.emit('close');
+  await assert.rejects(pendingClose, /attachment transfer closed/i);
+  assert.equal(closedResponse.listenerCount('drain'), 0);
+  assert.equal(closedResponse.listenerCount('close'), 0);
+  assert.equal(closedResponse.listenerCount('error'), 0);
 });
 
 test('draft replacement appends first and deletes only older copies', async t => {

@@ -24,6 +24,7 @@ import { isDraftFolder } from './draft-resume';
 import { UncertainSendBlockedError } from './immediate-send';
 import {
   buildMessageComposeDraft,
+  messageComposeActionLabel,
   type MessageComposeAction,
 } from './message-compose-actions';
 
@@ -82,29 +83,11 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     setPreparingComposeAction(action);
     try {
       const result = await prepareMessageCompose(action, message, sourceFolder, body);
-      if (result === 'unavailable') {
-        showToast({
-          type: 'error',
-          message: `${action === 'forward' ? 'Forward' : 'Reply'} could not be prepared. Try again.`,
-        });
-      }
-      if (result === 'missing-reply-address') {
-        showToast({ type: 'error', message: 'This message does not have a reply address.' });
-      }
-      if (result === 'identities-unavailable') {
-        showToast({
-          type: 'error',
-          message: mail.userIdentitiesError || 'Sending identities are still loading. Try again.',
-          actionLabel: 'Retry',
-          onAction: mail.retryUserIdentities,
-        });
-      }
+      if (typeof result === 'object') showToast({ type: 'error', ...result });
     } finally {
       setPreparingComposeAction(null);
     }
   }, [
-    mail.retryUserIdentities,
-    mail.userIdentitiesError,
     message,
     prepareMessageCompose,
     preparingComposeAction,
@@ -501,6 +484,15 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         <button className="btn btn-ghost" disabled={Boolean(preparingComposeAction)} onClick={() => {
           void startMessageCompose('forward');
         }} aria-label="Forward" title="Forward"><Forward size={16} /></button>
+        {preparingComposeAction && (
+          <span role="status" aria-live="polite" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            color: 'var(--text-secondary)', fontSize: '0.78rem', whiteSpace: 'nowrap',
+          }}>
+            <Spinner size={14} />
+            Preparing {messageComposeActionLabel(preparingComposeAction)}…
+          </span>
+        )}
         <button className="btn btn-ghost" aria-label="Show original" onClick={() => setShowRaw(true)} title="Show original"><Code size={16} /></button>
         <div style={{ position: 'relative' }}>
           <button className="btn btn-ghost" aria-label="Snooze message" onClick={() => setShowSnooze(!showSnooze)} title="Snooze"><Clock size={16} /></button>

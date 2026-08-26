@@ -1260,6 +1260,25 @@ React frontend:
   `protocol-guarded-webmail-20260826T164939Z`; both public protocol gates and
   released-asset browser verification passed.
 
+## 2026-08-26 Attachment-preserving Forward
+
+- Forward uses one dedicated, message-scoped multipart preparation request for
+  authoritative subject/From/To/Cc/Date/body metadata and every visible file.
+  The browser fails closed on incomplete data, shows `Preparing Forward…`, and
+  opens the normal Compose/autosave/send path only with the complete bundle.
+- The server caps source at 75 MiB, count at 100, each decoded file at the
+  configured upload limit, and aggregate decoded bytes at `min(50 MiB,
+  2 * upload limit)`. Typed pre-header `413` failures, response backpressure,
+  disconnect cancellation, and latest-compose-intent cancellation are tested.
+- Individual attachment recovery and Draft resume use dedicated IMAP
+  BODYSTRUCTURE/body-part downloads rather than whole-source parsing. Mapping
+  matches Mailparser's delivery-status/AMP/related ordering and uses IMAP
+  `TEXT` for eligible non-multipart roots, including nested `.eml` messages.
+  Draft resume runs at most four downloads and aborts siblings after failure.
+- Candidate proof: frontend 221/221 plus lint/build; backend 871 pass, seven
+  optional skips, zero fail; complete integration; mocked Chromium success and
+  permanent-limit failure; final Spec/Standards review with no findings.
+
 Validation:
 
 - `docs/webmail-release-validation.md` defines local gates, clean-VM checks, and the mail/calendar/contacts/mobile/security client matrix for modern webmail releases.

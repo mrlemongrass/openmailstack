@@ -190,6 +190,7 @@ test('unimplemented mail controls are absent while inline Send and Archive remai
   const inlineReply = read('../src/mail/components/InlineReply.tsx');
   const viewer = read('../src/mail/MessageViewer.tsx');
   const hook = read('../src/mail/hooks/useMail.ts');
+  const composeActions = read('../src/mail/message-compose-actions.ts');
   const panel = read('../src/settings/SettingsPanel.tsx');
   const navigation = read('../src/settings/settingsNavigation.ts');
   const tabs = read('../src/settings/tabs.ts');
@@ -218,7 +219,8 @@ test('unimplemented mail controls are absent while inline Send and Archive remai
   assert.match(mailRoutes, /loadMailIdentitiesRuntimeState\(fetchIdentities\)/);
   assert.match(mailRoutes, /userIdentitiesReady/);
   assert.match(mailRoutes, /userIdentitiesError/);
-  assert.match(hook, /action !== 'forward'[\s\S]*!_opts\.userIdentitiesReady[\s\S]*return 'identities-unavailable'/);
+  assert.match(hook, /identitiesReady: _opts\.userIdentitiesReady/);
+  assert.match(composeActions, /action !== 'forward'[\s\S]*!identitiesReady[\s\S]*return 'identities-unavailable'/);
   assert.match(viewer, /!mail\.userIdentitiesReady \|\| composeIdentities\.length === 0/);
 
   const folderSidebar = read('../src/mail/FolderSidebar.tsx');

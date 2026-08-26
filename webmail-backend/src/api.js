@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.apiRouter = void 0;
+exports.writeAttachmentResponseChunk = exports.validateAttachmentBundleLimits = exports.ATTACHMENT_DOWNLOAD_MAX_BYTES = exports.ATTACHMENT_SOURCE_MAX_BYTES = exports.ATTACHMENT_BUNDLE_MAX_DECODED_BYTES = exports.ATTACHMENT_BUNDLE_MAX_COUNT = exports.apiRouter = void 0;
 const express_1 = require("express");
 const crypto_1 = __importDefault(require("crypto"));
 const child_process_1 = require("child_process");
@@ -509,6 +509,100 @@ const getVisibleAttachments = (parsed) => {
         return [];
     return parsed.attachments.filter((attachment) => (attachment && (attachment.filename || attachment.contentDisposition === 'attachment' || !attachment.related)));
 };
+const MEBIBYTE = 1024 * 1024;
+exports.ATTACHMENT_BUNDLE_MAX_COUNT = 100;
+exports.ATTACHMENT_BUNDLE_MAX_DECODED_BYTES = Math.max(1, Math.min(50 * MEBIBYTE, config_1.serverConfig.uploadLimitBytes * 2));
+exports.ATTACHMENT_SOURCE_MAX_BYTES = 75 * MEBIBYTE;
+exports.ATTACHMENT_DOWNLOAD_MAX_BYTES = 75 * MEBIBYTE;
+class AttachmentBundleLimitError extends Error {
+    code;
+    constructor(message, code) {
+        super(message);
+        this.code = code;
+    }
+}
+class AttachmentTransferClosedError extends Error {
+}
+const validateAttachmentBundleLimits = (attachments) => {
+    if (attachments.length > exports.ATTACHMENT_BUNDLE_MAX_COUNT) {
+        throw new AttachmentBundleLimitError('Too many attachments to forward', 'ATTACHMENT_COUNT_LIMIT');
+    }
+    let totalBytes = 0;
+    for (const attachment of attachments) {
+        const bytes = Number(attachment?.content?.length);
+        if (!Number.isSafeInteger(bytes) || bytes < 0) {
+            throw new Error('Attachment data is unavailable');
+        }
+        if (bytes > config_1.serverConfig.uploadLimitBytes) {
+            throw new AttachmentBundleLimitError('An attachment is too large to forward', 'ATTACHMENT_FILE_SIZE_LIMIT');
+        }
+        totalBytes += bytes;
+        if (totalBytes > exports.ATTACHMENT_BUNDLE_MAX_DECODED_BYTES) {
+            throw new AttachmentBundleLimitError('The attachments are too large to forward together', 'ATTACHMENT_TOTAL_SIZE_LIMIT');
+        }
+    }
+};
+exports.validateAttachmentBundleLimits = validateAttachmentBundleLimits;
+const loadForwardMessagePreparation = async (imap, folder, uid, maxSourceBytes, isCancelled = () => false) => {
+    const boundedSourceBytes = Number.isFinite(maxSourceBytes) && Number(maxSourceBytes) > 0
+        ? Math.floor(Number(maxSourceBytes))
+        : undefined;
+    const msg = await imap.getMessageByUid(folder, uid, boundedSourceBytes === undefined ? undefined : boundedSourceBytes + 1);
+    if (!msg)
+        return null;
+    if (isCancelled())
+        throw new AttachmentTransferClosedError('Attachment transfer closed');
+    if (boundedSourceBytes !== undefined
+        && (msg.sourceComplete === false
+            || Number(msg.size) > boundedSourceBytes
+            || Number(msg.source?.length) > boundedSourceBytes)) {
+        throw new AttachmentBundleLimitError('Message is too large to prepare its attachments', 'MESSAGE_SOURCE_LIMIT');
+    }
+    const simpleParser = require('mailparser').simpleParser;
+    const parsed = await simpleParser(msg.source);
+    if (isCancelled())
+        throw new AttachmentTransferClosedError('Attachment transfer closed');
+    return {
+        subject: parsed.subject || '(No Subject)',
+        from: getAddressText(parsed.from),
+        to: getAddressText(parsed.to),
+        cc: getAddressText(parsed.cc),
+        date: parsed.date instanceof Date && !Number.isNaN(parsed.date.getTime())
+            ? parsed.date.toISOString()
+            : '',
+        text: typeof parsed.text === 'string' ? parsed.text : '',
+        html: typeof parsed.html === 'string' ? parsed.html : '',
+        attachments: getVisibleAttachments(parsed),
+    };
+};
+const writeAttachmentResponseChunk = async (res, chunk) => {
+    if (res.destroyed)
+        throw new AttachmentTransferClosedError('Attachment transfer closed');
+    if (res.write(chunk))
+        return;
+    await new Promise((resolve, reject) => {
+        const cleanup = () => {
+            res.removeListener('drain', onDrain);
+            res.removeListener('close', onClose);
+            res.removeListener('error', onError);
+        };
+        const onDrain = () => {
+            cleanup();
+            resolve();
+        };
+        const onClose = () => {
+            cleanup();
+            reject(new AttachmentTransferClosedError('Attachment transfer closed'));
+        };
+        const onError = () => onClose();
+        res.once('drain', onDrain);
+        res.once('close', onClose);
+        res.once('error', onError);
+        if (res.destroyed)
+            onClose();
+    });
+};
+exports.writeAttachmentResponseChunk = writeAttachmentResponseChunk;
 const isPreviewableAttachment = (contentType) => (contentType.startsWith('image/') ||
     contentType.startsWith('text/') ||
     contentType === 'application/pdf' ||
@@ -520,6 +614,14 @@ const isPreviewableAttachment = (contentType) => (contentType.startsWith('image/
     contentType === 'application/vnd.oasis.opendocument.spreadsheet' ||
     contentType === 'application/rtf');
 const sanitizeAttachmentFilename = (filename) => filename.replace(/[\r\n"]/g, '').trim() || 'attachment';
+const sanitizeAttachmentContentType = (contentType) => {
+    if (typeof contentType !== 'string')
+        return 'application/octet-stream';
+    const cleaned = contentType.trim();
+    return /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(cleaned)
+        ? cleaned.toLowerCase()
+        : 'application/octet-stream';
+};
 const encodeAttachmentFilename = (filename) => {
     const cleaned = sanitizeAttachmentFilename(filename);
     return `filename="${cleaned.replace(/\\/g, '\\\\')}"; filename*=UTF-8''${encodeURIComponent(cleaned)}`;
@@ -3060,6 +3162,78 @@ exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
         });
     }
 });
+exports.apiRouter.get('/folders/*folder/messages/:uid/attachments', requireAuth, async (req, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+    const folder = folderParam(req);
+    const uid = strictInteger(req.params.uid, 1, MAX_IMAP_UID);
+    if (uid === null) {
+        return res.status(400).json({ success: false, error: 'Invalid attachment request' });
+    }
+    let responseClosed = Boolean(req.aborted);
+    const markResponseClosed = () => { responseClosed = true; };
+    res.once('close', markResponseClosed);
+    try {
+        const preparation = await withDedicatedImap(user, pass, imap => (loadForwardMessagePreparation(imap, folder, uid, exports.ATTACHMENT_SOURCE_MAX_BYTES, () => responseClosed)));
+        if (preparation === null) {
+            return res.status(404).json({ success: false, error: 'Message not found' });
+        }
+        const { attachments } = preparation;
+        if (attachments.some((attachment) => attachment.content === null || attachment.content === undefined)) {
+            return res.status(404).json({ success: false, error: 'Attachment not found' });
+        }
+        (0, exports.validateAttachmentBundleLimits)(attachments);
+        if (responseClosed)
+            return;
+        const boundary = `oms-${crypto_1.default.randomBytes(18).toString('hex')}`;
+        res.setHeader('Content-Type', `multipart/form-data; boundary=${boundary}`);
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        const metadata = JSON.stringify({
+            subject: preparation.subject,
+            from: preparation.from,
+            to: preparation.to,
+            cc: preparation.cc,
+            date: preparation.date,
+            text: preparation.text,
+            html: preparation.html,
+            attachments: attachments.map((attachment, index) => ({
+                filename: attachment.filename || `attachment-${index + 1}`,
+                contentType: sanitizeAttachmentContentType(attachment.contentType),
+                size: attachment.content.length,
+            })),
+        });
+        await (0, exports.writeAttachmentResponseChunk)(res, `--${boundary}\r\n`);
+        await (0, exports.writeAttachmentResponseChunk)(res, 'Content-Disposition: form-data; name="message"\r\nContent-Type: application/json\r\n\r\n');
+        await (0, exports.writeAttachmentResponseChunk)(res, metadata);
+        await (0, exports.writeAttachmentResponseChunk)(res, '\r\n');
+        for (const [index, attachment] of attachments.entries()) {
+            const filename = attachment.filename || `attachment-${index + 1}`;
+            const contentType = sanitizeAttachmentContentType(attachment.contentType);
+            const formFilename = sanitizeAttachmentFilename(filename).replace(/\\/g, '\\\\');
+            await (0, exports.writeAttachmentResponseChunk)(res, `--${boundary}\r\n`);
+            await (0, exports.writeAttachmentResponseChunk)(res, `Content-Disposition: form-data; name="attachments"; filename="${formFilename}"\r\n`);
+            await (0, exports.writeAttachmentResponseChunk)(res, `Content-Type: ${contentType}\r\n\r\n`);
+            await (0, exports.writeAttachmentResponseChunk)(res, attachment.content);
+            await (0, exports.writeAttachmentResponseChunk)(res, '\r\n');
+        }
+        res.end(`--${boundary}--\r\n`);
+    }
+    catch (err) {
+        if (err instanceof AttachmentTransferClosedError || responseClosed)
+            return;
+        if (err instanceof AttachmentBundleLimitError && !res.headersSent) {
+            return res.status(413).json({ success: false, code: err.code, error: err.message });
+        }
+        console.error('Failed to fetch attachments:', err);
+        if (res.headersSent)
+            return res.end();
+        res.status(500).json({ success: false, error: 'Internal Server Error' });
+    }
+    finally {
+        res.removeListener('close', markResponseClosed);
+    }
+});
 exports.apiRouter.get('/folders/*folder/messages/:uid/attachments/:attachmentId', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -3070,21 +3244,24 @@ exports.apiRouter.get('/folders/*folder/messages/:uid/attachments/:attachmentId'
     if (uid === null || attachmentId === null) {
         return res.status(400).json({ success: false, error: 'Invalid attachment request' });
     }
-    const { ImapService } = require('./imap');
-    const simpleParser = require('mailparser').simpleParser;
-    const imap = await getPooledImap(user, pass);
     try {
-        const msg = await imap.getMessageByUid(folder, uid);
-        if (!msg)
+        const result = await withDedicatedImap(user, pass, imap => (imap.getAttachmentByUid(folder, uid, attachmentId, exports.ATTACHMENT_DOWNLOAD_MAX_BYTES)));
+        if (!result.messageFound) {
             return res.status(404).json({ success: false, error: 'Message not found' });
-        const parsed = await simpleParser(msg.source);
-        const attachments = getVisibleAttachments(parsed);
-        const attachment = attachments[attachmentId];
-        if (!attachment || !attachment.content) {
+        }
+        const attachment = result.attachment;
+        if (!attachment) {
             return res.status(404).json({ success: false, error: 'Attachment not found' });
         }
-        const contentType = attachment.contentType || 'application/octet-stream';
-        const filename = attachment.filename || `attachment-${attachmentId + 1}`;
+        if (attachment.tooLarge) {
+            return res.status(413).json({
+                success: false,
+                code: 'ATTACHMENT_DOWNLOAD_SIZE_LIMIT',
+                error: 'This attachment is too large to download in webmail',
+            });
+        }
+        const contentType = sanitizeAttachmentContentType(attachment.contentType);
+        const filename = attachment.filename;
         const disposition = forceDownload || !isPreviewableAttachment(contentType) ? 'attachment' : 'inline';
         res.setHeader('Content-Type', contentType);
         res.setHeader('Content-Length', attachment.content.length);
@@ -3095,8 +3272,6 @@ exports.apiRouter.get('/folders/*folder/messages/:uid/attachments/:attachmentId'
     catch (err) {
         console.error('Failed to fetch attachment:', err);
         res.status(500).json({ success: false, error: 'Internal Server Error' });
-    }
-    finally {
     }
 });
 exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req, res) => {

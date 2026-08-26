@@ -3,6 +3,17 @@ import type { Message } from '../shared/types';
 
 export type MessageComposeAction = 'reply' | 'reply-all' | 'forward';
 
+export type MessageComposePreparationStatus =
+  | 'started'
+  | 'superseded'
+  | 'unavailable'
+  | 'identities-unavailable'
+  | 'missing-reply-address'
+  | 'attachments-unavailable'
+  | 'attachments-count-exceeded'
+  | 'attachments-size-exceeded'
+  | 'message-size-exceeded';
+
 export interface MessageComposeDraft {
   to?: string;
   cc?: string;
@@ -10,6 +21,23 @@ export interface MessageComposeDraft {
   body?: string;
   inReplyTo?: string;
   references?: string;
+  attachments?: File[];
+}
+
+interface MessageComposePreparationInput {
+  action: MessageComposeAction;
+  message: Message;
+  folderPath: string;
+  body: string;
+  identitiesReady: boolean;
+  ownAddresses: string[];
+  isCurrent: () => boolean;
+  loadMessage: (uid: number, folderPath: string) => Promise<Message | undefined>;
+  loadForwardContent: (
+    message: Message,
+    folderPath: string,
+  ) => Promise<{ message: Message; attachments: File[] }>;
+  openCompose: (initial: MessageComposeDraft) => boolean;
 }
 
 interface ParsedAddress {
@@ -62,6 +90,11 @@ function prefixedSubject(prefix: 'Re' | 'Fwd', subject: string): string {
   const value = subject || '(no subject)';
   const alreadyPrefixed = prefix === 'Re' ? /^\s*re\s*:/i : /^\s*(?:fwd?|fw)\s*:/i;
   return alreadyPrefixed.test(value) ? value : `${prefix}: ${value}`;
+}
+
+export function messageComposeActionLabel(action: MessageComposeAction): string {
+  if (action === 'reply-all') return 'Reply all';
+  return action === 'forward' ? 'Forward' : 'Reply';
 }
 
 function replyRecipients(message: Message, ownAddresses: string[]) {
@@ -131,4 +164,55 @@ export function buildMessageComposeDraft(
     ...(inReplyTo ? { inReplyTo } : {}),
     ...(references ? { references } : {}),
   };
+}
+
+export async function prepareMessageComposeAction({
+  action,
+  message,
+  folderPath,
+  body,
+  identitiesReady,
+  ownAddresses,
+  isCurrent,
+  loadMessage,
+  loadForwardContent,
+  openCompose,
+}: MessageComposePreparationInput): Promise<MessageComposePreparationStatus> {
+  if (action !== 'forward' && (!identitiesReady || ownAddresses.length === 0)) {
+    return 'identities-unavailable';
+  }
+
+  let fullMessage: Message | undefined = message;
+  let attachments: File[] | undefined;
+  if (action === 'forward') {
+    try {
+      const hydration = await loadForwardContent(message, folderPath);
+      fullMessage = hydration.message;
+      attachments = hydration.attachments;
+    } catch (error) {
+      if (isCurrent() && error instanceof Error && 'code' in error) {
+        const code = (error as Error & { code?: unknown }).code;
+        if (code === 'ATTACHMENT_COUNT_LIMIT') return 'attachments-count-exceeded';
+        if (code === 'ATTACHMENT_FILE_SIZE_LIMIT' || code === 'ATTACHMENT_TOTAL_SIZE_LIMIT') {
+          return 'attachments-size-exceeded';
+        }
+        if (code === 'MESSAGE_SOURCE_LIMIT') return 'message-size-exceeded';
+      }
+      return isCurrent() ? 'attachments-unavailable' : 'superseded';
+    }
+    if (!isCurrent()) return 'superseded';
+  } else if (!message.bodyLoaded) {
+    fullMessage = await loadMessage(message.uid, folderPath);
+    if (!isCurrent()) return 'superseded';
+  }
+  if (!fullMessage) return 'unavailable';
+
+  const draft = buildMessageComposeDraft(action, fullMessage, ownAddresses);
+  if (action !== 'forward' && !draft.to) return 'missing-reply-address';
+  const initial = {
+    ...draft,
+    ...(body ? { body } : {}),
+    ...(action === 'forward' ? { attachments: attachments || [] } : {}),
+  };
+  return openCompose(initial) ? 'started' : 'superseded';
 }

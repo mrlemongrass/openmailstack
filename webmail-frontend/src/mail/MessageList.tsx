@@ -39,17 +39,13 @@ import {
 import { isDraftFolder } from './draft-resume';
 import { FolderDestinationDialog } from './components/FolderDialogs';
 import {
+  messageComposeActionLabel,
   type MessageComposeAction,
 } from './message-compose-actions';
 
 interface MessageListProps {
   mail: ReturnType<typeof useMail>;
   density: 'compact' | 'cozy' | 'comfortable';
-}
-
-function composeActionLabel(action: MessageComposeAction): string {
-  if (action === 'reply-all') return 'Reply all';
-  return action === 'forward' ? 'Forward' : 'Reply';
 }
 
 export function MessageList({ mail, density }: MessageListProps) {
@@ -207,23 +203,7 @@ export function MessageList({ mail, density }: MessageListProps) {
     const folderPath = messageFolder(message, decodedFolder);
     try {
       const result = await mail.prepareMessageCompose(action, message, folderPath);
-      if (result === 'unavailable') {
-        showToast({
-          type: 'error',
-          message: `${action === 'forward' ? 'Forward' : 'Reply'} could not be prepared. Try again.`,
-        });
-      }
-      if (result === 'missing-reply-address') {
-        showToast({ type: 'error', message: 'This message does not have a reply address.' });
-      }
-      if (result === 'identities-unavailable') {
-        showToast({
-          type: 'error',
-          message: mail.userIdentitiesError || 'Sending identities are still loading. Try again.',
-          actionLabel: 'Retry',
-          onAction: mail.retryUserIdentities,
-        });
-      }
+      if (typeof result === 'object') showToast({ type: 'error', ...result });
     } finally {
       if (statusRequestId === composeStatusRequestRef.current) setPreparingComposeAction(null);
     }
@@ -436,7 +416,7 @@ export function MessageList({ mail, density }: MessageListProps) {
           borderBottom: '1px solid rgba(59,130,246,0.15)',
         }}>
           <Loader size={14} style={{ animation: 'spin 1s linear infinite' }} />
-          Preparing {composeActionLabel(preparingComposeAction)}…
+          Preparing {messageComposeActionLabel(preparingComposeAction)}…
         </div>
       )}
       {scheduledFolder ? (

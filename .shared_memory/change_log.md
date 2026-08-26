@@ -2405,3 +2405,21 @@ Future entry template:
   the complete desktop/mobile action flow with no unexpected console or page
   errors. Only fixture APIs were used, so browser QA did not mutate a real
   mailbox.
+
+## 2026-08-26 — Attachment-preserving Forward
+
+- Forward now prepares authoritative headers/body and every visible attachment
+  in one bounded, cancellable multipart response, then reuses normal Compose,
+  Draft autosave, and send behavior. It fails closed with typed permanent-limit
+  guidance rather than creating a partial Forward.
+- Added dedicated-mailbox isolation, 75 MiB source/download bounds, count,
+  per-file and aggregate limits, backpressure/disconnect handling, latest-intent
+  cancellation, four-way Draft restore concurrency, and sibling cancellation.
+- Individual attachment downloads now use BODYSTRUCTURE and one decoded body
+  part. Regression coverage includes AMP HTML, delivery-status, related parts,
+  realistic nested `.eml` roots via IMAP `TEXT`, wrong-folder concurrency, and
+  source-independent large-message recovery.
+- Local candidate gates passed: frontend 221/221 plus lint/build; backend 871
+  pass and seven optional skips; complete integration; browser success/failure;
+  and fixed-point Spec/Standards review with no findings. Guarded deployment is
+  pending.

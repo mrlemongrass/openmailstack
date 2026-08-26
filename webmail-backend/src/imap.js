@@ -86,6 +86,42 @@ function assertExpectedUidValidity(folder, expected) {
         throw new MailboxMutationError('FOLDER_CHANGED', 409, 'This folder changed in another mail app. Refresh Mail and try again.');
     }
 }
+function bodyStructureParameter(parameters, key) {
+    if (!parameters)
+        return '';
+    const entry = Object.entries(parameters).find(([name]) => name.toLowerCase() === key);
+    return typeof entry?.[1] === 'string' ? entry[1] : '';
+}
+function visibleAttachmentBodyParts(node, insideRelated = false, result = [], isRoot = true) {
+    const contentType = String(node.type || '').toLowerCase();
+    if (contentType.startsWith('multipart/') && node.childNodes?.length) {
+        const childInsideRelated = insideRelated || contentType === 'multipart/related';
+        for (const child of node.childNodes) {
+            visibleAttachmentBodyParts(child, childInsideRelated, result, false);
+        }
+        return result;
+    }
+    // BODY[TEXT] is the complete decoded payload for a non-multipart root.
+    // This also preserves every header and nested part inside a root
+    // message/rfc822 attachment; BODY[1] would address its first nested part.
+    const part = String(node.part || (isRoot ? 'TEXT' : ''));
+    if (part !== 'TEXT' && !/^\d+(?:\.\d+)*$/.test(part))
+        return result;
+    const disposition = String(node.disposition || '').toLowerCase();
+    const filename = bodyStructureParameter(node.dispositionParameters, 'filename')
+        || bodyStructureParameter(node.parameters, 'name');
+    // Keep this list aligned with Mailparser's default textTypes. Attachment IDs
+    // are assigned from Mailparser's visible attachment order in api.ts.
+    const isBodyText = contentType === 'text/plain'
+        || contentType === 'text/html'
+        || contentType === 'message/delivery-status';
+    const isAttachment = !isBodyText || Boolean(disposition && disposition !== 'inline');
+    const isRelated = insideRelated && Boolean(node.id);
+    if (isAttachment && (filename || disposition === 'attachment' || !isRelated)) {
+        result.push({ part, filename, contentType });
+    }
+    return result;
+}
 class ImapService {
     client;
     constructor(user, pass, useMasterCredentials = true) {
@@ -1245,6 +1281,44 @@ class ImapService {
                 };
             }
             return null;
+        }
+        finally {
+            await this.client.mailboxClose();
+        }
+    }
+    async getAttachmentByUid(folderPath, uid, attachmentId, maxDecodedBytes) {
+        const decodedLimit = Math.max(1, Math.floor(maxDecodedBytes));
+        await this.client.mailboxOpen(folderPath);
+        try {
+            const message = await this.client.fetchOne(uid.toString(), { bodyStructure: true, uid: true }, { uid: true });
+            if (!message || !message.bodyStructure)
+                return { messageFound: false };
+            const bodyPart = visibleAttachmentBodyParts(message.bodyStructure)[attachmentId];
+            if (!bodyPart)
+                return { messageFound: true };
+            const download = await this.client.download(uid.toString(), bodyPart.part, {
+                uid: true,
+                maxBytes: decodedLimit + 1,
+            });
+            if (!download?.content)
+                return { messageFound: true };
+            const chunks = [];
+            let totalBytes = 0;
+            for await (const chunk of download.content) {
+                const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+                totalBytes += buffer.length;
+                chunks.push(buffer);
+            }
+            const tooLarge = totalBytes > decodedLimit;
+            return {
+                messageFound: true,
+                attachment: {
+                    filename: download.meta?.filename || bodyPart.filename || `attachment-${attachmentId + 1}`,
+                    contentType: download.meta?.contentType || bodyPart.contentType || 'application/octet-stream',
+                    content: tooLarge ? Buffer.alloc(0) : Buffer.concat(chunks, totalBytes),
+                    tooLarge,
+                },
+            };
         }
         finally {
             await this.client.mailboxClose();

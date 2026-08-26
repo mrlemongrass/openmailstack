@@ -34,6 +34,15 @@ export interface RuleMoveApplyResult {
     moved: number;
     movedUids: number[];
 }
+export interface MessageAttachmentDownloadResult {
+    messageFound: boolean;
+    attachment?: {
+        filename: string;
+        contentType: string;
+        content: Buffer;
+        tooLarge: boolean;
+    };
+}
 export declare class RuleMoveApplyError extends Error {
     result: RuleMoveApplyResult;
     retrySafe: boolean;
@@ -161,6 +170,7 @@ export declare class ImapService {
         size: number;
         sourceComplete: boolean;
     }>;
+    getAttachmentByUid(folderPath: string, uid: number, attachmentId: number, maxDecodedBytes: number): Promise<MessageAttachmentDownloadResult>;
     appendMessage(folderPath: string, content: string | Buffer, flags?: string[]): Promise<void>;
     moveMessage(sourceFolder: string, targetFolder: string, uid: number): Promise<void>;
     messageAction(folderPath: string, uids: number[], action: 'delete' | 'hardDelete' | 'archive' | 'spam' | 'move' | 'read' | 'unread' | 'star' | 'unstar', targetFolder?: string): Promise<{

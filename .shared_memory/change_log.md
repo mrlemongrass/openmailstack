@@ -2421,5 +2421,10 @@ Future entry template:
   source-independent large-message recovery.
 - Local candidate gates passed: frontend 221/221 plus lint/build; backend 871
   pass and seven optional skips; complete integration; browser success/failure;
-  and fixed-point Spec/Standards review with no findings. Guarded deployment is
-  pending.
+  and fixed-point Spec/Standards review with no findings.
+- Commit `a273261` passed guarded bridge and active public IMAPS plus ActiveSync
+  Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+  `protocol-guarded-webmail-20260826T220831Z` and
+  `protocol-guarded-webmail-20260826T221607Z`; active services, zero application
+  restarts, Nginx, journals, auth boundaries, exact artifacts, and the public
+  sign-in shell are clean.

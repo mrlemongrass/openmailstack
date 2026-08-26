@@ -1278,6 +1278,11 @@ React frontend:
 - Candidate proof: frontend 221/221 plus lint/build; backend 871 pass, seven
   optional skips, zero fail; complete integration; mocked Chromium success and
   permanent-limit failure; final Spec/Standards review with no findings.
+- Commit `a273261` is live. Guarded bridge/active rollback snapshots are
+  `protocol-guarded-webmail-20260826T220831Z` and
+  `protocol-guarded-webmail-20260826T221607Z`; both complete public protocol
+  gates, live service/restart/journal/auth checks, artifact equality, and the
+  released public sign-in shell passed.
 
 Validation:
 

@@ -10559,5 +10559,18 @@ intentionally bounded and directs oversized-message recovery to individual
 downloads or another IMAP client. Categories remains the next recommended
 Outlook-parity slice.
 
-The candidate is fully validated; guarded bridge and active deployment are
-pending.
+Commit `a27326123977703fbbf7dde9ce7a7a1f59cbd6d5` is live after guarded
+bridge and active deployment. Both stages passed public IMAPS plus ActiveSync
+Mail/Ping/Contacts/Calendar pre/post gates with exact cleanup. Rollbacks are
+`/var/backups/openmailstack/protocol-guarded-webmail-20260826T220831Z` and
+`/var/backups/openmailstack/protocol-guarded-webmail-20260826T221607Z`.
+
+OpenMailStack, its Scheduler worker, Dovecot, Postfix, Nginx, MariaDB, and
+Rspamd are active; both application units report `NRestarts=0`; Nginx validates;
+and release-window application warnings plus all-service errors are empty.
+Local/public auth and the protected Forward-preparation route return `401`, and
+the public app returns `200`. Checksum-aware dry runs found no backend/frontend
+content delta, and targeted source hashes match live. The public entry serves
+`index-DphdNnc8.js`, `react-D0JuimcS.js`, and `index-DnkyOgjT.css`. Fresh public
+Chromium rendered the branded sign-in shell; its only console error was the
+expected unauthenticated `/api/auth/me` `401`.

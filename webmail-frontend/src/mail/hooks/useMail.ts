@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type SetStateAction } from 'react';
 import type {
   Message, MailFolder, Signature, Rule, SavedSearch, FolderPathMutationResult,
+  FolderMutationWarning,
   MailUndoState,
   SearchField, SearchScope,
   SearchIndexStatusResponse, SearchWorkerStatusResponse,
@@ -28,9 +29,12 @@ import { draftComposeState, hydrateDraftAttachments } from '../draft-resume';
 import { outboundIdentityFields } from '../outbound-identity';
 import { reopenRestoredScheduledDraft } from '../scheduled-undo-draft';
 import {
-  removeFavoriteFolderSubtree,
+  reconcileFavoriteFolderReferences,
+  removeFavoriteFolderReferences,
   remapExpandedFolderPaths,
-  remapFavoriteFolderPaths,
+  remapFavoriteFolderReferences,
+  type FavoriteFolderReferences,
+  type FavoriteFolderRenameCandidate,
 } from '../folder-mutation-state';
 import {
   checkProtectedOutboundSendAttempt,
@@ -47,9 +51,14 @@ interface UseMailOptions {
   mailSettingsReady: boolean;
   mailSettingsError: string;
   onRetryMailSettings: () => void;
-  onMailSettingsChange: (settings: MailUserSettings) => Promise<void>;
+  onFavoriteSettingsChange: (folders: MailUserSettings['folders']) => Promise<void>;
   isThreaded: boolean;
   userIdentities: UserIdentities;
+}
+
+interface PendingFavoritePersistence {
+  references: FavoriteFolderReferences;
+  action: 'moved' | 'renamed' | 'deleted';
 }
 
 export type ImmediateSendPhase = 'idle' | 'pending' | 'retryable' | 'uncertain' | 'blocked';
@@ -142,6 +151,14 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function mergeFolderMutationWarnings(
+  warnings: FolderMutationWarning[] | undefined,
+  warning: FolderMutationWarning | undefined,
+): FolderMutationWarning[] | undefined {
+  const merged = [...(warnings || []), ...(warning ? [warning] : [])];
+  return merged.length ? [...new Set(merged)] : undefined;
+}
+
 function applyFolderScopedAction(
   messages: Message[],
   action: string,
@@ -166,9 +183,10 @@ function applyFolderScopedAction(
 export function useMail(_opts: UseMailOptions) {
   const mailSettings = _opts.mailSettings;
   const mailSettingsReady = _opts.mailSettingsReady;
-  const onMailSettingsChange = _opts.onMailSettingsChange;
+  const onFavoriteSettingsChange = _opts.onFavoriteSettingsChange;
   // Folder state
   const [folders, setFolders] = useState<MailFolder[]>([]);
+  const [folderListReady, setFolderListReady] = useState(false);
   const [activeFolder, setActiveFolder] = useState('INBOX');
   const activeFolderRef = useRef(activeFolder);
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>(() => {
@@ -182,8 +200,43 @@ export function useMail(_opts: UseMailOptions) {
     () => configuredFavoriteFolders || [],
     [configuredFavoriteFolders],
   );
+  const configuredFavoriteUidValidities = mailSettings.folders?.favoriteUidValidities;
+  const favoriteUidValidities = useMemo(
+    () => configuredFavoriteUidValidities || {},
+    [configuredFavoriteUidValidities],
+  );
+  const favoriteReferences = useMemo<FavoriteFolderReferences>(() => ({
+    paths: favoriteFolders,
+    uidValidities: favoriteUidValidities,
+  }), [favoriteFolders, favoriteUidValidities]);
+  const favoriteReconciliation = useMemo(() => reconcileFavoriteFolderReferences(
+    favoriteReferences,
+    folders,
+  ), [favoriteReferences, folders]);
+  const [dismissedFavoriteRenameCandidates, setDismissedFavoriteRenameCandidates] = useState<string[]>([]);
+  const favoriteRenameCandidates = useMemo(() => folderListReady
+    ? favoriteReconciliation.renameCandidates.filter(candidate => (
+        !dismissedFavoriteRenameCandidates.includes(
+          `${candidate.fromPath}\u0000${candidate.toPath}\u0000${candidate.uidValidity}`,
+        )
+      ))
+    : [], [dismissedFavoriteRenameCandidates, favoriteReconciliation.renameCandidates, folderListReady]);
+  const [dismissedUnavailableFavoritePaths, setDismissedUnavailableFavoritePaths] = useState<string[]>([]);
+  const unavailableFavoritePaths = useMemo(() => folderListReady
+    ? favoriteReconciliation.unresolvedPaths.filter(path => (
+        !dismissedUnavailableFavoritePaths.includes(path)
+      ))
+    : [], [dismissedUnavailableFavoritePaths, favoriteReconciliation.unresolvedPaths, folderListReady]);
   const [folderMutationPending, setFolderMutationPending] = useState(false);
   const folderMutationPendingRef = useRef(false);
+  const folderRequestIdRef = useRef(0);
+  const favoriteReconciliationAttemptRef = useRef('');
+  const [pendingFavoritePersistence, setPendingFavoritePersistence] = useState<PendingFavoritePersistence | null>(null);
+  const pendingFavoritePersistenceRef = useRef<PendingFavoritePersistence | null>(null);
+  const updatePendingFavoritePersistence = useCallback((pending: PendingFavoritePersistence | null) => {
+    pendingFavoritePersistenceRef.current = pending;
+    setPendingFavoritePersistence(pending);
+  }, []);
   const runFolderMutation = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
     if (folderMutationPendingRef.current) {
       throw new Error('Wait for the current folder change to finish.');
@@ -465,12 +518,18 @@ export function useMail(_opts: UseMailOptions) {
 
   // ---- Data fetching (must be before handleSend) ----
   const fetchFolders = useCallback(async () => {
+    const requestId = ++folderRequestIdRef.current;
+    setFolderListReady(false);
     try {
       const folderList = await api.fetchFolders();
+      if (requestId !== folderRequestIdRef.current) return true;
+      favoriteReconciliationAttemptRef.current = '';
       setFolders(folderList);
+      setFolderListReady(true);
       setMailError('');
       return true;
     } catch (e: unknown) {
+      if (requestId !== folderRequestIdRef.current) return true;
       setMailError(errorMessage(e, 'Failed to load folders'));
       console.error('Failed to fetch folders', e);
       return false;
@@ -484,37 +543,146 @@ export function useMail(_opts: UseMailOptions) {
     return folder.path;
   }, [fetchFolders, setExpandedPersisted]);
 
-  const persistFavoriteFolders = useCallback(async (favorites: string[]) => {
+  const persistFavoriteFolders = useCallback(async (
+    references: FavoriteFolderReferences,
+  ) => {
     if (!mailSettingsReady) {
       throw new Error('Favorites are still loading. Try again in a moment.');
     }
-    await onMailSettingsChange({
-      ...mailSettings,
-      folders: { favorites },
+    await onFavoriteSettingsChange({
+      favorites: references.paths,
+      favoriteUidValidities: references.uidValidities,
     });
-  }, [mailSettings, mailSettingsReady, onMailSettingsChange]);
+  }, [mailSettingsReady, onFavoriteSettingsChange]);
 
   const persistFolderMutationFavorites = useCallback(async (
-    nextFavorites: string[],
+    nextReferences: FavoriteFolderReferences,
     action: 'moved' | 'renamed' | 'deleted',
-  ) => {
-    if (nextFavorites.length === favoriteFolders.length
-      && nextFavorites.every((path, index) => path === favoriteFolders[index])) return;
+  ): Promise<FolderMutationWarning | undefined> => {
+    if (JSON.stringify(nextReferences) === JSON.stringify(favoriteReferences)) return undefined;
     try {
-      await persistFavoriteFolders(nextFavorites);
+      await persistFavoriteFolders(nextReferences);
+      updatePendingFavoritePersistence(null);
+      return undefined;
     } catch (error) {
       console.error(`Failed to preserve Favorites after folder ${action}`, error);
-      setMailError(`The folder was ${action}, but Favorites could not be updated. Add it again from the folder menu.`);
+      updatePendingFavoritePersistence({ references: nextReferences, action });
+      return 'FAVORITES_NOT_RECONCILED';
     }
-  }, [favoriteFolders, persistFavoriteFolders]);
+  }, [favoriteReferences, persistFavoriteFolders, updatePendingFavoritePersistence]);
+
+  useEffect(() => {
+    if (!mailSettingsReady
+      || folderMutationPending
+      || folderMutationPendingRef.current
+      || pendingFavoritePersistence
+      || !folderListReady
+      || folders.length === 0) {
+      return;
+    }
+    if (!favoriteReconciliation.changed) return;
+
+    const attemptKey = JSON.stringify(favoriteReconciliation.references);
+    if (favoriteReconciliationAttemptRef.current === attemptKey) return;
+    favoriteReconciliationAttemptRef.current = attemptKey;
+
+    void runFolderMutation(() => persistFavoriteFolders(
+      favoriteReconciliation.references,
+    )).catch(error => {
+      console.error('Failed to record Favorite folder identity', error);
+    });
+  }, [
+    favoriteReconciliation,
+    folderMutationPending,
+    folderListReady,
+    folders,
+    mailSettingsReady,
+    pendingFavoritePersistence,
+    persistFavoriteFolders,
+    runFolderMutation,
+  ]);
+
+  const retryFavoritePersistence = useCallback(async () => {
+    const pending = pendingFavoritePersistenceRef.current;
+    if (!pending) return;
+    await runFolderMutation(async () => {
+      await persistFavoriteFolders(pending.references);
+      if (pendingFavoritePersistenceRef.current === pending) {
+        updatePendingFavoritePersistence(null);
+      }
+    });
+  }, [persistFavoriteFolders, runFolderMutation, updatePendingFavoritePersistence]);
+
+  const confirmFavoriteRename = useCallback(async (candidate: FavoriteFolderRenameCandidate) => {
+    if (!folderListReady) {
+      throw new Error('Refresh Mail before updating this Favorite.');
+    }
+    if (pendingFavoritePersistenceRef.current) {
+      throw new Error('Retry the pending Favorites update before changing another folder.');
+    }
+    const currentCandidate = favoriteReconciliation.renameCandidates.find(item => (
+      item.fromPath === candidate.fromPath
+      && item.toPath === candidate.toPath
+      && item.uidValidity === candidate.uidValidity
+    ));
+    if (!currentCandidate) {
+      throw new Error('That folder changed again. Refresh Mail and review the new location.');
+    }
+    const nextReferences = remapFavoriteFolderReferences(
+      favoriteReferences,
+      candidate.fromPath,
+      candidate.toPath,
+      '',
+      '',
+      new Set([candidate.fromPath]),
+    );
+    await runFolderMutation(() => persistFavoriteFolders(nextReferences));
+  }, [favoriteReconciliation.renameCandidates, favoriteReferences, folderListReady, persistFavoriteFolders, runFolderMutation]);
+
+  const dismissFavoriteRename = useCallback((candidate: FavoriteFolderRenameCandidate) => {
+    const key = `${candidate.fromPath}\u0000${candidate.toPath}\u0000${candidate.uidValidity}`;
+    setDismissedFavoriteRenameCandidates(current => current.includes(key) ? current : [...current, key]);
+  }, []);
+
+  const removeUnavailableFavorite = useCallback(async (path: string) => {
+    if (!folderListReady) {
+      throw new Error('Refresh Mail before removing this Favorite.');
+    }
+    if (pendingFavoritePersistenceRef.current) {
+      throw new Error('Retry the pending Favorites update before changing another folder.');
+    }
+    if (!favoriteReconciliation.unresolvedPaths.includes(path)) {
+      throw new Error('That Favorite changed again. Refresh Mail and review it.');
+    }
+    await runFolderMutation(() => persistFavoriteFolders(
+      removeFavoriteFolderReferences(favoriteReferences, path, ''),
+    ));
+  }, [favoriteReconciliation.unresolvedPaths, favoriteReferences, folderListReady, persistFavoriteFolders, runFolderMutation]);
+
+  const dismissUnavailableFavorite = useCallback((path: string) => {
+    setDismissedUnavailableFavoritePaths(current => current.includes(path) ? current : [...current, path]);
+  }, []);
 
   const moveFolder = useCallback(async (path: string, parent: string | null) => {
     if (!mailSettingsReady) {
       throw new Error('Wait for Favorites to finish loading before moving folders.');
     }
+    if (pendingFavoritePersistenceRef.current) {
+      throw new Error('Retry the pending Favorites update before changing another folder.');
+    }
+    const sourceFolder = folders.find(folder => folder.path === path);
+    const parentFolder = parent === null ? null : folders.find(folder => folder.path === parent);
+    if (!sourceFolder?.uidValidity || (parent !== null && !parentFolder?.uidValidity)) {
+      throw new Error('The folder list changed. Refresh Mail and try again.');
+    }
     return runFolderMutation(async () => {
-      const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
-      const result = await api.moveFolder(path, parent);
+      const sourceDelimiter = sourceFolder.delimiter || '/';
+      const result = await api.moveFolder(
+        path,
+        parent,
+        sourceFolder.uidValidity as string,
+        parentFolder?.uidValidity,
+      );
       setExpandedPersisted(previous => remapExpandedFolderPaths(
         previous,
         path,
@@ -524,30 +692,39 @@ export function useMail(_opts: UseMailOptions) {
       ));
       if (parent) setExpandedPersisted(previous => ({ ...previous, [parent]: true }));
       await fetchFolders();
-      await persistFolderMutationFavorites(remapFavoriteFolderPaths(
-        favoriteFolders,
+      const favoriteWarning = await persistFolderMutationFavorites(remapFavoriteFolderReferences(
+        favoriteReferences,
         path,
         result.folder.path,
         sourceDelimiter,
         result.folder.delimiter || sourceDelimiter,
+        new Set(favoriteReconciliation.visiblePaths),
       ), 'moved');
+      const warnings = mergeFolderMutationWarnings(result.warnings, favoriteWarning);
       return {
         path: result.folder.path,
         delimiter: typeof result.folder.delimiter === 'string'
           ? result.folder.delimiter
           : sourceDelimiter,
-        ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+        ...(warnings ? { warnings } : {}),
       } satisfies FolderPathMutationResult;
     });
-  }, [favoriteFolders, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
+  }, [favoriteReconciliation.visiblePaths, favoriteReferences, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
 
   const renameFolder = useCallback(async (path: string, name: string) => {
     if (!mailSettingsReady) {
       throw new Error('Wait for Favorites to finish loading before renaming folders.');
     }
+    if (pendingFavoritePersistenceRef.current) {
+      throw new Error('Retry the pending Favorites update before changing another folder.');
+    }
+    const sourceFolder = folders.find(folder => folder.path === path);
+    if (!sourceFolder?.uidValidity) {
+      throw new Error('The folder list changed. Refresh Mail and try again.');
+    }
     return runFolderMutation(async () => {
-      const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
-      const result = await api.renameFolder(path, name);
+      const sourceDelimiter = sourceFolder.delimiter || '/';
+      const result = await api.renameFolder(path, name, sourceFolder.uidValidity as string);
       setExpandedPersisted(previous => remapExpandedFolderPaths(
         previous,
         path,
@@ -556,30 +733,39 @@ export function useMail(_opts: UseMailOptions) {
         result.folder.delimiter || sourceDelimiter,
       ));
       await fetchFolders();
-      await persistFolderMutationFavorites(remapFavoriteFolderPaths(
-        favoriteFolders,
+      const favoriteWarning = await persistFolderMutationFavorites(remapFavoriteFolderReferences(
+        favoriteReferences,
         path,
         result.folder.path,
         sourceDelimiter,
         result.folder.delimiter || sourceDelimiter,
+        new Set(favoriteReconciliation.visiblePaths),
       ), 'renamed');
+      const warnings = mergeFolderMutationWarnings(result.warnings, favoriteWarning);
       return {
         path: result.folder.path,
         delimiter: typeof result.folder.delimiter === 'string'
           ? result.folder.delimiter
           : sourceDelimiter,
-        ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+        ...(warnings ? { warnings } : {}),
       } satisfies FolderPathMutationResult;
     });
-  }, [favoriteFolders, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
+  }, [favoriteReconciliation.visiblePaths, favoriteReferences, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
 
   const deleteFolder = useCallback(async (path: string, permanent: boolean) => {
     if (!mailSettingsReady) {
       throw new Error('Wait for Favorites to finish loading before deleting folders.');
     }
+    if (pendingFavoritePersistenceRef.current) {
+      throw new Error('Retry the pending Favorites update before changing another folder.');
+    }
+    const sourceFolder = folders.find(folder => folder.path === path);
+    if (!sourceFolder?.uidValidity) {
+      throw new Error('The folder list changed. Refresh Mail and try again.');
+    }
     return runFolderMutation(async () => {
-      const sourceDelimiter = folders.find(folder => folder.path === path)?.delimiter || '/';
-      const result = await api.deleteFolder(path, permanent);
+      const sourceDelimiter = sourceFolder.delimiter || '/';
+      const result = await api.deleteFolder(path, permanent, sourceFolder.uidValidity as string);
       if (result.disposition === 'trashed') {
         const destinationDelimiter = result.folder.delimiter || sourceDelimiter;
         const trashPath = destinationDelimiter && result.folder.path.includes(destinationDelimiter)
@@ -604,39 +790,69 @@ export function useMail(_opts: UseMailOptions) {
         ));
       }
       await fetchFolders();
-      await persistFolderMutationFavorites(
-        result.disposition === 'trashed'
-          ? remapFavoriteFolderPaths(
-              favoriteFolders,
-              path,
-              result.folder.path,
-              sourceDelimiter,
-              result.folder.delimiter || sourceDelimiter,
-            )
-          : removeFavoriteFolderSubtree(favoriteFolders, path, sourceDelimiter),
+      const nextReferences = result.disposition === 'trashed'
+        ? remapFavoriteFolderReferences(
+            favoriteReferences,
+            path,
+            result.folder.path,
+            sourceDelimiter,
+            result.folder.delimiter || sourceDelimiter,
+            new Set(favoriteReconciliation.visiblePaths),
+          )
+        : removeFavoriteFolderReferences(
+            favoriteReferences,
+            path,
+            sourceDelimiter,
+            new Set(favoriteReconciliation.visiblePaths),
+          );
+      const favoriteWarning = await persistFolderMutationFavorites(
+        nextReferences,
         result.disposition === 'trashed' ? 'moved' : 'deleted',
       );
-      return result;
+      const warnings = mergeFolderMutationWarnings(result.warnings, favoriteWarning);
+      return warnings ? { ...result, warnings } : result;
     });
-  }, [favoriteFolders, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
+  }, [favoriteReconciliation.visiblePaths, favoriteReferences, fetchFolders, folders, mailSettingsReady, persistFolderMutationFavorites, runFolderMutation, setExpandedPersisted]);
 
   const retryFolderSearchCleanup = useCallback(async () => {
     await api.purgeSearchIndex();
   }, []);
 
   const toggleFavoriteFolder = useCallback(async (path: string) => {
+    if (pendingFavoritePersistenceRef.current) {
+      throw new Error('Retry the pending Favorites update before changing another folder.');
+    }
     const folder = folders.find(candidate => candidate.path === path);
     if (!folder || folder.disabled || path.toUpperCase() === 'SCHEDULED') {
       throw new Error('That folder cannot be added to Favorites.');
     }
-    if (!favoriteFolders.includes(path) && favoriteFolders.length >= 100) {
+    const isConfigured = favoriteReferences.paths.includes(path);
+    const isVisible = favoriteReconciliation.visiblePaths.includes(path);
+    if (!isConfigured && favoriteReferences.paths.length >= 100) {
       throw new Error('Favorites can include up to 100 folders. Remove one before adding another.');
     }
-    const nextFavorites = favoriteFolders.includes(path)
-      ? favoriteFolders.filter(candidate => candidate !== path)
-      : [...favoriteFolders, path];
-    await runFolderMutation(() => persistFavoriteFolders(nextFavorites));
-  }, [favoriteFolders, folders, persistFavoriteFolders, runFolderMutation]);
+    let nextReferences: FavoriteFolderReferences;
+    if (isVisible) {
+      nextReferences = removeFavoriteFolderReferences(favoriteReferences, path, '');
+    } else if (isConfigured) {
+      nextReferences = {
+        paths: [...favoriteReferences.paths],
+        uidValidities: {
+          ...favoriteReferences.uidValidities,
+          ...(folder.uidValidity ? { [path]: folder.uidValidity } : {}),
+        },
+      };
+    } else {
+      nextReferences = {
+        paths: [...favoriteReferences.paths, path],
+        uidValidities: {
+          ...favoriteReferences.uidValidities,
+          ...(folder.uidValidity ? { [path]: folder.uidValidity } : {}),
+        },
+      };
+    }
+    await runFolderMutation(() => persistFavoriteFolders(nextReferences));
+  }, [favoriteReconciliation.visiblePaths, favoriteReferences, folders, persistFavoriteFolders, runFolderMutation]);
 
   const markFolderRead = useCallback(async (path: string) => {
     if (markingReadFolderRef.current) {
@@ -1584,9 +1800,22 @@ export function useMail(_opts: UseMailOptions) {
 
   return {
     folders, activeFolder, setActiveFolder, expandedFolders, setExpandedFolders: setExpandedPersisted,
-    favoriteFolders, favoriteSettingsReady: mailSettingsReady, folderMutationPending,
+    favoriteFolders: favoriteReconciliation.visiblePaths,
+    favoriteRenameCandidates,
+    unavailableFavoritePaths,
+    favoriteSettingsReady: mailSettingsReady,
+    favoritePersistencePending: Boolean(pendingFavoritePersistence),
+    favoritePersistenceError: pendingFavoritePersistence
+      ? `The folder was ${pendingFavoritePersistence.action}, but Favorites still need to be updated.`
+      : '',
+    folderMutationPending,
     favoriteSettingsError: _opts.mailSettingsError,
     retryFavoriteSettings: _opts.onRetryMailSettings,
+    retryFavoritePersistence,
+    confirmFavoriteRename,
+    dismissFavoriteRename,
+    removeUnavailableFavorite,
+    dismissUnavailableFavorite,
     markingReadFolder,
     messages, setMessages, selectedMessages, setSelectedMessages,
     viewingThread, setViewingThread,

@@ -70,6 +70,22 @@ function mailboxTreeHasAmbiguousDestinationComponent(folders, sourcePath, source
             .split(sourceDelimiter)
             .some((component) => component.includes(destinationDelimiter))));
 }
+function normalizedExpectedUidValidity(value) {
+    if (typeof value !== 'string' || !/^\d{1,10}$/.test(value.trim())) {
+        throw new MailboxMutationError('INVALID_FOLDER_IDENTITY', 400, 'Refresh Mail before changing this folder.');
+    }
+    const uidValidity = BigInt(value.trim());
+    if (uidValidity <= 0n || uidValidity > 4294967295n) {
+        throw new MailboxMutationError('INVALID_FOLDER_IDENTITY', 400, 'Refresh Mail before changing this folder.');
+    }
+    return uidValidity.toString();
+}
+function assertExpectedUidValidity(folder, expected) {
+    const current = String(folder?.status?.uidValidity || '');
+    if (current !== expected) {
+        throw new MailboxMutationError('FOLDER_CHANGED', 409, 'This folder changed in another mail app. Refresh Mail and try again.');
+    }
+}
 class ImapService {
     client;
     constructor(user, pass, useMasterCredentials = true) {
@@ -99,13 +115,15 @@ class ImapService {
         this.client.close();
     }
     async getFolders() {
-        const folders = await this.client.list({ statusQuery: { unseen: true } });
+        const folders = await this.client.list({ statusQuery: { unseen: true, uidValidity: true } });
         return folders.map(f => {
             const specialUse = mailboxSpecialUse(f);
+            const uidValidity = String(f.status?.uidValidity || '');
             return {
                 path: f.path,
                 delimiter: f.delimiter,
                 unseen: Number(f.status?.unseen || 0),
+                ...(uidValidity && uidValidity !== '0' ? { uidValidity } : {}),
                 ...(specialUse ? { specialUse } : {}),
                 ...(f.flags?.has('\\Noselect') ? { disabled: true } : {}),
             };
@@ -187,12 +205,16 @@ class ImapService {
         }
         return { path: result.path, delimiter, unseen: 0 };
     }
-    async moveFolder(requestedPath, requestedParent) {
+    async moveFolder(requestedPath, requestedParent, requestedSourceUidValidity, requestedParentUidValidity) {
         if (requestedParent !== null && requestedParent !== undefined && typeof requestedParent !== 'string') {
             throw new MailboxMutationError('INVALID_FOLDER_DESTINATION', 400, 'Choose a valid destination folder.');
         }
         const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
         const parent = typeof requestedParent === 'string' ? requestedParent.trim() : null;
+        const expectedSourceUidValidity = normalizedExpectedUidValidity(requestedSourceUidValidity);
+        const expectedParentUidValidity = parent === null
+            ? undefined
+            : normalizedExpectedUidValidity(requestedParentUidValidity);
         if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {
             throw new MailboxMutationError('INVALID_FOLDER', 400, 'Choose a valid folder to move.');
         }
@@ -202,12 +224,13 @@ class ImapService {
         if (path.toUpperCase() === 'SCHEDULED' || parent?.toUpperCase() === 'SCHEDULED') {
             throw new MailboxMutationError('VIRTUAL_FOLDER_UNSUPPORTED', 409, 'Scheduled is a virtual folder and cannot be moved or contain folders.');
         }
-        const folders = await this.client.list();
+        const folders = await this.client.list({ statusQuery: { uidValidity: true } });
         const source = folders.find(folder => (folder.path === path
             || (path.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')));
         if (!source) {
             throw new MailboxMutationError('FOLDER_NOT_FOUND', 404, 'The folder no longer exists. Refresh Mail and try again.');
         }
+        assertExpectedUidValidity(source, expectedSourceUidValidity);
         if (source.path.toUpperCase() === 'INBOX' || mailboxSpecialUse(source)) {
             throw new MailboxMutationError('PROTECTED_FOLDER', 409, 'System folders cannot be moved.');
         }
@@ -227,6 +250,9 @@ class ImapService {
                 || (parent.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')));
         if (parent !== null && !parentFolder) {
             throw new MailboxMutationError('PARENT_FOLDER_NOT_FOUND', 404, 'The destination folder no longer exists. Refresh Mail and try again.');
+        }
+        if (parentFolder && expectedParentUidValidity) {
+            assertExpectedUidValidity(parentFolder, expectedParentUidValidity);
         }
         if (parentFolder?.flags?.has('\\Noselect')) {
             throw new MailboxMutationError('INVALID_FOLDER_DESTINATION', 409, 'That folder cannot contain subfolders.');
@@ -275,9 +301,10 @@ class ImapService {
             ...(warnings.length ? { warnings } : {}),
         };
     }
-    async renameFolder(requestedPath, requestedName) {
+    async renameFolder(requestedPath, requestedName, requestedSourceUidValidity) {
         const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
         const name = typeof requestedName === 'string' ? requestedName.trim() : '';
+        const expectedSourceUidValidity = normalizedExpectedUidValidity(requestedSourceUidValidity);
         if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {
             throw new MailboxMutationError('INVALID_FOLDER', 400, 'Choose a valid folder to rename.');
         }
@@ -287,12 +314,13 @@ class ImapService {
         if (path.toUpperCase() === 'SCHEDULED') {
             throw new MailboxMutationError('VIRTUAL_FOLDER_UNSUPPORTED', 409, 'Scheduled is a virtual folder and cannot be renamed.');
         }
-        const folders = await this.client.list();
+        const folders = await this.client.list({ statusQuery: { uidValidity: true } });
         const source = folders.find(folder => (folder.path === path
             || (path.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')));
         if (!source) {
             throw new MailboxMutationError('FOLDER_NOT_FOUND', 404, 'The folder no longer exists. Refresh Mail and try again.');
         }
+        assertExpectedUidValidity(source, expectedSourceUidValidity);
         if (source.path.toUpperCase() === 'INBOX' || mailboxSpecialUse(source)) {
             throw new MailboxMutationError('PROTECTED_FOLDER', 409, 'System folders cannot be renamed.');
         }
@@ -333,8 +361,9 @@ class ImapService {
             ...(warnings.length ? { warnings } : {}),
         };
     }
-    async deleteFolder(requestedPath, requestedPermanent = false) {
+    async deleteFolder(requestedPath, requestedPermanent, requestedSourceUidValidity) {
         const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+        const expectedSourceUidValidity = normalizedExpectedUidValidity(requestedSourceUidValidity);
         if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {
             throw new MailboxMutationError('INVALID_FOLDER', 400, 'Choose a valid folder to delete.');
         }
@@ -344,12 +373,13 @@ class ImapService {
         if (path.toUpperCase() === 'SCHEDULED') {
             throw new MailboxMutationError('VIRTUAL_FOLDER_UNSUPPORTED', 409, 'Scheduled is a virtual folder and cannot be deleted.');
         }
-        const folders = await this.client.list();
+        const folders = await this.client.list({ statusQuery: { uidValidity: true } });
         const source = folders.find(folder => (folder.path === path
             || (path.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')));
         if (!source) {
             throw new MailboxMutationError('FOLDER_NOT_FOUND', 404, 'The folder no longer exists. Refresh Mail and try again.');
         }
+        assertExpectedUidValidity(source, expectedSourceUidValidity);
         if (source.path.toUpperCase() === 'INBOX' || mailboxSpecialUse(source)) {
             throw new MailboxMutationError('PROTECTED_FOLDER', 409, 'System folders cannot be deleted.');
         }

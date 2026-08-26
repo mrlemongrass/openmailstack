@@ -36,6 +36,7 @@ export interface MailSettings {
     };
     folders: {
         favorites: string[];
+        favoriteUidValidities: Record<string, string>;
     };
 }
 
@@ -107,6 +108,7 @@ export const settingsDefaults = {
         },
         folders: {
             favorites: [],
+            favoriteUidValidities: {},
         },
     } satisfies MailSettings,
     calendar: {
@@ -238,6 +240,22 @@ const folderPathArray = (value: unknown): string[] => {
     return paths;
 };
 
+const favoriteUidValidityMap = (
+    value: unknown,
+    favorites: string[],
+): Record<string, string> => {
+    if (!isObject(value)) return {};
+    const values = new Map(Object.entries(value));
+    return Object.fromEntries(favorites.flatMap(path => {
+        const rawValue = values.get(path);
+        if (typeof rawValue !== 'string') return [];
+        const uidValidity = rawValue.trim();
+        if (!/^\d{1,10}$/.test(uidValidity)) return [];
+        const parsed = BigInt(uidValidity);
+        return parsed > 0n && parsed <= 4294967295n ? [[path, parsed.toString()]] : [];
+    }));
+};
+
 function normalizeSignatures(value: unknown): MailSettings['signatures'] {
     if (!Array.isArray(value)) return [];
 
@@ -292,6 +310,7 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
         const identity = isObject(source.identity) ? source.identity : {};
         const compose = isObject(source.compose) ? source.compose : {};
         const folders = isObject(source.folders) ? source.folders : {};
+        const favorites = folderPathArray(folders.favorites);
         return {
             signatures: normalizeSignatures(source.signatures),
             identity: {
@@ -318,7 +337,11 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
                 safeSenders: stringArray(isObject(source.spam) ? source.spam.safeSenders : undefined, 500, 255),
             },
             folders: {
-                favorites: folderPathArray(folders.favorites),
+                favorites,
+                favoriteUidValidities: favoriteUidValidityMap(
+                    folders.favoriteUidValidities,
+                    favorites,
+                ),
             },
         };
     }
@@ -382,6 +405,25 @@ export async function saveUserSettings(username: string, namespace: SettingsName
     await ensureUserSettingsSchema();
     const normalized = normalizeSettings(namespace, settings);
 
+    if (namespace === 'mail') {
+        await pool.query(
+            `INSERT INTO webmail_user_settings (username, namespace, settings_json)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                settings_json = JSON_SET(
+                    VALUES(settings_json),
+                    '$.folders',
+                    COALESCE(
+                        JSON_EXTRACT(settings_json, '$.folders'),
+                        JSON_EXTRACT(VALUES(settings_json), '$.folders')
+                    )
+                ),
+                updated_at = NOW()`,
+            [username, namespace, JSON.stringify(normalized)]
+        );
+        return getUserSettings(username, namespace);
+    }
+
     await pool.query(
         `INSERT INTO webmail_user_settings (username, namespace, settings_json)
          VALUES (?, ?, ?)
@@ -390,4 +432,27 @@ export async function saveUserSettings(username: string, namespace: SettingsName
     );
 
     return normalized;
+}
+
+export async function saveMailFavoriteSettings(
+    username: string,
+    folders: unknown,
+): Promise<MailSettings> {
+    await ensureUserSettingsSchema();
+    const normalized = normalizeSettings('mail', { folders }) as MailSettings;
+    const initialSettings: MailSettings = {
+        ...settingsDefaults.mail,
+        folders: normalized.folders,
+    };
+
+    await pool.query(
+        `INSERT INTO webmail_user_settings (username, namespace, settings_json)
+         VALUES (?, 'mail', ?)
+         ON DUPLICATE KEY UPDATE
+            settings_json = JSON_SET(settings_json, '$.folders', JSON_EXTRACT(?, '$')),
+            updated_at = NOW()`,
+        [username, JSON.stringify(initialSettings), JSON.stringify(normalized.folders)]
+    );
+
+    return getUserSettings(username, 'mail') as Promise<MailSettings>;
 }

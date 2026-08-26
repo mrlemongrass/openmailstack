@@ -5,20 +5,25 @@ process.env.OMS_DB_PASSWORD ||= 'imap-mail-search-test';
 
 const { ImapService } = require('../src/imap.js');
 
-test('folder listings request unseen counts through LIST-STATUS', async () => {
+test('folder listings expose unseen counts and stable UIDVALIDITY through LIST-STATUS', async () => {
   const calls = [];
   const service = Object.create(ImapService.prototype);
   service.client = {
     async list(options) {
       calls.push(options);
-      return [{ path: 'INBOX', delimiter: '/', status: { unseen: 7 } }];
+      return [{ path: 'INBOX', delimiter: '/', status: { unseen: 7, uidValidity: 9001n } }];
     },
   };
 
   const folders = await service.getFolders();
 
-  assert.deepEqual(calls, [{ statusQuery: { unseen: true } }]);
-  assert.deepEqual(folders, [{ path: 'INBOX', delimiter: '/', unseen: 7 }]);
+  assert.deepEqual(calls, [{ statusQuery: { unseen: true, uidValidity: true } }]);
+  assert.deepEqual(folders, [{
+    path: 'INBOX',
+    delimiter: '/',
+    unseen: 7,
+    uidValidity: '9001',
+  }]);
 });
 
 test('folder listings expose special-use and non-selectable metadata for safe mutations', async () => {

@@ -59,7 +59,7 @@ export declare class ImapService {
         delimiter: string;
         unseen: number;
     }>;
-    moveFolder(requestedPath: string, requestedParent: string | null | undefined): Promise<{
+    moveFolder(requestedPath: string, requestedParent: string | null | undefined, requestedSourceUidValidity: unknown, requestedParentUidValidity?: unknown): Promise<{
         warnings?: "SUBSCRIPTIONS_NOT_RECONCILED"[];
         previousPath: string;
         folder: {
@@ -68,7 +68,7 @@ export declare class ImapService {
             unseen: number;
         };
     }>;
-    renameFolder(requestedPath: string, requestedName: string): Promise<{
+    renameFolder(requestedPath: string, requestedName: string, requestedSourceUidValidity: unknown): Promise<{
         warnings?: "SUBSCRIPTIONS_NOT_RECONCILED"[];
         previousPath: string;
         folder: {
@@ -77,7 +77,7 @@ export declare class ImapService {
             unseen: number;
         };
     }>;
-    deleteFolder(requestedPath: string, requestedPermanent?: boolean | undefined): Promise<{
+    deleteFolder(requestedPath: string, requestedPermanent: boolean | undefined, requestedSourceUidValidity: unknown): Promise<{
         warnings?: "SUBSCRIPTIONS_NOT_RECONCILED"[];
         disposition: "deleted";
         deletedPath: string;

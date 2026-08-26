@@ -47,7 +47,12 @@ export async function createFolder(parent: string | null, name: string): Promise
   return data.folder;
 }
 
-export async function moveFolder(path: string, parent: string | null): Promise<{
+export async function moveFolder(
+  path: string,
+  parent: string | null,
+  sourceUidValidity: string,
+  parentUidValidity?: string,
+): Promise<{
   previousPath: string;
   folder: MailFolder;
   warnings?: FolderMutationWarning[];
@@ -55,7 +60,7 @@ export async function moveFolder(path: string, parent: string | null): Promise<{
   const res = await fetch('/api/folders', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, parent }),
+    body: JSON.stringify({ path, parent, sourceUidValidity, parentUidValidity }),
   });
   const data = await res.json().catch(() => ({ success: false })) as FolderMutationResponse;
   if (!res.ok || !data.success || !data.folder || !data.previousPath) {
@@ -68,7 +73,7 @@ export async function moveFolder(path: string, parent: string | null): Promise<{
   };
 }
 
-export async function renameFolder(path: string, name: string): Promise<{
+export async function renameFolder(path: string, name: string, sourceUidValidity: string): Promise<{
   previousPath: string;
   folder: MailFolder;
   warnings?: FolderMutationWarning[];
@@ -76,7 +81,7 @@ export async function renameFolder(path: string, name: string): Promise<{
   const res = await fetch('/api/folders', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, name }),
+    body: JSON.stringify({ path, name, sourceUidValidity }),
   });
   const data = await res.json().catch(() => ({ success: false })) as FolderMutationResponse;
   if (!res.ok || !data.success || !data.folder || !data.previousPath) {
@@ -92,6 +97,7 @@ export async function renameFolder(path: string, name: string): Promise<{
 const KNOWN_FOLDER_MUTATION_WARNINGS = new Set<FolderMutationWarning>([
   'SUBSCRIPTIONS_NOT_RECONCILED',
   'SEARCH_INDEX_RESET_FAILED',
+  'FAVORITES_NOT_RECONCILED',
 ]);
 
 function folderMutationWarnings(value: unknown): { warnings?: FolderMutationWarning[] } {
@@ -105,11 +111,15 @@ function folderMutationWarnings(value: unknown): { warnings?: FolderMutationWarn
   return warnings.length ? { warnings } : {};
 }
 
-export async function deleteFolder(path: string, permanent: boolean): Promise<FolderDeleteResult> {
+export async function deleteFolder(
+  path: string,
+  permanent: boolean,
+  sourceUidValidity: string,
+): Promise<FolderDeleteResult> {
   const res = await fetch('/api/folders', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, permanent }),
+    body: JSON.stringify({ path, permanent, sourceUidValidity }),
   });
   const data = await res.json().catch(() => ({ success: false })) as FolderMutationResponse;
   if (res.ok && data.success && data.disposition === 'trashed' && data.folder && data.previousPath) {

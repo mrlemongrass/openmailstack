@@ -33,6 +33,7 @@ export interface MailSettings {
     };
     folders: {
         favorites: string[];
+        favoriteUidValidities: Record<string, string>;
     };
 }
 export interface CalendarSettings {
@@ -98,6 +99,7 @@ export declare const settingsDefaults: {
         };
         folders: {
             favorites: any[];
+            favoriteUidValidities: {};
         };
     };
     calendar: {
@@ -137,4 +139,5 @@ export declare function ensureUserSettingsSchema(): Promise<void>;
 export declare function normalizeSettings(namespace: SettingsNamespace, value: unknown): UserSettings;
 export declare function getUserSettings(username: string, namespace: SettingsNamespace): Promise<UserSettings>;
 export declare function saveUserSettings(username: string, namespace: SettingsNamespace, settings: unknown): Promise<UserSettings>;
+export declare function saveMailFavoriteSettings(username: string, folders: unknown): Promise<MailSettings>;
 //# sourceMappingURL=user-settings.d.ts.map

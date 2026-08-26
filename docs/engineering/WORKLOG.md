@@ -10300,3 +10300,77 @@ External-client folder renames cannot atomically remap web-only Favorites.
 Folder Empty/color/order remain future lifecycle slices. The next recommended
 message slice is consistent Reply, Reply all, Forward, Flag, and Pin actions in
 row, reading-pane, bulk, and context surfaces.
+
+## 2026-08-25 — External Folder Rename Favorite Repair
+
+### Selected task
+
+Make Favorites recoverable after a folder is renamed by Outlook, Apple Mail,
+Thunderbird, or another IMAP client without silently attaching a saved Favorite
+to the wrong mailbox.
+
+### Goal and acceptance criteria
+
+- Bind every newly observed Favorite to the selectable mailbox generation that
+  the IMAP server reports, while retaining legacy path-only Favorites.
+- Never infer that a missing path is a rename until one authoritative folder
+  listing has succeeded; ambiguous and missing matches must remain explicit.
+- Offer a one-click confirmed path repair for one matching generation and an
+  explicit removal path when the folder is unavailable.
+- Keep Favorites persistence independent from other Mail settings and preserve
+  a pending exact mutation for visible Retry after an acknowledged IMAP folder
+  change followed by a settings failure.
+- Reject Move, Rename, and Delete when their source path has been replaced since
+  the folder list was loaded.
+- Pass complete tests, fixed-point review, MariaDB syntax proof, desktop/mobile
+  browser checks, the integration gate, and guarded bridge/active release.
+
+### Changes made
+
+- LIST-STATUS now includes `UIDVALIDITY`; normalized Favorites store an exact
+  path-to-generation map alongside their ordered path list. Reconciliation
+  never changes a Favorite automatically. One unique matching generation
+  produces an `Update Favorite` review card; no match produces an explicit
+  unavailable/removal card; multiple matches stay unresolved.
+- Folder list readiness is request-versioned. A refresh clears readiness, and
+  only the newest successful response enables repair or removal actions, so an
+  initial empty state or failed reload cannot be mistaken for deletion.
+- Added authenticated `PATCH /api/settings/mail/favorites`, which atomically
+  replaces only the normalized folders section. Generic Mail settings writes
+  atomically preserve the currently stored folders section, preventing a stale
+  Settings tab from undoing a newer Favorite repair.
+- Folder Move, Rename, and Delete now require the displayed source
+  `UIDVALIDITY`; non-root Move also requires the displayed parent generation.
+  The IMAP layer re-lists and returns `409 FOLDER_CHANGED` before mutation when
+  a path now denotes a different mailbox.
+- A committed IMAP lifecycle mutation whose Favorite write fails remains
+  visible as an exact pending update with Retry. While pending, overlapping
+  Favorite and lifecycle actions stay disabled.
+
+### Proof and review before release
+
+- Complete backend: 866 total, 859 pass, seven documented optional skips.
+- Complete frontend: 202/202; lint and production build passed.
+- The exact Mail-settings upsert expression passed against the installed
+  MariaDB using a session-local temporary table and preserved both the newer
+  non-folder settings and the older authoritative Favorites section.
+- Final Spec and Standards review returned no findings.
+- `git diff --check`, shared-memory hygiene, and the complete repository
+  integration gate passed, ending with `[ok] Integration checks completed.`
+- Headless Chromium proved that a delayed folder response shows no premature
+  repair state, a unique external-rename candidate sends only the confirmed
+  scoped Favorites update, and an unavailable Favorite can be removed. The
+  1440x900 and 390x844 layouts had exact viewport width and zero console
+  warnings/errors.
+
+### Residual limit and release state
+
+`UIDVALIDITY` identifies a mailbox generation but is not a globally unique
+mailbox identifier. Therefore it is used only to propose a user-confirmed
+repair, never to remap automatically. Truly automatic external-rename repair
+remains gated on a stable server identity such as RFC 8474 `MAILBOXID` (or a
+carefully proven Dovecot GUID bridge) plus an owner-scoped reconciliation path.
+
+The release candidate is locally verified. Guarded bridge/active deployment,
+live artifact and service checks, rollback paths, release commit, and push are
+recorded after the release completes.

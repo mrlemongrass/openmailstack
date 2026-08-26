@@ -1,5 +1,40 @@
 # Implementation State
 
+## 2026-08-25 External Folder Rename Favorite Repair
+
+**Status: release candidate verified locally; guarded release pending.**
+Favorites now retain a normalized positive `UIDVALIDITY` for each exact folder
+path. After the latest folder LIST succeeds, one missing Favorite with exactly
+one matching generation is presented as an external-rename candidate with
+`Not now` and `Update Favorite`; no match is presented as unavailable with an
+explicit removal action. Ambiguous matches and folder-load failures never
+produce a remap. The client does not change a Favorite without confirmation.
+
+Authenticated `PATCH /api/settings/mail/favorites` atomically replaces only the
+folders section. Generic Mail-settings writes preserve the current folders
+section inside the same SQL upsert, preventing a stale Settings view from
+reverting a repair. A failed post-lifecycle Favorite write retains the exact
+pending references and blocks overlapping folder/Favorite changes until Retry
+succeeds.
+
+Move, Rename, and Delete require the source generation displayed by the latest
+folder listing; non-root Move also binds its parent. The IMAP layer re-lists
+with LIST-STATUS and rejects missing/malformed identity with `400`, or a path
+generation mismatch with `409 FOLDER_CHANGED`, before mutation.
+
+Complete verification passed: 866 backend tests (859 pass, seven optional
+skips), 202 frontend tests, frontend lint/build, the complete integration gate,
+live-version MariaDB temporary-table syntax/behavior, shared-memory hygiene,
+and fixed-point Spec/Standards review with no findings.
+Chromium verified delayed-list readiness, confirmed rename repair, explicit
+unavailable removal, exact scoped PATCH bodies, 1440/390 px viewport fit, and
+zero console warnings/errors.
+
+This does not make an IMAP rename and SQL settings update atomic. `UIDVALIDITY`
+is only a user-confirmed heuristic because it is not a global mailbox identity.
+Automatic remapping remains gated on RFC 8474 `MAILBOXID` or a safely proven
+Dovecot GUID integration.
+
 ## 2026-08-25 Recoverable Mail Folder Deletion
 
 **Status: guarded-deployed in active mode and verified against the public API
@@ -39,7 +74,9 @@ boundaries, removed leaves, and proved zero residue. Released-asset Chromium at
 1440x900 and 390x844 passed confirmation, guard, focus, retry, viewport, and
 console checks.
 
-External IMAP renames still cannot atomically rewrite web-only Favorites.
+External IMAP renames now produce an explicit Favorite repair candidate when
+one generation match exists, but still cannot atomically rewrite web-only
+Favorites.
 Folder Empty, color, Favorites ordering, Categories, Pin/Flag, and richer
 message Reply/Forward actions remain separate Outlook-parity slices.
 
@@ -87,8 +124,8 @@ Mark-all-read locking/counts, mobile modal isolation, and focus restoration with
 zero console errors/warnings.
 
 Recoverable folder deletion shipped in the later 2026-08-25 slice. External
-IMAP renames cannot atomically rewrite the web-only Favorite setting, so missing
-paths are hidden until the user removes/re-adds the renamed mailbox.
+IMAP renames now have a user-confirmed generation-based repair path; fully
+automatic cross-system remapping remains intentionally unsupported.
 
 ## 2026-08-24 Mail Folder Rename Lifecycle
 

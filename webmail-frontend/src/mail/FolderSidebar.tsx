@@ -29,7 +29,10 @@ import { useToast } from '../shared/components/Toast';
 import type { ContextMenuPoint } from '../shared/context-menu-navigation';
 import { FolderDestinationDialog, NewFolderDialog, RenameFolderDialog } from './components/FolderDialogs';
 import { buildFolderTree, type FolderTreeNode } from './mail-folder-tree';
-import { remapFolderSubtreePath } from './folder-mutation-state';
+import {
+  remapFolderSubtreePath,
+  type FavoriteFolderRenameCandidate,
+} from './folder-mutation-state';
 
 type FolderIcon = React.ComponentType<{ size?: number }>;
 
@@ -38,14 +41,23 @@ interface FolderSidebarProps {
   activeFolder: string;
   expandedFolders: Record<string, boolean>;
   favoriteFolders: string[];
+  favoriteRenameCandidates?: FavoriteFolderRenameCandidate[];
+  unavailableFavoritePaths?: string[];
   favoriteSettingsReady?: boolean;
   favoriteSettingsError?: string;
+  favoritePersistencePending?: boolean;
+  favoritePersistenceError?: string;
   folderMutationPending?: boolean;
   markingReadFolder?: string | null;
   onToggleExpand: (path: string) => void;
   onToggleFavorite: (path: string) => Promise<void>;
   onMarkFolderRead: (path: string) => Promise<number>;
   onRetryFavoriteSettings?: () => void;
+  onRetryFavoritePersistence: () => Promise<void>;
+  onConfirmFavoriteRename: (candidate: FavoriteFolderRenameCandidate) => Promise<void>;
+  onDismissFavoriteRename: (candidate: FavoriteFolderRenameCandidate) => void;
+  onRemoveUnavailableFavorite: (path: string) => Promise<void>;
+  onDismissUnavailableFavorite: (path: string) => void;
   onFolderNavigate?: () => void;
   onFolderDialogChange?: (open: boolean) => void;
   onCompose: () => void;
@@ -140,14 +152,23 @@ export function FolderSidebar({
   activeFolder,
   expandedFolders,
   favoriteFolders,
+  favoriteRenameCandidates = [],
+  unavailableFavoritePaths = [],
   favoriteSettingsReady = true,
   favoriteSettingsError = '',
+  favoritePersistencePending = false,
+  favoritePersistenceError = '',
   folderMutationPending = false,
   markingReadFolder = null,
   onToggleExpand,
   onToggleFavorite,
   onMarkFolderRead,
   onRetryFavoriteSettings,
+  onRetryFavoritePersistence,
+  onConfirmFavoriteRename,
+  onDismissFavoriteRename,
+  onRemoveUnavailableFavorite,
+  onDismissUnavailableFavorite,
   onFolderNavigate,
   onFolderDialogChange,
   onCompose,
@@ -175,6 +196,9 @@ export function FolderSidebar({
     const node = foldersByPath.get(path);
     return node?.exists && !node.disabled && node.fullPath.toUpperCase() !== 'SCHEDULED' ? [node] : [];
   });
+  const favoriteActionsDisabled = !favoriteSettingsReady
+    || folderMutationPending
+    || favoritePersistencePending;
   const closeFolderMenu = useCallback(() => setFolderMenu(null), []);
   const closeNewFolderDialog = useCallback(() => {
     setNewFolderParent(undefined);
@@ -211,7 +235,8 @@ export function FolderSidebar({
   ) => {
     const subscriptionWarning = warnings?.includes('SUBSCRIPTIONS_NOT_RECONCILED') || false;
     const searchWarning = warnings?.includes('SEARCH_INDEX_RESET_FAILED') || false;
-    if (!subscriptionWarning && !searchWarning) {
+    const favoriteWarning = warnings?.includes('FAVORITES_NOT_RECONCILED') || false;
+    if (!subscriptionWarning && !searchWarning && !favoriteWarning) {
       showToast({ type: 'success', message: successMessage });
       return;
     }
@@ -219,30 +244,44 @@ export function FolderSidebar({
     const committedMutationGuidance = messagesPreserved
       ? 'Messages are intact. Refresh Mail and check folder subscriptions in other mail clients'
       : 'The folder deletion completed. Refresh Mail and check folder subscriptions in other mail clients';
-    const message = subscriptionWarning && searchWarning
+    let message = subscriptionWarning && searchWarning
       ? `${successMessage}, but subscriptions and search cleanup need attention. ${committedMutationGuidance}, then retry search cleanup.`
       : subscriptionWarning
         ? `${successMessage}, but subscriptions could not be updated. ${committedMutationGuidance}.`
-        : `${successMessage}, but search cleanup did not finish. Retry search cleanup.`;
+        : searchWarning
+          ? `${successMessage}, but search cleanup did not finish. Retry search cleanup.`
+          : successMessage;
+    if (favoriteWarning) {
+      message += ' Favorites still need to be updated; use Retry in Favorites.';
+    }
+    const retryAction = searchWarning && onRetrySearchCleanup ? {
+      actionLabel: 'Retry search cleanup',
+      onAction: async () => {
+        try {
+          await onRetrySearchCleanup();
+          showToast({ type: 'success', message: 'Search cleanup completed.' });
+        } catch (caught) {
+          showToast({ type: 'error', message: 'Search cleanup could not be completed.' });
+          throw caught;
+        }
+      },
+    } : favoriteWarning && onRetryFavoritePersistence ? {
+      actionLabel: 'Retry Favorites',
+      onAction: async () => {
+        try {
+          await onRetryFavoritePersistence();
+          showToast({ type: 'success', message: 'Favorites updated.' });
+        } catch (caught) {
+          showToast({ type: 'error', message: 'Favorites could not be updated.' });
+          throw caught;
+        }
+      },
+    } : {};
     showToast({
       type: 'info',
       message,
       duration: 9000,
-      ...(searchWarning && onRetrySearchCleanup ? {
-        actionLabel: 'Retry search cleanup',
-        onAction: async () => {
-          try {
-            await onRetrySearchCleanup();
-            showToast({ type: 'success', message: 'Search cleanup completed.' });
-          } catch (caught) {
-            showToast({
-              type: 'error',
-              message: 'Search cleanup could not be completed.',
-            });
-            throw caught;
-          }
-        },
-      } : {}),
+      ...retryAction,
     });
   };
 
@@ -280,7 +319,7 @@ export function FolderSidebar({
         label: 'Rename…',
         icon: Edit2,
         separatorBefore: true,
-        disabled: !favoriteSettingsReady || folderMutationPending,
+        disabled: favoriteActionsDisabled,
         onSelect: () => {
           onFolderDialogChange?.(true);
           setRenamingFolder(folderMenu.node);
@@ -290,7 +329,7 @@ export function FolderSidebar({
         id: 'move',
         label: 'Move…',
         icon: FolderInput,
-        disabled: !favoriteSettingsReady || folderMutationPending,
+        disabled: favoriteActionsDisabled,
         onSelect: () => {
           onFolderDialogChange?.(true);
           setMovingFolder(folderMenu.node);
@@ -305,8 +344,7 @@ export function FolderSidebar({
           : 'Delete',
         icon: Trash2,
         danger: true,
-        disabled: !favoriteSettingsReady
-          || folderMutationPending
+        disabled: favoriteActionsDisabled
           || hasProtectedDescendant
           || (deletePermanently && hasSubfolders),
         onSelect: () => {
@@ -351,11 +389,13 @@ export function FolderSidebar({
         id: 'favorite',
         label: !favoriteSettingsReady
           ? 'Favorites unavailable'
+          : favoritePersistencePending
+            ? 'Retry Favorites update first…'
           : folderMutationPending
             ? 'Folder change in progress…'
           : isFavorite ? 'Remove from Favorites' : 'Add to Favorites',
         icon: isFavorite ? StarOff : Star,
-        disabled: !favoriteSettingsReady || folderMutationPending,
+        disabled: favoriteActionsDisabled,
         focusAfterSelect: isFavorite
           ? () => findFolderFocusTarget(selectedNode.fullPath, selectedNode.delimiter)
           : undefined,
@@ -482,10 +522,125 @@ export function FolderSidebar({
           {!favoriteSettingsReady && !favoriteSettingsError && (
             <div className="mail-folder-settings-state" role="status">Loading Favorites…</div>
           )}
+          {favoriteSettingsReady && favoritePersistenceError && (
+            <div className="mail-folder-settings-state mail-folder-settings-state--error" role="alert">
+              <span>{favoritePersistenceError}</span>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={folderMutationPending}
+                onClick={() => {
+                  void onRetryFavoritePersistence().then(() => {
+                    showToast({ type: 'success', message: 'Favorites updated.' });
+                  }).catch(caught => {
+                    showToast({
+                      type: 'error',
+                      message: caught instanceof Error ? caught.message : 'Favorites could not be updated.',
+                    });
+                  });
+                }}
+              >
+                <RefreshCw size={13} aria-hidden="true" /> Retry
+              </button>
+            </div>
+          )}
+          {favoriteSettingsReady
+            && !favoritePersistencePending
+            && favoriteRenameCandidates.slice(0, 1).map(candidate => (
+            <div
+              className="mail-folder-settings-state mail-folder-settings-state--repair"
+              role="status"
+              key={`${candidate.fromPath}\u0000${candidate.toPath}\u0000${candidate.uidValidity}`}
+            >
+              <span>
+                <strong>{candidate.fromPath}</strong> may have been renamed to{' '}
+                <strong>{candidate.toPath}</strong> in another mail app.
+                {favoriteRenameCandidates.length > 1
+                  ? ` ${favoriteRenameCandidates.length - 1} more ${favoriteRenameCandidates.length === 2 ? 'Favorite needs' : 'Favorites need'} review.`
+                  : ''}
+              </span>
+              <span className="mail-folder-repair-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={favoriteActionsDisabled}
+                  onClick={() => onDismissFavoriteRename(candidate)}
+                >
+                  Not now
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={favoriteActionsDisabled}
+                  onClick={() => {
+                    void onConfirmFavoriteRename(candidate).then(() => {
+                      showToast({ type: 'success', message: `Favorite updated to ${candidate.toPath}.` });
+                    }).catch(caught => {
+                      showToast({
+                        type: 'error',
+                        message: caught instanceof Error ? caught.message : 'The Favorite could not be updated.',
+                      });
+                    });
+                  }}
+                >
+                  Update Favorite
+                </button>
+              </span>
+            </div>
+          ))}
+          {favoriteSettingsReady
+            && !favoritePersistencePending
+            && favoriteRenameCandidates.length === 0
+            && unavailableFavoritePaths.slice(0, 1).map(path => (
+            <div
+              className="mail-folder-settings-state mail-folder-settings-state--repair"
+              role="status"
+              key={path}
+            >
+              <span>
+                Favorite folder <strong>{path}</strong> is unavailable. It may have been deleted
+                or may no longer be listed by the mail server.
+                {unavailableFavoritePaths.length > 1
+                  ? ` ${unavailableFavoritePaths.length - 1} more ${unavailableFavoritePaths.length === 2 ? 'Favorite needs' : 'Favorites need'} review.`
+                  : ''}
+              </span>
+              <span className="mail-folder-repair-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={favoriteActionsDisabled}
+                  onClick={() => onDismissUnavailableFavorite(path)}
+                >
+                  Not now
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={favoriteActionsDisabled}
+                  onClick={() => {
+                    void onRemoveUnavailableFavorite(path).then(() => {
+                      showToast({ type: 'success', message: `Removed unavailable Favorite ${path}.` });
+                    }).catch(caught => {
+                      showToast({
+                        type: 'error',
+                        message: caught instanceof Error ? caught.message : 'The Favorite could not be removed.',
+                      });
+                    });
+                  }}
+                >
+                  Remove Favorite
+                </button>
+              </span>
+            </div>
+          ))}
           {favoriteSettingsReady && folderMutationPending && (
             <div className="mail-folder-settings-state" role="status">Folder change in progress…</div>
           )}
-          {favoriteSettingsReady && favoriteNodes.length === 0 && (
+          {favoriteSettingsReady
+            && favoriteNodes.length === 0
+            && favoriteRenameCandidates.length === 0
+            && unavailableFavoritePaths.length === 0
+            && !favoritePersistenceError && (
             <div className="mail-folder-settings-state">Add folders from their actions menu.</div>
           )}
           {favoriteSettingsReady && favoriteNodes.map(node => (

@@ -29,6 +29,14 @@ Last updated: 2026-08-25
   canary, exact artifact equality, and zero-error desktop/mobile released-asset
   browser proof.
 
+- ✅ Silent Favorite drift after external path reuse: each observed Favorite
+  now retains the folder's positive `UIDVALIDITY`; a successful authoritative
+  refresh may propose one matching external rename for explicit confirmation,
+  while missing and ambiguous matches remain visible for review. Move, Rename,
+  and Delete bind the displayed source generation and reject stale path reuse
+  before IMAP mutation. Scoped/atomic Favorites persistence prevents unrelated
+  or stale Mail-settings writes from reverting a repair.
+
 - ✅ Folder identity drift during rename: custom selectable folders now use a
   leaf-only server rename that preserves the advertised hierarchy delimiter,
   remaps active/expanded frontend paths, purges folder-keyed search state, and
@@ -181,11 +189,13 @@ Last updated: 2026-08-25
 
 ## Remaining High-Priority Risks
 
-- 🟡 Favorites are web settings rather than an IMAP attribute, so a rename
-  performed by an external client cannot atomically remap them; the UI filters
-  missing paths until the user removes/re-adds the renamed folder. Folder Empty,
-  color, and Favorites ordering remain incomplete Outlook-familiar lifecycle
-  affordances.
+- 🟡 Favorites remain web settings, so an external IMAP rename and the SQL
+  Favorite update cannot be one atomic transaction. `UIDVALIDITY` can safely
+  support only a user-confirmed one-candidate repair because it is not a
+  globally unique mailbox identifier. Automatic remapping requires a stable
+  server identity such as RFC 8474 `MAILBOXID` or a proven Dovecot GUID bridge.
+  Folder Empty, color, and Favorites ordering remain incomplete Outlook-
+  familiar lifecycle affordances.
 
 - 🔴 Physical Apple release evidence: the first final-runtime iPad SendMail is
   proven end-to-end through one durable row, one SMTP acceptance, and one

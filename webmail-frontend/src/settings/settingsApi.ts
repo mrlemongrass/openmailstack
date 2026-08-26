@@ -38,6 +38,7 @@ export interface MailUserSettings {
   };
   folders: {
     favorites: string[];
+    favoriteUidValidities: Record<string, string>;
   };
 }
 
@@ -99,6 +100,7 @@ export const defaultMailSettings: MailUserSettings = {
   },
   folders: {
     favorites: [],
+    favoriteUidValidities: {},
   },
 };
 
@@ -166,6 +168,22 @@ export async function saveUserSettings<T extends SettingsNamespace>(namespace: T
   const body = await response.json() as SettingsResponse<T>;
   if (!response.ok || !body.success) {
     throw new Error(body.error || `Failed to save ${namespace} settings`);
+  }
+  return body.settings;
+}
+
+export async function saveMailFavoriteSettings(
+  folders: MailUserSettings['folders'],
+): Promise<MailUserSettings> {
+  const response = await fetch('/api/settings/mail/favorites', {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folders }),
+  });
+  const body = await response.json() as SettingsResponse<'mail'>;
+  if (!response.ok || !body.success) {
+    throw new Error(body.error || 'Failed to save Favorite folders');
   }
   return body.settings;
 }

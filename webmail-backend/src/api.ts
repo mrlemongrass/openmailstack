@@ -37,7 +37,12 @@ import {
     type IndexedMailSearchField,
     type MailSearchIndexRow
 } from './search-index';
-import { getUserSettings, isSettingsNamespace, saveUserSettings } from './user-settings';
+import {
+    getUserSettings,
+    isSettingsNamespace,
+    saveMailFavoriteSettings,
+    saveUserSettings,
+} from './user-settings';
 import { getAdminSettings, isAdminSettingsNamespace, saveAdminSettings } from './admin-settings';
 import { BrandingValidationError, getBrandingSettings, saveBrandingSettings } from './branding';
 import {
@@ -2016,11 +2021,30 @@ apiRouter.patch('/folders', requireAuth, async (req: any, res) => {
                 'Rename or move the folder in one step, not both.',
             );
         }
+        if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'sourceUidValidity')
+            || (!hasName
+                && req.body?.parent !== null
+                && !Object.prototype.hasOwnProperty.call(req.body || {}, 'parentUidValidity'))) {
+            throw new MailboxMutationError(
+                'INVALID_FOLDER_IDENTITY',
+                400,
+                'Refresh Mail before changing this folder.',
+            );
+        }
         const imap = await getPooledImap(user, pass);
         await assertFolderMutationIsUnreferenced(user, pass, imap, req.body?.path);
         const result = hasName
-            ? await imap.renameFolder(req.body?.path, req.body?.name)
-            : await imap.moveFolder(req.body?.path, req.body?.parent);
+            ? await imap.renameFolder(
+                req.body?.path,
+                req.body?.name,
+                req.body?.sourceUidValidity,
+            )
+            : await imap.moveFolder(
+                req.body?.path,
+                req.body?.parent,
+                req.body?.sourceUidValidity,
+                req.body?.parentUidValidity,
+            );
         const searchIndexReset = await resetSearchIndexAfterFolderMutation(user);
         res.json({ success: true, ...folderMutationResponse(result, searchIndexReset) });
     } catch (err: unknown) {
@@ -2033,9 +2057,20 @@ apiRouter.delete('/folders', requireAuth, async (req: any, res) => {
     const pass = req.user.password;
 
     try {
+        if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'sourceUidValidity')) {
+            throw new MailboxMutationError(
+                'INVALID_FOLDER_IDENTITY',
+                400,
+                'Refresh Mail before changing this folder.',
+            );
+        }
         const imap = await getPooledImap(user, pass);
         await assertFolderMutationIsUnreferenced(user, pass, imap, req.body?.path);
-        const result = await imap.deleteFolder(req.body?.path, req.body?.permanent ?? false);
+        const result = await imap.deleteFolder(
+            req.body?.path,
+            req.body?.permanent ?? false,
+            req.body?.sourceUidValidity,
+        );
         const searchIndexReset = await resetSearchIndexAfterFolderMutation(user);
         res.json({ success: true, ...folderMutationResponse(result, searchIndexReset) });
     } catch (err: unknown) {
@@ -3629,6 +3664,21 @@ apiRouter.post('/settings/forwarding', requireAuth, async (req: any, res) => {
         await pool.query('UPDATE alias SET goto = ?, modified = NOW() WHERE address = ?', [goto, user]);
         res.json({ success: true });
     } catch (err: any) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+apiRouter.patch('/settings/mail/favorites', requireAuth, async (req: any, res) => {
+    const folders = req.body?.folders;
+    if (!folders || typeof folders !== 'object' || Array.isArray(folders)) {
+        return res.status(400).json({ success: false, error: 'Favorite folder settings are required' });
+    }
+
+    try {
+        const settings = await saveMailFavoriteSettings(req.user.username, folders);
+        res.json({ success: true, namespace: 'mail', settings });
+    } catch (err: any) {
+        console.error('Failed to save Favorite folders:', err);
         res.status(500).json({ success: false, error: err.message });
     }
 });

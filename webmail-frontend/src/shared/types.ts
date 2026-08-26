@@ -120,6 +120,7 @@ export interface RuleAnalysis {
 export interface MailFolder {
   path: string;
   unseen: number;
+  uidValidity?: string;
   delimiter?: string;
   specialUse?: string;
   disabled?: boolean;
@@ -127,7 +128,8 @@ export interface MailFolder {
 
 export type FolderMutationWarning =
   | 'SUBSCRIPTIONS_NOT_RECONCILED'
-  | 'SEARCH_INDEX_RESET_FAILED';
+  | 'SEARCH_INDEX_RESET_FAILED'
+  | 'FAVORITES_NOT_RECONCILED';
 
 export interface FolderPathMutationResult {
   path: string;

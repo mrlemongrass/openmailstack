@@ -259,6 +259,22 @@ verified recoverable/permanent confirmation copy, protected-tree and Trash-
 parent guards, post-mutation focus, partial-success retry, viewport fit, and
 zero console errors or warnings.
 
+Favorites now recover safely when Outlook or another IMAP client renames a
+folder. OMS stores the folder's current IMAP generation with its Favorite
+path. After an authoritative refresh, one matching generation produces a calm
+`old name may have been renamed to new name` review with `Not now` and `Update
+Favorite`; a missing folder can be explicitly removed. OMS never silently
+accepts the guess, never treats an initial/failed folder load as deletion, and
+leaves ambiguous matches unresolved. The same generation binding makes stale
+Move, Rename, and Delete requests fail before they can mutate a newly reused
+path.
+
+This is deliberate recovery rather than cross-system atomicity. The deployed
+IMAP surface does not expose a standards-based stable mailbox identifier, and
+`UIDVALIDITY` alone is not globally unique. Automatic external-rename remapping
+remains a later server-capability slice based on RFC 8474 `MAILBOXID` or an
+equivalently proven server GUID.
+
 This is not full Outlook parity. Categories, Pin/Flag, Rules-from-message,
 Sweep/Block/Ignore, richer message Reply/Forward context actions, Favorites
 ordering, folder color/empty commands, and Search Folders remain separate

@@ -2331,3 +2331,25 @@ Future entry template:
 - Live three-level subtree/message/collision/restore/permanent-boundary cleanup,
   six-service health, zero restarts, auth boundaries, exact artifacts, and
   desktop/mobile Chromium checks passed.
+
+## 2026-08-25 — External Folder Rename Favorite Repair
+
+- Added positive IMAP `UIDVALIDITY` metadata to folder listings and persisted a
+  normalized path-to-generation map for Favorites.
+- Added explicit external-rename review: one unique generation match offers
+  `Update Favorite`, no match offers explicit removal, and ambiguous or
+  unauthoritative states never remap automatically.
+- Added scoped authenticated Favorites persistence and protected it from stale
+  generic Mail-settings writes with atomic JSON updates. Failed post-lifecycle
+  persistence retains the exact intended state for visible Retry.
+- Bound Move, Rename, and Delete to the displayed source generation, plus the
+  destination parent generation for non-root Move, so stale path reuse fails
+  before IMAP mutation.
+- Passed 866 backend tests (859 pass, seven optional skips), 202 frontend tests,
+  lint/build, complete integration, installed-MariaDB temporary-table proof,
+  and final Spec/Standards review with no findings. Chromium passed delayed-list, confirmed-rename,
+  unavailable-removal, exact PATCH, desktop/mobile viewport, and zero-console-
+  warning/error checks.
+- Residual: IMAP rename and SQL Favorites persistence are not cross-system
+  atomic. `UIDVALIDITY` remains confirmation-only; automatic remapping needs a
+  stable identifier such as RFC 8474 `MAILBOXID` or a proven Dovecot GUID.

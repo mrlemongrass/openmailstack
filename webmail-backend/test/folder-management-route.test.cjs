@@ -116,17 +116,33 @@ require.cache[imapPoolPath] = {
         folderCalls.push({ action: 'create', parent, name });
         return createFolder(parent, name);
       },
-      async moveFolder(path, parent) {
-        folderCalls.push({ action: 'move', path, parent });
-        return moveFolder(path, parent);
+      async moveFolder(path, parent, sourceUidValidity, parentUidValidity) {
+        folderCalls.push({
+          action: 'move',
+          path,
+          parent,
+          ...(sourceUidValidity === undefined ? {} : { sourceUidValidity }),
+          ...(parentUidValidity === undefined ? {} : { parentUidValidity }),
+        });
+        return moveFolder(path, parent, sourceUidValidity, parentUidValidity);
       },
-      async renameFolder(path, name) {
-        folderCalls.push({ action: 'rename', path, name });
-        return renameFolder(path, name);
+      async renameFolder(path, name, sourceUidValidity) {
+        folderCalls.push({
+          action: 'rename',
+          path,
+          name,
+          ...(sourceUidValidity === undefined ? {} : { sourceUidValidity }),
+        });
+        return renameFolder(path, name, sourceUidValidity);
       },
-      async deleteFolder(path, permanent) {
-        folderCalls.push({ action: 'delete', path, permanent });
-        return deleteFolder(path, permanent);
+      async deleteFolder(path, permanent, sourceUidValidity) {
+        folderCalls.push({
+          action: 'delete',
+          path,
+          permanent,
+          ...(sourceUidValidity === undefined ? {} : { sourceUidValidity }),
+        });
+        return deleteFolder(path, permanent, sourceUidValidity);
       },
       async markFolderRead(path) {
         markFolderReadCalls.push(path);
@@ -154,6 +170,38 @@ global.setInterval = () => ({ unref() {} });
 const { apiRouter } = require('../src/api.js');
 global.setInterval = originalSetInterval;
 const { ImapService, MailboxMutationError } = require('../src/imap.js');
+
+function createMutationTestService() {
+  const service = Object.create(ImapService.prototype);
+  let client;
+  Object.defineProperty(service, 'client', {
+    configurable: true,
+    get: () => client,
+    set: value => {
+      const list = value.list?.bind(value);
+      if (list) {
+        value.list = async (...args) => (await list(...args)).map(folder => ({
+          ...folder,
+          status: {
+            ...(folder.status || {}),
+            uidValidity: folder.status?.uidValidity ?? 1n,
+          },
+        }));
+      }
+      client = value;
+    },
+  });
+  service.moveFolder = (path, parent, sourceUidValidity = '1', parentUidValidity = parent === null ? undefined : '1') => (
+    ImapService.prototype.moveFolder.call(service, path, parent, sourceUidValidity, parentUidValidity)
+  );
+  service.renameFolder = (path, name, sourceUidValidity = '1') => (
+    ImapService.prototype.renameFolder.call(service, path, name, sourceUidValidity)
+  );
+  service.deleteFolder = (path, permanent, sourceUidValidity = '1') => (
+    ImapService.prototype.deleteFolder.call(service, path, permanent, sourceUidValidity)
+  );
+  return service;
+}
 
 const requestJson = (port, method, path, body) => new Promise((resolve, reject) => {
   const payload = Buffer.from(JSON.stringify(body));
@@ -253,9 +301,12 @@ test('authenticated users can move and recoverably delete a custom folder', asyn
   const moved = await requestJson(port, 'PATCH', '/api/folders', {
     path: 'Projects/Travel',
     parent: 'Archive',
+    sourceUidValidity: '101',
+    parentUidValidity: '202',
   });
   const deleted = await requestJson(port, 'DELETE', '/api/folders', {
     path: 'Archive/Travel',
+    sourceUidValidity: '101',
   });
 
   assert.equal(moved.status, 200);
@@ -272,8 +323,19 @@ test('authenticated users can move and recoverably delete a custom folder', asyn
     folder: { path: 'Deleted Messages/Travel', delimiter: '/', unseen: 2 },
   });
   assert.deepEqual(folderCalls, [
-    { action: 'move', path: 'Projects/Travel', parent: 'Archive' },
-    { action: 'delete', path: 'Archive/Travel', permanent: false },
+    {
+      action: 'move',
+      path: 'Projects/Travel',
+      parent: 'Archive',
+      sourceUidValidity: '101',
+      parentUidValidity: '202',
+    },
+    {
+      action: 'delete',
+      path: 'Archive/Travel',
+      permanent: false,
+      sourceUidValidity: '101',
+    },
   ]);
   assert.deepEqual(purgeCalls, [username, username]);
 });
@@ -295,6 +357,7 @@ test('folder deletion requires explicit permanent intent for a folder already in
   const deleted = await requestJson(port, 'DELETE', '/api/folders', {
     path: 'Deleted Messages/Old',
     permanent: true,
+    sourceUidValidity: '303',
   });
 
   assert.equal(deleted.status, 200);
@@ -308,6 +371,7 @@ test('folder deletion requires explicit permanent intent for a folder already in
     action: 'delete',
     path: 'Deleted Messages/Old',
     permanent: true,
+    sourceUidValidity: '303',
   }]);
   assert.deepEqual(purgeCalls, [username]);
 });
@@ -328,6 +392,7 @@ test('authenticated users can rename a custom folder without changing its parent
   const response = await requestJson(port, 'PATCH', '/api/folders', {
     path: 'Projects/Travel',
     name: 'Trips',
+    sourceUidValidity: '101',
   });
 
   assert.equal(response.status, 200);
@@ -337,7 +402,12 @@ test('authenticated users can rename a custom folder without changing its parent
     folder: { path: 'Projects/Trips', delimiter: '/', unseen: 2 },
   });
   assert.deepEqual(folderCalls, [
-    { action: 'rename', path: 'Projects/Travel', name: 'Trips' },
+    {
+      action: 'rename',
+      path: 'Projects/Travel',
+      name: 'Trips',
+      sourceUidValidity: '101',
+    },
   ]);
   assert.deepEqual(purgeCalls, [username]);
 });
@@ -353,6 +423,8 @@ test('folder PATCH rejects a combined move and rename before IMAP mutation', asy
     path: 'Projects/Travel',
     parent: 'Archive',
     name: 'Trips',
+    sourceUidValidity: '101',
+    parentUidValidity: '202',
   });
 
   assert.equal(response.status, 400);
@@ -376,6 +448,8 @@ test('committed folder mutations still succeed when best-effort search cleanup f
   const response = await requestJson(port, 'PATCH', '/api/folders', {
     path: 'Projects/Travel',
     parent: 'Archive',
+    sourceUidValidity: '101',
+    parentUidValidity: '202',
   });
 
   assert.equal(response.status, 200);
@@ -415,16 +489,20 @@ test('folder rename, move, and delete reject rule or snooze path references befo
   const renamed = await requestJson(port, 'PATCH', '/api/folders', {
     path: 'Projects/Travel',
     name: 'Trips',
+    sourceUidValidity: '101',
   });
   const moved = await requestJson(port, 'PATCH', '/api/folders', {
     path: 'Projects/Travel',
     parent: 'Archive',
+    sourceUidValidity: '101',
+    parentUidValidity: '202',
   });
 
   activeRules = { rules: [] };
   snoozeFolders = ['Archive/Travel'];
   const deleted = await requestJson(port, 'DELETE', '/api/folders', {
     path: 'Archive/Travel',
+    sourceUidValidity: '202',
   });
 
   assert.equal(renamed.status, 409);
@@ -433,6 +511,34 @@ test('folder rename, move, and delete reject rule or snooze path references befo
   assert.equal(moved.json.code, 'FOLDER_IN_USE');
   assert.equal(deleted.status, 409);
   assert.equal(deleted.json.code, 'FOLDER_IN_USE');
+  assert.deepEqual(folderCalls, []);
+  assert.deepEqual(purgeCalls, []);
+});
+
+test('folder lifecycle routes reject requests without bound mailbox identities', async t => {
+  folderCalls.length = 0;
+  purgeCalls.length = 0;
+  activeRules = { rules: [] };
+  snoozeFolders = [];
+  const port = await withServer(t);
+
+  const renamed = await requestJson(port, 'PATCH', '/api/folders', {
+    path: 'Projects/Travel',
+    name: 'Trips',
+  });
+  const moved = await requestJson(port, 'PATCH', '/api/folders', {
+    path: 'Projects/Travel',
+    parent: 'Archive',
+    sourceUidValidity: '101',
+  });
+  const deleted = await requestJson(port, 'DELETE', '/api/folders', {
+    path: 'Projects/Travel',
+  });
+
+  for (const response of [renamed, moved, deleted]) {
+    assert.equal(response.status, 400);
+    assert.equal(response.json.code, 'INVALID_FOLDER_IDENTITY');
+  }
   assert.deepEqual(folderCalls, []);
   assert.deepEqual(purgeCalls, []);
 });
@@ -541,7 +647,7 @@ test('message action failures do not expose upstream IMAP details', async t => {
 
 test('IMAP folder creation supports top-level and child folders with the server delimiter', async () => {
   const calls = [];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [
@@ -564,7 +670,7 @@ test('IMAP folder creation supports top-level and child folders with the server 
 });
 
 test('IMAP child-folder creation rejects invalid names, virtual parents, and flat namespaces', async () => {
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [
@@ -612,7 +718,7 @@ test('IMAP child-folder creation rejects invalid names, virtual parents, and fla
 });
 
 test('IMAP child-folder creation reports an existing folder without treating it as success', async () => {
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() { return [{ path: 'INBOX', delimiter: '/' }]; },
     async mailboxCreate() { return { path: 'INBOX/Receipts', created: false }; },
@@ -637,7 +743,7 @@ test('IMAP folder moves preserve the leaf name and prevent unsafe destinations',
     { path: 'Archive', delimiter: '/' },
     { path: 'Old Sent', delimiter: '/', flags: new Set(['\\Sent']) },
   ];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() { return folders; },
     async mailboxRename(path, destination) {
@@ -693,7 +799,7 @@ test('IMAP folder moves preserve the leaf name and prevent unsafe destinations',
 
 test('IMAP folder moves translate subscribed descendants across namespace delimiters', async () => {
   const calls = [];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [
@@ -725,7 +831,7 @@ test('IMAP folder moves translate subscribed descendants across namespace delimi
 
 test('IMAP folder restore to top level uses the personal namespace delimiter', async () => {
   const calls = [];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     namespace: { prefix: '', delimiter: '/' },
     async list() {
@@ -761,7 +867,7 @@ test('IMAP folder restore fails closed when a name becomes ambiguous in the root
     { path: 'INBOX', delimiter: '/', specialUse: '\\Inbox' },
     { path: 'Deleted Messages.Project/2026', delimiter: '.' },
   ];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     namespace: { prefix: '', delimiter: '/' },
     async list() { return folders; },
@@ -791,7 +897,7 @@ test('IMAP folder rename changes only the leaf and preserves subtree subscriptio
     { path: 'Projects/Travel', delimiter: '/', subscribed: true, status: { unseen: 2 } },
     { path: 'Projects/Travel/2026', delimiter: '/', subscribed: true },
   ];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() { return folders; },
     async mailboxRename(path, segments) {
@@ -819,7 +925,7 @@ test('IMAP folder rename changes only the leaf and preserves subtree subscriptio
 
 test('IMAP folder rename supports a custom top-level folder', async () => {
   const calls = [];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [
@@ -848,8 +954,63 @@ test('IMAP folder rename supports a custom top-level folder', async () => {
   });
 });
 
+test('IMAP folder mutations reject a path reused by a different mailbox generation', async () => {
+  const calls = [];
+  const service = createMutationTestService();
+  service.client = {
+    namespace: { prefix: '', delimiter: '/' },
+    async list(options) {
+      calls.push(['list', options]);
+      return [
+        { path: 'INBOX', delimiter: '/', status: { uidValidity: 1n } },
+        { path: 'Projects', delimiter: '/', status: { uidValidity: 202n } },
+        { path: 'Archive', delimiter: '/', status: { uidValidity: 303n } },
+        { path: 'Deleted Messages', delimiter: '/', specialUse: '\\Trash', status: { uidValidity: 404n } },
+      ];
+    },
+    async mailboxRename() {
+      throw new Error('mailboxRename must not run for a reused path');
+    },
+    async mailboxDelete() {
+      throw new Error('mailboxDelete must not run for a reused path');
+    },
+  };
+
+  await assert.rejects(
+    () => ImapService.prototype.renameFolder.call(service, 'Projects', 'Work', undefined),
+    error => error instanceof MailboxMutationError && error.code === 'INVALID_FOLDER_IDENTITY',
+  );
+  await assert.rejects(
+    () => ImapService.prototype.moveFolder.call(service, 'Projects', 'Archive', '202', undefined),
+    error => error instanceof MailboxMutationError && error.code === 'INVALID_FOLDER_IDENTITY',
+  );
+  await assert.rejects(
+    () => ImapService.prototype.deleteFolder.call(service, 'Projects', false, undefined),
+    error => error instanceof MailboxMutationError && error.code === 'INVALID_FOLDER_IDENTITY',
+  );
+
+  await assert.rejects(
+    () => service.renameFolder('Projects', 'Work', '101'),
+    error => error instanceof MailboxMutationError && error.code === 'FOLDER_CHANGED',
+  );
+  await assert.rejects(
+    () => service.moveFolder('Projects', 'Archive', '101', '303'),
+    error => error instanceof MailboxMutationError && error.code === 'FOLDER_CHANGED',
+  );
+  await assert.rejects(
+    () => service.moveFolder('Projects', 'Archive', '202', '999'),
+    error => error instanceof MailboxMutationError && error.code === 'FOLDER_CHANGED',
+  );
+  await assert.rejects(
+    () => service.deleteFolder('Projects', false, '101'),
+    error => error instanceof MailboxMutationError && error.code === 'FOLDER_CHANGED',
+  );
+  assert.equal(calls.length, 4);
+  assert.ok(calls.every(([, options]) => options?.statusQuery?.uidValidity === true));
+});
+
 test('IMAP folder rename rejects protected, invalid, conflicting, and unchanged names', async () => {
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [
@@ -909,7 +1070,7 @@ test('IMAP folder rename rejects protected, invalid, conflicting, and unchanged 
 
 test('IMAP folder-wide mark as read is bounded to the mailbox UID ceiling captured at click time', async () => {
   const calls = [];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       calls.push(['list']);
@@ -952,7 +1113,7 @@ test('IMAP folder-wide mark as read is bounded to the mailbox UID ceiling captur
 
 test('IMAP folder-wide mark as read skips STORE when no unread messages exist and rejects invalid targets', async () => {
   const calls = [];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [
@@ -1002,7 +1163,7 @@ test('IMAP folder-wide mark as read skips STORE when no unread messages exist an
 
 test('IMAP folder-wide mark as read stores only searched unread UIDs in bounded batches', async () => {
   const flagSequences = [];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     mailbox: null,
     async list() {
@@ -1033,7 +1194,7 @@ test('IMAP folder-wide mark as read stores only searched unread UIDs in bounded 
 
 test('IMAP spam actions honor the server-designated special-use Junk folder', async () => {
   const calls = [];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async mailboxOpen(path) { calls.push(['open', path]); },
     async mailboxClose() { calls.push(['close']); },
@@ -1062,7 +1223,7 @@ test('IMAP spam actions honor the server-designated special-use Junk folder', as
 
 test('IMAP recoverable folder deletion moves a subscribed subtree beneath the designated Trash folder', async () => {
   const calls = [];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [
@@ -1098,7 +1259,7 @@ test('IMAP recoverable folder deletion moves a subscribed subtree beneath the de
 
 test('IMAP recoverable folder deletion reports subscription reconciliation failures after the move commits', async () => {
   let unsubscribeCalls = 0;
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [
@@ -1132,7 +1293,7 @@ test('IMAP recoverable folder deletion fails closed when a name becomes ambiguou
     { path: 'Reports.2026', delimiter: '/' },
     { path: 'Deleted Messages', delimiter: '.', flags: new Set(['\\Trash']) },
   ];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() { return folders; },
     async mailboxRename() { throw new Error('mailboxRename must not be called'); },
@@ -1155,7 +1316,7 @@ test('IMAP recoverable folder deletion fails closed when a name becomes ambiguou
 });
 
 test('IMAP recoverable folder deletion fails closed without a usable Trash contract', async () => {
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   let folders = [
     { path: 'Projects', delimiter: '/' },
   ];
@@ -1194,7 +1355,7 @@ test('IMAP recoverable folder deletion fails closed without a usable Trash contr
 
 test('IMAP permanent folder deletion is limited to a leaf already beneath Trash', async () => {
   const calls = [];
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [
@@ -1253,7 +1414,7 @@ test('IMAP permanent folder deletion is limited to a leaf already beneath Trash'
 });
 
 test('IMAP permanent folder deletion requires a matching Trash namespace contract', async () => {
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [
@@ -1271,7 +1432,7 @@ test('IMAP permanent folder deletion requires a matching Trash namespace contrac
 });
 
 test('IMAP permanent folder deletion fails closed without server acknowledgement', async () => {
-  const service = Object.create(ImapService.prototype);
+  const service = createMutationTestService();
   service.client = {
     async list() {
       return [

@@ -86,8 +86,11 @@ test('folder tree preserves an authoritative empty delimiter for flat namespaces
 
 test('folder subtree state follows a rename without touching similarly prefixed siblings', () => {
   const {
+    reconcileFavoriteFolderReferences,
+    removeFavoriteFolderReferences,
     removeFavoriteFolderSubtree,
     remapExpandedFolderPaths,
+    remapFavoriteFolderReferences,
     remapFavoriteFolderPaths,
     remapFolderSubtreePath,
   } = loadTypeScriptModule('../src/mail/folder-mutation-state.ts');
@@ -142,6 +145,119 @@ test('folder subtree state follows a rename without touching similarly prefixed 
       '/',
     ),
     ['INBOX', 'INBOX/Receipts-old'],
+  );
+  assert.deepEqual(
+    remapFavoriteFolderReferences(
+      {
+        paths: ['Trash.Project', 'Trash.Project.Child', 'Projects/Project', 'INBOX'],
+        uidValidities: {
+          'Trash.Project': '101',
+          'Trash.Project.Child': '102',
+          'Projects/Project': '999',
+          INBOX: '103',
+        },
+      },
+      'Trash.Project',
+      'Projects/Project',
+      '.',
+      '/',
+    ),
+    {
+      paths: ['Projects/Project', 'Projects/Project/Child', 'INBOX'],
+      uidValidities: {
+        'Projects/Project': '101',
+        'Projects/Project/Child': '102',
+        INBOX: '103',
+      },
+    },
+  );
+  assert.deepEqual(
+    removeFavoriteFolderReferences(
+      {
+        paths: ['INBOX', 'INBOX/Receipts', 'INBOX/Receipts/2025'],
+        uidValidities: { INBOX: '100', 'INBOX/Receipts': '101', 'INBOX/Receipts/2025': '102' },
+      },
+      'INBOX/Receipts',
+      '/',
+    ),
+    { paths: ['INBOX'], uidValidities: { INBOX: '100' } },
+  );
+
+  assert.deepEqual(
+    reconcileFavoriteFolderReferences(
+      {
+        paths: ['Old name', 'INBOX', 'Missing legacy'],
+        uidValidities: { 'Old name': '200', Ghost: '999' },
+      },
+      [
+        { path: 'New name', uidValidity: '200' },
+        { path: 'INBOX', uidValidity: '100' },
+        { path: 'Container', uidValidity: '300', disabled: true },
+      ],
+    ),
+    {
+      references: {
+        paths: ['Old name', 'INBOX', 'Missing legacy'],
+        uidValidities: { 'Old name': '200', INBOX: '100' },
+      },
+      visiblePaths: ['INBOX'],
+      renameCandidates: [{ fromPath: 'Old name', toPath: 'New name', uidValidity: '200' }],
+      unresolvedPaths: ['Missing legacy'],
+      unresolvedCount: 1,
+      changed: true,
+    },
+  );
+  assert.deepEqual(
+    reconcileFavoriteFolderReferences(
+      { paths: ['Old name'], uidValidities: { 'Old name': '200' } },
+      [
+        { path: 'Possible A', uidValidity: '200' },
+        { path: 'Possible B', uidValidity: '200' },
+      ],
+    ),
+    {
+      references: { paths: ['Old name'], uidValidities: { 'Old name': '200' } },
+      visiblePaths: [],
+      renameCandidates: [],
+      unresolvedPaths: ['Old name'],
+      unresolvedCount: 1,
+      changed: false,
+    },
+  );
+  assert.deepEqual(
+    reconcileFavoriteFolderReferences(
+      { paths: ['__proto__'], uidValidities: {} },
+      [{ path: '__proto__', uidValidity: '400' }],
+    ),
+    {
+      references: {
+        paths: ['__proto__'],
+        uidValidities: Object.fromEntries([['__proto__', '400']]),
+      },
+      visiblePaths: ['__proto__'],
+      renameCandidates: [],
+      unresolvedPaths: [],
+      unresolvedCount: 0,
+      changed: true,
+    },
+  );
+
+  assert.deepEqual(
+    reconcileFavoriteFolderReferences(
+      { paths: ['Old name'], uidValidities: { 'Old name': '200' } },
+      [
+        { path: 'Old name', uidValidity: '300' },
+        { path: 'New name', uidValidity: '200' },
+      ],
+    ),
+    {
+      references: { paths: ['Old name'], uidValidities: { 'Old name': '200' } },
+      visiblePaths: [],
+      renameCandidates: [{ fromPath: 'Old name', toPath: 'New name', uidValidity: '200' }],
+      unresolvedPaths: [],
+      unresolvedCount: 0,
+      changed: false,
+    },
   );
 });
 
@@ -282,31 +398,51 @@ test('rendered message rows expose sibling controls instead of nesting them in t
 test('folder lifecycle actions use the authenticated API and refresh the tree', () => {
   const api = source('src/shared/api.ts');
   const hook = source('src/mail/hooks/useMail.ts');
+  const routes = source('src/mail/routes.tsx');
   const sidebar = source('src/mail/FolderSidebar.tsx');
 
   assert.match(api, /fetch\('\/api\/folders',\s*\{[\s\S]*method:\s*'POST'/);
   assert.match(api, /JSON\.stringify\(\{ parent, name \}\)/);
   assert.match(api, /method:\s*'PATCH'/);
-  assert.match(api, /JSON\.stringify\(\{ path, parent \}\)/);
-  assert.match(api, /JSON\.stringify\(\{ path, name \}\)/);
+  assert.match(api, /JSON\.stringify\(\{ path, parent, sourceUidValidity, parentUidValidity \}\)/);
+  assert.match(api, /JSON\.stringify\(\{ path, name, sourceUidValidity \}\)/);
   assert.match(api, /method:\s*'DELETE'/);
   assert.match(api, /JSON\.stringify\(\{ path \}\)/);
   assert.match(api, /'\/api\/folders\/mark-read'/);
   assert.match(hook, /api\.createFolder\(parent, name\)/);
-  assert.match(hook, /api\.moveFolder\(path, parent\)/);
-  assert.match(hook, /api\.renameFolder\(path, name\)/);
-  assert.match(hook, /api\.deleteFolder\(path, permanent\)/);
+  assert.match(hook, /api\.moveFolder\([\s\S]*sourceFolder\.uidValidity/);
+  assert.match(hook, /api\.renameFolder\(path, name, sourceFolder\.uidValidity/);
+  assert.match(hook, /api\.deleteFolder\(path, permanent, sourceFolder\.uidValidity/);
   assert.match(hook, /result\.disposition === 'trashed'/);
   assert.match(hook, /path: result\.folder\.path,[\s\S]*delimiter: typeof result\.folder\.delimiter/);
   assert.match(sidebar, /const destinationDelimiter = typeof result\.delimiter/);
   assert.match(hook, /remapExpandedFolderPaths/);
-  assert.match(hook, /remapFavoriteFolderPaths/);
-  assert.match(hook, /removeFavoriteFolderSubtree/);
+  assert.match(hook, /remapFavoriteFolderReferences/);
+  assert.match(hook, /removeFavoriteFolderReferences/);
   assert.match(hook, /api\.markFolderRead\(path\)/);
   assert.match(hook, /refreshAfterFolderMarkReadRef\.current\(result\.path\)/);
   assert.match(hook, /setSelectedMessages/);
   assert.doesNotMatch(hook, /reconcileFolderMarkReadState|result\.maxUid/);
   assert.match(hook, /persistFavoriteFolders/);
+  assert.match(hook, /reconcileFavoriteFolderReferences/);
+  assert.match(hook, /favoriteUidValidities/);
+  assert.match(hook, /folderRequestIdRef/);
+  assert.match(hook, /folderListReady/);
+  assert.match(hook, /setFolderListReady\(true\)/);
+  assert.match(hook, /folderListReady\s*\?\s*favoriteReconciliation\.unresolvedPaths/);
+  assert.match(hook, /requestId !== folderRequestIdRef\.current/);
+  assert.match(hook, /FAVORITES_NOT_RECONCILED/);
+  assert.match(hook, /confirmFavoriteRename/);
+  assert.match(hook, /removeUnavailableFavorite/);
+  assert.match(hook, /retryFavoritePersistence/);
+  assert.doesNotMatch(hook, /onMailSettingsChange/);
+  assert.match(routes, /saveMailFavoriteSettings/);
+  assert.match(sidebar, /Update Favorite/);
+  assert.match(sidebar, /Remove Favorite/);
+  assert.match(sidebar, /unavailable/);
+  assert.match(sidebar, /Not now/);
+  assert.match(sidebar, /!favoritePersistencePending[\s\S]*favoriteRenameCandidates\.slice/);
+  assert.match(api, /JSON\.stringify\(\{ path, permanent, sourceUidValidity \}\)/);
   assert.match(hook, /case 'move': return 'Message moved\.'/);
   assert.match(hook, /await fetchFolders\(\)/);
 });

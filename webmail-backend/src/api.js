@@ -1764,11 +1764,17 @@ exports.apiRouter.patch('/folders', requireAuth, async (req, res) => {
         if (hasName && hasParent) {
             throw new imap_1.MailboxMutationError('INVALID_FOLDER_MUTATION', 400, 'Rename or move the folder in one step, not both.');
         }
+        if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'sourceUidValidity')
+            || (!hasName
+                && req.body?.parent !== null
+                && !Object.prototype.hasOwnProperty.call(req.body || {}, 'parentUidValidity'))) {
+            throw new imap_1.MailboxMutationError('INVALID_FOLDER_IDENTITY', 400, 'Refresh Mail before changing this folder.');
+        }
         const imap = await getPooledImap(user, pass);
         await assertFolderMutationIsUnreferenced(user, pass, imap, req.body?.path);
         const result = hasName
-            ? await imap.renameFolder(req.body?.path, req.body?.name)
-            : await imap.moveFolder(req.body?.path, req.body?.parent);
+            ? await imap.renameFolder(req.body?.path, req.body?.name, req.body?.sourceUidValidity)
+            : await imap.moveFolder(req.body?.path, req.body?.parent, req.body?.sourceUidValidity, req.body?.parentUidValidity);
         const searchIndexReset = await resetSearchIndexAfterFolderMutation(user);
         res.json({ success: true, ...folderMutationResponse(result, searchIndexReset) });
     }
@@ -1780,9 +1786,12 @@ exports.apiRouter.delete('/folders', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
     try {
+        if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'sourceUidValidity')) {
+            throw new imap_1.MailboxMutationError('INVALID_FOLDER_IDENTITY', 400, 'Refresh Mail before changing this folder.');
+        }
         const imap = await getPooledImap(user, pass);
         await assertFolderMutationIsUnreferenced(user, pass, imap, req.body?.path);
-        const result = await imap.deleteFolder(req.body?.path, req.body?.permanent ?? false);
+        const result = await imap.deleteFolder(req.body?.path, req.body?.permanent ?? false, req.body?.sourceUidValidity);
         const searchIndexReset = await resetSearchIndexAfterFolderMutation(user);
         res.json({ success: true, ...folderMutationResponse(result, searchIndexReset) });
     }
@@ -3312,6 +3321,20 @@ exports.apiRouter.post('/settings/forwarding', requireAuth, async (req, res) => 
         res.json({ success: true });
     }
     catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.patch('/settings/mail/favorites', requireAuth, async (req, res) => {
+    const folders = req.body?.folders;
+    if (!folders || typeof folders !== 'object' || Array.isArray(folders)) {
+        return res.status(400).json({ success: false, error: 'Favorite folder settings are required' });
+    }
+    try {
+        const settings = await (0, user_settings_1.saveMailFavoriteSettings)(req.user.username, folders);
+        res.json({ success: true, namespace: 'mail', settings });
+    }
+    catch (err) {
+        console.error('Failed to save Favorite folders:', err);
         res.status(500).json({ success: false, error: err.message });
     }
 });

@@ -263,6 +263,32 @@ body {
   font-size: 0.72rem;
 }
 
+.mail-folder-settings-state--repair {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 22%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.mail-folder-settings-state--repair strong {
+  overflow-wrap: anywhere;
+}
+
+.mail-folder-repair-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.mail-folder-repair-actions .btn {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+}
+
 .mail-folder-add-button {
   display: inline-flex;
   align-items: center;

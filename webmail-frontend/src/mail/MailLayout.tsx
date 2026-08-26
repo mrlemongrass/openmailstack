@@ -58,8 +58,12 @@ function FolderNavigation({
       activeFolder={mail.activeFolder}
       expandedFolders={mail.expandedFolders}
       favoriteFolders={mail.favoriteFolders}
+      favoriteRenameCandidates={mail.favoriteRenameCandidates}
+      unavailableFavoritePaths={mail.unavailableFavoritePaths}
       favoriteSettingsReady={mail.favoriteSettingsReady}
       favoriteSettingsError={mail.favoriteSettingsError}
+      favoritePersistencePending={mail.favoritePersistencePending}
+      favoritePersistenceError={mail.favoritePersistenceError}
       folderMutationPending={mail.folderMutationPending}
       markingReadFolder={mail.markingReadFolder}
       onToggleExpand={(path) => mail.setExpandedFolders((previous) => ({
@@ -69,6 +73,11 @@ function FolderNavigation({
       onToggleFavorite={mail.toggleFavoriteFolder}
       onMarkFolderRead={mail.markFolderRead}
       onRetryFavoriteSettings={mail.retryFavoriteSettings}
+      onRetryFavoritePersistence={mail.retryFavoritePersistence}
+      onConfirmFavoriteRename={mail.confirmFavoriteRename}
+      onDismissFavoriteRename={mail.dismissFavoriteRename}
+      onRemoveUnavailableFavorite={mail.removeUnavailableFavorite}
+      onDismissUnavailableFavorite={mail.dismissUnavailableFavorite}
       onFolderNavigate={onFolderNavigate}
       onFolderDialogChange={onFolderDialogChange}
       onCompose={() => mail.startCompose()}

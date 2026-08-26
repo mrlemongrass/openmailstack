@@ -8,7 +8,7 @@ import { useAppearance } from '../shared/hooks/useAppearance';
 import {
   defaultMailSettings,
   getUserSettings,
-  saveUserSettings,
+  saveMailFavoriteSettings,
   type MailUserSettings,
 } from '../settings/settingsApi';
 import { fetchIdentities } from '../shared/api';
@@ -27,17 +27,10 @@ export function MailRoutes() {
   const [mailSettingsError, setMailSettingsError] = useState('');
   const [userIdentities, setUserIdentities] = useState<UserIdentities>(EMPTY_USER_IDENTITIES);
   const mailSettingsRequestIdRef = useRef(0);
-  const persistMailSettings = useCallback(async (nextSettings: MailUserSettings) => {
-    const previousSettings = mailSettings;
-    setMailSettings(nextSettings);
-    try {
-      const savedSettings = await saveUserSettings('mail', nextSettings);
-      setMailSettings(savedSettings);
-    } catch (error) {
-      setMailSettings(current => current === nextSettings ? previousSettings : current);
-      throw error;
-    }
-  }, [mailSettings]);
+  const persistFavoriteSettings = useCallback(async (folders: MailUserSettings['folders']) => {
+    const savedSettings = await saveMailFavoriteSettings(folders);
+    setMailSettings(current => ({ ...current, folders: savedSettings.folders }));
+  }, []);
   const retryMailSettings = useCallback(() => {
     const requestId = ++mailSettingsRequestIdRef.current;
     setMailSettingsReady(false);
@@ -54,7 +47,7 @@ export function MailRoutes() {
     mailSettingsReady,
     mailSettingsError,
     onRetryMailSettings: retryMailSettings,
-    onMailSettingsChange: persistMailSettings,
+    onFavoriteSettingsChange: persistFavoriteSettings,
     isThreaded: false,
     userIdentities,
   });

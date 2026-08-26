@@ -116,6 +116,36 @@ function mailboxTreeHasAmbiguousDestinationComponent(
     ));
 }
 
+function normalizedExpectedUidValidity(value: unknown): string {
+    if (typeof value !== 'string' || !/^\d{1,10}$/.test(value.trim())) {
+        throw new MailboxMutationError(
+            'INVALID_FOLDER_IDENTITY',
+            400,
+            'Refresh Mail before changing this folder.',
+        );
+    }
+    const uidValidity = BigInt(value.trim());
+    if (uidValidity <= 0n || uidValidity > 4294967295n) {
+        throw new MailboxMutationError(
+            'INVALID_FOLDER_IDENTITY',
+            400,
+            'Refresh Mail before changing this folder.',
+        );
+    }
+    return uidValidity.toString();
+}
+
+function assertExpectedUidValidity(folder: any, expected: string) {
+    const current = String(folder?.status?.uidValidity || '');
+    if (current !== expected) {
+        throw new MailboxMutationError(
+            'FOLDER_CHANGED',
+            409,
+            'This folder changed in another mail app. Refresh Mail and try again.',
+        );
+    }
+}
+
 export class ImapService {
     public client: ImapFlow;
 
@@ -150,13 +180,15 @@ export class ImapService {
     }
 
     async getFolders(): Promise<any[]> {
-        const folders = await this.client.list({ statusQuery: { unseen: true } });
+        const folders = await this.client.list({ statusQuery: { unseen: true, uidValidity: true } });
         return folders.map(f => {
             const specialUse = mailboxSpecialUse(f);
+            const uidValidity = String(f.status?.uidValidity || '');
             return {
                 path: f.path,
                 delimiter: f.delimiter,
                 unseen: Number(f.status?.unseen || 0),
+                ...(uidValidity && uidValidity !== '0' ? { uidValidity } : {}),
                 ...(specialUse ? { specialUse } : {}),
                 ...(f.flags?.has('\\Noselect') ? { disabled: true } : {}),
             };
@@ -283,7 +315,12 @@ export class ImapService {
         return { path: result.path, delimiter, unseen: 0 };
     }
 
-    async moveFolder(requestedPath: string, requestedParent: string | null | undefined) {
+    async moveFolder(
+        requestedPath: string,
+        requestedParent: string | null | undefined,
+        requestedSourceUidValidity: unknown,
+        requestedParentUidValidity?: unknown,
+    ) {
         if (requestedParent !== null && requestedParent !== undefined && typeof requestedParent !== 'string') {
             throw new MailboxMutationError(
                 'INVALID_FOLDER_DESTINATION',
@@ -293,6 +330,10 @@ export class ImapService {
         }
         const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
         const parent = typeof requestedParent === 'string' ? requestedParent.trim() : null;
+        const expectedSourceUidValidity = normalizedExpectedUidValidity(requestedSourceUidValidity);
+        const expectedParentUidValidity = parent === null
+            ? undefined
+            : normalizedExpectedUidValidity(requestedParentUidValidity);
         if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {
             throw new MailboxMutationError('INVALID_FOLDER', 400, 'Choose a valid folder to move.');
         }
@@ -307,7 +348,7 @@ export class ImapService {
             );
         }
 
-        const folders = await this.client.list();
+        const folders = await this.client.list({ statusQuery: { uidValidity: true } });
         const source = folders.find(folder => (
             folder.path === path
             || (path.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')
@@ -319,6 +360,7 @@ export class ImapService {
                 'The folder no longer exists. Refresh Mail and try again.',
             );
         }
+        assertExpectedUidValidity(source, expectedSourceUidValidity);
         if (source.path.toUpperCase() === 'INBOX' || mailboxSpecialUse(source)) {
             throw new MailboxMutationError(
                 'PROTECTED_FOLDER',
@@ -353,6 +395,9 @@ export class ImapService {
                 404,
                 'The destination folder no longer exists. Refresh Mail and try again.',
             );
+        }
+        if (parentFolder && expectedParentUidValidity) {
+            assertExpectedUidValidity(parentFolder, expectedParentUidValidity);
         }
         if (parentFolder?.flags?.has('\\Noselect')) {
             throw new MailboxMutationError(
@@ -451,9 +496,14 @@ export class ImapService {
         };
     }
 
-    async renameFolder(requestedPath: string, requestedName: string) {
+    async renameFolder(
+        requestedPath: string,
+        requestedName: string,
+        requestedSourceUidValidity: unknown,
+    ) {
         const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
         const name = typeof requestedName === 'string' ? requestedName.trim() : '';
+        const expectedSourceUidValidity = normalizedExpectedUidValidity(requestedSourceUidValidity);
         if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {
             throw new MailboxMutationError('INVALID_FOLDER', 400, 'Choose a valid folder to rename.');
         }
@@ -472,7 +522,7 @@ export class ImapService {
             );
         }
 
-        const folders = await this.client.list();
+        const folders = await this.client.list({ statusQuery: { uidValidity: true } });
         const source = folders.find(folder => (
             folder.path === path
             || (path.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')
@@ -484,6 +534,7 @@ export class ImapService {
                 'The folder no longer exists. Refresh Mail and try again.',
             );
         }
+        assertExpectedUidValidity(source, expectedSourceUidValidity);
         if (source.path.toUpperCase() === 'INBOX' || mailboxSpecialUse(source)) {
             throw new MailboxMutationError(
                 'PROTECTED_FOLDER',
@@ -562,8 +613,13 @@ export class ImapService {
         };
     }
 
-    async deleteFolder(requestedPath: string, requestedPermanent: boolean | undefined = false) {
+    async deleteFolder(
+        requestedPath: string,
+        requestedPermanent: boolean | undefined,
+        requestedSourceUidValidity: unknown,
+    ) {
         const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+        const expectedSourceUidValidity = normalizedExpectedUidValidity(requestedSourceUidValidity);
         if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {
             throw new MailboxMutationError('INVALID_FOLDER', 400, 'Choose a valid folder to delete.');
         }
@@ -582,7 +638,7 @@ export class ImapService {
             );
         }
 
-        const folders = await this.client.list();
+        const folders = await this.client.list({ statusQuery: { uidValidity: true } });
         const source = folders.find(folder => (
             folder.path === path
             || (path.toUpperCase() === 'INBOX' && folder.path.toUpperCase() === 'INBOX')
@@ -594,6 +650,7 @@ export class ImapService {
                 'The folder no longer exists. Refresh Mail and try again.',
             );
         }
+        assertExpectedUidValidity(source, expectedSourceUidValidity);
         if (source.path.toUpperCase() === 'INBOX' || mailboxSpecialUse(source)) {
             throw new MailboxMutationError(
                 'PROTECTED_FOLDER',

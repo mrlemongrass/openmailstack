@@ -727,6 +727,34 @@ The global in-flight lock, persistent row progress, one live announcement,
 keyboard context-menu gestures, and focus-isolated mobile drawer/dialog flow
 prevent duplicate work and competing modal surfaces.
 
+Verified 2026-08-25: Favorite references now retain the selectable folder's
+positive IMAP `UIDVALIDITY` beside its exact path. The client reconciles only
+after the newest folder-list request succeeds. A missing path with exactly one
+matching generation becomes a reviewable external-rename candidate; the user
+must confirm `Update Favorite`. No match becomes an explicit unavailable
+Favorite with a Remove action, while multiple generation matches remain
+unresolved. `UIDVALIDITY` is intentionally a detection heuristic rather than a
+stable mailbox ID, so the client never performs an automatic external-rename
+remap.
+
+Favorite mutations use authenticated `PATCH /api/settings/mail/favorites`.
+That route atomically replaces only `mail.folders`; the generic Mail-settings
+upsert atomically preserves the already stored folders section so a stale
+Settings tab cannot overwrite a newer repair. If an acknowledged OMS folder
+mutation is followed by a Favorite persistence failure, the exact intended
+references stay visible and retryable while further lifecycle and Favorite
+actions remain locked.
+
+Folder Move, Rename, and Delete requests bind their source to the
+`UIDVALIDITY` presented by the latest folder list. A non-root Move also binds
+the destination parent. The IMAP service re-lists with LIST-STATUS immediately
+before mutation and rejects a missing, malformed, or mismatched generation;
+this prevents a stale browser path from mutating a different mailbox after an
+external delete/recreate or rename. A future automatic repair may use RFC 8474
+`MAILBOXID` or a proven server GUID when the deployed IMAP capability exposes a
+stable identifier; IMAP and SQL still cannot form one cross-system atomic
+transaction.
+
 Verified 2026-07-30: Mail Filters preserve array order as user-visible priority.
 Each executable rule stops later processing unless `stopProcessing=false`;
 legacy rules without the field retain stop behavior. The Sieve compiler and

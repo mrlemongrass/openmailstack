@@ -1223,6 +1223,25 @@ React frontend:
 - `webmail-frontend/src/index.css` contains the actual app styling. `webmail-frontend/src/App.css` looks like leftover Vite starter CSS and is not imported by `App.tsx`.
 - `webmail/src/App.tsx` is still the default Vite starter page and is not the active product app; `webmail/README.md` marks it as a deprecated scaffold.
 
+## 2026-08-26 Mail Reply And Flag Actions
+
+- `webmail-frontend/src/mail/message-compose-actions.ts` is the shared
+  Reply/Reply-all/Forward intent boundary for context-menu, reading-pane, and
+  keyboard entry points. It loads full details, honors `Reply-To`, handles
+  quoted commas/angle addresses, excludes configured owner identities,
+  de-duplicates recipients, normalizes subject prefixes, and creates
+  `In-Reply-To`/`References` state.
+- `useMail.ts` fingerprints, drafts, resumes, resets, and sends the reply thread
+  headers. Message-facing Flag/Unflag continues to use internal
+  `star`/`unstar` API actions backed by IMAP `\Flagged`.
+- Rows provide accessible Flag/Unflag, ordinary context menus lead with the
+  Reply family, the reading pane and `R`/`A`/`F`/`S` shortcuts share the same
+  logic, and bulk selection dynamically changes Flag to Unflag when all
+  selected messages are flagged. Draft/Scheduled menus remain bounded.
+- The mobile reading toolbar wraps at 767 px. Browser geometry at 390x844
+  proved all eleven controls are visible without page overflow or horizontal
+  discovery.
+
 Validation:
 
 - `docs/webmail-release-validation.md` defines local gates, clean-VM checks, and the mail/calendar/contacts/mobile/security client matrix for modern webmail releases.

@@ -6,6 +6,8 @@ export interface DraftComposeState {
   cc: string;
   bcc: string;
   replyTo: string;
+  inReplyTo: string;
+  references: string;
   subject: string;
   body: string;
   attachments: File[];
@@ -53,6 +55,8 @@ export function draftComposeState(message: Message, attachments: File[]): DraftC
     cc: message.cc || '',
     bcc: message.bcc || '',
     replyTo: message.replyTo || '',
+    inReplyTo: message.inReplyTo || '',
+    references: (message.references || []).join(' '),
     subject: /^\(no subject\)$/i.test(message.subject || '') ? '' : message.subject || '',
     body: message.text || message.html || '',
     attachments,

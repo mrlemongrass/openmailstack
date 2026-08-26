@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
-import { Trash2, Archive, ShieldAlert, Mail, MailOpen, StarIcon, X, FolderOpen } from 'lucide-react';
+import { Trash2, Archive, ShieldAlert, Mail, MailOpen, Flag, X, FolderOpen } from 'lucide-react';
 import type { MailFolder, SearchField, SearchScope } from '../shared/types';
 import { MoveToPopover } from './components/MoveToPopover';
 import { moveDestinationFolders } from './mail-message-identity';
 
 interface MailToolbarProps {
   selectedCount: number;
+  allSelectedFlagged: boolean;
   totalCount: number;
   searchQuery: string;
   searchField: SearchField;
@@ -34,12 +35,12 @@ const SEARCH_HINTS = [
   { syntax: 'subject:meeting', desc: 'Words in subject line' },
   { syntax: 'has:attachment', desc: 'Messages with attachments' },
   { syntax: 'is:unread', desc: 'Unread messages only' },
-  { syntax: 'is:starred', desc: 'Starred messages' },
+  { syntax: 'is:flagged', desc: 'Flagged messages' },
   { syntax: 'before:2026-01-01', desc: 'Messages before date' },
   { syntax: 'after:2026-01-01', desc: 'Messages after date' },
 ];
 
-export function MailToolbar({ selectedCount, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, draftMode = false, activeFolder, folders, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMoveSelected, onMarkAllRead, markAllReadPending = false, markAllReadDisabled = false }: MailToolbarProps) {
+export function MailToolbar({ selectedCount, allSelectedFlagged, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, draftMode = false, activeFolder, folders, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMoveSelected, onMarkAllRead, markAllReadPending = false, markAllReadDisabled = false }: MailToolbarProps) {
   const allSelected = selectedCount > 0 && selectedCount === totalCount;
   const [showHints, setShowHints] = useState(false);
   const [showMoveTo, setShowMoveTo] = useState(false);
@@ -71,7 +72,7 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, searchFiel
           <option value="body">Body</option>
           <option value="attachments">Attachments</option>
           <option value="unread">Unread</option>
-          <option value="starred">Starred</option>
+          <option value="starred">Flagged</option>
         </select>
         <select className="glass-input glass-select" aria-label="Search scope" value={searchScope}
           onChange={(e) => onSearchScopeChange(e.target.value as SearchScope)}>
@@ -155,7 +156,12 @@ export function MailToolbar({ selectedCount, totalCount, searchQuery, searchFiel
                     onClose={closeMoveTo} />
                 )}
               </div>
-              <button className="btn btn-ghost" onClick={() => onBulkAction('star')} title="Star"><StarIcon size={16} /></button>
+              <button className="btn btn-ghost"
+                onClick={() => onBulkAction(allSelectedFlagged ? 'unstar' : 'star')}
+                title={allSelectedFlagged ? 'Unflag' : 'Flag'}
+                aria-label={allSelectedFlagged ? 'Unflag selected messages' : 'Flag selected messages'}>
+                <Flag size={16} fill={allSelectedFlagged ? 'currentColor' : 'none'} />
+              </button>
               <button className="btn btn-ghost" onClick={() => onBulkAction('spam')} title="Mark as spam"><ShieldAlert size={16} /></button>
               <button className="btn btn-danger" onClick={() => onBulkAction('delete')} title="Delete"><Trash2 size={16} /></button>
             </>

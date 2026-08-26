@@ -755,6 +755,25 @@ external delete/recreate or rename. A future automatic repair may use RFC 8474
 stable identifier; IMAP and SQL still cannot form one cross-system atomic
 transaction.
 
+Verified 2026-08-26: ordinary-message context menus, rows, the reading pane,
+keyboard shortcuts, and bulk selection now share Reply/Reply all/Forward and
+Flag/Unflag interaction grammar. `message-compose-actions.ts` is the single
+compose-intent boundary: it loads full message detail before composing, honors
+`Reply-To`, preserves quoted display names, excludes every configured owner
+identity case-insensitively, de-duplicates mailboxes, normalizes `Re:`/`Fwd:`
+prefixes, and supplies `In-Reply-To` plus `References`. `useMail.ts` retains
+those headers in the compose fingerprint and carries them through Draft save,
+resume, and every full-compose send path.
+
+Message-facing controls say Flag/Unflag while the authenticated API deliberately
+retains `star`/`unstar` and `isStarred` as compatibility names for IMAP
+`\Flagged`. Single-row changes are guarded and optimistic with exact rollback;
+bulk selection offers Unflag only when every selected message is flagged.
+Failure paths stay visible. Draft and virtual Scheduled context menus preserve
+their narrower command sets. At the mobile breakpoint the reading toolbar wraps
+instead of clipping commands, so touch does not depend on right click or hidden
+horizontal scrolling.
+
 Verified 2026-07-30: Mail Filters preserve array order as user-visible priority.
 Each executable rule stops later processing unless `stopProcessing=false`;
 legacy rules without the field retain stop behavior. The Sieve compiler and

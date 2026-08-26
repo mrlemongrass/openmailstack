@@ -9,7 +9,7 @@ const SHORTCUTS: Shortcut[] = [
   { key: 'R', action: 'Reply' },
   { key: 'A', action: 'Reply All' },
   { key: 'F', action: 'Forward' },
-  { key: 'S', action: 'Toggle star' },
+  { key: 'S', action: 'Toggle flag' },
   { key: 'E', action: 'Archive' },
   { key: '#', action: 'Delete' },
   { key: 'Delete / Backspace', action: 'Delete' },

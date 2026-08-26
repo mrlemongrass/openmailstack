@@ -235,6 +235,7 @@ test('mail toolbar exposes field and folder-scope controls', () => {
     searchScope: 'folder',
     isSearchActive: true,
     selectionDisabled: false,
+    allSelectedFlagged: false,
     activeFolder: 'Projects',
     folders: [
       { path: 'INBOX', unseen: 0 },
@@ -261,6 +262,13 @@ test('mail toolbar exposes field and folder-scope controls', () => {
   assert.match(markup, /aria-label="Clear search"/);
   assert.match(markup, /title="Move to folder"/);
   assert.match(markup, /2 selected/);
+  assert.match(markup, /aria-label="Flag selected messages"/);
+
+  const allFlaggedMarkup = renderToStaticMarkup(React.createElement(toolbarModule.exports.MailToolbar, {
+    ...toolbarProps,
+    allSelectedFlagged: true,
+  }));
+  assert.match(allFlaggedMarkup, /aria-label="Unflag selected messages"/);
 
   const disabledMarkup = renderToStaticMarkup(React.createElement(toolbarModule.exports.MailToolbar, {
     ...toolbarProps,

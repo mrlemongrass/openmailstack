@@ -3199,6 +3199,14 @@ body {
 
 /* ---- Mobile Responsive ---- */
 @media (max-width: 767px) {
+  .message-viewer-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .message-viewer-toolbar-spacer {
+    display: none;
+  }
+
   .compose-modal-overlay {
     align-items: stretch;
     justify-content: stretch;

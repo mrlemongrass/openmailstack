@@ -342,7 +342,13 @@ test('message rows expose a context menu without replacing their normal open beh
   assert.match(row, /event\.key === 'ContextMenu'/);
   assert.match(row, /onClick\(message\.uid\)/);
   assert.match(list, /<ContextMenu/);
+  assert.match(list, /id: 'reply'/);
+  assert.match(list, /id: 'reply-all'/);
+  assert.match(list, /id: 'forward'/);
+  assert.match(list, /buildMessageComposeDraft/);
+  assert.match(list, /fetchMessageBody/);
   assert.match(list, /Mark (?:as )?unread|Mark (?:as )?read/);
+  assert.match(list, /message\.isStarred \? 'Unflag' : 'Flag'/);
   assert.match(list, /Archive/);
   assert.match(list, /Move to…/);
   assert.match(list, /Mark as spam/);
@@ -393,6 +399,7 @@ test('rendered message rows expose sibling controls instead of nesting them in t
   assert.match(openTag, /aria-label="Open message Quarterly plan"/);
   assert.match(openTag, /aria-keyshortcuts="Shift\+F10"/);
   assert.doesNotMatch(openChildren, /<(?:button|input|a\s[^>]*href=)/);
+  assert.match(markup, /aria-label="Flag message"/);
 });
 
 test('folder lifecycle actions use the authenticated API and refresh the tree', () => {

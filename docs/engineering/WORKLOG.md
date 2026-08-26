@@ -10388,3 +10388,69 @@ A dedicated public-IMAPS canary created a disposable folder, captured its
 positive `UIDVALIDITY`, renamed it externally, proved the renamed path retained
 the exact generation, deleted it, and proved zero LIST residue. No user mailbox
 or persisted Favorite was touched.
+
+## 2026-08-26 — Mail Reply And Flag Action Grammar
+
+### Selected task
+
+Complete one Outlook-familiar message-action slice: make Reply, Reply all,
+Forward, and Flag/Unflag behave consistently across message rows, native
+context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
+
+### Goal and acceptance criteria
+
+- Put Reply, Reply all, and Forward at the start of an ordinary message's
+  context menu without expanding Draft or Scheduled message permissions.
+- Use one compose-intent contract in context, reading-pane, and keyboard paths;
+  honor `Reply-To`, preserve quoted display names, exclude the owner's
+  identities, de-duplicate recipients, avoid repeated subject prefixes, and
+  preserve `In-Reply-To`/`References` through draft save, resume, and send.
+- Expose Flag/Unflag from the row, context menu, reading pane, keyboard, and
+  bulk toolbar while retaining the existing IMAP `\Flagged` wire contract.
+- Prevent rapid duplicate single-message mutations, report failures visibly,
+  and roll an optimistic row update back when the server rejects it.
+- Keep every reading-pane command visible at a 390 px viewport and preserve
+  the existing right-click keyboard/focus contract.
+
+### Changes made
+
+- Added a shared compose-draft builder for reply and forward intent. It loads
+  message detail before composing, honors `Reply-To`, understands commas inside
+  quoted display names and angle addresses, removes configured owner aliases
+  case-insensitively, and creates stable reply thread headers.
+- Routed context-menu, reading-pane, and `R`/`A`/`F` shortcut paths through the
+  same builder. Reply headers now survive both autosaved/resumed Drafts and
+  immediate or delayed send payloads.
+- Replaced message-facing Star language with Outlook-familiar Flag/Unflag while
+  deliberately preserving internal `star`/`unstar` API values for backend and
+  IMAP compatibility. Bulk selection changes to Unflag only when every selected
+  message is flagged.
+- Added visible mutation/preparation failures, single-message duplicate guards,
+  failed optimistic-update rollback, and a two-row mobile reading toolbar so no
+  action is clipped or requires hidden horizontal discovery.
+
+### Proof before release
+
+- TDD established missing compose-action, threading, context, row, reading-
+  pane, bulk, and mobile-layout contracts before implementation.
+- Complete frontend: 206/206; lint, production TypeScript/Vite build, and
+  `git diff --check` passed.
+- Mocked Chromium at 1440x900 and 390x844 exercised Reply all recipient
+  semantics, Forward quoting, context-menu keyboard focus return, Flag success,
+  forced Unflag failure/rollback/retry, bulk Flag/Unflag, and all eleven mobile
+  reading-pane action bounds. The only console errors were the deliberately
+  forced `503` and its handled action failure; there were no page errors.
+- The complete repository integration gate passed and ended with
+  `[ok] Integration checks completed.` Fixed-point Spec/Standards review remains
+  a release gate for this candidate.
+
+### Residual limits and release state
+
+Pin is intentionally separate because it needs durable per-user ordering and
+clear IMAP-client interoperability semantics rather than a cosmetic icon.
+Forward currently quotes loaded plain text; it does not yet clone original
+attachments, and HTML-only messages use the existing safe placeholder instead
+of re-injecting their markup into Compose. The bounded address parser covers
+quoted display names and angle addresses, not every obsolete RFC group/comment
+form. This candidate is not live until guarded deployment and production
+verification complete.

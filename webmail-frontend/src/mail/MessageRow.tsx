@@ -1,4 +1,4 @@
-import { Star, Paperclip, Archive, Trash2, Mail, MailOpen, Clock, FilePenLine } from 'lucide-react';
+import { Flag, Paperclip, Archive, Trash2, Mail, MailOpen, Clock, FilePenLine } from 'lucide-react';
 import type { Message } from '../shared/types';
 import type { ContextMenuPoint } from '../shared/context-menu-navigation';
 import { format, isToday, isYesterday } from 'date-fns';
@@ -94,10 +94,11 @@ export function MessageRow({
         <FilePenLine size={16} aria-hidden="true" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
       ) : (
         <button onClick={(e) => { e.stopPropagation(); onStar(message.uid); }}
-          aria-label={message.isStarred ? 'Unstar message' : 'Star message'}
+          aria-label={message.isStarred ? 'Unflag message' : 'Flag message'}
+          title={message.isStarred ? 'Unflag' : 'Flag'}
           style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-            color: message.isStarred ? '#f59e0b' : 'var(--text-secondary)', flexShrink: 0 }}>
-          <Star size={16} fill={message.isStarred ? '#f59e0b' : 'none'} />
+            color: message.isStarred ? 'var(--danger)' : 'var(--text-secondary)', flexShrink: 0 }}>
+          <Flag size={16} fill={message.isStarred ? 'currentColor' : 'none'} />
         </button>
       )}
       <button ref={openButtonRef} type="button" className="message-row-open"
@@ -178,7 +179,6 @@ export function MessageRow({
         <ActionButton icon={Trash2} title="Delete" onClick={() => onDelete(message.uid)} />
         <ActionButton icon={message.isRead ? Mail : MailOpen} title={message.isRead ? 'Mark unread' : 'Mark read'}
           onClick={() => onMarkRead(message.uid)} />
-        <ActionButton icon={Star} title="Star" onClick={() => onStar(message.uid)} />
         <ActionButton icon={Clock} title="Snooze" onClick={() => onSnooze(message.uid)} />
       </span>}
     </div>

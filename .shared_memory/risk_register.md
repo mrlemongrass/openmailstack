@@ -190,6 +190,15 @@ Last updated: 2026-08-25
 - ✅ Calendar event editor: the opaque labelled dialog keeps timed fields and actions reachable on mobile, deduplicates guest suggestions, and no longer discards a draft on an outside click. A disposable create/reopen/delete cycle passed through the real backend and left no temporary event behind.
 - ✅ Contacts editor: the full-screen mobile dialog keeps its actions visible, labels every field, and avoids outside-click draft loss. Contact detail activity targets the real mail index and owner-scoped Calendar tables with exact address boundaries and no premature event cutoff; authenticated live verification returned `200` and the prior duplicate 500 responses are gone.
 
+- ✅ Mail Reply/Flag action drift: context-menu, reading-pane, keyboard, row,
+  and bulk paths now share one compose/action contract. Reply honors
+  `Reply-To`, Reply all excludes owner identities and de-duplicates quoted
+  address lists, and thread headers survive Draft/send lifecycles. Flag uses
+  existing IMAP `\Flagged` storage, rolls failed optimistic changes back, and
+  all eleven reading-pane actions fit visibly at 390 px. Pin, forwarded
+  attachments, HTML-preserving Forward, and full RFC group/comment parsing
+  remain explicit follow-ups.
+
 ## Remaining High-Priority Risks
 
 - 🟡 Favorites remain web settings, so an external IMAP rename and the SQL

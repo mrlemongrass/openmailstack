@@ -27,6 +27,8 @@ const draft = {
   cc: 'manager@example.test',
   bcc: 'audit@example.test',
   replyTo: 'support@example.test',
+  inReplyTo: '<parent@example.test>',
+  references: ['<root@example.test>', '<parent@example.test>'],
   date: '2026-08-15T12:00:00Z',
   html: '<p>Preserve this body</p>',
   text: 'Preserve this body',
@@ -52,6 +54,8 @@ test('draft resume restores all composer fields and stable identity', () => {
     cc: 'manager@example.test',
     bcc: 'audit@example.test',
     replyTo: 'support@example.test',
+    inReplyTo: '<parent@example.test>',
+    references: '<root@example.test> <parent@example.test>',
     subject: 'Quarterly draft',
     body: 'Preserve this body',
     attachments: [attachmentFile],
@@ -91,6 +95,8 @@ test('Drafts viewer opens the real composer without reply controls and sends sta
   assert.match(hook, /const resumeDraft = useCallback[\s\S]*hydrateDraftAttachments[\s\S]*draftSaveCoordinatorRef\.current\.reset\([\s\S]*setDraftUid/);
   assert.match(hook, /formData\.append\('draftId',\s*currentDraft\.draftId\)/);
   assert.match(hook, /formData\.append\('draftUid',\s*currentDraft\.draftUid\)/);
+  assert.match(hook, /formData\.append\('inReplyTo',\s*composeInReplyTo\)/);
+  assert.match(hook, /formData\.append\('references',\s*composeReferences\)/);
   assert.match(viewer, /Edit draft/);
   assert.match(viewer, /!isScheduled && !isDraft && <InlineReply/);
   assert.match(row, /isDraft \? \([\s\S]*Delete draft[\s\S]*: !isScheduled &&/);

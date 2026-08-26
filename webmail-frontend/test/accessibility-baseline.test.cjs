@@ -12,7 +12,7 @@ test('desktop shell and icon-only mail/calendar controls have accessible names',
 
   assert.match(appShell, /to="\/settings" aria-label="Settings"/);
   assert.match(appShell, /to="\/admin" aria-label="Admin"/);
-  assert.match(messageViewer, /aria-label=\{message\.isStarred \? 'Remove star' : 'Star message'\}/);
+  assert.match(messageViewer, /aria-label=\{message\.isStarred \? 'Unflag message' : 'Flag message'\}/);
   assert.match(messageViewer, /aria-label="Archive message"/);
   assert.match(messageViewer, /aria-label="Delete message"/);
   assert.match(calendarToolbar, /aria-label=\{`Previous \$\{cal\.calendarView\}`\}/);
@@ -48,4 +48,14 @@ test('mobile Mail exposes a focus-managed touch folder drawer', () => {
   assert.match(layout, /active: open && !folderDialogOpen/);
   assert.match(layout, /onFolderNavigate=\{closeDrawer\}/);
   assert.match(layout, /onFolderDialogChange=\{setFolderDialogOpen\}/);
+});
+
+test('mobile message actions wrap instead of clipping off screen', () => {
+  const messageViewer = source('src/mail/MessageViewer.tsx');
+  const styles = source('src/index.css');
+
+  assert.match(messageViewer, /className="message-viewer-toolbar"/);
+  assert.match(messageViewer, /className="message-viewer-toolbar-spacer"/);
+  assert.match(styles, /@media \(max-width: 767px\)[\s\S]*\.message-viewer-toolbar \{[\s\S]*flex-wrap: wrap;/);
+  assert.match(styles, /\.message-viewer-toolbar-spacer \{[\s\S]*display: none;/);
 });

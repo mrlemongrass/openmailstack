@@ -18,9 +18,12 @@ import {
   Loader,
   Mail,
   MailOpen,
+  Flag,
+  Forward,
+  Reply,
+  ReplyAll,
   SearchX,
   ShieldAlert,
-  Star,
   Trash2,
 } from 'lucide-react';
 import type { useMail } from './hooks/useMail';
@@ -35,6 +38,10 @@ import {
 } from './mail-message-identity';
 import { isDraftFolder } from './draft-resume';
 import { FolderDestinationDialog } from './components/FolderDialogs';
+import {
+  buildMessageComposeDraft,
+  type MessageComposeAction,
+} from './message-compose-actions';
 
 interface MessageListProps {
   mail: ReturnType<typeof useMail>;
@@ -47,7 +54,7 @@ export function MessageList({ mail, density }: MessageListProps) {
   const navigate = useNavigate();
   const parentRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
-  const starringRef = useRef<Set<string>>(new Set());
+  const flaggingRef = useRef<Set<string>>(new Set());
   const [messageMenu, setMessageMenu] = useState<{
     message: Message;
     point: ContextMenuPoint;
@@ -157,24 +164,54 @@ export function MessageList({ mail, density }: MessageListProps) {
     }
   };
 
-  const handleStar = (msg: Message) => {
+  const handleFlag = async (msg: Message) => {
     const folderPath = messageFolder(msg, decodedFolder);
     const identity = messageIdentityKey(msg, decodedFolder);
-    if (starringRef.current.has(identity)) return; // guard against rapid double-clicks
+    if (flaggingRef.current.has(identity)) return;
+    const wasFlagged = Boolean(msg.isStarred);
     const action = msg.isStarred ? 'unstar' : 'star';
-    // Optimistic update: immediately toggle local state
-    starringRef.current.add(identity);
+    flaggingRef.current.add(identity);
     mail.setMessages((prev: Message[]) => prev.map((message) => (
-      messageIdentityKey(message, decodedFolder) === identity ? { ...message, isStarred: !msg.isStarred } : message
+      messageIdentityKey(message, decodedFolder) === identity ? { ...message, isStarred: !wasFlagged } : message
     )));
-    mail.messageAction(action, [msg.uid], folderPath).finally(() => {
-      starringRef.current.delete(identity);
-    });
+    const success = await mail.messageAction(action, [msg.uid], folderPath);
+    if (!success) {
+      mail.setMessages((prev: Message[]) => prev.map((message) => (
+        messageIdentityKey(message, decodedFolder) === identity
+          ? { ...message, isStarred: wasFlagged }
+          : message
+      )));
+      showToast({ type: 'error', message: `The message could not be ${wasFlagged ? 'unflagged' : 'flagged'}.` });
+    }
+    flaggingRef.current.delete(identity);
   };
 
   const closeMessageMenu = () => setMessageMenu(null);
   const openMessage = (message: Message) => {
     navigate(`/mail/${encodeURIComponent(messageFolder(message, decodedFolder))}/${message.uid}`);
+  };
+  const startMessageCompose = async (action: MessageComposeAction, message: Message) => {
+    const folderPath = messageFolder(message, decodedFolder);
+    const fullMessage = message.bodyLoaded
+      ? message
+      : await mail.fetchMessageBody(message.uid, folderPath);
+    if (!fullMessage) {
+      showToast({
+        type: 'error',
+        message: `${action === 'forward' ? 'Forward' : 'Reply'} could not be prepared. Try again.`,
+      });
+      return;
+    }
+    const draft = buildMessageComposeDraft(
+      action,
+      fullMessage,
+      (mail.composeIdentities || []).map((identity: { address: string }) => identity.address),
+    );
+    if (action !== 'forward' && !draft.to) {
+      showToast({ type: 'error', message: 'This message does not have a reply address.' });
+      return;
+    }
+    mail.startCompose(draft);
   };
   const runMessageAction = (action: string, message: Message) => {
     const folderPath = messageFolder(message, decodedFolder);
@@ -207,23 +244,50 @@ export function MessageList({ mail, density }: MessageListProps) {
     const sourceFolderDetails = mail.folders.find(candidate => candidate.path === sourceFolder);
     const isJunk = sourceFolderDetails?.specialUse?.toLowerCase() === '\\junk'
       || /(^|[/.])(junk|spam)$/i.test(sourceFolder);
-    messageMenuItems.push({
-      id: 'open',
-      label: isDraft ? 'Open draft' : 'Open message',
-      icon: ExternalLink,
-      onSelect: () => openMessage(message),
-    });
     if (isDraft) {
-      messageMenuItems.push({
-        id: 'delete',
-        label: 'Delete draft',
-        icon: Trash2,
-        danger: true,
-        separatorBefore: true,
-        onSelect: () => runMessageAction('delete', message),
-      });
-    } else if (!isScheduled) {
       messageMenuItems.push(
+        {
+          id: 'open',
+          label: 'Open draft',
+          icon: ExternalLink,
+          onSelect: () => openMessage(message),
+        },
+        {
+          id: 'delete',
+          label: 'Delete draft',
+          icon: Trash2,
+          danger: true,
+          separatorBefore: true,
+          onSelect: () => runMessageAction('delete', message),
+        },
+      );
+    } else if (isScheduled) {
+      messageMenuItems.push({
+        id: 'open',
+        label: 'Open scheduled message',
+        icon: ExternalLink,
+        onSelect: () => openMessage(message),
+      });
+    } else {
+      messageMenuItems.push(
+        {
+          id: 'reply',
+          label: 'Reply',
+          icon: Reply,
+          onSelect: () => { void startMessageCompose('reply', message); },
+        },
+        {
+          id: 'reply-all',
+          label: 'Reply all',
+          icon: ReplyAll,
+          onSelect: () => { void startMessageCompose('reply-all', message); },
+        },
+        {
+          id: 'forward',
+          label: 'Forward',
+          icon: Forward,
+          onSelect: () => { void startMessageCompose('forward', message); },
+        },
         {
           id: 'read',
           label: message.isRead ? 'Mark unread' : 'Mark read',
@@ -232,10 +296,10 @@ export function MessageList({ mail, density }: MessageListProps) {
           onSelect: () => runMessageAction(message.isRead ? 'unread' : 'read', message),
         },
         {
-          id: 'star',
-          label: message.isStarred ? 'Remove star' : 'Star message',
-          icon: Star,
-          onSelect: () => runMessageAction(message.isStarred ? 'unstar' : 'star', message),
+          id: 'flag',
+          label: message.isStarred ? 'Unflag' : 'Flag',
+          icon: Flag,
+          onSelect: () => { void handleFlag(message); },
         },
         {
           id: 'archive',
@@ -274,6 +338,13 @@ export function MessageList({ mail, density }: MessageListProps) {
           danger: true,
           separatorBefore: true,
           onSelect: () => runMessageAction('delete', message),
+        },
+        {
+          id: 'open',
+          label: 'Open message',
+          icon: ExternalLink,
+          separatorBefore: true,
+          onSelect: () => openMessage(message),
         },
       );
     }
@@ -353,6 +424,9 @@ export function MessageList({ mail, density }: MessageListProps) {
         </div>
       ) : <MailToolbar
         selectedCount={mail.selectedMessages.length}
+        allSelectedFlagged={mail.selectedMessages.length > 0 && mail.selectedMessages.every(uid => (
+          Boolean(mail.messages.find(message => message.uid === uid)?.isStarred)
+        ))}
         totalCount={mail.messages.length}
         activeFolder={mail.activeFolder}
         searchQuery={mail.searchQuery}
@@ -375,7 +449,14 @@ export function MessageList({ mail, density }: MessageListProps) {
             mail.setSelectedMessages(mail.messages.map((m) => m.uid));
           }
         }}
-        onBulkAction={(action) => { if (!selectionDisabled) void mail.messageAction(action); }}
+        onBulkAction={(action) => {
+          if (selectionDisabled) return;
+          void mail.messageAction(action).then(success => {
+            if (!success) {
+              showToast({ type: 'error', message: 'The selected messages could not be updated.' });
+            }
+          });
+        }}
         onMoveSelected={(targetFolder) => {
           if (!selectionDisabled) {
             void mail.messageAction('move', undefined, undefined, targetFolder).then((moved) => {
@@ -417,7 +498,7 @@ export function MessageList({ mail, density }: MessageListProps) {
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
                 onSelect={handleSelect}
                 onClick={() => navigate(`/mail/${encodeURIComponent(messageFolder(msg, decodedFolder))}/${msg.uid}`)}
-                onStar={() => handleStar(msg)}
+                onStar={() => { void handleFlag(msg); }}
                 onArchive={() => mail.messageAction('archive', [msg.uid], messageFolder(msg, decodedFolder))}
                 onDelete={() => mail.messageAction('delete', [msg.uid], messageFolder(msg, decodedFolder))}
                 onMarkRead={() => {

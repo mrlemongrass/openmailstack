@@ -2361,3 +2361,20 @@ Future entry template:
   boundaries, protected Favorites route, and exact backend/VERSION/frontend
   artifacts are clean. A public-IMAPS canary proved `UIDVALIDITY` preservation
   across external rename and zero final LIST residue.
+
+## 2026-08-26 — Mail Reply And Flag Action Grammar
+
+- Added Reply, Reply all, Forward, and Flag/Unflag to ordinary-message context
+  menus and aligned row, reading-pane, keyboard, and bulk action surfaces.
+- Added one compose-intent builder that honors `Reply-To`, preserves quoted
+  display names, excludes owner aliases, de-duplicates recipients, normalizes
+  subject prefixes, and carries thread headers through Draft/save/send.
+- Preserved the existing `star`/`unstar` API as the IMAP `\Flagged` wire
+  contract while changing user-facing language and icons to Flag/Unflag.
+- Added duplicate guards, visible failures, optimistic rollback, dynamic bulk
+  Unflag, and a wrapped mobile reading toolbar with all eleven actions proven
+  inside a 390 px viewport.
+- Local candidate proof: 206/206 frontend tests, lint, production build,
+  whitespace, the complete repository integration gate, desktop/mobile
+  Chromium flows, and expected-only forced-failure console output. Guarded live
+  release remains pending.

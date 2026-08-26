@@ -280,10 +280,27 @@ Both bridge and active stages passed public IMAPS plus ActiveSync
 Mail/Ping/Contacts/Calendar pre/post gates, and a zero-residue public-IMAPS
 canary proved the live server preserves the generation across external rename.
 
-This is not full Outlook parity. Categories, Pin/Flag, Rules-from-message,
-Sweep/Block/Ignore, richer message Reply/Forward context actions, Favorites
-ordering, folder color/empty commands, and Search Folders remain separate
-bounded slices.
+#### 3.1.2 OMS message-action implementation status
+
+The next P0 action-grammar slice adds Reply, Reply all, Forward, and Flag/Unflag
+consistently across ordinary-message context menus, rows, the reading pane,
+keyboard shortcuts, and bulk selection where the action is meaningful. Right
+click remains an accelerator: visible row/reading/bulk controls and `R`, `A`,
+`F`, and `S` shortcuts provide keyboard/touch alternatives. Draft and virtual
+Scheduled rows retain their intentionally smaller safe menus.
+
+All compose entry points share one recipient/threading contract. Reply honors
+`Reply-To`; Reply all preserves display names, excludes the signed-in user's
+configured identities, and de-duplicates recipients; reply thread headers
+survive Draft save/resume and send. User-facing Flag maps to IMAP `\Flagged`
+through the existing internal `star`/`unstar` API. Failed optimistic changes
+roll back and explain the failure, and the mobile reading toolbar wraps so no
+command is clipped at 390 px.
+
+This is not full Outlook parity. Categories, Pin, Rules-from-message,
+Sweep/Block/Ignore, Favorites ordering, folder color/empty commands, Search
+Folders, attachment-preserving Forward, and richer RFC address parsing remain
+separate bounded slices.
 
 ### 3.2 Calendar
 

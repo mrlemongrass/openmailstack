@@ -329,6 +329,8 @@ export function useMail(_opts: UseMailOptions) {
   const [composeCc, setComposeCc] = useState('');
   const [composeBcc, setComposeBcc] = useState('');
   const [composeReplyTo, setComposeReplyTo] = useState<string | null>(null);
+  const [composeInReplyTo, setComposeInReplyTo] = useState('');
+  const [composeReferences, setComposeReferences] = useState('');
   const [composeSubject, setComposeSubject] = useState('');
   const [composeBody, setComposeBody] = useState('');
   const [selectedComposeFrom, setComposeFrom] = useState('');
@@ -449,10 +451,13 @@ export function useMail(_opts: UseMailOptions) {
       composeCc,
       composeSubject || '(no subject)',
       composeBody,
+      composeInReplyTo,
+      composeReferences,
       attachments,
     ]);
   }, [composeAttachmentRevision, composeAttachments, composeBcc, composeBody, composeCc, composeFrom,
-    composeReplyTo, composeSubject, composeTo, _opts.mailSettings.identity.alwaysBccSelf,
+    composeInReplyTo, composeReferences, composeReplyTo, composeSubject, composeTo,
+    _opts.mailSettings.identity.alwaysBccSelf,
     _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
 
   const updateComposeAttachments = useCallback((update: SetStateAction<File[]>) => {
@@ -485,6 +490,8 @@ export function useMail(_opts: UseMailOptions) {
     bcc?: string;
     subject?: string;
     body?: string;
+    inReplyTo?: string;
+    references?: string;
   } = {}) => {
     if (isComposing) return;
     if (draftTimerRef.current) {
@@ -504,6 +511,8 @@ export function useMail(_opts: UseMailOptions) {
     setComposeCc(initial.cc || '');
     setComposeBcc(initial.bcc || '');
     setComposeReplyTo(null);
+    setComposeInReplyTo(initial.inReplyTo || '');
+    setComposeReferences(initial.references || '');
     setComposeSubject(initial.subject || '');
     setComposeBody(initial.body || '');
     setComposeAttachments([]);
@@ -969,6 +978,8 @@ export function useMail(_opts: UseMailOptions) {
         if (composeCc) formData.append('cc', composeCc);
         formData.append('subject', composeSubject || '(no subject)');
         formData.append('html', composeBody);
+        if (composeInReplyTo) formData.append('inReplyTo', composeInReplyTo);
+        if (composeReferences) formData.append('references', composeReferences);
         if (currentDraft.draftId) formData.append('draftId', currentDraft.draftId);
         if (currentDraft.draftUid) formData.append('draftUid', currentDraft.draftUid);
         composeAttachments.forEach(file => formData.append('attachments', file));
@@ -983,8 +994,8 @@ export function useMail(_opts: UseMailOptions) {
       if (saveRevision === draftSaveRevisionRef.current) setDraftSaveStatus('error');
       return false;
     }
-  }, [composeAttachments, composeBcc, composeBody, composeCc, composeFrom, composeReplyTo,
-    composeSubject, composeTo, _opts.mailSettings.identity.alwaysBccSelf,
+  }, [composeAttachments, composeBcc, composeBody, composeCc, composeFrom, composeInReplyTo,
+    composeReferences, composeReplyTo, composeSubject, composeTo, _opts.mailSettings.identity.alwaysBccSelf,
     _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
 
   const resumeDraft = useCallback(async (message: Message, folder: string) => {
@@ -1025,6 +1036,8 @@ export function useMail(_opts: UseMailOptions) {
     setComposeCc(state.cc);
     setComposeBcc(state.bcc);
     setComposeReplyTo(state.replyTo);
+    setComposeInReplyTo(state.inReplyTo);
+    setComposeReferences(state.references);
     setComposeSubject(state.subject);
     setComposeBody(state.body);
     setComposeAttachments(state.attachments);
@@ -1095,6 +1108,7 @@ export function useMail(_opts: UseMailOptions) {
   const finishComposeAfterConfirmedSend = useCallback(() => {
     setComposeTo(''); setComposeCc(''); setComposeBcc('');
     setComposeReplyTo(null);
+    setComposeInReplyTo(''); setComposeReferences('');
     setComposeSubject(''); setComposeBody('');
     setComposeFrom(''); setComposeSignature('none');
     setComposeAttachments([]);
@@ -1140,6 +1154,8 @@ export function useMail(_opts: UseMailOptions) {
       if (composeCc) formData.append('cc', composeCc);
       formData.append('subject', composeSubject || '(no subject)');
       formData.append('html', composeBody);
+      if (composeInReplyTo) formData.append('inReplyTo', composeInReplyTo);
+      if (composeReferences) formData.append('references', composeReferences);
       formData.append('draftId', currentDraft.draftId);
       if (currentDraft.draftUid) formData.append('draftUid', currentDraft.draftUid);
       composeAttachments.forEach((file) => {
@@ -1242,7 +1258,8 @@ export function useMail(_opts: UseMailOptions) {
     } finally {
       setSending(false);
     }
-  }, [composeFrom, composeReplyTo, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeAttachments,
+  }, [composeFrom, composeInReplyTo, composeReferences, composeReplyTo, composeTo, composeCc, composeBcc,
+    composeSubject, composeBody, composeAttachments,
     finishComposeAfterConfirmedSend, saveCurrentDraft,
     _opts.mailSettings.compose.undoSendSeconds, _opts.mailSettings.identity.alwaysBccSelf,
     _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
@@ -1482,17 +1499,32 @@ export function useMail(_opts: UseMailOptions) {
   const fetchMessageBody = useCallback(async (uid: number, folderPath: string) => {
     try {
       const detail = await messageDetailLoaderRef.current.load(folderPath, uid);
-      if (!detail || !mailboxPathsEqual(activeFolderRef.current, folderPath)) return;
+      if (!detail) return undefined;
+      const summary = messagesRef.current.find(message => (
+        message.uid === uid && mailboxPathsEqual(message.folder || folderPath, folderPath)
+      ));
+      const merged = mergeMessageDetails(summary || detail, detail);
+      if (!mailboxPathsEqual(activeFolderRef.current, folderPath)) return merged;
       setMessages((prev) => prev.map((m) =>
-        m.uid === uid ? mergeMessageDetails(m, detail) : m
+        m.uid === uid && mailboxPathsEqual(m.folder || folderPath, folderPath)
+          ? mergeMessageDetails(m, detail)
+          : m
       ));
       setViewingThread((prev) => {
-        if (prev?.some((m) => m.uid === uid)) {
-          return prev.map((m) => m.uid === uid ? mergeMessageDetails(m, detail) : m);
+        if (prev?.some((m) => m.uid === uid && mailboxPathsEqual(m.folder || folderPath, folderPath))) {
+          return prev.map((m) => (
+            m.uid === uid && mailboxPathsEqual(m.folder || folderPath, folderPath)
+              ? mergeMessageDetails(m, detail)
+              : m
+          ));
         }
         return [detail];
       });
-    } catch (e) { console.error('Failed to fetch message body', e); }
+      return merged;
+    } catch (e) {
+      console.error('Failed to fetch message body', e);
+      return undefined;
+    }
   }, [setMessages]);
 
   // Pre-fetch message bodies in the background (non-blocking, silent)
@@ -1833,6 +1865,7 @@ export function useMail(_opts: UseMailOptions) {
     showCc, setShowCc, showBcc, setShowBcc,
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc,
     composeReplyTo, setComposeReplyTo,
+    composeInReplyTo, setComposeInReplyTo, composeReferences, setComposeReferences,
     composeSubject, setComposeSubject, composeBody, setComposeBody,
     composeFrom, setComposeFrom, composeIdentities: identities, composeSignature, setComposeSignature,
     composeAttachments, setComposeAttachments: updateComposeAttachments,

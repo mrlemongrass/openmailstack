@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { Reply, ReplyAll, Forward, Star, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, ImageOff, ChevronLeft } from 'lucide-react';
+import { Reply, ReplyAll, Forward, Flag, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, ImageOff, ChevronLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import DOMPurify from 'dompurify';
 import { AttachmentCard } from './components/AttachmentCard';
@@ -22,6 +22,10 @@ import { scheduleDelayedMarkRead } from './message-reading';
 import { outboundSendFeedback } from './outbound-send-feedback';
 import { isDraftFolder } from './draft-resume';
 import { UncertainSendBlockedError } from './immediate-send';
+import {
+  buildMessageComposeDraft,
+  type MessageComposeAction,
+} from './message-compose-actions';
 
 export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const { showToast } = useToast();
@@ -37,12 +41,22 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [showRemoveScheduledConfirm, setShowRemoveScheduledConfirm] = useState(false);
   const [resumingDraft, setResumingDraft] = useState(false);
   const [deletingDraft, setDeletingDraft] = useState(false);
+  const [flaggingMessage, setFlaggingMessage] = useState(false);
+  const [preparingComposeAction, setPreparingComposeAction] = useState<MessageComposeAction | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const moveButtonRef = useRef<HTMLButtonElement>(null);
   const markingReadRef = useRef<Set<string>>(new Set());
   const scheduledMessageWasVisibleRef = useRef(false);
   const editingDraftFolderRef = useRef<string | null>(null);
-  const { messages, fetchMessageBody, fetchMessages, isComposing, messageAction } = mail;
+  const {
+    composeIdentities,
+    fetchMessageBody,
+    fetchMessages,
+    isComposing,
+    messageAction,
+    messages,
+    startCompose,
+  } = mail;
 
   const messageUid = uid ? parseInt(uid, 10) : 0;
   const decodedRouteFolder = folder ? decodeURIComponent(folder) : mail.activeFolder;
@@ -61,6 +75,49 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   );
   const messageIsRead = message?.isRead ?? true;
   const messageIsScheduled = Boolean(message?.is_scheduled);
+  const startMessageCompose = useCallback(async (action: MessageComposeAction) => {
+    if (!message || preparingComposeAction) return;
+    setPreparingComposeAction(action);
+    try {
+      const fullMessage = message.bodyLoaded
+        ? message
+        : await fetchMessageBody(message.uid, sourceFolder);
+      if (!fullMessage) {
+        showToast({
+          type: 'error',
+          message: `${action === 'forward' ? 'Forward' : 'Reply'} could not be prepared. Try again.`,
+        });
+        return;
+      }
+      const draft = buildMessageComposeDraft(
+        action,
+        fullMessage,
+        (composeIdentities || []).map((identity: { address: string }) => identity.address),
+      );
+      if (action !== 'forward' && !draft.to) {
+        showToast({ type: 'error', message: 'This message does not have a reply address.' });
+        return;
+      }
+      startCompose(draft);
+    } finally {
+      setPreparingComposeAction(null);
+    }
+  }, [composeIdentities, fetchMessageBody, message, preparingComposeAction, showToast,
+    sourceFolder, startCompose]);
+  const toggleMessageFlag = useCallback(async () => {
+    if (!message || flaggingMessage) return;
+    setFlaggingMessage(true);
+    const wasFlagged = Boolean(message.isStarred);
+    const success = await messageAction(
+      wasFlagged ? 'unstar' : 'star',
+      [message.uid],
+      sourceFolder,
+    );
+    if (!success) {
+      showToast({ type: 'error', message: `The message could not be ${wasFlagged ? 'unflagged' : 'flagged'}.` });
+    }
+    setFlaggingMessage(false);
+  }, [flaggingMessage, message, messageAction, showToast, sourceFolder]);
 
   useEffect(() => {
     if (message) {
@@ -128,39 +185,18 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
 
       const key = e.key.toLowerCase();
       if ((message.is_scheduled || messageIsDraft) && key !== 'escape' && key !== '?') return;
-      const d = typeof message.date === 'string' ? new Date(message.date) : message.date;
       if (key === 'r' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        mail.startCompose({ to: message.from, subject: `Re: ${message.subject}` });
+        void startMessageCompose('reply');
       } else if (key === 'a' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        const ownAddresses = new Set((mail.composeIdentities || []).map((i: { address: string }) => i.address.toLowerCase()));
-        const allRecipients = [message.from, message.to, message.cc].filter(Boolean).join(', ');
-        const parsed = allRecipients.split(',').map((addr: string) => {
-          const match = addr.trim().match(/<(.+?)>/);
-          return match ? match[1] : addr.trim();
-        }).filter(Boolean);
-        const unique = [...new Set(parsed)].filter((addr: string) => !ownAddresses.has(addr.toLowerCase()));
-        mail.startCompose({ to: unique.join(', '), subject: `Re: ${message.subject}` });
+        void startMessageCompose('reply-all');
       } else if (key === 'f' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        const dateStr = d ? format(d, 'EEE, MMM d, yyyy h:mm a') : '';
-        const forwardHeader = [
-          `\n\n---------- Forwarded message ---------`,
-          `From: ${message.from}`,
-          `Date: ${dateStr}`,
-          `Subject: ${message.subject}`,
-          message.to ? `To: ${message.to}` : null,
-          message.cc ? `Cc: ${message.cc}` : null,
-        ].filter(Boolean).join('\n');
-        const quoteBody = message.text ? `\n> ${message.text.replace(/\n/g, '\n> ')}` : message.html ? `\n\n[HTML content forwarded — open original to view formatting]` : '';
-        mail.startCompose({
-          subject: `Fwd: ${message.subject}`,
-          body: forwardHeader + quoteBody,
-        });
+        void startMessageCompose('forward');
       } else if (key === 's' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        mail.messageAction(message.isStarred ? 'unstar' : 'star', [message.uid]);
+        void toggleMessageFlag();
       } else if (key === 'e' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         mail.messageAction('archive', [message.uid]);
@@ -177,7 +213,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [message, messageIsDraft, mail, folder, navigate]);
+  }, [message, messageIsDraft, mail, folder, navigate, startMessageCompose, toggleMessageFlag]);
 
   if (!uid) {
     return (
@@ -312,7 +348,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)' }}>
+      <div className="message-viewer-toolbar" style={{ display: 'flex', gap: 4, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)' }}>
         <button className="btn btn-ghost" aria-label="Back to message list"
           onClick={() => navigate(`/mail/${encodeURIComponent(folder || 'INBOX')}`)}>
           <Mail size={16} />
@@ -423,42 +459,16 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           </>
         ) : (
           <>
-        <button className="btn btn-ghost" aria-label="Reply" onClick={() => {
-          mail.startCompose({ to: message.from, subject: `Re: ${message.subject}` });
+        <button className="btn btn-ghost" aria-label="Reply" disabled={Boolean(preparingComposeAction)} onClick={() => {
+          void startMessageCompose('reply');
         }} title="Reply">
           <Reply size={16} />
         </button>
-        <button className="btn btn-ghost" onClick={() => {
-          // Reply All: collect all unique recipients, exclude own address
-          const ownAddresses = new Set((mail.composeIdentities || []).map((i: { address: string }) => i.address.toLowerCase()));
-          const allRecipients = [message.from, message.to, message.cc].filter(Boolean).join(', ');
-          const parsed = allRecipients.split(',').map((a: string) => {
-            const match = a.trim().match(/<(.+?)>/);
-            return match ? match[1] : a.trim();
-          }).filter(Boolean);
-          const unique = [...new Set(parsed)].filter((a: string) => !ownAddresses.has(a.toLowerCase()));
-          mail.startCompose({ to: unique.join(', '), subject: `Re: ${message.subject}` });
-        }} aria-label="Reply all" title="Reply All"><ReplyAll size={16} /></button>
-        <button className="btn btn-ghost" onClick={() => {
-          // Forward: set Fwd: subject, quote original message
-          const dateStr = dateObj ? format(dateObj, 'EEE, MMM d, yyyy h:mm a') : '';
-          const forwardHeader = [
-            `\n\n---------- Forwarded message ---------`,
-            `From: ${message.from}`,
-            `Date: ${dateStr}`,
-            `Subject: ${message.subject}`,
-            message.to ? `To: ${message.to}` : null,
-            message.cc ? `Cc: ${message.cc}` : null,
-          ].filter(Boolean).join('\n');
-          const quoteBody = message.text
-            ? `\n> ${message.text.replace(/\n/g, '\n> ')}`
-            : message.html
-            ? `\n\n[HTML content forwarded — open original to view formatting]`
-            : '';
-          mail.startCompose({
-            subject: `Fwd: ${message.subject}`,
-            body: forwardHeader + quoteBody,
-          });
+        <button className="btn btn-ghost" disabled={Boolean(preparingComposeAction)} onClick={() => {
+          void startMessageCompose('reply-all');
+        }} aria-label="Reply all" title="Reply all"><ReplyAll size={16} /></button>
+        <button className="btn btn-ghost" disabled={Boolean(preparingComposeAction)} onClick={() => {
+          void startMessageCompose('forward');
         }} aria-label="Forward" title="Forward"><Forward size={16} /></button>
         <button className="btn btn-ghost" aria-label="Show original" onClick={() => setShowRaw(true)} title="Show original"><Code size={16} /></button>
         <div style={{ position: 'relative' }}>
@@ -469,9 +479,14 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
               onClose={() => setShowSnooze(false)} />
           )}
         </div>
-        <div style={{ flex: 1 }} />
-        <button className="btn btn-ghost" aria-label={message.isStarred ? 'Remove star' : 'Star message'} onClick={() => { mail.messageAction(message.isStarred ? 'unstar' : 'star', [message.uid]); showToast({ type: 'info', message: message.isStarred ? 'Star removed' : 'Starred' }); }}>
-          <Star size={16} fill={message.isStarred ? '#f59e0b' : 'none'} color={message.isStarred ? '#f59e0b' : undefined} />
+        <div className="message-viewer-toolbar-spacer" style={{ flex: 1 }} />
+        <button className="btn btn-ghost"
+          aria-label={message.isStarred ? 'Unflag message' : 'Flag message'}
+          title={message.isStarred ? 'Unflag' : 'Flag'}
+          disabled={flaggingMessage}
+          onClick={() => { void toggleMessageFlag(); }}>
+          <Flag size={16} fill={message.isStarred ? 'currentColor' : 'none'}
+            color={message.isStarred ? 'var(--danger)' : undefined} />
         </button>
         <button className="btn btn-ghost" aria-label="Mark unread" onClick={() => { mail.messageAction('unread', [message.uid]); navigate(`/mail/${encodeURIComponent(folder || 'INBOX')}`); }} title="Mark unread">
           <MailOpen size={16} />

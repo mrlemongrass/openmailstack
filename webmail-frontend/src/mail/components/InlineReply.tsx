@@ -96,7 +96,7 @@ export function InlineReply({
           )}
           <button className="btn btn-ghost" disabled={replyBusy || sendBlocked}
             onClick={onOpenFullCompose} style={{ fontSize: '0.8rem' }}>
-            <Maximize2 size={14} /> Rich editor
+            <Maximize2 size={14} /> Open full editor
           </button>
         </div>
       </div>

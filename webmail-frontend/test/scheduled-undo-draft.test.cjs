@@ -41,6 +41,7 @@ test('Undo reopens a restored new-message Draft from the server-returned identit
       },
       resumeDraft: async (message, folder) => {
         calls.push(['resume', message.uid, folder]);
+        return { opened: true };
       },
     },
   );
@@ -68,7 +69,7 @@ test('Undo preserves a newer composer instead of overwriting it with a stale sch
         touchedDraft = true;
         return restoredMessage;
       },
-      resumeDraft: async () => { touchedDraft = true; },
+      resumeDraft: async () => { touchedDraft = true; return { opened: true }; },
     },
   );
 
@@ -91,7 +92,10 @@ test('inline-reply Undo resumes the returned reply Draft through the full compos
     {
       isComposerOpen: () => false,
       fetchDraft: async () => replyDraft,
-      resumeDraft: async (message, folder) => { resumed = { message, folder }; },
+      resumeDraft: async (message, folder) => {
+        resumed = { message, folder };
+        return { opened: true };
+      },
     },
   );
 

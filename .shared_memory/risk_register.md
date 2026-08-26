@@ -196,8 +196,10 @@ Last updated: 2026-08-25
   address lists, inline Send shares that contract, and complete thread headers
   survive Draft/send lifecycles. Newly authored textarea content submits as MIME
   plain text, preserving forwarded address syntax and line breaks; resumed HTML-
-  only Drafts retain their format. Latest-intent sequencing prevents stale body
-  fetches from replacing a newer compose action. Flag uses existing IMAP
+  only Drafts retain their API-projected MIME body mode. Settings exposes only
+  the implemented Plain text composer. Shared latest-intent sequencing prevents
+  stale body fetches or Draft hydration from replacing a newer compose action.
+  Flag uses existing IMAP
   `\Flagged` storage, rolls failed optimistic changes back, and all eleven
   reading-pane actions fit visibly at 390 px. Pin, forwarded attachments, HTML-
   preserving Forward, and full RFC group/comment parsing remain explicit follow-

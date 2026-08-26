@@ -9,7 +9,7 @@ export interface ScheduledUndoDraftResult {
 interface ScheduledUndoDraftDependencies {
   isComposerOpen: () => boolean;
   fetchDraft: (folder: string, uid: number) => Promise<Message | undefined>;
-  resumeDraft: (message: Message, folder: string) => Promise<unknown>;
+  resumeDraft: (message: Message, folder: string) => Promise<{ opened: boolean }>;
 }
 
 export async function reopenRestoredScheduledDraft(
@@ -26,6 +26,6 @@ export async function reopenRestoredScheduledDraft(
 
   const message = await dependencies.fetchDraft(draftFolder, draftUid);
   if (!message) return result;
-  await dependencies.resumeDraft(message, draftFolder);
-  return { ...result, reopened: true };
+  const resumed = await dependencies.resumeDraft(message, draftFolder);
+  return { ...result, reopened: resumed.opened };
 }

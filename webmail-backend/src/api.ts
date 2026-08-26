@@ -57,6 +57,7 @@ import { parseRspamdHealthStatus } from './rspamd-health';
 import { verifyStoredPassword } from './password-verification';
 import { rateLimit } from './security';
 import { InstalledVersionError, readInstalledVersion } from './version-info';
+import { projectParsedMessageBody } from './message-body-format';
 import {
     authorizeOutboundSender,
     compileOutboundMessage,
@@ -3478,6 +3479,7 @@ apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req: any, re
                     date: projectScheduledOutboundInstant(rows[0]),
                     html: opts.html || '',
                     text: opts.text || '',
+                    bodyMode: opts.html ? 'rich' : 'plain',
                     attachments: [], // We won't try to parse attachments for scheduled messages for now
                     is_scheduled: true,
                     scheduled_id: realId,
@@ -3505,6 +3507,7 @@ apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req: any, re
         
         const parsed = await simpleParser(msg.source);
         const calData = extractCalendarData(parsed);
+        const parsedBody = projectParsedMessageBody(parsed);
         res.json({
             success: true,
             message: {
@@ -3516,8 +3519,7 @@ apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req: any, re
                 bcc: (parsed.bcc as any)?.text || '',
                 replyTo: (parsed.replyTo as any)?.text || '',
                 date: parsed.date,
-                html: parsed.html || parsed.textAsHtml,
-                text: parsed.text,
+                ...parsedBody,
                 isRead: msg.flags.includes('\\Seen'),
                 isStarred: msg.flags.includes('\\Flagged'),
                 hasAttachments: getVisibleAttachments(parsed).length > 0,

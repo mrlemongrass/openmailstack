@@ -89,7 +89,7 @@ export const settingsDefaults = {
             alwaysBccSelf: false,
         },
         compose: {
-            defaultMode: 'rich',
+            defaultMode: 'plain',
             defaultFont: 'system',
             attachmentReminder: true,
             undoSendSeconds: 10,
@@ -319,7 +319,7 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
                 alwaysBccSelf: booleanValue(identity.alwaysBccSelf, settingsDefaults.mail.identity.alwaysBccSelf),
             },
             compose: {
-                defaultMode: stringOption(compose.defaultMode, ['rich', 'plain'], settingsDefaults.mail.compose.defaultMode),
+                defaultMode: 'plain',
                 defaultFont: stringOption(compose.defaultFont, ['system', 'serif', 'mono'], settingsDefaults.mail.compose.defaultFont),
                 attachmentReminder: booleanValue(compose.attachmentReminder, settingsDefaults.mail.compose.attachmentReminder),
                 undoSendSeconds: numberOption(compose.undoSendSeconds, [0, 5, 10, 20, 30], settingsDefaults.mail.compose.undoSendSeconds),

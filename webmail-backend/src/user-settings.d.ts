@@ -80,7 +80,7 @@ export declare const settingsDefaults: {
             alwaysBccSelf: false;
         };
         compose: {
-            defaultMode: "rich";
+            defaultMode: "plain";
             defaultFont: "system";
             attachmentReminder: true;
             undoSendSeconds: 10;

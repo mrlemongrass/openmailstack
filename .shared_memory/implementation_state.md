@@ -1235,14 +1235,17 @@ React frontend:
 - `useMail.ts` fingerprints, drafts, resumes, resets, and sends the reply thread
   headers, including inline quick replies. Newly authored textarea content uses
   MIME plain text so forwarded `<mailbox>` addresses are not parsed as HTML;
-  resumed HTML-only Drafts preserve their source body mode. Message-facing
+  the detail API projects authoritative MIME `bodyMode`, so resumed HTML-only
+  Drafts preserve HTML even when Mailparser derives text. Settings exposes only
+  the currently implemented Plain text format and hides inactive font controls. Message-facing
   Flag/Unflag continues to use internal `star`/`unstar` API actions backed by
   IMAP `\Flagged`.
 - Rows provide accessible Flag/Unflag, ordinary context menus lead with the
   Reply family, the reading pane and `R`/`A`/`F`/`S` shortcuts share the same
   logic, and bulk selection dynamically changes Flag to Unflag when all
-  selected messages are flagged. Slow overlapping compose preparation uses
-  latest-intent sequencing and cannot overwrite a newer draft. Draft/Scheduled
+  selected messages are flagged. One `useMail` latest-intent coordinator spans
+  context, reading-pane, new-message, and Draft hydration work, so slow
+  preparation cannot overwrite a newer draft. Draft/Scheduled
   menus remain bounded.
 - The mobile reading toolbar wraps at 767 px. Browser geometry at 390x844
   proved all eleven controls are visible without page overflow or horizontal

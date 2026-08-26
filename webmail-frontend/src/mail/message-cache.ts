@@ -64,6 +64,7 @@ export function mergeMessageDetails(summary: Message, detail?: Message): Message
     replyTo: detail.replyTo ?? summary.replyTo,
     html: detail.html,
     text: detail.text,
+    bodyMode: detail.bodyMode,
     attachments: detail.attachments,
     messageId: detail.messageId,
     inReplyTo: detail.inReplyTo,

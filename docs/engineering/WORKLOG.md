@@ -10414,25 +10414,30 @@ context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
 
 ### Changes made
 
-- Added a shared compose-draft builder for reply and forward intent. It loads
-  message detail before composing, honors `Reply-To`, understands commas inside
+- Added a shared compose-draft builder for reply and forward intent. A shared
+  `useMail` preparation boundary loads detail before the builder runs. It honors
+  `Reply-To`, understands commas inside
   quoted display names and angle addresses, removes configured owner aliases
   case-insensitively, and creates stable reply thread headers.
 - Routed context-menu, reading-pane, inline quick-reply/rich-editor handoff, and
-  `R`/`A`/`F` shortcut paths through the same builder. Reply headers now inherit
+  `R`/`A`/`F` shortcut paths through the same builder. The inline expansion is
+  truthfully labelled `Open full editor`, not Rich editor. Reply headers inherit
   a parent's `In-Reply-To` when no `References` chain exists and survive both
   autosaved/resumed Drafts and immediate or delayed send payloads.
 - Newly authored textarea content now saves and sends as MIME plain text rather
   than being mislabelled as HTML. This preserves forwarded angle-bracket
-  addresses and line breaks; resumed HTML-only Drafts retain their existing HTML
-  body mode rather than being silently reformatted.
+  addresses and line breaks. The message-detail API now reports authoritative
+  MIME `bodyMode`, so resumed HTML-only Drafts retain HTML even when Mailparser
+  also derives plain text. Settings truthfully exposes Plain text as the only
+  available compose format and removes the inactive font control.
 - Replaced message-facing Star language with Outlook-familiar Flag/Unflag while
   deliberately preserving internal `star`/`unstar` API values for backend and
   IMAP compatibility. Bulk selection changes to Unflag only when every selected
   message is flagged.
 - Added visible mutation/preparation failures, single-message duplicate guards,
-  latest-intent sequencing for overlapping compose preparation, an authoritative
-  composer-open guard, failed optimistic-update rollback, and a two-row mobile
+  one cross-surface latest-intent coordinator for overlapping body loads, Draft
+  attachment hydration, and new-message entry, an authoritative composer-open
+  guard, failed optimistic-update rollback, and a two-row mobile
   reading toolbar so no action is clipped or requires hidden horizontal
   discovery.
 
@@ -10440,15 +10445,19 @@ context menus, the reading pane, keyboard shortcuts, and the bulk toolbar.
 
 - TDD established missing compose-action, threading, context, row, reading-
   pane, bulk, and mobile-layout contracts before implementation.
-- Complete frontend: 208/208; lint, production TypeScript/Vite build, and
+- Complete frontend: 211/211; lint, production TypeScript/Vite build, and
   `git diff --check` passed.
+- Complete backend: 861 passed, 7 optional integration tests skipped, 0 failed;
+  the real MIME regression proves HTML and plain source projection.
 - Mocked Chromium at 1440x900 and 390x844 exercised Reply all recipient
-  semantics, a delayed Reply versus Forward race with latest intent winning,
+  semantics, a delayed reading-pane Reply versus newer list-context Forward
+  with latest intent winning,
   plain-text Forward quoting/persistence, inline-reply text handoff
-  to a threaded rich Reply, a direct inline Reply with exact Reply-To/subject/
+  to a threaded full-editor Reply, a direct inline Reply with exact Reply-To/subject/
   thread headers, context-menu keyboard focus return, Flag success, forced
   Unflag failure/rollback/retry, bulk Flag/Unflag, and all eleven mobile reading-
-  pane action bounds. The only console errors were the deliberately forced
+  pane action bounds, and the honest plain-only compose Settings surface. The
+  only console errors were the deliberately forced
   `503` and its handled action failure; there were no page errors.
 - The complete repository integration gate passed and ended with
   `[ok] Integration checks completed.` Fixed-point Spec/Standards review remains

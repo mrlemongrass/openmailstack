@@ -70,8 +70,9 @@ test('HTML-only Drafts retain their body format when resumed', () => {
 
   const state = draftComposeState({
     ...draft,
-    text: undefined,
+    text: 'Preserve this HTML',
     html: '<p>Preserve <strong>this HTML</strong></p>',
+    bodyMode: 'rich',
   }, []);
 
   assert.equal(state.mode, 'rich');
@@ -114,6 +115,8 @@ test('Drafts viewer opens the real composer without reply controls and sends sta
   assert.match(hook, /const composeBodyField = composeMode === 'rich' \? 'html' : 'text'/);
   assert.match(hook, /formData\.append\(composeBodyField,\s*composeBody\)/);
   assert.match(hook, /setComposeMode\(state\.mode\)/);
+  assert.match(hook, /composePreparationCoordinatorRef/);
+  assert.match(hook, /const requestId = composePreparationCoordinatorRef\.current\.begin\(\)[\s\S]*hydrateDraftAttachments[\s\S]*claimComposeIntent\(requestId\)/);
   assert.match(hook, /formData\.append\('subject',\s*subject\)/);
   assert.match(viewer, /Edit draft/);
   assert.match(viewer, /!isScheduled && !isDraft && <InlineReply/);

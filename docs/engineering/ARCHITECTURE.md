@@ -758,8 +758,8 @@ transaction.
 Verified 2026-08-26: ordinary-message context menus, rows, the reading pane,
 keyboard shortcuts, and bulk selection now share Reply/Reply all/Forward and
 Flag/Unflag interaction grammar. `message-compose-actions.ts` is the single
-compose-intent boundary: it loads full message detail before composing, honors
-`Reply-To`, preserves quoted display names, excludes every configured owner
+draft-construction boundary: it honors `Reply-To`, preserves quoted display
+names, excludes every configured owner
 identity case-insensitively, de-duplicates mailboxes, normalizes `Re:`/`Fwd:`
 prefixes, and supplies `In-Reply-To` plus `References`. When a parent has no
 `References`, its `In-Reply-To` seeds the inherited chain before the parent
@@ -767,21 +767,30 @@ Message-ID is appended. `useMail.ts` retains those headers in the compose
 fingerprint and carries them through Draft save, resume, full-compose send, and
 the inline quick-reply path.
 
+`useMail.prepareMessageCompose()` owns full-detail loading and one shared
+latest-intent coordinator for list, reading-pane, keyboard, new-message, and
+Draft-resume entry points. A newer intent invalidates older body fetch or Draft
+attachment hydration work before it can claim the composer.
+
 The active Compose UI is a textarea, so newly authored bodies are persisted and
 submitted as MIME `text` rather than `html`. This keeps typed/forwarded angle-
-bracket mailbox addresses and line breaks literal. Resumed HTML-only Drafts
-retain their original `html` body mode so an external client's Draft is not
-silently reformatted. HTML-only source messages remain represented by a safe
-placeholder during Forward; rich-message editing remains a separate future
-surface rather than accepting untrusted source markup.
+bracket mailbox addresses and line breaks literal. The message-detail API
+projects an authoritative `bodyMode` from the parsed MIME source, so resumed
+HTML-only Drafts retain their original `html` body mode even though Mailparser
+also supplies derived plain text. Settings now advertises Plain text as the only
+available compose format and omits the inactive font selector. HTML-only source
+messages remain represented by a safe placeholder during Forward; rich-message
+editing remains a separate future surface rather than accepting untrusted
+source markup.
 
 Message-facing controls say Flag/Unflag while the authenticated API deliberately
 retains `star`/`unstar` and `isStarred` as compatibility names for IMAP
 `\Flagged`. Single-row changes are guarded and optimistic with exact rollback;
 bulk selection offers Unflag only when every selected message is flagged.
-Failure paths stay visible. Context-menu body preparation uses latest-intent
-wins sequencing plus an authoritative composer-open guard, preventing a slower
-Reply request from overwriting a newer Forward. Draft and virtual Scheduled
+Failure paths stay visible. Shared compose preparation uses latest-intent-wins
+sequencing plus an authoritative composer-open guard, preventing a slower
+reading-pane Reply or Draft hydration from overwriting a newer context-menu
+Forward or new message. Draft and virtual Scheduled
 context menus preserve their narrower command sets. At the mobile breakpoint
 the reading toolbar wraps instead of clipping commands, so touch does not depend
 on right click or hidden horizontal scrolling.

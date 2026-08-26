@@ -34,6 +34,7 @@ test('message detail survives a summary refresh after mark-as-read', () => {
     date: '2026-07-12T00:00:00.000Z',
     isRead: false,
     html: '<p>Full body</p>',
+    bodyMode: 'rich',
     attachments: [{ id: 1, filename: 'proof.txt', contentType: 'text/plain', size: 5 }],
   });
   const refreshedSummary = {
@@ -48,6 +49,7 @@ test('message detail survives a summary refresh after mark-as-read', () => {
   const merged = mergeMessageDetails(refreshedSummary, detail);
 
   assert.equal(merged.html, '<p>Full body</p>');
+  assert.equal(merged.bodyMode, 'rich');
   assert.equal(merged.bodyLoaded, true);
   assert.equal(merged.isRead, true, 'the refreshed flag state must remain authoritative');
   assert.equal(merged.attachments[0].filename, 'proof.txt');

@@ -55,7 +55,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     isComposing,
     messageAction,
     messages,
-    startCompose,
+    prepareMessageCompose,
   } = mail;
 
   const messageUid = uid ? parseInt(uid, 10) : 0;
@@ -79,31 +79,20 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     if (!message || preparingComposeAction) return;
     setPreparingComposeAction(action);
     try {
-      const fullMessage = message.bodyLoaded
-        ? message
-        : await fetchMessageBody(message.uid, sourceFolder);
-      if (!fullMessage) {
+      const result = await prepareMessageCompose(action, message, sourceFolder, body);
+      if (result === 'unavailable') {
         showToast({
           type: 'error',
           message: `${action === 'forward' ? 'Forward' : 'Reply'} could not be prepared. Try again.`,
         });
-        return;
       }
-      const draft = buildMessageComposeDraft(
-        action,
-        fullMessage,
-        (composeIdentities || []).map((identity: { address: string }) => identity.address),
-      );
-      if (action !== 'forward' && !draft.to) {
+      if (result === 'missing-reply-address') {
         showToast({ type: 'error', message: 'This message does not have a reply address.' });
-        return;
       }
-      startCompose(body ? { ...draft, body } : draft);
     } finally {
       setPreparingComposeAction(null);
     }
-  }, [composeIdentities, fetchMessageBody, message, preparingComposeAction, showToast,
-    sourceFolder, startCompose]);
+  }, [message, prepareMessageCompose, preparingComposeAction, showToast, sourceFolder]);
   const toggleMessageFlag = useCallback(async () => {
     if (!message || flaggingMessage) return;
     setFlaggingMessage(true);
@@ -424,7 +413,8 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
               onClick={async () => {
                 setResumingDraft(true);
                 try {
-                  const { senderChanged } = await mail.resumeDraft(message, sourceFolder);
+                  const { senderChanged, opened } = await mail.resumeDraft(message, sourceFolder);
+                  if (!opened) return;
                   editingDraftFolderRef.current = sourceFolder;
                   if (senderChanged) {
                     showToast({

@@ -157,17 +157,6 @@ const radiusOptions: { value: RadiusMode; label: string }[] = [
   { value: 'round', label: 'Round' },
 ];
 
-const composeModeOptions: { value: MailUserSettings['compose']['defaultMode']; label: string }[] = [
-  { value: 'rich', label: 'Rich text' },
-  { value: 'plain', label: 'Plain text' },
-];
-
-const composeFontOptions: { value: MailUserSettings['compose']['defaultFont']; label: string }[] = [
-  { value: 'system', label: 'System' },
-  { value: 'serif', label: 'Serif' },
-  { value: 'mono', label: 'Mono' },
-];
-
 const previewPaneOptions: { value: MailUserSettings['reading']['previewPane']; label: string }[] = [
   { value: 'right', label: 'Right' },
   { value: 'bottom', label: 'Bottom' },
@@ -398,11 +387,13 @@ function MailIdentityPane({ mailSettings, availableSenders, setupMailboxAddress,
 
         <section className="settings-section">
           <h3>Compose</h3>
-          <SegmentedControl options={composeModeOptions} value={mailSettings.compose.defaultMode} onChange={value => updateCompose({ defaultMode: value })} />
-          <label className="settings-field">
-            <span>Default Font</span>
-            <SegmentedControl options={composeFontOptions} value={mailSettings.compose.defaultFont} onChange={value => updateCompose({ defaultFont: value })} />
-          </label>
+          <div className="settings-field">
+            <span>Message format</span>
+            <strong>Plain text</strong>
+            <p className="settings-description">
+              Plain text is the available message format. Rich formatting controls will appear here when the editor supports them.
+            </p>
+          </div>
           <label className="settings-field">
             <span>Undo Send</span>
             <select className="glass-input glass-select" value={mailSettings.compose.undoSendSeconds} onChange={event => updateCompose({ undoSendSeconds: Number(event.target.value) as MailUserSettings['compose']['undoSendSeconds'] })}>

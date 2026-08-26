@@ -206,6 +206,7 @@ export interface Message {
   preview?: string;
   html?: string;
   text?: string;
+  bodyMode?: 'rich' | 'plain';
   bodyLoaded?: boolean;
   messageId?: string;
   inReplyTo?: string;

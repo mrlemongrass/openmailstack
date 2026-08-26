@@ -295,9 +295,11 @@ configured identities, and de-duplicates recipients; reply thread headers
 inherit the parent's chain and survive Draft save/resume, direct inline reply,
 rich-editor handoff, and send. Newly authored textarea content submits as MIME
 plain text so forwarded mailbox addresses and line breaks remain literal, while
-resumed HTML-only Drafts retain their source format. Overlapping context actions
-use latest-intent sequencing so a slow earlier body fetch cannot replace the
-newer draft. User-facing Flag maps to IMAP `\Flagged` through the existing
+resumed HTML-only Drafts retain an API-projected source body mode. Settings
+advertises Plain text as the only currently available compose format. One
+shared latest-intent coordinator spans context, reading-pane, new-message, and
+Draft-resume entry points, so a slow earlier body fetch or attachment hydration
+cannot replace the newer draft. User-facing Flag maps to IMAP `\Flagged` through the existing
 internal `star`/`unstar` API. Failed optimistic changes roll back and explain the
 failure, and the mobile reading toolbar wraps so no command is clipped at 390 px.
 

@@ -2374,13 +2374,18 @@ Future entry template:
   parent References chain inherits its In-Reply-To value.
 - Corrected newly authored textarea content to submit as MIME plain text rather
   than HTML, preserving forwarded angle-bracket addresses and line breaks while
-  retaining the source format of resumed HTML-only Drafts.
+  using an authoritative API `bodyMode` to retain the source format of resumed
+  HTML-only Drafts. Removed inactive Rich text and font choices from Settings so
+  the visible preference surface matches the plain-text editor, and renamed the
+  inline expansion action from Rich editor to Open full editor.
 - Preserved the existing `star`/`unstar` API as the IMAP `\Flagged` wire
   contract while changing user-facing language and icons to Flag/Unflag.
-- Added duplicate guards, visible failures, latest-intent compose sequencing,
+- Added duplicate guards, visible failures, cross-surface latest-intent compose
+  sequencing that also covers delayed Draft hydration and new-message entry,
   optimistic rollback, dynamic bulk Unflag, and a wrapped mobile reading toolbar
   with all eleven actions proven inside a 390 px viewport.
-- Local candidate proof: 208/208 frontend tests, lint, production build,
+- Local candidate proof: 211/211 frontend tests; 861 backend passes with 7
+  optional integration skips and no failures; lint, production build,
   whitespace, the complete repository integration gate, desktop/mobile
   Chromium flows, and expected-only forced-failure console output. Guarded live
   release remains pending.

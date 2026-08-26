@@ -336,6 +336,7 @@ test('mobile folder drawer suspends for nested dialogs and uses defined visual t
 test('message rows expose a context menu without replacing their normal open behavior', () => {
   const row = source('src/mail/MessageRow.tsx');
   const list = source('src/mail/MessageList.tsx');
+  const viewer = source('src/mail/MessageViewer.tsx');
   const hook = source('src/mail/hooks/useMail.ts');
 
   assert.match(row, /onContextMenu=/);
@@ -346,13 +347,14 @@ test('message rows expose a context menu without replacing their normal open beh
   assert.match(list, /id: 'reply'/);
   assert.match(list, /id: 'reply-all'/);
   assert.match(list, /id: 'forward'/);
-  assert.match(list, /buildMessageComposeDraft/);
-  assert.match(list, /fetchMessageBody/);
-  assert.match(list, /composePreparationRequestRef/);
-  assert.match(list, /const requestId = \+\+composePreparationRequestRef\.current/);
-  assert.match(list, /if \(requestId !== composePreparationRequestRef\.current\) return/);
+  assert.match(hook, /buildMessageComposeDraft/);
+  assert.match(hook, /fetchMessageBody/);
+  assert.match(list, /mail\.prepareMessageCompose\(action, message, folderPath\)/);
+  assert.match(viewer, /prepareMessageCompose[\s\S]*prepareMessageCompose\(action, message, sourceFolder, body\)/);
   assert.match(list, /Preparing \{composeActionLabel\(preparingComposeAction\)\}/);
-  assert.match(hook, /if \(isComposingRef\.current\) return false;[\s\S]*isComposingRef\.current = true/);
+  assert.match(hook, /const prepareMessageCompose = useCallback[\s\S]*composePreparationCoordinatorRef\.current\.begin\(\)/);
+  assert.match(hook, /startCompose\(body \? \{ \.\.\.draft, body \} : draft, requestId\)/);
+  assert.match(hook, /const claimComposeIntent = useCallback[\s\S]*isComposingRef\.current = true/);
   assert.match(list, /Mark (?:as )?unread|Mark (?:as )?read/);
   assert.match(list, /message\.isStarred \? 'Unflag' : 'Flag'/);
   assert.match(list, /Archive/);

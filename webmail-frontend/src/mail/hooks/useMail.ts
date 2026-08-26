@@ -26,6 +26,8 @@ import { createMailSearchRequestCoordinator, isMailSearchAbort } from '../mail-s
 import { mailIdentities, selectComposeFrom } from '../mail-runtime-settings';
 import { createDraftSaveCoordinator } from '../draft-save-coordinator';
 import { draftComposeState, hydrateDraftAttachments } from '../draft-resume';
+import { createComposePreparationCoordinator } from '../compose-preparation-coordinator';
+import { buildMessageComposeDraft, type MessageComposeAction } from '../message-compose-actions';
 import { outboundIdentityFields } from '../outbound-identity';
 import { reopenRestoredScheduledDraft } from '../scheduled-undo-draft';
 import {
@@ -359,6 +361,7 @@ export function useMail(_opts: UseMailOptions) {
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftSaveCoordinatorRef = useRef(createDraftSaveCoordinator());
   const draftSaveRevisionRef = useRef(0);
+  const composePreparationCoordinatorRef = useRef(createComposePreparationCoordinator());
 
   // Inline reply state
   const [replyText, setReplyText] = useState('');
@@ -485,6 +488,13 @@ export function useMail(_opts: UseMailOptions) {
     setProtectedReplySend(null);
   }, [replyText]);
 
+  const claimComposeIntent = useCallback((requestId: number) => {
+    if (isComposingRef.current) return false;
+    if (!composePreparationCoordinatorRef.current.claim(requestId)) return false;
+    isComposingRef.current = true;
+    return true;
+  }, []);
+
   const startCompose = useCallback((initial: {
     to?: string;
     cc?: string;
@@ -493,9 +503,9 @@ export function useMail(_opts: UseMailOptions) {
     body?: string;
     inReplyTo?: string;
     references?: string;
-  } = {}) => {
-    if (isComposingRef.current) return false;
-    isComposingRef.current = true;
+  } = {}, preparationRequestId?: number) => {
+    const requestId = preparationRequestId ?? composePreparationCoordinatorRef.current.begin();
+    if (!claimComposeIntent(requestId)) return false;
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current);
       draftTimerRef.current = null;
@@ -526,7 +536,7 @@ export function useMail(_opts: UseMailOptions) {
     setComposeDocked(false);
     setIsComposing(true);
     return true;
-  }, []);
+  }, [claimComposeIntent]);
 
   // ---- Data fetching (must be before handleSend) ----
   const fetchFolders = useCallback(async () => {
@@ -1003,6 +1013,7 @@ export function useMail(_opts: UseMailOptions) {
     _opts.mailSettings.identity.replyTo, _opts.userIdentities.address]);
 
   const resumeDraft = useCallback(async (message: Message, folder: string) => {
+    const requestId = composePreparationCoordinatorRef.current.begin();
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current);
       draftTimerRef.current = null;
@@ -1020,6 +1031,7 @@ export function useMail(_opts: UseMailOptions) {
       && state.from
       && restoredFrom.toLowerCase() !== state.from.toLowerCase(),
     );
+    if (!claimComposeIntent(requestId)) return { senderChanged: false, opened: false };
 
     draftSaveCoordinatorRef.current.reset({
       draftId: state.draftId,
@@ -1051,8 +1063,8 @@ export function useMail(_opts: UseMailOptions) {
     setShowBcc(Boolean(state.bcc));
     setComposeDocked(false);
     setIsComposing(true);
-    return { senderChanged };
-  }, [identities, _opts.mailSettings.identity.defaultFrom]);
+    return { senderChanged, opened: true };
+  }, [claimComposeIntent, identities, _opts.mailSettings.identity.defaultFrom]);
 
   const cancelScheduledDelivery = useCallback(async (scheduledId: number) => {
     const undo = await api.undoAction({ scheduledId });
@@ -1537,6 +1549,29 @@ export function useMail(_opts: UseMailOptions) {
     }
   }, [setMessages]);
 
+  const prepareMessageCompose = useCallback(async (
+    action: MessageComposeAction,
+    message: Message,
+    folderPath: string,
+    body = '',
+  ) => {
+    const requestId = composePreparationCoordinatorRef.current.begin();
+    const fullMessage = message.bodyLoaded
+      ? message
+      : await fetchMessageBody(message.uid, folderPath);
+    if (!composePreparationCoordinatorRef.current.isCurrent(requestId)) return 'superseded' as const;
+    if (!fullMessage) return 'unavailable' as const;
+    const draft = buildMessageComposeDraft(
+      action,
+      fullMessage,
+      identities.map(identity => identity.address),
+    );
+    if (action !== 'forward' && !draft.to) return 'missing-reply-address' as const;
+    return startCompose(body ? { ...draft, body } : draft, requestId)
+      ? 'started' as const
+      : 'superseded' as const;
+  }, [fetchMessageBody, identities, startCompose]);
+
   // Pre-fetch message bodies in the background (non-blocking, silent)
   const prefetchBodies = useCallback((uids: number[], folderPath: string) => {
     for (const uid of uids) {
@@ -1871,7 +1906,7 @@ export function useMail(_opts: UseMailOptions) {
     searchIndexStatus, searchWorkerStatus,
     savedSearches,
     showSearchHints, setShowSearchHints,
-    isComposing, setIsComposing, startCompose, resumeDraft, composeDocked, setComposeDocked,
+    isComposing, setIsComposing, startCompose, prepareMessageCompose, resumeDraft, composeDocked, setComposeDocked,
     showCc, setShowCc, showBcc, setShowBcc,
     composeTo, setComposeTo, composeCc, setComposeCc, composeBcc, setComposeBcc,
     composeReplyTo, setComposeReplyTo,

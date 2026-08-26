@@ -65,6 +65,7 @@ const rspamd_health_1 = require("./rspamd-health");
 const password_verification_1 = require("./password-verification");
 const security_1 = require("./security");
 const version_info_1 = require("./version-info");
+const message_body_format_1 = require("./message-body-format");
 const outbound_mail_1 = require("./outbound-mail");
 const scheduled_send_1 = require("./scheduled-send");
 const account_security_1 = require("./account-security");
@@ -3139,6 +3140,7 @@ exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req,
                     date: (0, scheduled_send_1.projectScheduledOutboundInstant)(rows[0]),
                     html: opts.html || '',
                     text: opts.text || '',
+                    bodyMode: opts.html ? 'rich' : 'plain',
                     attachments: [], // We won't try to parse attachments for scheduled messages for now
                     is_scheduled: true,
                     scheduled_id: realId,
@@ -3168,6 +3170,7 @@ exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req,
             return res.status(404).json({ success: false, error: 'Not found' });
         const parsed = await simpleParser(msg.source);
         const calData = extractCalendarData(parsed);
+        const parsedBody = (0, message_body_format_1.projectParsedMessageBody)(parsed);
         res.json({
             success: true,
             message: {
@@ -3179,8 +3182,7 @@ exports.apiRouter.get('/folders/*folder/messages/:uid', requireAuth, async (req,
                 bcc: parsed.bcc?.text || '',
                 replyTo: parsed.replyTo?.text || '',
                 date: parsed.date,
-                html: parsed.html || parsed.textAsHtml,
-                text: parsed.text,
+                ...parsedBody,
                 isRead: msg.flags.includes('\\Seen'),
                 isStarred: msg.flags.includes('\\Flagged'),
                 hasAttachments: getVisibleAttachments(parsed).length > 0,

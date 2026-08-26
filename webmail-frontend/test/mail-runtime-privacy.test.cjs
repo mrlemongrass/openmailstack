@@ -159,6 +159,7 @@ test('compose sender remains valid as identities arrive and are revoked', () => 
 test('unimplemented mail controls are absent while inline Send and Archive remains', () => {
   const read = relativePath => fs.readFileSync(path.resolve(__dirname, relativePath), 'utf8');
   const compose = read('../src/mail/ComposeModal.tsx');
+  const inlineReply = read('../src/mail/components/InlineReply.tsx');
   const viewer = read('../src/mail/MessageViewer.tsx');
   const hook = read('../src/mail/hooks/useMail.ts');
   const panel = read('../src/settings/SettingsPanel.tsx');
@@ -172,6 +173,11 @@ test('unimplemented mail controls are absent while inline Send and Archive remai
   assert.doesNotMatch(viewer, /Mute thread/);
   assert.doesNotMatch(hook, /muteThread/);
   assert.doesNotMatch(panel, /updateReading\(\{ threaded:/);
+  assert.doesNotMatch(panel, /Rich text/);
+  assert.doesNotMatch(panel, /Default Font/);
+  assert.match(panel, /Plain text is the available message format/);
+  assert.doesNotMatch(inlineReply, /Rich editor/);
+  assert.match(inlineReply, /Open full editor/);
   assert.doesNotMatch(navigation, /mail_forwarding|mail_vacation|Auto-Responder/);
   assert.doesNotMatch(tabs, /mail_forwarding|mail_vacation/);
   assert.doesNotMatch(settingsRoutes, /forwardingGoto|vacationSettings|handleSaveForwarding|handleSaveVacation/);

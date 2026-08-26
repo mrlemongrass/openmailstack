@@ -39,7 +39,6 @@ import {
 import { isDraftFolder } from './draft-resume';
 import { FolderDestinationDialog } from './components/FolderDialogs';
 import {
-  buildMessageComposeDraft,
   type MessageComposeAction,
 } from './message-compose-actions';
 
@@ -60,7 +59,7 @@ export function MessageList({ mail, density }: MessageListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const flaggingRef = useRef<Set<string>>(new Set());
-  const composePreparationRequestRef = useRef(0);
+  const composeStatusRequestRef = useRef(0);
   const [messageMenu, setMessageMenu] = useState<{
     message: Message;
     point: ContextMenuPoint;
@@ -101,7 +100,7 @@ export function MessageList({ mail, density }: MessageListProps) {
   }, [activeFolder, decodedFolder, resetSearchState, setActiveFolder, setSelectedMessages]);
 
   useEffect(() => {
-    composePreparationRequestRef.current += 1;
+    composeStatusRequestRef.current += 1;
     parentRef.current?.scrollTo({ top: 0 });
     setMessageMenu(null);
     setMovingMessage(null);
@@ -203,33 +202,22 @@ export function MessageList({ mail, density }: MessageListProps) {
     navigate(`/mail/${encodeURIComponent(messageFolder(message, decodedFolder))}/${message.uid}`);
   };
   const startMessageCompose = async (action: MessageComposeAction, message: Message) => {
-    const requestId = ++composePreparationRequestRef.current;
+    const statusRequestId = ++composeStatusRequestRef.current;
     setPreparingComposeAction(action);
     const folderPath = messageFolder(message, decodedFolder);
     try {
-      const fullMessage = message.bodyLoaded
-        ? message
-        : await mail.fetchMessageBody(message.uid, folderPath);
-      if (requestId !== composePreparationRequestRef.current) return;
-      if (!fullMessage) {
+      const result = await mail.prepareMessageCompose(action, message, folderPath);
+      if (result === 'unavailable') {
         showToast({
           type: 'error',
           message: `${action === 'forward' ? 'Forward' : 'Reply'} could not be prepared. Try again.`,
         });
-        return;
       }
-      const draft = buildMessageComposeDraft(
-        action,
-        fullMessage,
-        (mail.composeIdentities || []).map((identity: { address: string }) => identity.address),
-      );
-      if (action !== 'forward' && !draft.to) {
+      if (result === 'missing-reply-address') {
         showToast({ type: 'error', message: 'This message does not have a reply address.' });
-        return;
       }
-      mail.startCompose(draft);
     } finally {
-      if (requestId === composePreparationRequestRef.current) setPreparingComposeAction(null);
+      if (statusRequestId === composeStatusRequestRef.current) setPreparingComposeAction(null);
     }
   };
   const runMessageAction = (action: string, message: Message) => {

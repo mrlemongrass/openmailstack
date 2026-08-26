@@ -85,6 +85,13 @@ test('normalizeSettings returns safe mail settings', () => {
   });
 });
 
+test('mail settings expose only the currently implemented plain-text compose mode', () => {
+  assert.equal(settingsDefaults.mail.compose.defaultMode, 'plain');
+  assert.equal(normalizeSettings('mail', {
+    compose: { defaultMode: 'rich' },
+  }).compose.defaultMode, 'plain');
+});
+
 test('normalizeSettings bounds calendar settings', () => {
   const normalized = normalizeSettings('calendar', {
     defaultCalendarId: 42,

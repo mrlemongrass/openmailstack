@@ -38,12 +38,12 @@ global.setInterval = () => ({ unref() {} });
 const { apiRouter } = require('../src/api.js');
 global.setInterval = originalSetInterval;
 
-const requestAnalysis = (port, body) => new Promise((resolve, reject) => {
+const requestRules = (port, path, body) => new Promise((resolve, reject) => {
   const payload = Buffer.from(JSON.stringify(body));
   const req = http.request({
     hostname: '127.0.0.1',
     port,
-    path: '/api/rules/analyze',
+    path,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -60,6 +60,7 @@ const requestAnalysis = (port, body) => new Promise((resolve, reject) => {
   req.on('error', reject);
   req.end(payload);
 });
+const requestAnalysis = (port, body) => requestRules(port, '/api/rules/analyze', body);
 
 async function startServer(t) {
   const express = require('express');
@@ -128,5 +129,44 @@ test('rule analysis rejects malformed and unbounded drafts before analysis', asy
   assert.equal(oversizedString.json.code, 'RULE_ANALYSIS_LIMIT');
   assert.equal(oversizedTotal.status, 413);
   assert.equal(oversizedTotal.json.code, 'RULE_ANALYSIS_LIMIT');
+  assert.equal(manageSieveConstructions, 0);
+});
+
+test('rule saving rejects an unbounded document before compiling or accessing ManageSieve', async t => {
+  const port = await startServer(t);
+  const tooManyRules = await requestRules(port, '/api/rules', {
+    rules: Array.from({ length: 1001 }, (_value, index) => ({
+      id: `rule-${index}`,
+      criteria: [],
+      actions: [],
+    })),
+  });
+  const paddedDocument = await requestRules(port, '/api/rules', {
+    rules: [{
+      name: 'Small valid rule',
+      criteria: [{ field: 'subject', operator: 'contains', value: 'receipt' }],
+      actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+    }],
+    padding: 'x'.repeat(5000000),
+  });
+  const oversizedVacation = await requestRules(port, '/api/rules', {
+    rules: [],
+    vacation: { enabled: true, body: 'x'.repeat(4097) },
+  });
+  const malformedNestedValue = await requestRules(port, '/api/rules', {
+    rules: [{
+      criteria: [{ field: 'subject', operator: 'contains', value: 42 }],
+      actions: [],
+    }],
+  });
+
+  assert.equal(tooManyRules.status, 413);
+  assert.equal(tooManyRules.json.code, 'RULE_LIMIT');
+  assert.equal(paddedDocument.status, 413);
+  assert.equal(paddedDocument.json.code, 'RULE_LIMIT');
+  assert.equal(oversizedVacation.status, 413);
+  assert.equal(oversizedVacation.json.code, 'RULE_LIMIT');
+  assert.equal(malformedNestedValue.status, 400);
+  assert.equal(malformedNestedValue.json.code, 'INVALID_RULE_DOCUMENT');
   assert.equal(manageSieveConstructions, 0);
 });

@@ -40,7 +40,9 @@ export declare const RULE_ANALYSIS_LIMITS: {
     readonly items: 10000;
     readonly stringCharacters: 4096;
     readonly totalStringCharacters: 1000000;
+    readonly serializedBytes: 1250000;
 };
+export declare const normalizeRuleDocument: (document: unknown) => SieveRulesDocument | null;
 export declare const exceedsRuleAnalysisLimits: (document: SieveRulesDocument) => boolean;
 export declare function analyzeRuleDocument(document: SieveRulesDocument): RuleAnalysis;
 //# sourceMappingURL=rule-analysis.d.ts.map

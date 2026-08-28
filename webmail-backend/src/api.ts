@@ -18,9 +18,9 @@ import {
 import { canDemoteGlobalAdmin, clearSession, createSession, hashSessionId, hasGlobalAdminAccess, requireAdminSession, requireSession } from './auth';
 import { imapConfig, normalizeMailboxUsername, schedulerConfig, serverConfig, sieveConfig, smtpConfig } from './config';
 import { compileSieve, extractJsonFromSieve, type SieveRule, type SieveRulesDocument } from './sieve-compiler';
-import { analyzeRuleDocument, exceedsRuleAnalysisLimits, RULE_ANALYSIS_LIMITS } from './rule-analysis';
+import { analyzeRuleDocument, exceedsRuleAnalysisLimits, normalizeRuleDocument, RULE_ANALYSIS_LIMITS } from './rule-analysis';
 import { evaluateRulesForMessage } from './rule-engine';
-import { executableRuleCriteria } from './rule-semantics';
+import { executableRuleCriteria, isExecutableRuleCriterion } from './rule-semantics';
 import {
     MailboxMutationError,
     RuleMoveApplyError,
@@ -28,6 +28,11 @@ import {
     type RuleMoveApplyResult,
 } from './imap';
 import { RuleRunLedger } from './rule-run-ledger';
+import {
+    parseRuleRunMessageSelection,
+    RuleRunPreviewSelectionUnavailableError,
+    ruleRunPreviewSelectionStore,
+} from './rule-run-preview-selection';
 import {
     createSavedMailSearch,
     deleteMailSearchRows,
@@ -1489,7 +1494,16 @@ apiRouter.post('/rules/analyze', requireAuth, (req: any, res) => {
         });
         return;
     }
-    res.json({ success: true, analysis: analyzeRuleDocument(document) });
+    const normalizedDocument = normalizeRuleDocument(document);
+    if (!normalizedDocument) {
+        res.status(400).json({
+            success: false,
+            code: 'INVALID_RULE_ANALYSIS_DOCUMENT',
+            error: 'The rule document is malformed.',
+        });
+        return;
+    }
+    res.json({ success: true, analysis: analyzeRuleDocument(normalizedDocument) });
 });
 
 apiRouter.get('/rules', requireAuth, async (req: any, res) => {
@@ -1497,24 +1511,16 @@ apiRouter.get('/rules', requireAuth, async (req: any, res) => {
     const pass = req.user.password;
 
     try {
-        const client = new ManageSieveClient(sieveConfig.host, sieveConfig.port, sieveConfig.masterUser, sieveConfig.masterPass);
-        await client.connect();
-        await client.login(user, pass);
-        
-        let script = '';
-        try {
-            script = await client.getScript('webmail');
-        } catch (e) {
-            // Script might not exist yet
-        }
-        
-        await client.logout();
-        
-        const jsonData = extractJsonFromSieve(script);
-        res.json(jsonData);
+        res.json(await getActiveRulesDocument(user, pass));
     } catch (err: any) {
         console.error('Failed to get rules:', err);
-        res.status(500).json({ error: err.message });
+        res.status(err instanceof SavedRuleDocumentError ? 409 : 500).json({
+            error: err instanceof SavedRuleDocumentError
+                ? err.kind === 'limit'
+                    ? 'Saved rules exceed the safe size limit.'
+                    : 'Saved rules are malformed.'
+                : err.message,
+        });
     }
 });
 
@@ -1524,7 +1530,25 @@ apiRouter.post('/rules', requireAuth, async (req: any, res) => {
 
     try {
         const jsonData = req.body;
-        const scriptContent = compileSieve(jsonData);
+        if (!jsonData || typeof jsonData !== 'object' || !Array.isArray(jsonData.rules)) {
+            return res.status(400).json({ success: false, code: 'INVALID_RULE_DOCUMENT', error: 'A rules array is required.' });
+        }
+        if (exceedsRuleAnalysisLimits(jsonData)) {
+            return res.status(413).json({
+                success: false,
+                code: 'RULE_LIMIT',
+                error: `Rules support up to ${RULE_ANALYSIS_LIMITS.rules.toLocaleString('en-US')} rules, ${RULE_ANALYSIS_LIMITS.items.toLocaleString('en-US')} conditions or actions, and ${RULE_ANALYSIS_LIMITS.totalStringCharacters.toLocaleString('en-US')} characters. Individual values are limited to ${RULE_ANALYSIS_LIMITS.stringCharacters.toLocaleString('en-US')} characters.`,
+            });
+        }
+        const normalizedDocument = normalizeRuleDocument(jsonData);
+        if (!normalizedDocument) {
+            return res.status(400).json({
+                success: false,
+                code: 'INVALID_RULE_DOCUMENT',
+                error: 'The rule document is malformed.',
+            });
+        }
+        const scriptContent = compileSieve(normalizedDocument);
 
         const client = new ManageSieveClient(sieveConfig.host, sieveConfig.port, sieveConfig.masterUser, sieveConfig.masterPass);
         await client.connect();
@@ -1554,9 +1578,13 @@ type RuleRunScopeSnapshot = {
     maxUid: number;
     uidValidity: string;
 };
-
+type RuleRunMessageRef = {
+    folder: string;
+    uid: number;
+};
 const MAX_RULE_RUN_SCOPE_FOLDERS = 500;
-const MAX_RULE_RUN_MATCH_RULE_NAMES = 20;
+const MAX_RULE_RUN_MATCH_DETAILS = 20;
+const MAX_RULE_RUN_MESSAGE_SELECTION_OVERRIDES = 100000;
 
 function resolveRuleRunScope(
     folders: any[],
@@ -1595,6 +1623,22 @@ const envelopeAddressText = (addresses: any): string => (
         : ''
 );
 
+class SavedRuleDocumentError extends Error {
+    constructor(readonly kind: 'limit' | 'malformed') {
+        super(kind === 'limit'
+            ? 'Saved rules exceed the safe evaluation limit.'
+            : 'Saved rules are malformed.');
+        this.name = 'SavedRuleDocumentError';
+    }
+}
+
+const validateSavedRuleDocument = (document: SieveRulesDocument): SieveRulesDocument => {
+    if (exceedsRuleAnalysisLimits(document)) throw new SavedRuleDocumentError('limit');
+    const normalized = normalizeRuleDocument(document);
+    if (!normalized) throw new SavedRuleDocumentError('malformed');
+    return normalized;
+};
+
 async function getActiveRulesDocument(user: string, pass: string): Promise<SieveRulesDocument> {
     const client = new ManageSieveClient(
         sieveConfig.host,
@@ -1605,11 +1649,23 @@ async function getActiveRulesDocument(user: string, pass: string): Promise<Sieve
     await client.connect();
     try {
         await client.login(user, pass);
+        let script: string;
         try {
-            return extractJsonFromSieve(await client.getScript('webmail'));
-        } catch {
-            return { rules: [] };
+            script = await client.getScript('webmail');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const missingScript = /^GETSCRIPT failed: NO(?:$|[\t (])/i.test(message)
+                && /(?:does(?:n't| not) exist|not found|unknown script|nonexistent)/i.test(message);
+            if (missingScript) return { rules: [] };
+            throw error;
         }
+        let document: SieveRulesDocument;
+        try {
+            document = extractJsonFromSieve(script);
+        } catch {
+            throw new SavedRuleDocumentError('malformed');
+        }
+        return validateSavedRuleDocument(document);
     } finally {
         try { await client.logout(); } catch {}
     }
@@ -1619,7 +1675,13 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
     const user = req.user.username;
     const pass = req.user.password;
     const folder = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';
-    const mode = req.body?.mode === 'apply' ? 'apply' : req.body?.mode === 'preview' ? 'preview' : '';
+    const requestedMode = req.body?.mode;
+    const selectedApplyMode = requestedMode === 'apply-selected';
+    const mode = requestedMode === 'apply' || selectedApplyMode
+        ? 'apply'
+        : requestedMode === 'preview'
+            ? 'preview'
+            : '';
     const includeMatchDetails = req.body?.includeMatchDetails === true;
     const includeSubfolders = req.body?.includeSubfolders === true;
     const readState: RuleRunReadState = req.body?.readState === 'unread'
@@ -1648,6 +1710,10 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
     const requestedRuleRevision = typeof req.body?.ruleRevision === 'string'
         ? req.body.ruleRevision.trim()
         : '';
+    const hasRequestedPreviewToken = req.body?.previewToken !== undefined;
+    const requestedPreviewToken = typeof req.body?.previewToken === 'string'
+        ? req.body.previewToken.trim()
+        : '';
     const copyResolution = req.body?.copyResolution === 'completed'
         ? 'completed'
         : req.body?.copyResolution === 'retry'
@@ -1656,6 +1722,16 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
     const copyActionKeys = Array.isArray(req.body?.copyActionKeys)
         ? req.body.copyActionKeys.map((value: unknown) => String(value))
         : [];
+    const hasMessageSelection = req.body?.messageSelection !== undefined;
+    const parsedMessageSelection = hasMessageSelection
+        ? parseRuleRunMessageSelection(req.body.messageSelection, {
+            maxGroups: MAX_RULE_RUN_SCOPE_FOLDERS,
+            maxMessages: MAX_RULE_RUN_MESSAGE_SELECTION_OVERRIDES,
+        })
+        : null;
+    const messageSelectionMode = parsedMessageSelection?.mode || '';
+    const messageSelectionMessages: RuleRunMessageRef[] = parsedMessageSelection?.messages || [];
+    const initialRunPage = cursor === 0 && requestedScopeIndex === 0;
 
     if (
         !folder
@@ -1714,6 +1790,13 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
         || (requestedMaxUid !== undefined && (!Number.isInteger(requestedMaxUid) || requestedMaxUid < 0))
         || (requestedUidValidity && !/^\d{1,64}$/.test(requestedUidValidity))
         || requestedRuleRevision.length > 128
+        || (
+            hasRequestedPreviewToken
+            && (
+                typeof req.body.previewToken !== 'string'
+                || !/^[A-Za-z0-9_-]{32,128}$/.test(requestedPreviewToken)
+            )
+        )
         || (req.body?.copyResolution !== undefined && !copyResolution)
         || (
             req.body?.copyActionKeys !== undefined
@@ -1727,6 +1810,18 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
         || (copyResolution && copyActionKeys.length === 0)
         || (!copyResolution && copyActionKeys.length > 0)
         || (copyResolution && mode !== 'apply')
+        || (hasMessageSelection && !selectedApplyMode)
+        || (selectedApplyMode && !hasRequestedPreviewToken)
+        || (selectedApplyMode && initialRunPage !== hasMessageSelection)
+        || (!selectedApplyMode && mode !== 'preview' && hasRequestedPreviewToken)
+        || (mode === 'preview' && initialRunPage && hasRequestedPreviewToken)
+        || (
+            hasMessageSelection
+            && (
+                mode !== 'apply'
+                || !parsedMessageSelection
+            )
+        )
         || (cursor > 0 && (
             !requestedRuleRevision
             || (!hasRequestedScopeSnapshot && !requestedUidValidity)
@@ -1748,6 +1843,58 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
         return res.status(400).json({ success: false, error: 'Invalid rule-run request.' });
     }
 
+    const selectedApplyRequestKey = selectedApplyMode
+        ? crypto
+            .createHash('sha256')
+            .update(JSON.stringify({
+                folder,
+                includeSubfolders,
+                readState,
+                cursor,
+                scopeIndex: requestedScopeIndex,
+                scopeSnapshot: requestedScopeSnapshot,
+                ruleIds: requestedRuleIds,
+                maxUid: requestedMaxUid,
+                uidValidity: requestedUidValidity,
+                ruleRevision: requestedRuleRevision,
+                selectionMode: messageSelectionMode,
+                selection: [...messageSelectionMessages].sort((left, right) => (
+                    left.folder.localeCompare(right.folder) || left.uid - right.uid
+                )),
+                copyResolution,
+                copyActionKeys: [...copyActionKeys].sort(),
+            }))
+            .digest('base64url')
+        : '';
+    if (selectedApplyMode && requestedPreviewToken && requestedRuleRevision) {
+        const replay = ruleRunPreviewSelectionStore.replayApplyResult(
+            requestedPreviewToken,
+            user,
+            requestedRuleRevision,
+            selectedApplyRequestKey,
+        );
+        if (replay) return res.status(replay.status).json(replay.response);
+    }
+
+    let selectedApplyClaim: {
+        previewToken: string;
+        binding: string;
+        requestKey: string;
+    } | null = null;
+    const finishSelectedApplyWithError = (status: number, error: string) => {
+        const response = { success: false, error };
+        if (selectedApplyClaim) {
+            ruleRunPreviewSelectionStore.finishApplyRequest(
+                selectedApplyClaim.previewToken,
+                user,
+                selectedApplyClaim.binding,
+                selectedApplyClaim.requestKey,
+                { status, response },
+                { retain: true, applyComplete: true },
+            );
+        }
+        return res.status(status).json(response);
+    };
     try {
         const imap = await getPooledImap(user, pass);
         const folders = await imap.getFolders();
@@ -1818,6 +1965,14 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             return res.status(400).json({ success: false, error: 'Invalid rule-run request.' });
         }
 
+        const scopeByFolder = new Map(scopeSnapshot.map(entry => [entry.folder, entry]));
+        if (messageSelectionMessages.some(entry => (
+            !scopeByFolder.has(entry.folder)
+            || entry.uid > (scopeByFolder.get(entry.folder)?.maxUid || 0)
+        ))) {
+            return res.status(400).json({ success: false, error: 'Invalid rule-run request.' });
+        }
+
         if (mode === 'apply' && requestedScopeIndex === 0 && cursor === 0) {
             const currentScopeState = await imap.getFolderUidNext(scopeFolders);
             const staleScope = currentScopeState.failedFolders.length > 0
@@ -1832,7 +1987,18 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             }
         }
 
-        const document = await getActiveRulesDocument(user, pass);
+        let document: SieveRulesDocument;
+        try {
+            document = await getActiveRulesDocument(user, pass);
+        } catch (err) {
+            if (!(err instanceof SavedRuleDocumentError)) throw err;
+            return res.status(409).json({
+                success: false,
+                error: err.kind === 'limit'
+                    ? 'Saved rules exceed the safe evaluation limit. Reduce the rule set, save it, and preview again.'
+                    : 'Saved rules are malformed. Save the rule set again before running it.',
+            });
+        }
         const documentRules = Array.isArray(document.rules) ? document.rules : [];
         const selectionIds = ruleSelectionIds(documentRules);
         const enabledRuleEntries = documentRules
@@ -1875,14 +2041,134 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
                     : 'Rules or message scope changed since preview. Preview again before applying.',
             });
         }
+        let previewToken = requestedPreviewToken;
+        let previewSelectionState = previewToken
+            ? ruleRunPreviewSelectionStore.state(previewToken, user, ruleRevision)
+            : null;
+        if (selectedApplyMode && previewToken) {
+            const replay = ruleRunPreviewSelectionStore.replayApplyResult(
+                previewToken,
+                user,
+                ruleRevision,
+                selectedApplyRequestKey,
+            );
+            if (replay) return res.status(replay.status).json(replay.response);
+        }
+        if (previewToken && !previewSelectionState) {
+            return res.status(409).json({
+                success: false,
+                error: 'The matched-message preview expired or changed. Preview again before applying.',
+            });
+        }
+        if (mode === 'preview' && previewSelectionState?.applyStarted) {
+            return res.status(409).json({
+                success: false,
+                error: 'This matched-message preview is already being applied. Preview again to review it.',
+            });
+        }
+        if (mode === 'preview' && includeMatchDetails && initialRunPage && !previewToken) {
+            const createdPreviewToken = ruleRunPreviewSelectionStore.create(user, ruleRevision);
+            if (!createdPreviewToken) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'Too many rule previews are active. Finish another rule run or try again shortly.',
+                });
+            }
+            previewToken = createdPreviewToken;
+            previewSelectionState = ruleRunPreviewSelectionStore.state(previewToken, user, ruleRevision);
+        }
+        let applySelector: ((sourceFolder: string, uid: number) => boolean) | null = null;
+        if (selectedApplyMode) {
+            if (!previewSelectionState?.complete || previewSelectionState.applyComplete) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'The matched-message preview is incomplete or has expired. Preview again before applying.',
+                });
+            }
+            if (initialRunPage) {
+                const selectionStarted = ruleRunPreviewSelectionStore.beginApply(
+                    previewToken,
+                    user,
+                    ruleRevision,
+                    messageSelectionMode as 'allExcept' | 'only',
+                    messageSelectionMessages,
+                );
+                if (!selectionStarted) {
+                    return res.status(409).json({
+                        success: false,
+                        error: 'The selected messages no longer belong to this preview. Preview again before applying.',
+                    });
+                }
+            } else if (!previewSelectionState.applyStarted) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'The selected rule run was not started. Preview again before applying.',
+                });
+            }
+            const claim = ruleRunPreviewSelectionStore.claimApplyRequest(
+                previewToken,
+                user,
+                ruleRevision,
+                selectedApplyRequestKey,
+            );
+            if (claim.kind === 'unavailable') {
+                return res.status(409).json({
+                    success: false,
+                    error: 'Another selected rule page is active or this run can no longer continue safely. Review the mailbox before trying again.',
+                });
+            }
+            if (claim.kind === 'replay' || claim.kind === 'pending') {
+                const result = claim.kind === 'pending' ? await claim.result : claim.result;
+                return res.status(result.status).json(result.response);
+            }
+            selectedApplyClaim = {
+                previewToken,
+                binding: ruleRevision,
+                requestKey: selectedApplyRequestKey,
+            };
+            ruleRunPreviewSelectionStore.assertApplyActive(previewToken, user, ruleRevision);
+            applySelector = ruleRunPreviewSelectionStore.createApplySelector(
+                previewToken,
+                user,
+                ruleRevision,
+            );
+            if (!applySelector) {
+                return finishSelectedApplyWithError(
+                    409,
+                    'The selected rule run could not be resumed safely. Preview again before applying.',
+                );
+            }
+        }
+        const frozenPreview = mode === 'preview' && previewSelectionState?.complete === true;
+        const isMessageSelected = (sourceFolder: string, uid: number): boolean => (
+            !selectedApplyMode
+            || applySelector?.(sourceFolder, uid) === true
+        );
         const rules: SieveRule[] = selectedRuleEntries.map(entry => ({
             ...entry.rule,
             id: entry.selectionId,
         }));
-        const selectedRuleNames = new Map(selectedRuleEntries.map(entry => ([
+        const selectedRuleIndexes = new Map(selectedRuleEntries.map(entry => ([
             entry.selectionId,
-            String(entry.rule.name || `Rule ${entry.index + 1}`),
+            entry.index,
         ])));
+        const matchRuleCatalog = includeMatchDetails && requestedScopeIndex === 0 && cursor === 0
+            ? selectedRuleEntries.map(entry => ({
+                ruleIndex: entry.index,
+                name: String(entry.rule.name || `Rule ${entry.index + 1}`),
+                condition: entry.rule.condition === 'any' ? 'any' as const : 'all' as const,
+                criteria: (entry.rule.criteria || []).flatMap((criterion, criterionIndex) => (
+                    isExecutableRuleCriterion(criterion)
+                        ? [{
+                            criterionIndex,
+                            field: criterion.field,
+                            operator: criterion.operator,
+                            value: criterion.value,
+                        }]
+                        : []
+                )),
+            }))
+            : undefined;
         const includesBodyRules = rules.some(rule => (
             executableRuleCriteria(rule).some(criterion => criterion.field === 'body')
         ));
@@ -1892,9 +2178,15 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             currentScope.maxUid,
             includesBodyRules ? 25 : 200,
             includesBodyRules,
-            readState,
+            frozenPreview || selectedApplyMode ? 'all' : readState,
         );
         if (currentScope.uidValidity !== page.uidValidity) {
+            if (selectedApplyMode) {
+                return finishSelectedApplyWithError(
+                    409,
+                    'A source folder changed since preview. Preview again before applying.',
+                );
+            }
             return res.status(409).json({
                 success: false,
                 error: 'A source folder changed since preview. Preview again before applying.',
@@ -1910,16 +2202,25 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             subject: string;
             from: string;
             date: string;
-            rules: Array<{ id: string; name: string }>;
-            additionalRuleCount: number;
+            rules: Array<{
+                ruleIndex: number;
+                condition: 'any' | 'all';
+                matchedCriterionIndexes: number[];
+                totalCriteria: number;
+            }>;
             destinations: string[];
             outcome: 'move' | 'already-in-destination' | 'delivery-only' | 'missing-destination' | 'no-existing-mail-action';
         }> = [];
+        const previewMatchedMessages: RuleRunMessageRef[] = [];
+        const previewActionableMessages: RuleRunMessageRef[] = [];
         let matchedMessages = 0;
         let deliveryOnlyMatches = 0;
         let bodySkippedMessages = 0;
+        const orderedMessages = [...page.messages].sort((left, right) => left.uid - right.uid);
+        const processedMessages: typeof orderedMessages = [];
 
-        for (const message of page.messages) {
+        for (const message of orderedMessages) {
+            processedMessages.push(message);
             let parsed: any = null;
             if (includesBodyRules && message.sourceComplete && message.source) {
                 parsed = await require('mailparser').simpleParser(message.source);
@@ -1936,19 +2237,45 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
                 ...(!message.sourceComplete ? { unavailableFields: ['body'] } : {}),
             });
 
+            if (
+                frozenPreview
+                && evaluation.matchedRuleIds.length > 0
+                && !ruleRunPreviewSelectionStore.containsMatched(
+                    previewToken,
+                    user,
+                    ruleRevision,
+                    currentScope.folder,
+                    message.uid,
+                )
+            ) {
+                continue;
+            }
+
             if (evaluation.unevaluatedRuleIds.length > 0) bodySkippedMessages += 1;
-            if (evaluation.matchedRuleIds.length > 0) matchedMessages += 1;
+            if (evaluation.matchedRuleIds.length > 0) {
+                matchedMessages += 1;
+                if (previewToken && !frozenPreview) {
+                    previewMatchedMessages.push({ folder: currentScope.folder, uid: message.uid });
+                }
+            }
             if (evaluation.deliveryOnlyActions.length > 0) deliveryOnlyMatches += 1;
             for (const ruleId of evaluation.matchedRuleIds) {
                 ruleMatchCounts.set(ruleId, (ruleMatchCounts.get(ruleId) || 0) + 1);
             }
 
-            const moveFolders = evaluation.moveFolders.filter(destination => {
+            const evaluatedMoveFolders = evaluation.moveFolders.filter(destination => {
                 if (destination === currentScope.folder) return false;
                 if (folderPaths.has(destination)) return true;
                 invalidDestinations.add(destination);
                 return false;
             });
+            const moveFolders = frozenPreview && !ruleRunPreviewSelectionStore.containsActionable(
+                previewToken,
+                user,
+                ruleRevision,
+                currentScope.folder,
+                message.uid,
+            ) ? [] : evaluatedMoveFolders;
             if (includeMatchDetails && evaluation.matchedRuleIds.length > 0) {
                 const rawDate = message.envelope?.date;
                 const parsedDate = rawDate ? new Date(rawDate) : null;
@@ -1956,10 +2283,17 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
                     destination !== currentScope.folder && !folderPaths.has(destination)
                 ));
                 const alreadyInDestination = evaluation.moveFolders.includes(currentScope.folder);
-                const matchedRules = evaluation.matchedRuleIds.map(id => ({
-                    id,
-                    name: selectedRuleNames.get(id) || id,
-                }));
+                const matchedRuleDetails = new Map(evaluation.matchedRuleDetails.map(detail => [detail.id, detail]));
+                const matchedRules = evaluation.matchedRuleIds.flatMap(id => {
+                    const detail = matchedRuleDetails.get(id);
+                    const ruleIndex = selectedRuleIndexes.get(id);
+                    return detail && ruleIndex !== undefined ? [{
+                        ruleIndex,
+                        condition: detail?.condition || 'all',
+                        matchedCriterionIndexes: detail.matchedCriterionIndexes,
+                        totalCriteria: detail.totalCriteria,
+                    }] : [];
+                });
                 const outcome = moveFolders.length > 0
                     ? 'move'
                     : missingDestination
@@ -1977,17 +2311,54 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
                     date: parsedDate && !Number.isNaN(parsedDate.getTime())
                         ? parsedDate.toISOString()
                         : '',
-                    rules: matchedRules.slice(0, MAX_RULE_RUN_MATCH_RULE_NAMES),
-                    additionalRuleCount: Math.max(0, matchedRules.length - MAX_RULE_RUN_MATCH_RULE_NAMES),
+                    rules: matchedRules,
                     destinations: moveFolders,
                     outcome,
                 });
             }
-            if (moveFolders.length === 0) continue;
+            const detailLimitReached = (
+                includeMatchDetails
+                && matchDetails.length >= MAX_RULE_RUN_MATCH_DETAILS
+            );
+            if (moveFolders.length > 0) {
+                if (previewToken && !frozenPreview) {
+                    previewActionableMessages.push({ folder: currentScope.folder, uid: message.uid });
+                }
+            }
+            if (
+                moveFolders.length === 0
+                || (mode === 'apply' && !isMessageSelected(currentScope.folder, message.uid))
+            ) {
+                if (detailLimitReached) break;
+                continue;
+            }
 
             plans.push({ uid: message.uid, moveFolders });
             for (const destination of moveFolders) {
                 destinationCounts.set(destination, (destinationCounts.get(destination) || 0) + 1);
+            }
+            if (detailLimitReached) break;
+        }
+
+        const detailPageCapped = includeMatchDetails && processedMessages.length < orderedMessages.length;
+        const currentPageDone = !detailPageCapped && page.done;
+        const currentPageCursor = detailPageCapped
+            ? processedMessages.at(-1)?.uid || cursor
+            : page.nextCursor;
+
+        if (mode === 'preview' && previewToken && !frozenPreview) {
+            const stored = ruleRunPreviewSelectionStore.append(
+                previewToken,
+                user,
+                ruleRevision,
+                previewMatchedMessages,
+                previewActionableMessages,
+            );
+            if (!stored) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'This preview contains too many matched messages. Choose a narrower folder or message scope.',
+                });
             }
         }
 
@@ -2004,6 +2375,9 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             movedUids: [],
         };
         if (mode === 'apply') {
+            if (selectedApplyMode) {
+                ruleRunPreviewSelectionStore.assertApplyActive(previewToken, user, ruleRevision);
+            }
             const operationKey = crypto
                 .createHash('sha256')
                 .update(`${user}\0${currentScope.folder}\0${page.uidValidity}`)
@@ -2032,11 +2406,19 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             }))
             .filter(rule => rule.count > 0);
 
-        const hasNextFolder = page.done && requestedScopeIndex + 1 < scopeSnapshot.length;
+        const hasNextFolder = currentPageDone && requestedScopeIndex + 1 < scopeSnapshot.length;
         const nextScopeIndex = hasNextFolder ? requestedScopeIndex + 1 : requestedScopeIndex;
-        const nextCursor = hasNextFolder ? 0 : page.nextCursor;
-
-        res.json({
+        const nextCursor = hasNextFolder ? 0 : currentPageCursor;
+        const runDone = currentPageDone && !hasNextFolder;
+        if (mode === 'preview' && previewToken && !frozenPreview && runDone) {
+            if (!ruleRunPreviewSelectionStore.markPreviewComplete(previewToken, user, ruleRevision)) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'The matched-message preview expired while it was being prepared. Preview again.',
+                });
+            }
+        }
+        const responseBody = {
             success: true,
             mode,
             folder,
@@ -2045,7 +2427,7 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             readState,
             scopeSnapshot,
             scopeIndex: nextScopeIndex,
-            processed: page.messages.length,
+            processed: processedMessages.length,
             matchedMessages,
             affectedMessages: plans.length,
             appliedMessages: applyResult.affected,
@@ -2060,15 +2442,36 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
                 count,
             })),
             matchDetails: matchDetails.sort((left, right) => left.uid - right.uid),
+            ...(matchRuleCatalog ? { matchRuleCatalog } : {}),
+            ...(previewToken ? { previewToken } : {}),
             ruleRevision,
             cursor: nextCursor,
             maxUid: currentScope.maxUid,
             uidValidity: currentScope.uidValidity,
-            done: page.done && !hasNextFolder,
-        });
+            done: runDone,
+        };
+        if (
+            selectedApplyMode
+            && !ruleRunPreviewSelectionStore.finishApplyRequest(
+                previewToken,
+                user,
+                ruleRevision,
+                selectedApplyRequestKey,
+                { status: 200, response: responseBody },
+                { retain: true, applyComplete: runDone },
+            )
+        ) {
+            return res.status(409).json({
+                success: false,
+                error: 'The selected rule run expired before its progress could be recorded. Review the mailbox before trying again.',
+            });
+        }
+
+        res.json(responseBody);
     } catch (err: any) {
         console.error('Failed to run rules:', err);
-        res.status(500).json({
+        const status = err instanceof RuleRunPreviewSelectionUnavailableError ? 409 : 500;
+        const errorBody = {
             success: false,
             error: err.message || 'Failed to run rules.',
             ...(err instanceof RuleMoveApplyError
@@ -2081,7 +2484,22 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
                     })),
                 }
                 : {}),
-        });
+        };
+        if (selectedApplyClaim) {
+            const retrySafeMoveFailure = err instanceof RuleMoveApplyError && err.retrySafe;
+            ruleRunPreviewSelectionStore.finishApplyRequest(
+                selectedApplyClaim.previewToken,
+                user,
+                selectedApplyClaim.binding,
+                selectedApplyClaim.requestKey,
+                { status, response: errorBody },
+                {
+                    retain: !retrySafeMoveFailure,
+                    applyComplete: !(err instanceof RuleMoveApplyError),
+                },
+            );
+        }
+        res.status(status).json(errorBody);
     }
 });
 

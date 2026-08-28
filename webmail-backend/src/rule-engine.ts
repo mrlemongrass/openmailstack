@@ -1,6 +1,6 @@
 import {
     executableRuleActions,
-    executableRuleCriteria,
+    isExecutableRuleCriterion,
     type SieveCriterion,
     type SieveRule,
 } from './rule-semantics';
@@ -16,6 +16,12 @@ export interface RuleMessage {
 
 export interface RuleEvaluation {
     matchedRuleIds: string[];
+    matchedRuleDetails: Array<{
+        id: string;
+        condition: 'any' | 'all';
+        matchedCriterionIndexes: number[];
+        totalCriteria: number;
+    }>;
     moveFolders: string[];
     deliveryOnlyActions: string[];
     unevaluatedRuleIds: string[];
@@ -39,6 +45,7 @@ function criterionMatches(criterion: SieveCriterion, message: RuleMessage): Crit
 export function evaluateRulesForMessage(rules: SieveRule[], message: RuleMessage): RuleEvaluation {
     const result: RuleEvaluation = {
         matchedRuleIds: [],
+        matchedRuleDetails: [],
         moveFolders: [],
         deliveryOnlyActions: [],
         unevaluatedRuleIds: [],
@@ -47,7 +54,10 @@ export function evaluateRulesForMessage(rules: SieveRule[], message: RuleMessage
     rules.forEach((rule, index) => {
         if (result.stoppedByRuleId || rule.enabled === false) return;
 
-        const criteria = executableRuleCriteria(rule).map(criterion => criterionMatches(criterion, message));
+        const executableCriteria = (rule.criteria || []).flatMap((criterion, criterionIndex) => (
+            isExecutableRuleCriterion(criterion) ? [{ criterion, criterionIndex }] : []
+        ));
+        const criteria = executableCriteria.map(({ criterion }) => criterionMatches(criterion, message));
         const actions = executableRuleActions(rule);
         if (criteria.length === 0 || actions.length === 0) return;
 
@@ -67,6 +77,14 @@ export function evaluateRulesForMessage(rules: SieveRule[], message: RuleMessage
 
         const ruleId = String(rule.id || rule.name || `rule-${index + 1}`);
         result.matchedRuleIds.push(ruleId);
+        result.matchedRuleDetails.push({
+            id: ruleId,
+            condition: rule.condition === 'any' ? 'any' : 'all',
+            matchedCriterionIndexes: executableCriteria.flatMap(({ criterionIndex }, resultIndex) => (
+                criteria[resultIndex] === true ? [criterionIndex] : []
+            )),
+            totalCriteria: executableCriteria.length,
+        });
 
         for (const action of actions) {
             if (action.type === 'move' && action.folder) {

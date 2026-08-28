@@ -23,9 +23,24 @@ export interface RuleRunScopeSnapshot {
   uidValidity: string;
 }
 
+export interface RuleRunMessageRef {
+  folder: string;
+  uid: number;
+}
+
+export interface RuleRunMessageSelectionGroup {
+  folder: string;
+  uids: number[];
+}
+
+export interface RuleRunMessageSelection {
+  mode: 'allExcept' | 'only';
+  groups: RuleRunMessageSelectionGroup[];
+}
+
 export interface RuleRunRequest {
   folder: string;
-  mode: 'preview' | 'apply';
+  mode: 'preview' | 'apply' | 'apply-selected';
   cursor: number;
   includeMatchDetails?: boolean;
   includeSubfolders?: boolean;
@@ -36,6 +51,8 @@ export interface RuleRunRequest {
   maxUid?: number;
   uidValidity?: string;
   ruleRevision?: string;
+  previewToken?: string;
+  messageSelection?: RuleRunMessageSelection;
   copyResolution?: 'completed' | 'retry';
   copyActionKeys?: string[];
 }
@@ -58,14 +75,33 @@ export type RuleRunMatchOutcome =
   | 'missing-destination'
   | 'no-existing-mail-action';
 
+export interface RuleRunMatchRuleCatalogEntry {
+  ruleIndex: number;
+  name: string;
+  condition: 'any' | 'all';
+  criteria: Array<{
+    criterionIndex: number;
+    field: string;
+    operator: string;
+    value: string;
+  }>;
+}
+
 export interface RuleRunMatchDetail {
   folder: string;
   uid: number;
   subject: string;
   from: string;
   date: string;
-  rules: Array<{ id: string; name: string }>;
-  additionalRuleCount?: number;
+  rules: Array<{
+    ruleIndex?: number;
+    id?: string;
+    name?: string;
+    condition: 'any' | 'all';
+    matchedCriterionIndexes?: number[];
+    matchedCriteria?: Array<{ field: string; operator: string; value: string }>;
+    totalCriteria: number;
+  }>;
   destinations: string[];
   outcome: RuleRunMatchOutcome;
 }
@@ -97,6 +133,8 @@ export interface RuleRunPageResponse {
   ruleMatches: RuleMatchCount[];
   destinations: RuleRunCount[];
   matchDetails?: RuleRunMatchDetail[];
+  matchRuleCatalog?: RuleRunMatchRuleCatalogEntry[];
+  previewToken?: string;
   ruleRevision: string;
   cursor: number;
   maxUid: number;

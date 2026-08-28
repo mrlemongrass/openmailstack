@@ -15,6 +15,7 @@ function criterionMatches(criterion, message) {
 function evaluateRulesForMessage(rules, message) {
     const result = {
         matchedRuleIds: [],
+        matchedRuleDetails: [],
         moveFolders: [],
         deliveryOnlyActions: [],
         unevaluatedRuleIds: [],
@@ -22,7 +23,8 @@ function evaluateRulesForMessage(rules, message) {
     rules.forEach((rule, index) => {
         if (result.stoppedByRuleId || rule.enabled === false)
             return;
-        const criteria = (0, rule_semantics_1.executableRuleCriteria)(rule).map(criterion => criterionMatches(criterion, message));
+        const executableCriteria = (rule.criteria || []).flatMap((criterion, criterionIndex) => ((0, rule_semantics_1.isExecutableRuleCriterion)(criterion) ? [{ criterion, criterionIndex }] : []));
+        const criteria = executableCriteria.map(({ criterion }) => criterionMatches(criterion, message));
         const actions = (0, rule_semantics_1.executableRuleActions)(rule);
         if (criteria.length === 0 || actions.length === 0)
             return;
@@ -42,6 +44,12 @@ function evaluateRulesForMessage(rules, message) {
             return;
         const ruleId = String(rule.id || rule.name || `rule-${index + 1}`);
         result.matchedRuleIds.push(ruleId);
+        result.matchedRuleDetails.push({
+            id: ruleId,
+            condition: rule.condition === 'any' ? 'any' : 'all',
+            matchedCriterionIndexes: executableCriteria.flatMap(({ criterionIndex }, resultIndex) => (criteria[resultIndex] === true ? [criterionIndex] : [])),
+            totalCriteria: executableCriteria.length,
+        });
         for (const action of actions) {
             if (action.type === 'move' && action.folder) {
                 result.moveFolders = result.moveFolders.filter(folder => folder !== action.folder);

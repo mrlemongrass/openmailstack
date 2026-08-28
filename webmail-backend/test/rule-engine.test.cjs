@@ -158,6 +158,20 @@ test('rule matching is case-insensitive and honors any, all, equals, and negatio
   const result = evaluateRulesForMessage(rules, chaseMessage);
 
   assert.deepEqual(result.matchedRuleIds, ['all', 'any']);
+  assert.deepEqual(result.matchedRuleDetails, [
+    {
+      id: 'all',
+      condition: 'all',
+      matchedCriterionIndexes: [0, 1],
+      totalCriteria: 2,
+    },
+    {
+      id: 'any',
+      condition: 'any',
+      matchedCriterionIndexes: [0],
+      totalCriteria: 2,
+    },
+  ]);
   assert.deepEqual(result.moveFolders, ['Exact', 'Body']);
 });
 

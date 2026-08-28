@@ -9,6 +9,12 @@ export interface RuleMessage {
 }
 export interface RuleEvaluation {
     matchedRuleIds: string[];
+    matchedRuleDetails: Array<{
+        id: string;
+        condition: 'any' | 'all';
+        matchedCriterionIndexes: number[];
+        totalCriteria: number;
+    }>;
     moveFolders: string[];
     deliveryOnlyActions: string[];
     unevaluatedRuleIds: string[];

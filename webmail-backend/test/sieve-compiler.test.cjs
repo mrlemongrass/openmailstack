@@ -67,6 +67,25 @@ test('extractJsonFromSieve keeps legacy JSON_DATA compatibility', () => {
   });
 });
 
+test('extractJsonFromSieve rejects malformed or truncated saved-rule markers', () => {
+  assert.throws(
+    () => extractJsonFromSieve('/* JSON_DATA_BASE64: bm90LWpzb24 */'),
+    /metadata is malformed/i,
+  );
+  assert.throws(
+    () => extractJsonFromSieve('/* JSON_DATA_BASE64: eyJydWxlcyI6W10'),
+    /metadata is malformed/i,
+  );
+  assert.throws(
+    () => extractJsonFromSieve('/* JSON_DATA: {"rules": [} */'),
+    /metadata is malformed/i,
+  );
+  assert.throws(
+    () => extractJsonFromSieve('require ["fileinto"];\nkeep;'),
+    /metadata is missing/i,
+  );
+});
+
 test('compileSieve keeps legacy stop behavior and allows an ordered rule to continue', () => {
   const script = compileSieve({
     rules: [
@@ -93,4 +112,31 @@ test('compileSieve keeps legacy stop behavior and allows an ordered rule to cont
   assert.match(financeBlock, /fileinto "INBOX\.Finance";[\s\S]*stop;/);
   assert.match(chaseBlock, /fileinto "INBOX\.ADs";/);
   assert.doesNotMatch(chaseBlock, /\bstop;/);
+});
+
+test('compileSieve normalizes unknown properties and rejects full-document amplification', () => {
+  const script = compileSieve({
+    rules: [{
+      name: 'Known fields only',
+      criteria: [{ field: 'subject', operator: 'contains', value: 'receipt', padding: 'ignored' }],
+      actions: [{ type: 'discard', padding: 'ignored' }],
+      padding: 'ignored',
+    }],
+    padding: 'ignored',
+  });
+  assert.deepEqual(extractJsonFromSieve(script), {
+    rules: [{
+      name: 'Known fields only',
+      criteria: [{ field: 'subject', operator: 'contains', value: 'receipt' }],
+      actions: [{ type: 'discard' }],
+    }],
+  });
+  assert.throws(() => compileSieve({
+    rules: [],
+    padding: 'x'.repeat(5000000),
+  }), /safe compilation limit/);
+  assert.throws(() => compileSieve({
+    rules: [],
+    vacation: { enabled: true, body: 'x'.repeat(4097) },
+  }), /safe compilation limit/);
 });

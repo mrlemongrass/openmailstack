@@ -5,8 +5,12 @@ import type {
   RuleRunCount,
   RuleRunMatchCursor,
   RuleRunMatchDetail,
+  RuleRunMatchRuleCatalogEntry,
+  RuleRunMessageRef,
+  RuleRunMessageSelection,
   RuleRunPageResponse,
   RuleRunReadState,
+  RuleRunRequest,
   RuleRunScopeSnapshot,
 } from '../shared/types';
 
@@ -53,6 +57,82 @@ export async function prepareRuleRun({
   return saveRules();
 }
 
+export interface RuleRunMessageSelectionState {
+  mode: RuleRunMessageSelection['mode'];
+  messages: Map<string, RuleRunMessageRef>;
+}
+
+async function runRulesPageWithSelectedApplyRetry(
+  request: RuleRunRequest,
+  signal?: AbortSignal,
+): Promise<RuleRunPageResponse> {
+  try {
+    return await runRulesPage(request, signal);
+  } catch (error) {
+    if (
+      request.mode !== 'apply-selected'
+      || signal?.aborted
+      || !(error instanceof TypeError)
+    ) throw error;
+    return runRulesPage(request, signal);
+  }
+}
+
+function ruleRunMessageKey(message: RuleRunMessageRef): string {
+  return `${message.folder}\u0000${message.uid}`;
+}
+
+export function createRuleRunMessageSelection(
+  mode: RuleRunMessageSelection['mode'] = 'allExcept',
+): RuleRunMessageSelectionState {
+  return { mode, messages: new Map() };
+}
+
+export function isRuleRunMessageSelected(
+  selection: RuleRunMessageSelectionState,
+  message: RuleRunMessageRef,
+): boolean {
+  const listed = selection.messages.has(ruleRunMessageKey(message));
+  return selection.mode === 'only' ? listed : !listed;
+}
+
+export function setRuleRunMessageSelected(
+  selection: RuleRunMessageSelectionState,
+  message: RuleRunMessageRef,
+  selected: boolean,
+): RuleRunMessageSelectionState {
+  const messages = new Map(selection.messages);
+  const key = ruleRunMessageKey(message);
+  const defaultSelected = selection.mode === 'allExcept';
+  if (selected === defaultSelected) messages.delete(key);
+  else messages.set(key, { folder: message.folder, uid: message.uid });
+  return { ...selection, messages };
+}
+
+export function countSelectedRuleRunMessages(
+  selection: RuleRunMessageSelectionState,
+  totalMessages: number,
+): number {
+  return selection.mode === 'only'
+    ? Math.min(totalMessages, selection.messages.size)
+    : Math.max(0, totalMessages - selection.messages.size);
+}
+
+export function serializeRuleRunMessageSelection(
+  selection: RuleRunMessageSelectionState,
+): RuleRunMessageSelection {
+  const groups = new Map<string, number[]>();
+  for (const message of selection.messages.values()) {
+    const uids = groups.get(message.folder);
+    if (uids) uids.push(message.uid);
+    else groups.set(message.folder, [message.uid]);
+  }
+  return {
+    mode: selection.mode,
+    groups: [...groups].map(([folder, uids]) => ({ folder, uids })),
+  };
+}
+
 export interface RuleRunSummary {
   folder: string;
   sourceFolder: string;
@@ -73,6 +153,8 @@ export interface RuleRunSummary {
   destinations: RuleRunCount[];
   matchDetails: RuleRunMatchDetail[];
   matchDetailsCursor: RuleRunMatchCursor | null;
+  matchRuleCatalog: RuleRunMatchRuleCatalogEntry[];
+  previewToken: string;
   maxUid: number;
   uidValidity: string;
   ruleRevision: string;
@@ -88,6 +170,8 @@ interface RunRulesOptions {
   maxUid?: number;
   uidValidity?: string;
   ruleRevision?: string;
+  previewToken?: string;
+  messageSelection?: RuleRunMessageSelection;
   copyResolution?: 'completed' | 'retry';
   copyActionKeys?: string[];
   captureMatchDetails?: boolean;
@@ -105,6 +189,8 @@ export async function runRulesThroughFolder({
   maxUid,
   uidValidity,
   ruleRevision,
+  previewToken,
+  messageSelection,
   copyResolution,
   copyActionKeys,
   captureMatchDetails = false,
@@ -115,6 +201,7 @@ export async function runRulesThroughFolder({
   let snapshotMaxUid = maxUid;
   let snapshotUidValidity = uidValidity;
   let snapshotRuleRevision = ruleRevision;
+  let snapshotPreviewToken = previewToken;
   let snapshotFolders = scopeSnapshot;
   let scopeIndex = 0;
   const ruleMatches = new Map<string, RuleMatchCount>();
@@ -140,6 +227,8 @@ export async function runRulesThroughFolder({
     destinations: [],
     matchDetails: [],
     matchDetailsCursor: null,
+    matchRuleCatalog: [],
+    previewToken: snapshotPreviewToken || '',
     maxUid: snapshotMaxUid || 0,
     uidValidity: snapshotUidValidity || '',
     ruleRevision: snapshotRuleRevision || '',
@@ -153,9 +242,9 @@ export async function runRulesThroughFolder({
       && captureMatchDetails
       && summary.matchDetails.length < RULE_RUN_MATCH_PAGE_SIZE
     );
-    const request = {
+    const request: RuleRunRequest = {
       folder,
-      mode,
+      mode: mode === 'apply' && messageSelection ? 'apply-selected' : mode,
       cursor,
       ...(includeMatchDetails ? { includeMatchDetails: true } : {}),
       ...(includeSubfolders ? { includeSubfolders: true } : {}),
@@ -165,10 +254,27 @@ export async function runRulesThroughFolder({
       ...(usesScopeSnapshot || snapshotMaxUid === undefined ? {} : { maxUid: snapshotMaxUid }),
       ...(usesScopeSnapshot || !snapshotUidValidity ? {} : { uidValidity: snapshotUidValidity }),
       ...(snapshotRuleRevision ? { ruleRevision: snapshotRuleRevision } : {}),
+      ...(snapshotPreviewToken ? { previewToken: snapshotPreviewToken } : {}),
+      ...(messageSelection && pageNumber === 0 ? { messageSelection } : {}),
       ...(copyResolution ? { copyResolution } : {}),
       ...(copyActionKeys?.length ? { copyActionKeys } : {}),
     };
-    const page: RuleRunPageResponse = await runRulesPage(request, signal);
+    const page: RuleRunPageResponse = await runRulesPageWithSelectedApplyRetry(request, signal);
+    if (mode === 'preview' && captureMatchDetails) {
+      if (pageNumber === 0) {
+        if (!Array.isArray(page.matchRuleCatalog)) {
+          throw new Error('The server cannot explain this preview safely yet. Refresh after the server update completes.');
+        }
+        summary.matchRuleCatalog = page.matchRuleCatalog;
+      }
+      if (typeof page.previewToken !== 'string' || !page.previewToken) {
+        throw new Error('The server cannot bind selections to this preview yet. Refresh after the server update completes.');
+      }
+    }
+    if (snapshotPreviewToken && page.previewToken !== snapshotPreviewToken) {
+      throw new Error('The matched-message preview expired or changed. Preview again before applying.');
+    }
+    snapshotPreviewToken = page.previewToken || snapshotPreviewToken;
     const pageScopeSnapshot = Array.isArray(page.scopeSnapshot) ? page.scopeSnapshot : undefined;
     if ((includeSubfolders || readState !== 'all') && !pageScopeSnapshot) {
       throw new Error('The server does not support this folder scope yet. Refresh after the server update completes.');
@@ -206,6 +312,7 @@ export async function runRulesThroughFolder({
     summary.maxUid = page.maxUid;
     summary.uidValidity = page.uidValidity;
     summary.ruleRevision = page.ruleRevision;
+    summary.previewToken = snapshotPreviewToken || '';
 
     if (includeMatchDetails) {
       if (!Array.isArray(page.matchDetails)) {
@@ -291,11 +398,13 @@ export async function loadRuleMatchDetailsPage({
       ...(preview.readState === 'all' ? {} : { readState: preview.readState }),
       ...(ruleIds === undefined ? {} : { ruleIds }),
       ruleRevision: preview.ruleRevision,
+      previewToken: preview.previewToken,
       includeMatchDetails: true,
     }, signal);
 
     if (
       page.ruleRevision !== preview.ruleRevision
+      || page.previewToken !== preview.previewToken
       || JSON.stringify(page.scopeSnapshot) !== JSON.stringify(preview.scopeSnapshot)
     ) {
       throw new Error('Rules or message scope changed since preview. Preview again before applying.');

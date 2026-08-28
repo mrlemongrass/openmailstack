@@ -365,8 +365,10 @@ export async function fetchSignatures(): Promise<Signature[]> {
 
 export async function fetchRules(): Promise<Rule[]> {
   const res = await fetch('/api/rules');
-  const data = await res.json();
-  return data.rules || [];
+  const data = await res.json().catch(() => ({})) as { rules?: unknown; error?: string };
+  if (!res.ok) throw new Error(data.error || 'Failed to load saved rules.');
+  if (!Array.isArray(data.rules)) throw new Error('The server did not return a valid saved rule set.');
+  return data.rules as Rule[];
 }
 
 export async function analyzeRules(rules: Rule[], signal?: AbortSignal): Promise<RuleAnalysis> {

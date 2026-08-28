@@ -28,6 +28,7 @@ export interface SieveRulesDocument {
     rules?: SieveRule[];
     vacation?: SieveVacation;
 }
+export declare const isExecutableRuleCriterion: (criterion: SieveCriterion) => boolean;
 export declare const executableRuleCriteria: (rule: SieveRule) => SieveCriterion[];
 export declare const executableRuleActions: (rule: SieveRule) => SieveAction[];
 //# sourceMappingURL=rule-semantics.d.ts.map

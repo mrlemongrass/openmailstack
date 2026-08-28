@@ -36,12 +36,14 @@ export interface SieveRulesDocument {
 const supportedFields = new Set(['subject', 'from', 'to', 'body']);
 const supportedOperators = new Set(['contains', 'not_contains', 'equals']);
 
+export const isExecutableRuleCriterion = (criterion: SieveCriterion): boolean => (
+    Boolean(criterion.value)
+    && supportedFields.has(criterion.field)
+    && supportedOperators.has(criterion.operator)
+);
+
 export const executableRuleCriteria = (rule: SieveRule): SieveCriterion[] => (
-    (rule.criteria || []).filter(criterion => (
-        Boolean(criterion.value)
-        && supportedFields.has(criterion.field)
-        && supportedOperators.has(criterion.operator)
-    ))
+    (rule.criteria || []).filter(isExecutableRuleCriterion)
 );
 
 export const executableRuleActions = (rule: SieveRule): SieveAction[] => (

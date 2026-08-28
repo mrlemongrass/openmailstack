@@ -12,16 +12,22 @@ import type {
   Rule,
   RuleRunMatchCursor,
   RuleRunMatchDetail,
+  RuleRunMatchRuleCatalogEntry,
   RuleRunReadState,
 } from '../shared/types';
 import { useModalFocus } from '../shared/hooks/useModalFocus';
 import {
+  countSelectedRuleRunMessages,
+  createRuleRunMessageSelection,
   getRunnableRuleIds,
   getRuleRunSelectors,
+  isRuleRunMessageSelected,
   loadRuleMatchDetailsPage,
   normalizeRuleRunSelection,
   RULE_RUN_MATCH_PAGE_SIZE,
   runRulesThroughFolder,
+  serializeRuleRunMessageSelection,
+  setRuleRunMessageSelected,
   type RuleRunSummary,
 } from './rule-run';
 
@@ -57,14 +63,31 @@ function matchOutcomeLabel(match: RuleRunMatchDetail): string {
   return 'Matched, with no existing-mail Move action';
 }
 
-function matchedRuleLabel(match: RuleRunMatchDetail): string {
-  const visibleRules = match.rules.slice(0, 3).map(rule => rule.name);
-  const remaining = Math.max(
-    0,
-    match.rules.length - visibleRules.length + (match.additionalRuleCount || 0),
-  );
+function matchedRuleLabel(
+  match: RuleRunMatchDetail,
+  catalog: Map<number, RuleRunMatchRuleCatalogEntry>,
+): string {
+  const visibleRules = match.rules.slice(0, 3).map(({ ruleIndex, name }) => (
+    ruleIndex !== undefined
+      ? catalog.get(ruleIndex)?.name || `Rule ${ruleIndex + 1}`
+      : name || 'Saved rule'
+  ));
+  const remaining = Math.max(0, match.rules.length - visibleRules.length);
   return `${visibleRules.join(', ')}${remaining > 0 ? ` +${remaining} more` : ''}`;
 }
+
+const CRITERION_FIELD_LABELS: Record<string, string> = {
+  subject: 'Subject',
+  from: 'From',
+  to: 'To',
+  body: 'Message body',
+};
+
+const CRITERION_OPERATOR_LABELS: Record<string, string> = {
+  contains: 'contains',
+  not_contains: 'does not contain',
+  equals: 'equals',
+};
 
 export function RuleRunDialog({
   folders,
@@ -104,15 +127,21 @@ export function RuleRunDialog({
   const [matchNextCursor, setMatchNextCursor] = useState<RuleRunMatchCursor | null>(null);
   const [matchPageLoading, setMatchPageLoading] = useState(false);
   const [matchPageError, setMatchPageError] = useState('');
+  const [expandedMatchKeys, setExpandedMatchKeys] = useState(() => new Set<string>());
+  const [messageSelection, setMessageSelection] = useState(() => (
+    createRuleRunMessageSelection('allExcept')
+  ));
+  const [messageSelectionLocked, setMessageSelectionLocked] = useState(false);
   const busy = phase === 'previewing' || phase === 'applying';
   const selectedFolder = selectableFolders.find(item => item.path === folder);
   const childPrefix = selectedFolder?.delimiter ? `${folder}${selectedFolder.delimiter}` : '';
   const subfolderCount = childPrefix
     ? selectableFolders.filter(item => item.path.startsWith(childPrefix)).length
     : 0;
-  const selectedRuleEntries = rules.flatMap((rule, index) => (
-    selectedRuleIds.includes(ruleSelectors[index]) ? [{ rule, index }] : []
-  ));
+  const previewRuleCatalog = new Map((preview?.matchRuleCatalog || []).map(rule => ([
+    rule.ruleIndex,
+    rule,
+  ])));
 
   const requestClose = useCallback(() => {
     if (phase === 'previewing') {
@@ -146,11 +175,15 @@ export function RuleRunDialog({
     setProgress(null);
     if (mode === 'preview') {
       matchControllerRef.current?.abort();
+      setMessageSelection(createRuleRunMessageSelection('allExcept'));
+      setMessageSelectionLocked(false);
       setMatchPages([]);
       setMatchPageIndex(0);
       setMatchNextCursor(null);
       setMatchPageError('');
+      setExpandedMatchKeys(new Set());
     }
+    if (mode === 'apply') setMessageSelectionLocked(true);
     setPhase(mode === 'preview' ? 'previewing' : 'applying');
 
     try {
@@ -168,7 +201,9 @@ export function RuleRunDialog({
               maxUid: preview.maxUid,
               uidValidity: preview.uidValidity,
               ruleRevision: preview.ruleRevision,
+              previewToken: preview.previewToken,
               scopeSnapshot: preview.scopeSnapshot,
+              messageSelection: serializeRuleRunMessageSelection(messageSelection),
             }
           : {}),
         ...(copyResolution ? { copyResolution } : {}),
@@ -185,6 +220,8 @@ export function RuleRunDialog({
         setNeedsCopyResolution(false);
         setPendingCopies([]);
         setPreview(summary);
+        setMessageSelection(createRuleRunMessageSelection('allExcept'));
+        setMessageSelectionLocked(false);
         setMatchPages(summary.matchDetails.length > 0 ? [summary.matchDetails] : []);
         setMatchPageIndex(0);
         setMatchNextCursor(summary.matchDetailsCursor);
@@ -225,7 +262,11 @@ export function RuleRunDialog({
           : [];
         setNeedsCopyResolution(resolutionRequired);
         setPendingCopies(resolutionRequired ? interruptedCopies : []);
-        if (mode === 'apply' && !retrySafe && !resolutionRequired) setPreview(null);
+        if (mode === 'apply' && !retrySafe && !resolutionRequired) {
+          setPreview(null);
+          setMessageSelectionLocked(false);
+        }
+        if (mode === 'preview') setMessageSelectionLocked(false);
         setPhase(mode === 'apply' && (retrySafe || resolutionRequired) ? 'preview' : 'choose');
       }
     } finally {
@@ -283,8 +324,6 @@ export function RuleRunDialog({
     }
   };
 
-  const previewDestinationActions = preview?.destinations.reduce((total, item) => total + item.count, 0) || 0;
-  const createsCopies = Boolean(preview && previewDestinationActions > preview.affectedMessages);
   const pendingDestinations = pendingCopies.reduce<Map<string, number>>((counts, copy) => {
     counts.set(copy.destination, (counts.get(copy.destination) || 0) + 1);
     return counts;
@@ -298,6 +337,31 @@ export function RuleRunDialog({
     .slice(0, matchPageIndex)
     .reduce((total, page) => total + page.length, 0);
   const loadedMatchCount = matchPages.reduce((total, page) => total + page.length, 0);
+  const selectedMoveCount = preview
+    ? countSelectedRuleRunMessages(messageSelection, preview.affectedMessages)
+    : 0;
+  const selectedDestinations = (() => {
+    if (!preview) return [];
+    const counts = messageSelection.mode === 'allExcept'
+      ? new Map(preview.destinations.map(destination => [destination.folder, destination.count]))
+      : new Map<string, number>();
+    for (const match of matchPages.flat()) {
+      if (match.outcome !== 'move') continue;
+      const selected = isRuleRunMessageSelected(messageSelection, match);
+      for (const destination of match.destinations) {
+        if (messageSelection.mode === 'allExcept' && !selected) {
+          counts.set(destination, Math.max(0, (counts.get(destination) || 0) - 1));
+        } else if (messageSelection.mode === 'only' && selected) {
+          counts.set(destination, (counts.get(destination) || 0) + 1);
+        }
+      }
+    }
+    return [...counts]
+      .filter(([, count]) => count > 0)
+      .map(([destination, count]) => ({ folder: destination, count }));
+  })();
+  const selectedDestinationActions = selectedDestinations.reduce((total, item) => total + item.count, 0);
+  const createsCopies = Boolean(preview && selectedDestinationActions > selectedMoveCount);
   const hasNextMatchPage = (
     matchPageIndex + 1 < matchPages.length
     || Boolean(matchNextCursor && preview && loadedMatchCount < preview.matchedMessages)
@@ -448,7 +512,7 @@ export function RuleRunDialog({
                   ))}
                 </div>
                 <small>
-                  Messages arriving after Preview are excluded. Read status is checked again during Apply.
+                  Apply is limited to the exact messages in this preview. Later arrivals and newly matching messages are excluded.
                 </small>
               </fieldset>
               <div className="rule-run-safety-note">
@@ -490,12 +554,12 @@ export function RuleRunDialog({
               </div>
               <div className="rule-run-order-summary">
                 <strong>
-                  {selectedRuleEntries.length} rule{selectedRuleEntries.length === 1 ? '' : 's'} in saved order
+                  {preview.matchRuleCatalog.length} rule{preview.matchRuleCatalog.length === 1 ? '' : 's'} in saved order
                 </strong>
                 <ol aria-label="Selected rule execution order">
-                  {selectedRuleEntries.map(({ rule, index }) => (
-                    <li key={ruleSelectors[index]}>
-                      <span>{index + 1}</span>
+                  {preview.matchRuleCatalog.map(rule => (
+                    <li key={rule.ruleIndex}>
+                      <span>{rule.ruleIndex + 1}</span>
                       {rule.name || 'Untitled Rule'}
                     </li>
                   ))}
@@ -504,21 +568,45 @@ export function RuleRunDialog({
               <div className="rule-run-metrics" role="status" aria-live="polite">
                 <div><strong>{preview.processed}</strong><span>Scanned</span></div>
                 <div><strong>{preview.matchedMessages}</strong><span>Matched</span></div>
-                <div><strong>{preview.affectedMessages}</strong><span>Would move</span></div>
+                <div><strong>{selectedMoveCount}</strong><span>Selected to move</span></div>
               </div>
               {preview.matchedMessages > 0 && (
                 <section className="rule-run-match-review" aria-labelledby="rule-run-matches-title">
                   <div className="rule-run-match-header">
                     <div>
                       <h3 id="rule-run-matches-title">Matched messages</h3>
-                      <p>Review sender, subject, matched rule, and planned outcome before applying.</p>
+                      <p>Choose which messages to move. Expand “Why it matched” to review the exact criteria.</p>
                     </div>
                     {currentMatchPage.length > 0 && (
-                      <strong aria-live="polite">
+                      <strong>
                         {matchPageStart + 1}–{matchPageStart + currentMatchPage.length} of {preview.matchedMessages}
                       </strong>
                     )}
                   </div>
+                  {preview.affectedMessages > 0 && (
+                    <div className="rule-run-message-selection">
+                      <span>
+                        <strong>{selectedMoveCount}</strong> of {preview.affectedMessages}{' '}
+                        message{preview.affectedMessages === 1 ? '' : 's'} selected to move
+                      </span>
+                      <div>
+                        <button
+                          type="button"
+                          disabled={messageSelectionLocked || selectedMoveCount === preview.affectedMessages}
+                          onClick={() => setMessageSelection(createRuleRunMessageSelection('allExcept'))}
+                        >
+                          Select all
+                        </button>
+                        <button
+                          type="button"
+                          disabled={messageSelectionLocked || selectedMoveCount === 0}
+                          onClick={() => setMessageSelection(createRuleRunMessageSelection('only'))}
+                        >
+                          Deselect all
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {(preview.matchedMessages > RULE_RUN_MATCH_PAGE_SIZE || matchPageError) && (
                     <div className="rule-run-match-pagination">
                       <button
@@ -543,46 +631,145 @@ export function RuleRunDialog({
                     </div>
                   )}
                   <ol className="rule-run-match-list" start={matchPageStart + 1}>
-                    {currentMatchPage.map(match => (
-                      <li key={`${match.folder}:${match.uid}`}>
-                        <div className="rule-run-match-message">
-                          <strong title={match.subject || 'No subject'}>
-                            {match.subject || '(No subject)'}
-                          </strong>
-                          <span title={match.from || 'Unknown sender'}>
-                            {match.from || 'Unknown sender'}
-                          </span>
-                          <small>
-                            {preview.scopeSnapshot.length > 1 && <>{match.folder}<span aria-hidden="true"> · </span></>}
-                            <time dateTime={match.date || undefined}>{formatMatchDate(match.date)}</time>
-                          </small>
-                        </div>
-                        <div className="rule-run-match-reason">
-                          <span>
-                            Matched by <strong>{matchedRuleLabel(match)}</strong>
-                          </span>
-                          <span className={`rule-run-match-outcome ${match.outcome}`}>
-                            {matchOutcomeLabel(match)}
-                          </span>
-                        </div>
-                      </li>
-                    ))}
+                    {currentMatchPage.map(match => {
+                      const canMove = match.outcome === 'move';
+                      const selected = canMove && isRuleRunMessageSelected(messageSelection, match);
+                      const matchKey = `${match.folder}:${match.uid}`;
+                      const explanationOpen = expandedMatchKeys.has(matchKey);
+                      return (
+                        <li
+                          key={matchKey}
+                          className={canMove && !selected ? 'not-selected' : ''}
+                        >
+                          <div className={`rule-run-match-select ${canMove ? '' : 'disabled'}`}>
+                            {canMove ? (
+                              <label className="rule-run-match-select-control">
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  disabled={messageSelectionLocked}
+                                  aria-label={`Move ${match.subject || 'message'} in this run`}
+                                  onChange={event => setMessageSelection(current => (
+                                    setRuleRunMessageSelected(current, match, event.target.checked)
+                                  ))}
+                                />
+                              </label>
+                            ) : (
+                              <span aria-hidden="true" />
+                            )}
+                          </div>
+                          <div className="rule-run-match-message">
+                            <strong title={match.subject || 'No subject'}>
+                              {match.subject || '(No subject)'}
+                            </strong>
+                            <span title={match.from || 'Unknown sender'}>
+                              {match.from || 'Unknown sender'}
+                            </span>
+                            <small>
+                              {preview.scopeSnapshot.length > 1 && <>{match.folder}<span aria-hidden="true"> · </span></>}
+                              <time dateTime={match.date || undefined}>{formatMatchDate(match.date)}</time>
+                            </small>
+                          </div>
+                          <div className="rule-run-match-reason">
+                            <span>
+                              Matched by <strong>{matchedRuleLabel(match, previewRuleCatalog)}</strong>
+                            </span>
+                            <span className={`rule-run-match-outcome ${match.outcome} ${canMove && !selected ? 'not-selected' : ''}`}>
+                              {canMove && !selected
+                                ? `Not selected — ${matchOutcomeLabel(match)}`
+                                : matchOutcomeLabel(match)}
+                            </span>
+                            <details
+                              className="rule-run-match-explanation"
+                              open={explanationOpen}
+                              onToggle={event => {
+                                const open = event.currentTarget.open;
+                                setExpandedMatchKeys(current => {
+                                  if (current.has(matchKey) === open) return current;
+                                  const next = new Set(current);
+                                  if (open) next.add(matchKey);
+                                  else next.delete(matchKey);
+                                  return next;
+                                });
+                              }}
+                            >
+                              <summary>Why it matched</summary>
+                              {explanationOpen && <div>
+                                {match.rules.map(rule => {
+                                  const catalogRule = rule.ruleIndex === undefined
+                                    ? undefined
+                                    : previewRuleCatalog.get(rule.ruleIndex);
+                                  const matchedCriterionIndexes = rule.matchedCriterionIndexes || [];
+                                  const matchedCriterionIndexSet = new Set(matchedCriterionIndexes);
+                                  const indexedCriteria = (catalogRule?.criteria || [])
+                                    .filter(criterion => matchedCriterionIndexSet.has(criterion.criterionIndex))
+                                    .map(criterion => ({
+                                      criterion,
+                                      criterionIndex: criterion.criterionIndex,
+                                    }));
+                                  const criteria = rule.matchedCriterionIndexes
+                                    ? indexedCriteria
+                                    : (rule.matchedCriteria || []).map((criterion, criterionIndex) => ({
+                                        criterion,
+                                        criterionIndex,
+                                      }));
+                                  const matchedCriterionCount = rule.matchedCriterionIndexes
+                                    ? matchedCriterionIndexes.length
+                                    : criteria.length;
+                                  const totalCriteria = rule.totalCriteria || matchedCriterionCount;
+                                  return (
+                                    <section key={rule.ruleIndex ?? rule.id ?? rule.name}>
+                                      <header>
+                                        <strong>
+                                          {catalogRule?.name
+                                            || rule.name
+                                            || (rule.ruleIndex === undefined ? 'Saved rule' : `Rule ${rule.ruleIndex + 1}`)}
+                                        </strong>
+                                        <span>
+                                          {rule.condition === 'any' ? 'Any' : 'All'} conditions
+                                          {' · '}{matchedCriterionCount} of {totalCriteria} matched
+                                        </span>
+                                      </header>
+                                      {criteria.length > 0 ? (
+                                        <ul>
+                                          {criteria.map(({ criterion, criterionIndex }) => (
+                                            <li key={criterionIndex}>
+                                              <strong>{CRITERION_FIELD_LABELS[criterion.field] || criterion.field}</strong>{' '}
+                                              {CRITERION_OPERATOR_LABELS[criterion.operator] || criterion.operator}{' '}
+                                              <q>{criterion.value}</q>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      ) : (
+                                        <p>Criteria details are unavailable. Preview again to refresh them.</p>
+                                      )}
+                                    </section>
+                                  );
+                                })}
+                              </div>}
+                            </details>
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ol>
                   {matchPageError && (
                     <p className="rule-run-footnote warning" role="alert">{matchPageError}</p>
                   )}
                 </section>
               )}
-              {preview.destinations.length > 0 ? (
+              {selectedDestinations.length > 0 ? (
                 <div className="rule-run-destinations">
-                  <h3>Planned destinations</h3>
-                  {preview.destinations.map(destination => (
+                  <h3>Selected destinations</h3>
+                  {selectedDestinations.map(destination => (
                     <div key={destination.folder}>
                       <span>{destination.folder}</span>
                       <strong>{destination.count}</strong>
                     </div>
                   ))}
                 </div>
+              ) : preview.affectedMessages > 0 ? (
+                <p className="rule-run-empty">No messages are selected to move.</p>
               ) : (
                 <p className="rule-run-empty">No saved Move rule matches were found.</p>
               )}
@@ -670,6 +857,9 @@ export function RuleRunDialog({
                   setMatchPageIndex(0);
                   setMatchNextCursor(null);
                   setMatchPageError('');
+                  setExpandedMatchKeys(new Set());
+                  setMessageSelection(createRuleRunMessageSelection('allExcept'));
+                  setMessageSelectionLocked(false);
                   setError('');
                   setPhase('choose');
                 }}
@@ -699,10 +889,10 @@ export function RuleRunDialog({
                 <button
                   className="btn btn-primary"
                   type="button"
-                  disabled={!preview?.affectedMessages || matchPageLoading}
+                  disabled={selectedMoveCount === 0 || matchPageLoading}
                   onClick={() => void run('apply')}
                 >
-                  Apply rules
+                  Apply to {selectedMoveCount} selected
                 </button>
               )}
             </>

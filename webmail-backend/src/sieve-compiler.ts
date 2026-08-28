@@ -5,6 +5,7 @@ import {
     type SieveCriterion,
     type SieveRulesDocument,
 } from './rule-semantics';
+import { exceedsRuleAnalysisLimits, normalizeRuleDocument, RULE_ANALYSIS_LIMITS } from './rule-analysis';
 
 export type {
     SieveAction,
@@ -16,27 +17,46 @@ export type {
 
 const JSON_DATA_BASE64_PATTERN = /\/\* JSON_DATA_BASE64: ([A-Za-z0-9_-]+) \*\//;
 const LEGACY_JSON_DATA_PATTERN = /\/\* JSON_DATA: ([\s\S]*?) \*\//;
+const JSON_DATA_BASE64_MARKER = '/* JSON_DATA_BASE64:';
+const LEGACY_JSON_DATA_MARKER = '/* JSON_DATA:';
+const MAX_ENCODED_JSON_CHARACTERS = Math.ceil(RULE_ANALYSIS_LIMITS.serializedBytes * 4 / 3) + 4;
 
 export function extractJsonFromSieve(script: string): SieveRulesDocument {
     const encodedMatch = script.match(JSON_DATA_BASE64_PATTERN);
     if (encodedMatch?.[1]) {
-        try {
-            return JSON.parse(Buffer.from(encodedMatch[1], 'base64url').toString('utf8'));
-        } catch {
-            return { rules: [] };
+        if (encodedMatch[1].length > MAX_ENCODED_JSON_CHARACTERS) {
+            throw new Error('Saved rule metadata exceeds the safe size limit.');
         }
+        const decoded = Buffer.from(encodedMatch[1], 'base64url');
+        if (decoded.byteLength > RULE_ANALYSIS_LIMITS.serializedBytes) {
+            throw new Error('Saved rule metadata exceeds the safe size limit.');
+        }
+        try {
+            return JSON.parse(decoded.toString('utf8'));
+        } catch {
+            throw new Error('Saved rule metadata is malformed.');
+        }
+    }
+    if (script.includes(JSON_DATA_BASE64_MARKER)) {
+        throw new Error('Saved rule metadata is malformed.');
     }
 
     const legacyMatch = script.match(LEGACY_JSON_DATA_PATTERN);
     if (legacyMatch?.[1]) {
+        if (Buffer.byteLength(legacyMatch[1], 'utf8') > RULE_ANALYSIS_LIMITS.serializedBytes) {
+            throw new Error('Saved rule metadata exceeds the safe size limit.');
+        }
         try {
             return JSON.parse(legacyMatch[1]);
         } catch {
-            return { rules: [] };
+            throw new Error('Saved rule metadata is malformed.');
         }
     }
+    if (script.includes(LEGACY_JSON_DATA_MARKER)) {
+        throw new Error('Saved rule metadata is malformed.');
+    }
 
-    return { rules: [] };
+    throw new Error('Saved rule metadata is missing.');
 }
 
 export function quoteSieveString(value: unknown): string {
@@ -79,6 +99,12 @@ function compileAction(action: SieveAction): string | null {
 }
 
 export function compileSieve(jsonData: SieveRulesDocument): string {
+    if (exceedsRuleAnalysisLimits(jsonData)) {
+        throw new Error('Rule document exceeds the safe compilation limit.');
+    }
+    const normalized = normalizeRuleDocument(jsonData);
+    if (!normalized) throw new Error('Rule document is malformed.');
+    jsonData = normalized;
     let script = 'require ["fileinto", "reject", "envelope", "body", "vacation"];\n\n';
     const encodedJson = Buffer.from(JSON.stringify(jsonData || { rules: [] }), 'utf8').toString('base64url');
     script += `/* JSON_DATA_BASE64: ${encodedJson} */\n\n`;

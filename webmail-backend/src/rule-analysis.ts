@@ -62,7 +62,111 @@ export const RULE_ANALYSIS_LIMITS = {
     items: 10000,
     stringCharacters: 4096,
     totalStringCharacters: 1000000,
+    serializedBytes: 1250000,
 } as const;
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+    Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+);
+
+const copyOptionalString = (
+    source: Record<string, unknown>,
+    target: Record<string, unknown>,
+    key: string,
+): boolean => {
+    if (source[key] === undefined) return true;
+    if (typeof source[key] !== 'string') return false;
+    target[key] = source[key];
+    return true;
+};
+
+const copyOptionalBoolean = (
+    source: Record<string, unknown>,
+    target: Record<string, unknown>,
+    key: string,
+): boolean => {
+    if (source[key] === undefined) return true;
+    if (typeof source[key] !== 'boolean') return false;
+    target[key] = source[key];
+    return true;
+};
+
+export const normalizeRuleDocument = (document: unknown): SieveRulesDocument | null => {
+    if (!isRecord(document) || !Array.isArray(document.rules)) return null;
+    const rules: SieveRule[] = [];
+    for (const rawRule of document.rules) {
+        if (!isRecord(rawRule)) return null;
+        const normalizedRule: Record<string, unknown> = {};
+        if (
+            !copyOptionalString(rawRule, normalizedRule, 'id')
+            || !copyOptionalString(rawRule, normalizedRule, 'name')
+            || !copyOptionalString(rawRule, normalizedRule, 'condition')
+            || !copyOptionalBoolean(rawRule, normalizedRule, 'enabled')
+            || !copyOptionalBoolean(rawRule, normalizedRule, 'stopProcessing')
+        ) return null;
+
+        if (rawRule.criteria !== undefined) {
+            if (!Array.isArray(rawRule.criteria)) return null;
+            const criteria: SieveCriterion[] = [];
+            for (const rawCriterion of rawRule.criteria) {
+                if (!isRecord(rawCriterion)) return null;
+                const criterion: Record<string, unknown> = {};
+                if (
+                    !copyOptionalString(rawCriterion, criterion, 'id')
+                    || !copyOptionalString(rawCriterion, criterion, 'field')
+                    || !copyOptionalString(rawCriterion, criterion, 'operator')
+                    || !copyOptionalString(rawCriterion, criterion, 'value')
+                    || typeof criterion.field !== 'string'
+                    || typeof criterion.operator !== 'string'
+                    || typeof criterion.value !== 'string'
+                ) return null;
+                criteria.push(criterion as unknown as SieveCriterion);
+            }
+            normalizedRule.criteria = criteria;
+        }
+
+        if (rawRule.actions !== undefined) {
+            if (!Array.isArray(rawRule.actions)) return null;
+            const actions: SieveAction[] = [];
+            for (const rawAction of rawRule.actions) {
+                if (!isRecord(rawAction)) return null;
+                const action: Record<string, unknown> = {};
+                if (
+                    !copyOptionalString(rawAction, action, 'id')
+                    || !copyOptionalString(rawAction, action, 'type')
+                    || !copyOptionalString(rawAction, action, 'folder')
+                    || typeof action.type !== 'string'
+                ) return null;
+                actions.push(action as unknown as SieveAction);
+            }
+            normalizedRule.actions = actions;
+        }
+        rules.push(normalizedRule as unknown as SieveRule);
+    }
+
+    const normalized: SieveRulesDocument = { rules };
+    if (document.vacation !== undefined) {
+        if (!isRecord(document.vacation)) return null;
+        const vacation: Record<string, unknown> = {};
+        if (
+            !copyOptionalBoolean(document.vacation, vacation, 'enabled')
+            || !copyOptionalString(document.vacation, vacation, 'subject')
+            || !copyOptionalString(document.vacation, vacation, 'body')
+            || typeof vacation.enabled !== 'boolean'
+            || typeof vacation.body !== 'string'
+        ) return null;
+        if (document.vacation.days !== undefined) {
+            if (
+                !Number.isInteger(document.vacation.days)
+                || Number(document.vacation.days) < 1
+                || Number(document.vacation.days) > 365
+            ) return null;
+            vacation.days = Number(document.vacation.days);
+        }
+        normalized.vacation = vacation as unknown as SieveRulesDocument['vacation'];
+    }
+    return normalized;
+};
 
 const asciiFold = (value: string): string => value.replace(/[A-Z]/g, letter => letter.toLowerCase());
 
@@ -87,6 +191,13 @@ const actionSignature = (action: SieveAction): string | null => {
 };
 
 export const exceedsRuleAnalysisLimits = (document: SieveRulesDocument): boolean => {
+    try {
+        if (Buffer.byteLength(JSON.stringify(document), 'utf8') > RULE_ANALYSIS_LIMITS.serializedBytes) {
+            return true;
+        }
+    } catch {
+        return true;
+    }
     const rules = Array.isArray(document?.rules) ? document.rules : [];
     if (rules.length > RULE_ANALYSIS_LIMITS.rules) return true;
 
@@ -113,6 +224,7 @@ export const exceedsRuleAnalysisLimits = (document: SieveRulesDocument): boolean
 
         measure(rule.id);
         measure(rule.name);
+        measure(rule.condition);
         for (const criterion of criteria) {
             if (!criterion || typeof criterion !== 'object') continue;
             measure(criterion.id);
@@ -129,7 +241,12 @@ export const exceedsRuleAnalysisLimits = (document: SieveRulesDocument): boolean
         if (exceeded) return true;
     }
 
-    return false;
+    if (document.vacation && typeof document.vacation === 'object') {
+        measure(document.vacation.subject);
+        measure(document.vacation.body);
+    }
+
+    return exceeded;
 };
 
 const fieldLabel = (field: string): string => ({

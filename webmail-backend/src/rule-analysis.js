@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.exceedsRuleAnalysisLimits = exports.RULE_ANALYSIS_LIMITS = void 0;
+exports.exceedsRuleAnalysisLimits = exports.normalizeRuleDocument = exports.RULE_ANALYSIS_LIMITS = void 0;
 exports.analyzeRuleDocument = analyzeRuleDocument;
 const supportedFields = new Set(['subject', 'from', 'to', 'body']);
 const supportedOperators = new Set(['contains', 'not_contains', 'equals']);
@@ -13,7 +13,101 @@ exports.RULE_ANALYSIS_LIMITS = {
     items: 10000,
     stringCharacters: 4096,
     totalStringCharacters: 1000000,
+    serializedBytes: 1250000,
 };
+const isRecord = (value) => (Boolean(value) && typeof value === 'object' && !Array.isArray(value));
+const copyOptionalString = (source, target, key) => {
+    if (source[key] === undefined)
+        return true;
+    if (typeof source[key] !== 'string')
+        return false;
+    target[key] = source[key];
+    return true;
+};
+const copyOptionalBoolean = (source, target, key) => {
+    if (source[key] === undefined)
+        return true;
+    if (typeof source[key] !== 'boolean')
+        return false;
+    target[key] = source[key];
+    return true;
+};
+const normalizeRuleDocument = (document) => {
+    if (!isRecord(document) || !Array.isArray(document.rules))
+        return null;
+    const rules = [];
+    for (const rawRule of document.rules) {
+        if (!isRecord(rawRule))
+            return null;
+        const normalizedRule = {};
+        if (!copyOptionalString(rawRule, normalizedRule, 'id')
+            || !copyOptionalString(rawRule, normalizedRule, 'name')
+            || !copyOptionalString(rawRule, normalizedRule, 'condition')
+            || !copyOptionalBoolean(rawRule, normalizedRule, 'enabled')
+            || !copyOptionalBoolean(rawRule, normalizedRule, 'stopProcessing'))
+            return null;
+        if (rawRule.criteria !== undefined) {
+            if (!Array.isArray(rawRule.criteria))
+                return null;
+            const criteria = [];
+            for (const rawCriterion of rawRule.criteria) {
+                if (!isRecord(rawCriterion))
+                    return null;
+                const criterion = {};
+                if (!copyOptionalString(rawCriterion, criterion, 'id')
+                    || !copyOptionalString(rawCriterion, criterion, 'field')
+                    || !copyOptionalString(rawCriterion, criterion, 'operator')
+                    || !copyOptionalString(rawCriterion, criterion, 'value')
+                    || typeof criterion.field !== 'string'
+                    || typeof criterion.operator !== 'string'
+                    || typeof criterion.value !== 'string')
+                    return null;
+                criteria.push(criterion);
+            }
+            normalizedRule.criteria = criteria;
+        }
+        if (rawRule.actions !== undefined) {
+            if (!Array.isArray(rawRule.actions))
+                return null;
+            const actions = [];
+            for (const rawAction of rawRule.actions) {
+                if (!isRecord(rawAction))
+                    return null;
+                const action = {};
+                if (!copyOptionalString(rawAction, action, 'id')
+                    || !copyOptionalString(rawAction, action, 'type')
+                    || !copyOptionalString(rawAction, action, 'folder')
+                    || typeof action.type !== 'string')
+                    return null;
+                actions.push(action);
+            }
+            normalizedRule.actions = actions;
+        }
+        rules.push(normalizedRule);
+    }
+    const normalized = { rules };
+    if (document.vacation !== undefined) {
+        if (!isRecord(document.vacation))
+            return null;
+        const vacation = {};
+        if (!copyOptionalBoolean(document.vacation, vacation, 'enabled')
+            || !copyOptionalString(document.vacation, vacation, 'subject')
+            || !copyOptionalString(document.vacation, vacation, 'body')
+            || typeof vacation.enabled !== 'boolean'
+            || typeof vacation.body !== 'string')
+            return null;
+        if (document.vacation.days !== undefined) {
+            if (!Number.isInteger(document.vacation.days)
+                || Number(document.vacation.days) < 1
+                || Number(document.vacation.days) > 365)
+                return null;
+            vacation.days = Number(document.vacation.days);
+        }
+        normalized.vacation = vacation;
+    }
+    return normalized;
+};
+exports.normalizeRuleDocument = normalizeRuleDocument;
 const asciiFold = (value) => value.replace(/[A-Z]/g, letter => letter.toLowerCase());
 const displayText = (value) => {
     const text = String(value ?? '').replace(/[\r\n\t]+/g, ' ');
@@ -36,6 +130,14 @@ const actionSignature = (action) => {
     return null;
 };
 const exceedsRuleAnalysisLimits = (document) => {
+    try {
+        if (Buffer.byteLength(JSON.stringify(document), 'utf8') > exports.RULE_ANALYSIS_LIMITS.serializedBytes) {
+            return true;
+        }
+    }
+    catch {
+        return true;
+    }
     const rules = Array.isArray(document?.rules) ? document.rules : [];
     if (rules.length > exports.RULE_ANALYSIS_LIMITS.rules)
         return true;
@@ -63,6 +165,7 @@ const exceedsRuleAnalysisLimits = (document) => {
             return true;
         measure(rule.id);
         measure(rule.name);
+        measure(rule.condition);
         for (const criterion of criteria) {
             if (!criterion || typeof criterion !== 'object')
                 continue;
@@ -81,7 +184,11 @@ const exceedsRuleAnalysisLimits = (document) => {
         if (exceeded)
             return true;
     }
-    return false;
+    if (document.vacation && typeof document.vacation === 'object') {
+        measure(document.vacation.subject);
+        measure(document.vacation.body);
+    }
+    return exceeded;
 };
 exports.exceedsRuleAnalysisLimits = exceedsRuleAnalysisLimits;
 const fieldLabel = (field) => ({

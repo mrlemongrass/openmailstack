@@ -40,6 +40,7 @@ function SettingsLoader() {
 
   // Rules and folders (loaded separately)
   const [rules, setRules] = useState<Rule[]>([]);
+  const [rulesLoaded, setRulesLoaded] = useState(false);
   const [rulesDirty, setRulesDirty] = useState(false);
   const [folders, setFolders] = useState<MailFolder[]>([]);
 
@@ -114,6 +115,7 @@ function SettingsLoader() {
         applyAppearancePreferences(appearanceData);
 
         setRules(rulesData);
+        setRulesLoaded(true);
         setRulesDirty(false);
         setFolders(foldersData);
 
@@ -304,8 +306,8 @@ function SettingsLoader() {
     );
   }
 
-  // --- Error state (only when we have no data at all) ---
-  if (settingsSyncError && !mailSettings.identity) {
+  // Rules must load authoritatively before any editable Settings surface appears.
+  if (!rulesLoaded) {
     return (
       <div style={{
         flex: 1,
@@ -318,7 +320,7 @@ function SettingsLoader() {
         <div style={{ textAlign: 'center' }}>
           <p>Failed to load settings</p>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: 8 }}>
-            {settingsSyncError}
+            {settingsSyncError || 'Saved rules could not be loaded safely.'}
           </p>
           <button
             className="btn btn-primary"

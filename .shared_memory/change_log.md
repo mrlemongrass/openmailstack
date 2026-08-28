@@ -2474,3 +2474,18 @@ Future entry template:
   `protocol-guarded-webmail-20260828T192800Z` and
   `protocol-guarded-webmail-20260828T193529Z`; live health, restarts, Nginx,
   journals, auth boundaries, and exact backend/frontend artifacts are clean.
+
+## 2026-08-28 — Rule Save-and-Run Handoff
+
+- Replaced the dirty-draft Run lock with an explicit `Save & run` action; per-rule
+  Run controls use the same save-first handoff.
+- Preview opens only after Rules save succeeds. Failure keeps the draft and error
+  visible without opening Preview; clean saved rules continue to show `Run rules`.
+- Passed focused Filters 8/8, complete frontend 223/223, lint/build, whitespace,
+  complete integration, and local failure/success Chromium flows.
+- Commit `6ebda2c` passed guarded bridge and active public IMAPS plus ActiveSync
+  Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+  `protocol-guarded-webmail-20260828T201158Z` and
+  `protocol-guarded-webmail-20260828T201928Z`.
+- Live artifact `index-BxuEfHIO.js` passed public-asset desktop/mobile fixture QA
+  with exact save content, dialog ordering, zero overflow, and a clean console.

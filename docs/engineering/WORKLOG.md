@@ -10707,3 +10707,49 @@ not expose bodies or explain every condition-level comparison. Mail can be delet
 or change read state before a later lazy page, so that inconsistency deliberately
 requires a new Preview. Existing-mail execution remains Move-only; broader action
 parity and its confirmation/result semantics remain the next bounded Rules task.
+
+## 2026-08-28 — Rule Save-and-Run Handoff
+
+### Selected task
+
+Remove the dead end where editing a mail rule disabled every existing-mail Run
+control, while preserving the requirement that Preview evaluates saved rules.
+
+### Diagnosis and change
+
+- A clean mocked load kept both Run controls enabled. Source tracing confirmed
+  that the reported banner appears only after an edit, add/delete, reorder,
+  enablement change, or duplicate cleanup; it was the intended saved-rule safety
+  lock rather than a false initial dirty state.
+- The page-level action now becomes `Save & run` while the draft is dirty instead
+  of becoming disabled. Per-rule Run controls remain available with an explicit
+  save-then-run tooltip.
+- Both paths await the existing authenticated Rules save and open the scope/preview
+  dialog only after the server confirms success. A failed save retains the dirty
+  draft, displays the save error, and leaves the preview closed. Clean rules retain
+  the ordinary `Run rules` action.
+- `Save & run` does not scan or move mail by itself; it saves the draft and opens
+  the existing preview-first workflow.
+
+### Proof and release
+
+- TDD red was observed for the missing save-before-preview coordinator and dirty
+  action wiring. The focused Filters suite passes 8/8; the complete frontend suite
+  passes 223/223; lint, production build, whitespace, and the complete repository
+  integration gate pass.
+- Local Chromium proved both branches: a rejected save kept the dialog closed with
+  visible feedback, and a successful save opened it with the newly saved rule.
+- Commit `6ebda2c` passed guarded bridge and active deployments. Both stages passed
+  pre/post public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar gates with exact
+  canary cleanup. Rollbacks are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260828T201158Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260828T201928Z`.
+- The public app serves `index-BxuEfHIO.js` and `index-grPnN6KX.css`; the deployed
+  frontend tree exactly matches the tested build. Fresh public-asset Chromium
+  proved clean Run, dirty Save & run, exact POST content, dialog opening, 390 px
+  containment, zero horizontal overflow, and zero console errors/warnings using
+  fixture APIs. No real mailbox was read, no real rule was saved, and no rule was
+  applied by browser QA.
+- All seven services are active, both application units report `NRestarts=0`,
+  Nginx validates, local/public auth boundaries return `401`, and the public app
+  returns `200`.

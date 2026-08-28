@@ -1397,3 +1397,26 @@ Nginx, warning journals, auth boundaries, and exact backend/VERSION/frontend
 artifacts are clean. Public desktop/mobile Chromium loaded `index-BOTXZdEt.js`,
 paged a 43-match fixture through 1-20, 21-40, and 41-43 with no overflow or
 console errors/warnings, and accessed no real mailbox.
+
+## 2026-08-28 Rule Save-and-Run Handoff
+
+**Status: guarded-deployed in active mode and verified against the public
+frontend artifact.** A dirty Filters draft no longer disables existing-mail Run.
+The page action becomes `Save & run`, and per-rule Run remains available; both
+await the authenticated Rules save and open the existing scope/Preview dialog
+only after a successful response. Save failure keeps the draft dirty, exposes the
+error, and does not open Preview. A clean document still shows `Run rules`.
+
+This preserves the saved-document execution boundary: Save & run only persists
+the draft and opens the preview-first flow; it does not scan or move mail itself.
+The initial symptom was an intentional dirty lock after a real editor mutation,
+not a false dirty state on load.
+
+Commit `6ebda2c` passes focused Filters 8/8, complete frontend 223/223, lint,
+production build, whitespace, and complete integration. Guarded bridge and active
+releases passed public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar pre/post
+gates. Rollbacks are `protocol-guarded-webmail-20260828T201158Z` and
+`protocol-guarded-webmail-20260828T201928Z`. The live frontend exactly matches the
+tested tree and serves `index-BxuEfHIO.js`; fresh public-asset desktop/mobile
+Chromium proved clean Run, dirty Save & run, successful save-to-dialog ordering,
+zero 390 px overflow, and zero console errors/warnings with fixture APIs only.

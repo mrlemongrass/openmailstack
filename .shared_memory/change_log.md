@@ -2452,3 +2452,25 @@ Future entry template:
   no request to `296`; all observed metadata writes returned `207`. Live code
   matches the repository, services are healthy, and no human calendar/contact
   data was changed.
+
+## 2026-08-28 — Existing-mail Rule Match Review
+
+- Added preview-only, metadata-only message evidence for Rules: subject, sender,
+  date, source folder, matched saved rule, and precise planned outcome. Apply
+  rejects detail requests and existing Move/copy-ledger semantics are unchanged.
+- Captured the first 20 matches during the full preview and added lazy 20-item
+  Next/Previous review bound to the same rule revision, selected rules, read state,
+  and server-authored scope snapshot. Later mailbox drift asks for a new Preview.
+- Added a responsive desktop/mobile review list with visible range/page controls,
+  bounded labels, fixed actions, accessible summary announcements, and no message
+  bodies or unbounded all-at-once rendering.
+- Passed backend 880 total (873 pass, seven optional skips), frontend 222/222,
+  focused regressions, lint/build, generated runtime parity, whitespace, exact-tree
+  integration, and local/public desktop plus 390 px Chromium. The 43-match fixture
+  paged through all three ranges with zero overflow or console warnings and no real
+  mailbox access.
+- Commit `1a1d3977` passed guarded bridge and active public IMAPS plus ActiveSync
+  Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+  `protocol-guarded-webmail-20260828T192800Z` and
+  `protocol-guarded-webmail-20260828T193529Z`; live health, restarts, Nginx,
+  journals, auth boundaries, and exact backend/frontend artifacts are clean.

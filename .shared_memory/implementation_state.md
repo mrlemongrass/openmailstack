@@ -1367,3 +1367,33 @@ Validation:
   Public IMAPS/ActiveSync, staging, Socket.IO, readiness, artifact equality,
   restart count, and the warning journal pass. Rollback snapshot:
   `/var/backups/openmailstack/protocol-guarded-webmail-20260803T232855Z/`.
+
+## 2026-08-28 Existing-mail Rule Match Review
+
+**Status: guarded-deployed in active mode and verified against the public
+frontend artifact.** Existing-mail Rules Preview now shows an auditable,
+metadata-only list of matched messages: subject, sender, date, source folder when
+multiple folders are in scope, matched saved rule, and planned outcome. The first
+20 matches are captured during the original complete preview. Additional 20-item
+pages load only on demand and earlier pages remain cached for Previous navigation;
+the UI never renders the full result set at once.
+
+Review continuation carries the exact preview rule revision, canonical selection,
+read state, and server-authored ordered folder/UIDVALIDITY/UID-ceiling snapshot,
+then resumes after the last reviewed UID. Match details are preview-only, bounded
+to metadata and rule names, and rejected during Apply. If deletions or read-state
+changes make a later page inconsistent with the original total, review stops with
+explicit Preview-again guidance. Existing Apply and copy-ledger behavior is
+unchanged.
+
+Commit `1a1d3977` passes focused backend 21/21 and frontend 7/7, complete backend
+880 total (873 pass, seven optional skips), frontend 222/222, lint/build,
+generated runtime parity, whitespace, and the complete exact-tree integration
+gate. Guarded bridge and active releases passed public IMAPS plus ActiveSync
+Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+`protocol-guarded-webmail-20260828T192800Z` and
+`protocol-guarded-webmail-20260828T193529Z`. Active services, restart counts,
+Nginx, warning journals, auth boundaries, and exact backend/VERSION/frontend
+artifacts are clean. Public desktop/mobile Chromium loaded `index-BOTXZdEt.js`,
+paged a 43-match fixture through 1-20, 21-40, and 41-43 with no overflow or
+console errors/warnings, and accessed no real mailbox.

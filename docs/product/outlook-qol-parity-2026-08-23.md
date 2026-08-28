@@ -137,6 +137,24 @@ assets `index-DEtIDm_z.js` and `index-DaERTbNz.css`, repeated the three-folder
 Preview/Apply flow with no overflow or fresh console/page errors, and used
 mocked APIs so it did not read or mutate a real mailbox.
 
+A guarded-deployed 2026-08-28 follow-on makes Preview auditable at the message
+level. It shows subject, sender, date, source folder when relevant, matched saved
+rule, and the planned Move/delivery-only/no-Move outcome without exposing bodies.
+The first 20 results are captured during the original complete scan; later pages
+load in 20-item slices only when requested, remain bound to the exact revision and
+server-authored scope snapshot, and cache prior pages for Previous navigation.
+Deletion or read-state drift that makes a later range inconsistent requires a new
+Preview. Apply rejects the match-detail flag and retains the existing mutation and
+copy-ledger contract.
+
+Commit `1a1d3977` passes backend 880 total (873 pass, seven optional skips),
+frontend 222/222, lint/build, exact-tree integration, and desktop/mobile browser
+proof over all three pages of a 43-match fixture. Guarded bridge and active releases
+passed public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar pre/post gates;
+rollbacks are `protocol-guarded-webmail-20260828T192800Z` and
+`protocol-guarded-webmail-20260828T193529Z`. The public released artifacts are
+exact and the browser fixture used mocked APIs, so it did not access a real mailbox.
+
 This closes the folder/subfolder and All/Unread/Read portion of the P0 contract,
 but does **not** complete the full incoming-rule vocabulary. The existing-mail
 runner supports Move actions; Reject and Discard remain delivery-time-only.

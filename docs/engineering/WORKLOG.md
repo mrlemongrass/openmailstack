@@ -10631,3 +10631,79 @@ The protocol behavior that caused the alert is physically closed, but the owner
 has not yet explicitly confirmed that the already displayed macOS alert cleared.
 If it remains visible after Calendar refresh/relaunch, inspect fresh CalDAV
 traffic before removing/re-adding the account or touching calendar data.
+
+## 2026-08-28 — Existing-mail Rule Match Review
+
+### Selected task
+
+Make the existing-mail Rules preview auditable by showing which messages matched,
+without rendering an unbounded mailbox result or weakening Preview/Apply safety.
+
+### Goal and acceptance criteria
+
+- Show subject, sender, date, matched saved rule, and planned outcome before Apply.
+- Keep large result sets usable with 20-message pages rather than one long render.
+- Capture the first review page during the original full preview; fetch later pages
+  only when requested and bind them to the same rule revision and server-authored
+  mailbox scope snapshot.
+- Return metadata only, never message bodies, and reject match-detail requests in
+  Apply mode.
+- Detect message-count drift during later review and require a fresh Preview rather
+  than presenting inconsistent ranges.
+- Preserve existing Move execution, delivery-only action, UIDVALIDITY, UID ceiling,
+  selected-rule order, and copy-ledger behavior.
+- Remain accessible and overflow-free on desktop and 390 px mobile.
+
+### Changes made
+
+- Added preview-only `includeMatchDetails` results with source folder, UID, subject,
+  sender, date, bounded matched-rule names, valid planned destinations, and a
+  precise Move/already-there/missing-destination/delivery-only/no-Move outcome.
+  Apply rejects this flag before mailbox work.
+- Retained only the first 20 matched messages in the completed Preview summary.
+  `Next matches` lazily resumes after the last reviewed UID with the exact saved
+  rule selection, revision, read state, and server scope snapshot. Loaded pages are
+  cached for immediate Previous navigation.
+- Added a visible `Matched messages` review above Planned destinations, with range
+  and page indicators, bounded rule/destination labels, a scroll-contained list,
+  and stable footer actions. Pagination controls remain above the list so they are
+  discoverable on short mobile viewports.
+- Moved live status announcements to the three summary metrics so assistive
+  technology does not announce all 20 review rows at once. Apply and copy-recovery
+  actions are disabled while another review page is loading.
+- Later-page deletion/read-state drift, an unexpected excess, stalled progress, or
+  a changed revision/snapshot stops review with explicit `Preview again` guidance.
+
+### Proof and release
+
+- TDD red was observed for missing backend match evidence and frontend bounded
+  pagination before implementation. Focused backend route tests pass 21/21 and
+  focused frontend Filters tests pass 7/7.
+- Complete backend verification passes 880 total tests: 873 pass, seven documented
+  optional skips, zero failures. Complete frontend verification passes 222/222;
+  lint, both production builds, generated backend runtime parity, whitespace, and
+  the exact-tree repository integration gate pass.
+- Local Chromium and the released public assets were exercised at 1440x1000 and
+  390x844 with a 43-match fixture. Pages 1-20, 21-40, and 41-43 rendered correctly;
+  Previous used cached data, Next disabled on the final page, document/dialog/list
+  widths had zero overflow, and the console reported zero errors or warnings.
+  Browser QA mocked authenticated APIs and did not read or mutate a real mailbox.
+- Commit `1a1d3977` passed guarded bridge and active deployment. Both stages passed
+  pre/post public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar gates with exact
+  canary cleanup. Rollbacks are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260828T192800Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260828T193529Z`.
+- Backend, Scheduler worker, Dovecot, Postfix, Nginx, MariaDB, and Rspamd are active;
+  both application units report `NRestarts=0`; release-window warning journals are
+  empty; Nginx validates; local/public auth and protected rule-run probes return
+  `401`; the public route returns `200`; and repository/live backend, VERSION, and
+  full frontend artifacts are exact. Public Chromium loaded
+  `index-BOTXZdEt.js` and `index-grPnN6KX.css`.
+
+### Residual limits and next task
+
+The review proves which messages matched the saved rules at Preview time; it does
+not expose bodies or explain every condition-level comparison. Mail can be deleted
+or change read state before a later lazy page, so that inconsistency deliberately
+requires a new Preview. Existing-mail execution remains Move-only; broader action
+parity and its confirmation/result semantics remain the next bounded Rules task.

@@ -877,7 +877,9 @@ complete satisfied set. The browser selects every actionable Move by default,
 supports per-message changes plus Select all/Deselect all across unloaded pages,
 and derives the displayed selected count and destinations from that selection.
 Apply accepts only the compact `allExcept` or `only` selection bound to the
-Preview token, so unchecked messages cannot be moved.
+Preview token, then canonicalizes it to the smaller equivalent representation,
+so unchecked messages cannot be moved and a full 100,000-message run stays
+within the per-owner budget.
 
 The backend holds the Preview's matched/actionable membership for 30 minutes,
 bounded to 100,000 matches per token, 250,000 stored message references, 128

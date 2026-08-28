@@ -10792,6 +10792,10 @@ show the exact saved criteria responsible for each match before any move occurs.
   Completed Apply clears the stored manifest and selection. One owner therefore
   cannot exhaust either shared capacity pool with abandoned previews, and another
   account retains room for a full 100,000-match Preview.
+- Canonicalized every validated selection to the smaller equivalent `only` or
+  `allExcept` representation before storage accounting. The maximum 100,000-match
+  case therefore supports every selection while using at most 50,000 override
+  references; the actionable-membership check is linear rather than quadratic.
 - Claimed each selected Apply page before its scan or mutation. An identical
   concurrent retry waits for and replays the original page response; a different
   request fails closed. Selection is submitted only on the first page and then
@@ -10807,7 +10811,7 @@ show the exact saved criteria responsible for each match before any move occurs.
   evidence, result-wide bulk selection, one-time selection submission, frozen
   membership, oversized input rejection, exact concurrent retry replay, strict
   saved-rule loading, and per-owner token capacity.
-- Complete backend verification passes 904 total tests: 897 pass, seven documented
+- Complete backend verification passes 905 total tests: 898 pass, seven documented
   optional database skips, zero failures. Complete frontend verification passes
   226/226; frontend lint and both production builds pass.
 - Desktop Chromium with a 43-match fixture proved all selected by default,
@@ -10819,4 +10823,6 @@ show the exact saved criteria responsible for each match before any move occurs.
 - Exact-commit Specification review returned no findings. Standards review found
   and drove fixes for strict rule loading, retry idempotency, selection allocation
   bounds, terminal storage cleanup, claim timing, markerless Sieve handling, and
-  per-owner token/reference capacity; final re-review is required before release.
+  per-owner token/reference capacity. Their final boundary review also drove
+  smaller-complement canonicalization for a full 100,000-match selection; final
+  exact-candidate Specification and Standards re-reviews both returned no findings.

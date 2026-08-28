@@ -1435,15 +1435,18 @@ A random server-held Preview token freezes matched/actionable folder+UID members
 for 30 minutes. The client submits a compact `allExcept`/`only` selection once;
 later Apply pages resume by token. Each page is claimed before scan/mutation, so an
 identical concurrent retry waits for or replays one recorded HTTP result and a
-different request fails closed. Storage is bounded to 100,000 matches per token,
+different request fails closed. The server canonicalizes selection to the smaller
+equivalent representation, retaining every choice across a full 100,000 matches
+without exceeding 50,000 overrides. Storage is bounded to 100,000 matches per token,
 250,000 references, 128 tokens globally, and 32 per owner; terminal Apply clears
 membership and selection. A 150,000-reference per-owner ceiling leaves another
 account room for a full 100,000-match Preview. Markerless/malformed saved Sieve
 metadata fails closed, and Settings stays non-editable until saved rules load
 authoritatively.
 
-Candidate `08d4c8b` passes backend 904 total (897 pass, seven optional skips),
+Candidate through `77cd730` passes backend 905 total (898 pass, seven optional skips),
 frontend 226/226, lint/build, focused concurrency/capacity/loading checks, desktop
 and 390 px fixture Chromium, and Specification review with no findings. Browser QA
-changed no real mailbox. Final Standards re-review, exact-tree integration,
-guarded bridge/active release, and live artifact/health proof remain pending.
+changed no real mailbox. Final exact-candidate Specification and Standards
+re-reviews returned no findings. Exact-tree integration, guarded bridge/active
+release, and live artifact/health proof remain pending.

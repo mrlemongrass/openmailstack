@@ -2499,13 +2499,17 @@ Future entry template:
   bodies. `any` reports true criteria; `all` reports the complete satisfied set.
 - Froze matched/actionable membership behind a random 30-minute Preview token and
   bound compact `allExcept`/`only` selection to it. New arrivals cannot enter Apply.
+- Canonicalized validated selections to the smaller complement, preserving every
+  choice at the 100,000-message bound while storing at most 50,000 overrides; the
+  maximum-bound membership check is linear rather than quadratic.
 - Claimed selected Apply pages before scan/mutation and replay exact concurrent
   retries. Added 100,000-per-token, 250,000-global-reference, 128-token-global,
   32-token-per-owner, and 150,000-reference-per-owner bounds, with terminal
   membership/selection cleanup and capacity for another full Preview.
 - Made markerless or malformed saved Sieve metadata fail closed and blocked the
   editable Settings surface until saved Rules load authoritatively.
-- Candidate `08d4c8b` passes backend 897 plus seven optional skips, frontend
+- Candidate through `77cd730` passes backend 898 plus seven optional skips, frontend
   226/226, lint/build, focused regressions, desktop/mobile fixture Chromium, and
-  Specification review. No real mailbox was read or changed during browser QA;
-  final Standards, integration, guarded release, and live proof remain pending.
+  final Specification/Standards re-reviews with no findings. No real mailbox was
+  read or changed during browser QA; integration, guarded release, and live proof
+  remain pending.

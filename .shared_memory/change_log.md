@@ -2489,3 +2489,23 @@ Future entry template:
   `protocol-guarded-webmail-20260828T201928Z`.
 - Live artifact `index-BxuEfHIO.js` passed public-asset desktop/mobile fixture QA
   with exact save content, dialog ordering, zero overflow, and a clean console.
+
+## 2026-08-28 — Selective and Explainable Existing-mail Rule Apply
+
+- Added default-selected per-message Move checkboxes plus Select all/Deselect all
+  across lazy 20-row pages. Selected counts, destinations, and Apply availability
+  update immediately, and Apply excludes every unchecked message.
+- Added expandable saved-rule and exact decisive-criterion evidence without message
+  bodies. `any` reports true criteria; `all` reports the complete satisfied set.
+- Froze matched/actionable membership behind a random 30-minute Preview token and
+  bound compact `allExcept`/`only` selection to it. New arrivals cannot enter Apply.
+- Claimed selected Apply pages before scan/mutation and replay exact concurrent
+  retries. Added 100,000-per-token, 250,000-global-reference, 128-token-global,
+  32-token-per-owner, and 150,000-reference-per-owner bounds, with terminal
+  membership/selection cleanup and capacity for another full Preview.
+- Made markerless or malformed saved Sieve metadata fail closed and blocked the
+  editable Settings surface until saved Rules load authoritatively.
+- Candidate `08d4c8b` passes backend 897 plus seven optional skips, frontend
+  226/226, lint/build, focused regressions, desktop/mobile fixture Chromium, and
+  Specification review. No real mailbox was read or changed during browser QA;
+  final Standards, integration, guarded release, and live proof remain pending.

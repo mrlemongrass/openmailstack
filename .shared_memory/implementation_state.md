@@ -1420,3 +1420,30 @@ gates. Rollbacks are `protocol-guarded-webmail-20260828T201158Z` and
 tested tree and serves `index-BxuEfHIO.js`; fresh public-asset desktop/mobile
 Chromium proved clean Run, dirty Save & run, successful save-to-dialog ordering,
 zero 390 px overflow, and zero console errors/warnings with fixture APIs only.
+
+## 2026-08-28 Selective and Explainable Rule Apply
+
+**Status: candidate verified; guarded release pending.** Existing-mail Rules
+Preview now selects every actionable Move by default and exposes per-message
+checkboxes plus Select all/Deselect all across unloaded 20-row pages. Counts and
+planned destinations follow the current selection, zero selection disables Apply,
+and only selected messages may be moved. Expandable evidence names each matched
+saved rule and its exact decisive criteria; `any` exposes true criteria and `all`
+the complete satisfied set. No bodies or unbounded result list enter the browser.
+
+A random server-held Preview token freezes matched/actionable folder+UID membership
+for 30 minutes. The client submits a compact `allExcept`/`only` selection once;
+later Apply pages resume by token. Each page is claimed before scan/mutation, so an
+identical concurrent retry waits for or replays one recorded HTTP result and a
+different request fails closed. Storage is bounded to 100,000 matches per token,
+250,000 references, 128 tokens globally, and 32 per owner; terminal Apply clears
+membership and selection. A 150,000-reference per-owner ceiling leaves another
+account room for a full 100,000-match Preview. Markerless/malformed saved Sieve
+metadata fails closed, and Settings stays non-editable until saved rules load
+authoritatively.
+
+Candidate `08d4c8b` passes backend 904 total (897 pass, seven optional skips),
+frontend 226/226, lint/build, focused concurrency/capacity/loading checks, desktop
+and 390 px fixture Chromium, and Specification review with no findings. Browser QA
+changed no real mailbox. Final Standards re-review, exact-tree integration,
+guarded bridge/active release, and live artifact/health proof remain pending.

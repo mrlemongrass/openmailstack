@@ -10753,3 +10753,70 @@ control, while preserving the requirement that Preview evaluates saved rules.
 - All seven services are active, both application units report `NRestarts=0`,
   Nginx validates, local/public auth boundaries return `401`, and the public app
   returns `200`.
+
+## 2026-08-28 — Selective and Explainable Existing-mail Rule Apply
+
+### Selected task
+
+Let the owner exclude false-positive messages from an existing-mail rule run and
+show the exact saved criteria responsible for each match before any move occurs.
+
+### Goal and acceptance criteria
+
+- Select every actionable matched message by default, with one checkbox per row.
+- Make Select all and Deselect all operate across the complete result, including
+  pages that have not been loaded into the browser.
+- Apply only the selected messages and keep counts/destinations synchronized with
+  the current selection; zero selected messages must disable Apply.
+- Explain which rule and exact criteria matched without rendering all messages or
+  message bodies at once.
+- Freeze Preview membership so new arrivals cannot enter Apply, and make exact
+  concurrent Apply retries unable to duplicate mailbox mutations.
+
+### Changes made
+
+- Added a selectable 20-row review with all actionable moves checked initially,
+  per-row checkboxes, and result-wide Select all/Deselect all controls. Selection
+  survives Next/Previous navigation and uses a compact `allExcept`/`only` model,
+  so large runs do not require every selected UID in browser state.
+- Added expandable `Why it matched` evidence for each matched saved rule. `any`
+  rules report each true criterion; `all` rules report the complete satisfied
+  set, using the same normalized executable criterion semantics as Sieve/manual
+  evaluation.
+- Added a server-held, random Preview token that freezes matched and actionable
+  membership for 30 minutes. Apply accepts only a selection bound to that token;
+  later pages filter through the frozen manifest and newly matching mail cannot
+  enter the run.
+- Bounded storage to 100,000 matches per Preview, 250,000 message references,
+  128 tokens globally, 32 tokens per owner, and 150,000 references per owner.
+  Completed Apply clears the stored manifest and selection. One owner therefore
+  cannot exhaust either shared capacity pool with abandoned previews, and another
+  account retains room for a full 100,000-match Preview.
+- Claimed each selected Apply page before its scan or mutation. An identical
+  concurrent retry waits for and replays the original page response; a different
+  request fails closed. Selection is submitted only on the first page and then
+  resumed by token.
+- Saved-rule loading now distinguishes a genuinely absent active script from a
+  malformed or markerless script. Settings remains blocked behind Retry until an
+  authoritative saved document loads, preventing an empty fallback from
+  overwriting existing server rules.
+
+### Proof before release
+
+- TDD red/green covered selection defaults and sparse changes, exact criterion
+  evidence, result-wide bulk selection, one-time selection submission, frozen
+  membership, oversized input rejection, exact concurrent retry replay, strict
+  saved-rule loading, and per-owner token capacity.
+- Complete backend verification passes 904 total tests: 897 pass, seven documented
+  optional database skips, zero failures. Complete frontend verification passes
+  226/226; frontend lint and both production builds pass.
+- Desktop Chromium with a 43-match fixture proved all selected by default,
+  unchecked UIDs persisted across pages, Select all/Deselect all covered unloaded
+  pages, zero selection disabled Apply, the exact criterion expanded, and Apply
+  sent `allExcept` once before token-only continuation. A 390 px viewport had no
+  overflow and both runs had zero console errors. Fixture QA did not read or
+  mutate a real mailbox.
+- Exact-commit Specification review returned no findings. Standards review found
+  and drove fixes for strict rule loading, retry idempotency, selection allocation
+  bounds, terminal storage cleanup, claim timing, markerless Sieve handling, and
+  per-owner token/reference capacity; final re-review is required before release.

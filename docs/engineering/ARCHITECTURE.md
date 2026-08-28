@@ -870,6 +870,27 @@ Large-message Body conditions use three-valued evaluation:
 known header matches can still decide `any` rules, while only genuinely
 undecidable rules are reported as skipped.
 
+Verified 2026-08-28: the completed Preview exposes matched messages as bounded
+20-row metadata pages. Every row carries the decisive saved rule and exact
+criterion evidence; `any` reports only true criteria, while `all` reports the
+complete satisfied set. The browser selects every actionable Move by default,
+supports per-message changes plus Select all/Deselect all across unloaded pages,
+and derives the displayed selected count and destinations from that selection.
+Apply accepts only the compact `allExcept` or `only` selection bound to the
+Preview token, so unchecked messages cannot be moved.
+
+The backend holds the Preview's matched/actionable membership for 30 minutes,
+bounded to 100,000 matches per token, 250,000 stored message references, 128
+tokens globally, 32 tokens per authenticated owner, and 150,000 stored references
+per owner so another account retains room for a full Preview. Later review pages scan
+the frozen mailbox scope and may return only members of that manifest; a new
+arrival cannot enter the run. Selected Apply claims each page before scanning or
+mutation, and an exact concurrent transport retry waits for or replays the same
+recorded HTTP result. Membership and selection storage are cleared when Apply is
+terminal. Missing active Sieve scripts remain an empty-rules state, but malformed
+or markerless scripts fail closed; Settings does not expose an editable surface
+until the saved rules document loads authoritatively.
+
 #### Calendar features to verify
 
 - Month view

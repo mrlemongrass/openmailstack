@@ -1556,6 +1556,7 @@ type RuleRunScopeSnapshot = {
 };
 
 const MAX_RULE_RUN_SCOPE_FOLDERS = 500;
+const MAX_RULE_RUN_MATCH_RULE_NAMES = 20;
 
 function resolveRuleRunScope(
     folders: any[],
@@ -1619,6 +1620,7 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
     const pass = req.user.password;
     const folder = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';
     const mode = req.body?.mode === 'apply' ? 'apply' : req.body?.mode === 'preview' ? 'preview' : '';
+    const includeMatchDetails = req.body?.includeMatchDetails === true;
     const includeSubfolders = req.body?.includeSubfolders === true;
     const readState: RuleRunReadState = req.body?.readState === 'unread'
         ? 'unread'
@@ -1659,6 +1661,11 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
         !folder
         || folder.length > 512
         || !mode
+        || (
+            req.body?.includeMatchDetails !== undefined
+            && typeof req.body.includeMatchDetails !== 'boolean'
+        )
+        || (includeMatchDetails && mode !== 'preview')
         || (req.body?.includeSubfolders !== undefined && typeof req.body.includeSubfolders !== 'boolean')
         || (
             req.body?.readState !== undefined
@@ -1872,6 +1879,10 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
             ...entry.rule,
             id: entry.selectionId,
         }));
+        const selectedRuleNames = new Map(selectedRuleEntries.map(entry => ([
+            entry.selectionId,
+            String(entry.rule.name || `Rule ${entry.index + 1}`),
+        ])));
         const includesBodyRules = rules.some(rule => (
             executableRuleCriteria(rule).some(criterion => criterion.field === 'body')
         ));
@@ -1893,6 +1904,17 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
         const ruleMatchCounts = new Map<string, number>();
         const destinationCounts = new Map<string, number>();
         const invalidDestinations = new Set<string>();
+        const matchDetails: Array<{
+            folder: string;
+            uid: number;
+            subject: string;
+            from: string;
+            date: string;
+            rules: Array<{ id: string; name: string }>;
+            additionalRuleCount: number;
+            destinations: string[];
+            outcome: 'move' | 'already-in-destination' | 'delivery-only' | 'missing-destination' | 'no-existing-mail-action';
+        }> = [];
         let matchedMessages = 0;
         let deliveryOnlyMatches = 0;
         let bodySkippedMessages = 0;
@@ -1903,10 +1925,12 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
                 parsed = await require('mailparser').simpleParser(message.source);
             }
 
+            const subject = String(parsed?.subject || message.envelope?.subject || '');
+            const from = String(parsed?.from?.text || envelopeAddressText(message.envelope?.from));
             const evaluation = evaluateRulesForMessage(rules, {
                 uid: message.uid,
-                subject: String(parsed?.subject || message.envelope?.subject || ''),
-                from: String(parsed?.from?.text || envelopeAddressText(message.envelope?.from)),
+                subject,
+                from,
                 to: String(parsed?.to?.text || envelopeAddressText(message.envelope?.to)),
                 body: String(parsed?.text || ''),
                 ...(!message.sourceComplete ? { unavailableFields: ['body'] } : {}),
@@ -1925,6 +1949,40 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
                 invalidDestinations.add(destination);
                 return false;
             });
+            if (includeMatchDetails && evaluation.matchedRuleIds.length > 0) {
+                const rawDate = message.envelope?.date;
+                const parsedDate = rawDate ? new Date(rawDate) : null;
+                const missingDestination = evaluation.moveFolders.some(destination => (
+                    destination !== currentScope.folder && !folderPaths.has(destination)
+                ));
+                const alreadyInDestination = evaluation.moveFolders.includes(currentScope.folder);
+                const matchedRules = evaluation.matchedRuleIds.map(id => ({
+                    id,
+                    name: selectedRuleNames.get(id) || id,
+                }));
+                const outcome = moveFolders.length > 0
+                    ? 'move'
+                    : missingDestination
+                        ? 'missing-destination'
+                        : alreadyInDestination
+                            ? 'already-in-destination'
+                            : evaluation.deliveryOnlyActions.length > 0
+                                ? 'delivery-only'
+                                : 'no-existing-mail-action';
+                matchDetails.push({
+                    folder: currentScope.folder,
+                    uid: message.uid,
+                    subject,
+                    from,
+                    date: parsedDate && !Number.isNaN(parsedDate.getTime())
+                        ? parsedDate.toISOString()
+                        : '',
+                    rules: matchedRules.slice(0, MAX_RULE_RUN_MATCH_RULE_NAMES),
+                    additionalRuleCount: Math.max(0, matchedRules.length - MAX_RULE_RUN_MATCH_RULE_NAMES),
+                    destinations: moveFolders,
+                    outcome,
+                });
+            }
             if (moveFolders.length === 0) continue;
 
             plans.push({ uid: message.uid, moveFolders });
@@ -2001,6 +2059,7 @@ apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
                 folder: destination,
                 count,
             })),
+            matchDetails: matchDetails.sort((left, right) => left.uid - right.uid),
             ruleRevision,
             cursor: nextCursor,
             maxUid: currentScope.maxUid,

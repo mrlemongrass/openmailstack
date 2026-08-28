@@ -27,6 +27,7 @@ export interface RuleRunRequest {
   folder: string;
   mode: 'preview' | 'apply';
   cursor: number;
+  includeMatchDetails?: boolean;
   includeSubfolders?: boolean;
   readState?: RuleRunReadState;
   scopeIndex?: number;
@@ -50,6 +51,30 @@ export interface RuleMatchCount {
   count: number;
 }
 
+export type RuleRunMatchOutcome =
+  | 'move'
+  | 'already-in-destination'
+  | 'delivery-only'
+  | 'missing-destination'
+  | 'no-existing-mail-action';
+
+export interface RuleRunMatchDetail {
+  folder: string;
+  uid: number;
+  subject: string;
+  from: string;
+  date: string;
+  rules: Array<{ id: string; name: string }>;
+  additionalRuleCount?: number;
+  destinations: string[];
+  outcome: RuleRunMatchOutcome;
+}
+
+export interface RuleRunMatchCursor {
+  scopeIndex: number;
+  cursor: number;
+}
+
 export interface RuleRunPageResponse {
   success: boolean;
   error?: string;
@@ -71,6 +96,7 @@ export interface RuleRunPageResponse {
   invalidDestinations: string[];
   ruleMatches: RuleMatchCount[];
   destinations: RuleRunCount[];
+  matchDetails?: RuleRunMatchDetail[];
   ruleRevision: string;
   cursor: number;
   maxUid: number;

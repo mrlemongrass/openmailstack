@@ -218,6 +218,114 @@ test('scoped rule runs carry the server folder snapshot and read state across fo
   assert.deepEqual(summary.scopeSnapshot, scopeSnapshot);
 });
 
+test('rule-run preview keeps twenty match details and loads later pages from the stable snapshot', async () => {
+  const scopeSnapshot = [{ folder: 'INBOX.ADs', maxUid: 500, uidValidity: '9200' }];
+  const matchDetail = uid => ({
+    folder: 'INBOX.ADs',
+    uid,
+    subject: `Receipt ${uid}`,
+    from: `Store ${uid} <receipts-${uid}@example.test>`,
+    date: `2026-08-${String(Math.min(uid, 28)).padStart(2, '0')}T12:00:00.000Z`,
+    rules: [{ id: 'receipts', name: 'Receipts' }],
+    destinations: ['INBOX.Receipts'],
+    outcome: 'move',
+  });
+  const pages = [
+    {
+      success: true,
+      mode: 'preview',
+      folder: 'INBOX.ADs',
+      sourceFolder: 'INBOX.ADs',
+      scopeSnapshot,
+      scopeIndex: 0,
+      processed: 200,
+      matchedMessages: 23,
+      affectedMessages: 23,
+      appliedMessages: 0,
+      copiedMessages: 0,
+      movedMessages: 0,
+      deliveryOnlyMatches: 0,
+      bodySkippedMessages: 0,
+      invalidDestinations: [],
+      ruleMatches: [{ id: 'receipts', name: 'Receipts', count: 23 }],
+      destinations: [{ folder: 'INBOX.Receipts', count: 23 }],
+      matchDetails: Array.from({ length: 23 }, (_value, index) => matchDetail(index + 1)),
+      ruleRevision: 'receipts-v1',
+      cursor: 500,
+      maxUid: 500,
+      uidValidity: '9200',
+      done: true,
+    },
+    {
+      success: true,
+      mode: 'preview',
+      folder: 'INBOX.ADs',
+      sourceFolder: 'INBOX.ADs',
+      scopeSnapshot,
+      scopeIndex: 0,
+      processed: 180,
+      matchedMessages: 3,
+      affectedMessages: 3,
+      appliedMessages: 0,
+      copiedMessages: 0,
+      movedMessages: 0,
+      deliveryOnlyMatches: 0,
+      bodySkippedMessages: 0,
+      invalidDestinations: [],
+      ruleMatches: [{ id: 'receipts', name: 'Receipts', count: 3 }],
+      destinations: [{ folder: 'INBOX.Receipts', count: 3 }],
+      matchDetails: [matchDetail(21), matchDetail(22), matchDetail(23)],
+      ruleRevision: 'receipts-v1',
+      cursor: 500,
+      maxUid: 500,
+      uidValidity: '9200',
+      done: true,
+    },
+  ];
+  const requests = [];
+  const {
+    loadRuleMatchDetailsPage,
+    runRulesThroughFolder,
+  } = loadTypeScriptModule('../src/settings/rule-run.ts', {
+    '../shared/api': {
+      runRulesPage: async request => {
+        requests.push(request);
+        return pages.shift();
+      },
+    },
+  });
+
+  const summary = await runRulesThroughFolder({
+    folder: 'INBOX.ADs',
+    mode: 'preview',
+    ruleIds: ['receipts'],
+    captureMatchDetails: true,
+  });
+
+  assert.equal(summary.matchDetails.length, 20);
+  assert.deepEqual(summary.matchDetailsCursor, { scopeIndex: 0, cursor: 20 });
+  assert.equal(requests[0].includeMatchDetails, true);
+
+  const nextPage = await loadRuleMatchDetailsPage({
+    preview: summary,
+    ruleIds: ['receipts'],
+    cursor: summary.matchDetailsCursor,
+  });
+
+  assert.deepEqual(nextPage.matchDetails.map(message => message.uid), [21, 22, 23]);
+  assert.equal(nextPage.nextCursor, null);
+  assert.deepEqual(requests[1], {
+    folder: 'INBOX.ADs',
+    mode: 'preview',
+    cursor: 20,
+    scopeIndex: 0,
+    scopeSnapshot,
+    ruleIds: ['receipts'],
+    ruleRevision: 'receipts-v1',
+    includeMatchDetails: true,
+  });
+});
+
 test('rule-run selection keeps saved order and supports legacy identities', () => {
   const {
     getRunnableRuleIds,
@@ -378,6 +486,14 @@ test('filters expose ordered priority, stop processing, and preview-first folder
   assert.match(dialogSource, /Clear all/);
   assert.match(dialogSource, /ruleIds: selectedRuleIds/);
   assert.match(dialogSource, /Preview matches/);
+  assert.match(dialogSource, /Matched messages/);
+  assert.match(dialogSource, /Review sender, subject, matched rule, and planned outcome/);
+  assert.match(dialogSource, /Previous matches/);
+  assert.match(dialogSource, /Next matches/);
+  assert.match(dialogSource, /nextLoadedCount > preview\.matchedMessages/);
+  assert.match(dialogSource, /Matched messages changed after this preview/);
+  assert.match(dialogSource, /className="rule-run-metrics" role="status" aria-live="polite"/);
+  assert.doesNotMatch(dialogSource, /className="rule-run-summary" aria-live=/);
   assert.match(dialogSource, /Apply rules/);
   assert.match(dialogSource, /disabled=\{phase === 'applying'\}/);
   assert.match(dialogSource, /Stop preview/);
@@ -396,6 +512,7 @@ test('filters expose ordered priority, stop processing, and preview-first folder
   assert.match(duplicateDialogSource, /No duplicate conditions or actions found/);
   assert.match(indexCss, /\.filter-rule-priority-controls/);
   assert.match(indexCss, /\.rule-duplicate-review/);
+  assert.match(indexCss, /\.rule-run-match-list/);
   assert.match(
     indexCss,
     /\.rule-run-footnote\.warning\s*\{\s*color:\s*var\(--feedback-warning-text\)/,

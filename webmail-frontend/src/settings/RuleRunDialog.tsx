@@ -1,11 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Play, X } from 'lucide-react';
-import type { MailFolder, Rule, RuleRunReadState } from '../shared/types';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Play,
+  X,
+} from 'lucide-react';
+import type {
+  MailFolder,
+  Rule,
+  RuleRunMatchCursor,
+  RuleRunMatchDetail,
+  RuleRunReadState,
+} from '../shared/types';
 import { useModalFocus } from '../shared/hooks/useModalFocus';
 import {
   getRunnableRuleIds,
   getRuleRunSelectors,
+  loadRuleMatchDetailsPage,
   normalizeRuleRunSelection,
+  RULE_RUN_MATCH_PAGE_SIZE,
   runRulesThroughFolder,
   type RuleRunSummary,
 } from './rule-run';
@@ -18,6 +33,38 @@ const READ_STATE_LABELS: Record<RuleRunReadState, string> = {
   unread: 'Unread messages',
   read: 'Read messages',
 };
+
+const MATCH_DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+function formatMatchDate(value: string): string {
+  if (!value) return 'Date unavailable';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Date unavailable' : MATCH_DATE_FORMATTER.format(date);
+}
+
+function matchOutcomeLabel(match: RuleRunMatchDetail): string {
+  if (match.destinations.length > 0) {
+    const visibleDestinations = match.destinations.slice(0, 2);
+    const remaining = match.destinations.length - visibleDestinations.length;
+    return `Would move to ${visibleDestinations.join(', ')}${remaining > 0 ? ` +${remaining} more` : ''}`;
+  }
+  if (match.outcome === 'already-in-destination') return 'Already in the planned folder';
+  if (match.outcome === 'delivery-only') return 'Delivery-only action; existing mail stays put';
+  if (match.outcome === 'missing-destination') return 'Destination missing; message would not move';
+  return 'Matched, with no existing-mail Move action';
+}
+
+function matchedRuleLabel(match: RuleRunMatchDetail): string {
+  const visibleRules = match.rules.slice(0, 3).map(rule => rule.name);
+  const remaining = Math.max(
+    0,
+    match.rules.length - visibleRules.length + (match.additionalRuleCount || 0),
+  );
+  return `${visibleRules.join(', ')}${remaining > 0 ? ` +${remaining} more` : ''}`;
+}
 
 export function RuleRunDialog({
   folders,
@@ -32,6 +79,7 @@ export function RuleRunDialog({
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  const matchControllerRef = useRef<AbortController | null>(null);
   const latestProgressRef = useRef<RuleRunSummary | null>(null);
   const selectableFolders = folders.filter(folder => folder.disabled !== true);
   const inbox = selectableFolders.find(folder => folder.path.toUpperCase() === 'INBOX');
@@ -51,6 +99,11 @@ export function RuleRunDialog({
   const [stopped, setStopped] = useState(false);
   const [needsCopyResolution, setNeedsCopyResolution] = useState(false);
   const [pendingCopies, setPendingCopies] = useState<PendingCopy[]>([]);
+  const [matchPages, setMatchPages] = useState<RuleRunMatchDetail[][]>([]);
+  const [matchPageIndex, setMatchPageIndex] = useState(0);
+  const [matchNextCursor, setMatchNextCursor] = useState<RuleRunMatchCursor | null>(null);
+  const [matchPageLoading, setMatchPageLoading] = useState(false);
+  const [matchPageError, setMatchPageError] = useState('');
   const busy = phase === 'previewing' || phase === 'applying';
   const selectedFolder = selectableFolders.find(item => item.path === folder);
   const childPrefix = selectedFolder?.delimiter ? `${folder}${selectedFolder.delimiter}` : '';
@@ -72,7 +125,10 @@ export function RuleRunDialog({
 
   useModalFocus({ dialogRef, open: true, onClose: requestClose });
 
-  useEffect(() => () => controllerRef.current?.abort(), []);
+  useEffect(() => () => {
+    controllerRef.current?.abort();
+    matchControllerRef.current?.abort();
+  }, []);
 
   const run = async (
     mode: 'preview' | 'apply',
@@ -88,6 +144,13 @@ export function RuleRunDialog({
     setError('');
     setStopped(false);
     setProgress(null);
+    if (mode === 'preview') {
+      matchControllerRef.current?.abort();
+      setMatchPages([]);
+      setMatchPageIndex(0);
+      setMatchNextCursor(null);
+      setMatchPageError('');
+    }
     setPhase(mode === 'preview' ? 'previewing' : 'applying');
 
     try {
@@ -99,6 +162,7 @@ export function RuleRunDialog({
           : includeSubfolders,
         readState: mode === 'apply' && preview ? preview.readState : readState,
         ruleIds: selectedRuleIds,
+        captureMatchDetails: mode === 'preview',
         ...(mode === 'apply' && preview
           ? {
               maxUid: preview.maxUid,
@@ -121,6 +185,9 @@ export function RuleRunDialog({
         setNeedsCopyResolution(false);
         setPendingCopies([]);
         setPreview(summary);
+        setMatchPages(summary.matchDetails.length > 0 ? [summary.matchDetails] : []);
+        setMatchPageIndex(0);
+        setMatchNextCursor(summary.matchDetailsCursor);
         setPhase('preview');
       } else {
         setResult(summary);
@@ -166,6 +233,56 @@ export function RuleRunDialog({
     }
   };
 
+  const showNextMatchPage = async () => {
+    if (matchPageIndex + 1 < matchPages.length) {
+      setMatchPageIndex(index => index + 1);
+      return;
+    }
+    if (!preview || !matchNextCursor || matchPageLoading || matchControllerRef.current) return;
+
+    const controller = new AbortController();
+    matchControllerRef.current = controller;
+    setMatchPageLoading(true);
+    setMatchPageError('');
+    try {
+      const nextPage = await loadRuleMatchDetailsPage({
+        preview,
+        ruleIds: selectedRuleIds,
+        cursor: matchNextCursor,
+        signal: controller.signal,
+      });
+      const loadedCount = matchPages.reduce((total, page) => total + page.length, 0);
+      const nextLoadedCount = loadedCount + nextPage.matchDetails.length;
+      if (nextLoadedCount > preview.matchedMessages) {
+        setMatchNextCursor(null);
+        setMatchPageError('Matched messages changed after this preview. Preview again to refresh the review list.');
+        return;
+      }
+      if (nextPage.matchDetails.length === 0 && loadedCount < preview.matchedMessages) {
+        setMatchNextCursor(null);
+        setMatchPageError('Matched messages changed after this preview. Preview again to refresh the review list.');
+        return;
+      }
+      setMatchPages(pages => [...pages, nextPage.matchDetails]);
+      setMatchPageIndex(index => index + 1);
+      setMatchNextCursor(nextPage.nextCursor);
+      if (!nextPage.nextCursor && nextLoadedCount < preview.matchedMessages) {
+        setMatchPageError('Matched messages changed after this preview. Preview again to refresh the review list.');
+      }
+    } catch (loadError) {
+      if (!(loadError instanceof Error && loadError.name === 'AbortError')) {
+        setMatchPageError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'Could not load more matched messages.',
+        );
+      }
+    } finally {
+      if (matchControllerRef.current === controller) matchControllerRef.current = null;
+      setMatchPageLoading(false);
+    }
+  };
+
   const previewDestinationActions = preview?.destinations.reduce((total, item) => total + item.count, 0) || 0;
   const createsCopies = Boolean(preview && previewDestinationActions > preview.affectedMessages);
   const pendingDestinations = pendingCopies.reduce<Map<string, number>>((counts, copy) => {
@@ -176,6 +293,15 @@ export function RuleRunDialog({
   const previewScopeCount = preview?.scopeSnapshot.length || 1;
   const resultReadLabel = READ_STATE_LABELS[result?.readState || 'all'];
   const resultScopeCount = result?.scopeSnapshot.length || 1;
+  const currentMatchPage = matchPages[matchPageIndex] || [];
+  const matchPageStart = matchPages
+    .slice(0, matchPageIndex)
+    .reduce((total, page) => total + page.length, 0);
+  const loadedMatchCount = matchPages.reduce((total, page) => total + page.length, 0);
+  const hasNextMatchPage = (
+    matchPageIndex + 1 < matchPages.length
+    || Boolean(matchNextCursor && preview && loadedMatchCount < preview.matchedMessages)
+  );
 
   return (
     <div className="modal-overlay rule-run-overlay">
@@ -354,7 +480,7 @@ export function RuleRunDialog({
           )}
 
           {phase === 'preview' && preview && (
-            <div className="rule-run-summary" aria-live="polite">
+            <div className="rule-run-summary">
               <div className="rule-run-scope-summary">
                 <strong>{previewReadLabel} in {preview.folder}</strong>
                 <span>
@@ -375,11 +501,78 @@ export function RuleRunDialog({
                   ))}
                 </ol>
               </div>
-              <div className="rule-run-metrics">
+              <div className="rule-run-metrics" role="status" aria-live="polite">
                 <div><strong>{preview.processed}</strong><span>Scanned</span></div>
                 <div><strong>{preview.matchedMessages}</strong><span>Matched</span></div>
                 <div><strong>{preview.affectedMessages}</strong><span>Would move</span></div>
               </div>
+              {preview.matchedMessages > 0 && (
+                <section className="rule-run-match-review" aria-labelledby="rule-run-matches-title">
+                  <div className="rule-run-match-header">
+                    <div>
+                      <h3 id="rule-run-matches-title">Matched messages</h3>
+                      <p>Review sender, subject, matched rule, and planned outcome before applying.</p>
+                    </div>
+                    {currentMatchPage.length > 0 && (
+                      <strong aria-live="polite">
+                        {matchPageStart + 1}–{matchPageStart + currentMatchPage.length} of {preview.matchedMessages}
+                      </strong>
+                    )}
+                  </div>
+                  {(preview.matchedMessages > RULE_RUN_MATCH_PAGE_SIZE || matchPageError) && (
+                    <div className="rule-run-match-pagination">
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        disabled={matchPageIndex === 0 || matchPageLoading}
+                        onClick={() => setMatchPageIndex(index => Math.max(0, index - 1))}
+                      >
+                        <ChevronLeft size={16} /> Previous matches
+                      </button>
+                      <span>
+                        Page {matchPageIndex + 1} of {Math.ceil(preview.matchedMessages / RULE_RUN_MATCH_PAGE_SIZE)}
+                      </span>
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        disabled={!hasNextMatchPage || matchPageLoading}
+                        onClick={() => void showNextMatchPage()}
+                      >
+                        {matchPageLoading ? 'Loading…' : 'Next matches'} <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  )}
+                  <ol className="rule-run-match-list" start={matchPageStart + 1}>
+                    {currentMatchPage.map(match => (
+                      <li key={`${match.folder}:${match.uid}`}>
+                        <div className="rule-run-match-message">
+                          <strong title={match.subject || 'No subject'}>
+                            {match.subject || '(No subject)'}
+                          </strong>
+                          <span title={match.from || 'Unknown sender'}>
+                            {match.from || 'Unknown sender'}
+                          </span>
+                          <small>
+                            {preview.scopeSnapshot.length > 1 && <>{match.folder}<span aria-hidden="true"> · </span></>}
+                            <time dateTime={match.date || undefined}>{formatMatchDate(match.date)}</time>
+                          </small>
+                        </div>
+                        <div className="rule-run-match-reason">
+                          <span>
+                            Matched by <strong>{matchedRuleLabel(match)}</strong>
+                          </span>
+                          <span className={`rule-run-match-outcome ${match.outcome}`}>
+                            {matchOutcomeLabel(match)}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                  {matchPageError && (
+                    <p className="rule-run-footnote warning" role="alert">{matchPageError}</p>
+                  )}
+                </section>
+              )}
               {preview.destinations.length > 0 ? (
                 <div className="rule-run-destinations">
                   <h3>Planned destinations</h3>
@@ -470,20 +663,35 @@ export function RuleRunDialog({
                 className="btn btn-ghost"
                 type="button"
                 onClick={() => {
+                  matchControllerRef.current?.abort();
                   setNeedsCopyResolution(false);
                   setPendingCopies([]);
+                  setMatchPages([]);
+                  setMatchPageIndex(0);
+                  setMatchNextCursor(null);
+                  setMatchPageError('');
                   setError('');
                   setPhase('choose');
                 }}
               >
-                  Change scope or rules
+                Change scope or rules
               </button>
               {needsCopyResolution ? (
                 <>
-                  <button className="btn btn-ghost" type="button" onClick={() => void run('apply', 'retry')}>
+                  <button
+                    className="btn btn-ghost"
+                    type="button"
+                    disabled={matchPageLoading}
+                    onClick={() => void run('apply', 'retry')}
+                  >
                     Copies are missing
                   </button>
-                  <button className="btn btn-primary" type="button" onClick={() => void run('apply', 'completed')}>
+                  <button
+                    className="btn btn-primary"
+                    type="button"
+                    disabled={matchPageLoading}
+                    onClick={() => void run('apply', 'completed')}
+                  >
                     Copies are present
                   </button>
                 </>
@@ -491,7 +699,7 @@ export function RuleRunDialog({
                 <button
                   className="btn btn-primary"
                   type="button"
-                  disabled={!preview?.affectedMessages}
+                  disabled={!preview?.affectedMessages || matchPageLoading}
                   onClick={() => void run('apply')}
                 >
                   Apply rules

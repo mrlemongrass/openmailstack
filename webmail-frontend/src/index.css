@@ -2309,8 +2309,8 @@ body {
 }
 
 .rule-run-dialog {
-  width: min(620px, 100%);
-  max-height: min(760px, calc(100dvh - 40px));
+  width: min(760px, 100%);
+  max-height: min(820px, calc(100dvh - 40px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2732,6 +2732,161 @@ body {
   font-size: var(--font-size-2xs);
 }
 
+.rule-run-match-review {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.rule-run-match-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.rule-run-match-header h3,
+.rule-run-match-header p {
+  margin: 0;
+}
+
+.rule-run-match-header h3 {
+  font-size: 0.92rem;
+}
+
+.rule-run-match-header p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  line-height: 1.45;
+}
+
+.rule-run-match-header > strong {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.rule-run-match-list {
+  max-height: min(390px, 48dvh);
+  margin: 0;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.rule-run-match-list li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(190px, 0.85fr);
+  align-items: center;
+  gap: 18px;
+  padding: 11px 12px;
+}
+
+.rule-run-match-list li + li {
+  border-top: 1px solid var(--border-glass);
+}
+
+.rule-run-match-message,
+.rule-run-match-reason {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.rule-run-match-message > strong,
+.rule-run-match-message > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-run-match-message > strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.rule-run-match-message > span,
+.rule-run-match-reason > span:first-child {
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+}
+
+.rule-run-match-reason > span:first-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-run-match-message small {
+  overflow-wrap: anywhere;
+  color: var(--text-tertiary);
+  font-size: 0.69rem;
+}
+
+.rule-run-match-reason {
+  justify-items: start;
+}
+
+.rule-run-match-reason > span:first-child strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.rule-run-match-outcome {
+  max-width: 100%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  color: color-mix(in srgb, var(--accent-primary) 65%, var(--text-primary));
+  padding: 4px 8px;
+  overflow: hidden;
+  font-size: 0.69rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-run-match-outcome.delivery-only,
+.rule-run-match-outcome.missing-destination,
+.rule-run-match-outcome.no-existing-mail-action {
+  background: rgba(251, 191, 36, 0.1);
+  color: var(--feedback-warning-text);
+}
+
+.rule-run-match-outcome.already-in-destination {
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+}
+
+.rule-run-match-pagination {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.rule-run-match-pagination .btn {
+  min-width: 0;
+  justify-content: center;
+}
+
+.rule-run-match-pagination .btn:last-child {
+  justify-self: end;
+}
+
+.rule-run-match-pagination > span {
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .rule-run-destinations {
   display: grid;
   gap: 7px;
@@ -3057,6 +3212,33 @@ body {
 
   .rule-run-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .rule-run-match-header {
+    align-items: flex-start;
+  }
+
+  .rule-run-match-list {
+    max-height: min(340px, 40dvh);
+  }
+
+  .rule-run-match-list li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .rule-run-match-pagination {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .rule-run-match-pagination > span {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .rule-run-match-pagination .btn:last-child {
+    justify-self: stretch;
   }
 
   .rule-duplicate-summary {

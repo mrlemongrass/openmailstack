@@ -3,10 +3,14 @@ import type {
   Rule,
   RuleMatchCount,
   RuleRunCount,
+  RuleRunMatchCursor,
+  RuleRunMatchDetail,
   RuleRunPageResponse,
   RuleRunReadState,
   RuleRunScopeSnapshot,
 } from '../shared/types';
+
+export const RULE_RUN_MATCH_PAGE_SIZE = 20;
 
 type RuleIdentitySource = Pick<Rule, 'id' | 'name' | 'enabled'> & {
   id?: string;
@@ -56,6 +60,8 @@ export interface RuleRunSummary {
   invalidDestinations: string[];
   ruleMatches: RuleMatchCount[];
   destinations: RuleRunCount[];
+  matchDetails: RuleRunMatchDetail[];
+  matchDetailsCursor: RuleRunMatchCursor | null;
   maxUid: number;
   uidValidity: string;
   ruleRevision: string;
@@ -73,6 +79,7 @@ interface RunRulesOptions {
   ruleRevision?: string;
   copyResolution?: 'completed' | 'retry';
   copyActionKeys?: string[];
+  captureMatchDetails?: boolean;
   signal?: AbortSignal;
   onProgress?: (summary: RuleRunSummary) => void;
 }
@@ -89,6 +96,7 @@ export async function runRulesThroughFolder({
   ruleRevision,
   copyResolution,
   copyActionKeys,
+  captureMatchDetails = false,
   signal,
   onProgress,
 }: RunRulesOptions): Promise<RuleRunSummary> {
@@ -119,6 +127,8 @@ export async function runRulesThroughFolder({
     invalidDestinations: [],
     ruleMatches: [],
     destinations: [],
+    matchDetails: [],
+    matchDetailsCursor: null,
     maxUid: snapshotMaxUid || 0,
     uidValidity: snapshotUidValidity || '',
     ruleRevision: snapshotRuleRevision || '',
@@ -126,10 +136,17 @@ export async function runRulesThroughFolder({
 
   for (let pageNumber = 0; pageNumber < 10000; pageNumber += 1) {
     const usesScopeSnapshot = Boolean(snapshotFolders?.length);
+    const requestScopeIndex = scopeIndex;
+    const includeMatchDetails = (
+      mode === 'preview'
+      && captureMatchDetails
+      && summary.matchDetails.length < RULE_RUN_MATCH_PAGE_SIZE
+    );
     const request = {
       folder,
       mode,
       cursor,
+      ...(includeMatchDetails ? { includeMatchDetails: true } : {}),
       ...(includeSubfolders ? { includeSubfolders: true } : {}),
       ...(readState === 'all' ? {} : { readState }),
       ...(usesScopeSnapshot ? { scopeIndex, scopeSnapshot: snapshotFolders } : {}),
@@ -179,6 +196,21 @@ export async function runRulesThroughFolder({
     summary.uidValidity = page.uidValidity;
     summary.ruleRevision = page.ruleRevision;
 
+    if (includeMatchDetails) {
+      if (!Array.isArray(page.matchDetails)) {
+        throw new Error('The server cannot review matched messages yet. Refresh after the server update completes.');
+      }
+      const remaining = RULE_RUN_MATCH_PAGE_SIZE - summary.matchDetails.length;
+      const accepted = page.matchDetails.slice(0, remaining);
+      summary.matchDetails.push(...accepted);
+      if (accepted.length === remaining) {
+        const lastMatch = accepted.at(-1);
+        summary.matchDetailsCursor = lastMatch
+          ? { scopeIndex: requestScopeIndex, cursor: lastMatch.uid }
+          : null;
+      }
+    }
+
     page.invalidDestinations.forEach(destination => invalidDestinations.add(destination));
     page.ruleMatches.forEach(rule => {
       const current = ruleMatches.get(rule.id);
@@ -201,7 +233,12 @@ export async function runRulesThroughFolder({
     summary.destinations = [...destinations.values()];
     onProgress?.({ ...summary });
 
-    if (page.done) return summary;
+    if (page.done) {
+      if (summary.matchedMessages <= summary.matchDetails.length) {
+        summary.matchDetailsCursor = null;
+      }
+      return summary;
+    }
     const nextScopeIndex = Number.isInteger(page.scopeIndex) ? Number(page.scopeIndex) : scopeIndex;
     if (nextScopeIndex === scopeIndex && page.cursor <= cursor) {
       throw new Error('Rule run stopped because mailbox progress stalled.');
@@ -211,4 +248,75 @@ export async function runRulesThroughFolder({
   }
 
   throw new Error('Rule run exceeded its safe page limit.');
+}
+
+export async function loadRuleMatchDetailsPage({
+  preview,
+  ruleIds,
+  cursor: initialCursor,
+  signal,
+}: {
+  preview: RuleRunSummary;
+  ruleIds?: string[];
+  cursor: RuleRunMatchCursor;
+  signal?: AbortSignal;
+}): Promise<{
+  matchDetails: RuleRunMatchDetail[];
+  nextCursor: RuleRunMatchCursor | null;
+}> {
+  let scopeIndex = initialCursor.scopeIndex;
+  let cursor = initialCursor.cursor;
+  const matchDetails: RuleRunMatchDetail[] = [];
+
+  for (let pageNumber = 0; pageNumber < 10000; pageNumber += 1) {
+    const requestScopeIndex = scopeIndex;
+    const page = await runRulesPage({
+      folder: preview.folder,
+      mode: 'preview',
+      cursor,
+      scopeIndex,
+      scopeSnapshot: preview.scopeSnapshot,
+      ...(preview.includeSubfolders ? { includeSubfolders: true } : {}),
+      ...(preview.readState === 'all' ? {} : { readState: preview.readState }),
+      ...(ruleIds === undefined ? {} : { ruleIds }),
+      ruleRevision: preview.ruleRevision,
+      includeMatchDetails: true,
+    }, signal);
+
+    if (
+      page.ruleRevision !== preview.ruleRevision
+      || JSON.stringify(page.scopeSnapshot) !== JSON.stringify(preview.scopeSnapshot)
+    ) {
+      throw new Error('Rules or message scope changed since preview. Preview again before applying.');
+    }
+    if (!Array.isArray(page.matchDetails)) {
+      throw new Error('The server cannot review matched messages yet. Refresh after the server update completes.');
+    }
+
+    const remaining = RULE_RUN_MATCH_PAGE_SIZE - matchDetails.length;
+    const accepted = page.matchDetails.slice(0, remaining);
+    matchDetails.push(...accepted);
+    if (accepted.length === remaining) {
+      const lastMatch = accepted.at(-1);
+      const consumedWholeResponse = accepted.length === page.matchDetails.length;
+      return {
+        matchDetails,
+        nextCursor: page.done && consumedWholeResponse
+          ? null
+          : lastMatch
+            ? { scopeIndex: requestScopeIndex, cursor: lastMatch.uid }
+            : null,
+      };
+    }
+    if (page.done) return { matchDetails, nextCursor: null };
+
+    const nextScopeIndex = Number.isInteger(page.scopeIndex) ? Number(page.scopeIndex) : scopeIndex;
+    if (nextScopeIndex === scopeIndex && page.cursor <= cursor) {
+      throw new Error('Matched-message review stopped because mailbox progress stalled.');
+    }
+    scopeIndex = nextScopeIndex;
+    cursor = page.cursor;
+  }
+
+  throw new Error('Matched-message review exceeded its safe page limit.');
 }

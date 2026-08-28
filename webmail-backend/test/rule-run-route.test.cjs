@@ -175,6 +175,7 @@ const fakeImap = {
             subject: 'Your statement is available',
             from: [{ name: 'Chase', address: 'noreply@chase.com' }],
             to: [{ address: user }],
+            date: new Date('2026-08-01T16:30:00.000Z'),
           },
           size: 500,
           sourceComplete: true,
@@ -407,6 +408,46 @@ test('rule-run preview evaluates only the selected saved rules', async t => {
   assert.deepEqual(response.json.ruleMatches, [{ id: 'ads', name: 'Ads', count: 1 }]);
   assert.equal(response.json.deliveryOnlyMatches, 0);
   assert.equal(response.json.bodySkippedMessages, 0);
+});
+
+test('rule-run preview returns auditable matched-message details when requested', async t => {
+  const port = await startServer(t);
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['ads'],
+    includeMatchDetails: true,
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.json.matchDetails, [{
+    folder: 'INBOX',
+    uid: 101,
+    subject: 'Your statement is available',
+    from: 'Chase <noreply@chase.com>',
+    date: '2026-08-01T16:30:00.000Z',
+    rules: [{ id: 'ads', name: 'Ads' }],
+    additionalRuleCount: 0,
+    destinations: ['Ads'],
+    outcome: 'move',
+  }]);
+});
+
+test('rule-run rejects match-detail requests during Apply', async t => {
+  const port = await startServer(t);
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'apply',
+    cursor: 0,
+    maxUid: 105,
+    uidValidity: '9001',
+    ruleRevision: 'not-a-real-preview',
+    includeMatchDetails: true,
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(response.json.error, /invalid rule-run request/i);
 });
 
 test('rule-run pages through selectable subfolders with one unread scope snapshot', async t => {

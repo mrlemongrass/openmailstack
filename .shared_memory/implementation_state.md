@@ -1423,7 +1423,7 @@ zero 390 px overflow, and zero console errors/warnings with fixture APIs only.
 
 ## 2026-08-28 Selective and Explainable Rule Apply
 
-**Status: candidate verified; guarded release pending.** Existing-mail Rules
+**Status: guarded-deployed in active mode and live-verified.** Existing-mail Rules
 Preview now selects every actionable Move by default and exposes per-message
 checkboxes plus Select all/Deselect all across unloaded 20-row pages. Counts and
 planned destinations follow the current selection, zero selection disables Apply,
@@ -1448,5 +1448,13 @@ Candidate through `77cd730` passes backend 905 total (898 pass, seven optional s
 frontend 226/226, lint/build, focused concurrency/capacity/loading checks, desktop
 and 390 px fixture Chromium, and Specification review with no findings. Browser QA
 changed no real mailbox. Final exact-candidate Specification and Standards
-re-reviews returned no findings. Exact-tree integration, guarded bridge/active
-release, and live artifact/health proof remain pending.
+re-reviews returned no findings. Exact-tree integration ended with the repository
+success marker. Release commit `8c93e78` passed guarded bridge and active public
+IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar gates with exact canary cleanup;
+rollbacks are `protocol-guarded-webmail-20260828T233328Z` and
+`protocol-guarded-webmail-20260828T234056Z`. Complete staging smoke, active services,
+zero application restarts, Nginx, app journals, auth boundaries, and exact backend,
+frontend, and VERSION artifacts are clean. The public app serves
+`index-CjSZYTru.js` and `index-B_oziJgF.css`; public Chromium rendered the branded
+sign-in form with only its expected unauthenticated auth `401`. No real user mail
+or saved rule was changed.

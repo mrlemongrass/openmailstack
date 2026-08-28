@@ -2511,5 +2511,11 @@ Future entry template:
 - Candidate through `77cd730` passes backend 898 plus seven optional skips, frontend
   226/226, lint/build, focused regressions, desktop/mobile fixture Chromium, and
   final Specification/Standards re-reviews with no findings. No real mailbox was
-  read or changed during browser QA; integration, guarded release, and live proof
-  remain pending.
+  read or changed during browser QA.
+- Release commit `8c93e78` passed exact-tree integration, guarded bridge and active
+  public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar pre/post gates, and the
+  complete live staging smoke. Rollbacks are
+  `protocol-guarded-webmail-20260828T233328Z` and
+  `protocol-guarded-webmail-20260828T234056Z`. Services/restarts, Nginx, application
+  journals, auth boundaries, and exact backend/frontend/VERSION artifacts are clean;
+  public assets are `index-CjSZYTru.js` and `index-B_oziJgF.css`.

@@ -10810,7 +10810,8 @@ show the exact saved criteria responsible for each match before any move occurs.
 - TDD red/green covered selection defaults and sparse changes, exact criterion
   evidence, result-wide bulk selection, one-time selection submission, frozen
   membership, oversized input rejection, exact concurrent retry replay, strict
-  saved-rule loading, and per-owner token capacity.
+  saved-rule loading, per-owner token/reference capacity, and the maximum
+  100,000-match selection boundary.
 - Complete backend verification passes 905 total tests: 898 pass, seven documented
   optional database skips, zero failures. Complete frontend verification passes
   226/226; frontend lint and both production builds pass.
@@ -10826,3 +10827,26 @@ show the exact saved criteria responsible for each match before any move occurs.
   per-owner token/reference capacity. Their final boundary review also drove
   smaller-complement canonicalization for a full 100,000-match selection; final
   exact-candidate Specification and Standards re-reviews both returned no findings.
+
+### Release and live proof
+
+- The exact release tree completed the repository integration gate with 226/226
+  frontend regressions and final output `[ok] Integration checks completed.`
+- Commit `8c93e78` passed guarded compatibility-bridge and active deployments.
+  Both stages passed pre/post public IMAPS plus ActiveSync Mail/Ping/Contacts/
+  Calendar gates with exact canary cleanup. Rollbacks are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260828T233328Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260828T234056Z`.
+- The complete live staging smoke passed all required services, listeners,
+  TLS/STARTTLS, configuration, Rspamd, web/auth, DKIM, and Scheduler-worker checks.
+  `openmailstack.service` and `openmailstack-scheduler-worker.service` are active
+  with `NRestarts=0`; application warning journals are empty and Nginx validates.
+- Local/public `/api/auth/me` and public protected `/api/rules/run` return `401`;
+  the public app returns `200` and serves `index-CjSZYTru.js` plus
+  `index-B_oziJgF.css`. Repository/live backend content, frontend tree, and
+  `VERSION` are exact. Fresh public Chromium rendered the branded sign-in form;
+  its only console entry was the expected unauthenticated `/api/auth/me` `401`.
+- Pre-existing Postfix TLS-parameter deprecation, Rspamd timeout tuning, and
+  unrelated inbound-client reverse-DNS warnings remain non-blocking advisories.
+  Browser QA used fixture APIs, and no real user mailbox or saved rule was changed;
+  guarded protocol canary data was removed by each successful gate.

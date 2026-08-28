@@ -42,6 +42,17 @@ export function normalizeRuleRunSelection(
   return getRunnableRuleIds(rules).filter(id => requested.has(id));
 }
 
+export async function prepareRuleRun({
+  rulesDirty,
+  saveRules,
+}: {
+  rulesDirty: boolean;
+  saveRules: () => Promise<boolean>;
+}): Promise<boolean> {
+  if (!rulesDirty) return true;
+  return saveRules();
+}
+
 export interface RuleRunSummary {
   folder: string;
   sourceFolder: string;

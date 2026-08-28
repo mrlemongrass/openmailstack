@@ -360,6 +360,40 @@ test('rule-run selection keeps saved order and supports legacy identities', () =
   );
 });
 
+test('dirty rule runs wait for a successful save before opening the preview', async () => {
+  const { prepareRuleRun } = loadTypeScriptModule('../src/settings/rule-run.ts', {
+    '../shared/api': { runRulesPage: async () => { throw new Error('not called'); } },
+  });
+  const events = [];
+
+  assert.equal(await prepareRuleRun({
+    rulesDirty: false,
+    saveRules: async () => {
+      events.push('save-clean');
+      return true;
+    },
+  }), true);
+  assert.deepEqual(events, []);
+
+  assert.equal(await prepareRuleRun({
+    rulesDirty: true,
+    saveRules: async () => {
+      events.push('save-dirty');
+      return true;
+    },
+  }), true);
+  assert.deepEqual(events, ['save-dirty']);
+
+  assert.equal(await prepareRuleRun({
+    rulesDirty: true,
+    saveRules: async () => {
+      events.push('save-failed');
+      return false;
+    },
+  }), false);
+  assert.deepEqual(events, ['save-dirty', 'save-failed']);
+});
+
 test('duplicate cleanup removes only later exact copies and preserves the original draft', () => {
   const {
     applyRuleDuplicateCleanup,
@@ -459,7 +493,10 @@ test('filters expose ordered priority, stop processing, and preview-first folder
   assert.match(panelSource, /checked=\{rule\.stopProcessing !== false\}/);
   assert.match(panelSource, /Stop processing more rules/);
   assert.match(panelSource, /setActiveRuleId\(onAddRule\(\)\)/);
-  assert.match(panelSource, /Save your rule changes before running them on existing mail/);
+  assert.match(panelSource, /You have unsaved rule changes/);
+  assert.match(panelSource, /Save &amp; run/);
+  assert.match(panelSource, /rulesDirty \? 'Save & run' : 'Run rules'/);
+  assert.match(panelSource, /void handleOpenRunDialog\(enabledRuleIds\)/);
   assert.match(panelSource, /aria-label=\{`Run \$\{rule\.name \|\| 'Untitled Rule'\} now`\}/);
   assert.match(panelSource, /<RuleRunDialog[\s\S]*rules=\{rules\}/);
   assert.match(panelSource, /Review duplicates/);

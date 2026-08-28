@@ -228,6 +228,7 @@ function SettingsLoader() {
 
   const handleSaveRules = useCallback(async () => {
     setSaving(true);
+    setSettingsSyncError('');
     try {
       const response = await fetch('/api/rules', {
         method: 'POST',
@@ -241,9 +242,11 @@ function SettingsLoader() {
       setRulesDirty(false);
       setSettingsSaveState('saved');
       setTimeout(() => setSettingsSaveState('idle'), 2000);
+      return true;
     } catch (err: unknown) {
       setSettingsSyncError(errorMessage(err, 'Failed to save rules'));
       setSettingsSaveState('error');
+      return false;
     } finally {
       setSaving(false);
     }

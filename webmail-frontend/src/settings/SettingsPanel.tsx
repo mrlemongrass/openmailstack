@@ -11,7 +11,7 @@ import { useToast } from '../shared/components/Toast';
 import { supportedTimeZones } from '../calendar/calendarTime';
 import { AccountSecurityControls } from './AccountSecurityControls';
 import { RuleRunDialog } from './RuleRunDialog';
-import { getRunnableRuleIds, getRuleRunSelectors } from './rule-run';
+import { getRunnableRuleIds, getRuleRunSelectors, prepareRuleRun } from './rule-run';
 import { RuleDuplicateReviewDialog } from './RuleDuplicateReviewDialog';
 import { applyRuleDuplicateCleanup, getExactRuleDuplicateIndexes } from './rule-duplicates';
 import type { RuleAnalysisRemoval } from '../shared/types';
@@ -112,7 +112,7 @@ interface SettingsContentProps {
   onMoveRule: (id: string, direction: 'up' | 'down') => void;
   onReplaceRules: (rules: Rule[], dirty?: boolean) => void;
   rulesDirty: boolean;
-  onSaveRules: () => void;
+  onSaveRules: () => Promise<boolean>;
   onAddSignature: () => void;
   onUpdateSignatures: (signatures: Signature[]) => void;
   onMailSettingsChange: (settings: MailUserSettings) => void;
@@ -656,6 +656,10 @@ function FiltersPane({
     onDeleteRule(id);
     setActiveRuleId(null);
   };
+  const handleOpenRunDialog = async (ruleIds: string[]) => {
+    const ready = await prepareRuleRun({ rulesDirty, saveRules: onSaveRules });
+    if (ready) setRunDialogRuleIds(ruleIds);
+  };
   const handleApplyDuplicateCleanup = (removals: RuleAnalysisRemoval[]) => {
     const result = applyRuleDuplicateCleanup(rules, removals);
     setDuplicateReviewOpen(false);
@@ -683,11 +687,11 @@ function FiltersPane({
             <button
               className="btn btn-ghost"
               type="button"
-              onClick={() => setRunDialogRuleIds(enabledRuleIds)}
-              disabled={enabledRuleIds.length === 0 || rulesDirty}
-              title={rulesDirty ? 'Save rule changes before running them' : 'Run saved rules on existing mail'}
+              onClick={() => void handleOpenRunDialog(enabledRuleIds)}
+              disabled={enabledRuleIds.length === 0 || saving}
+              title={rulesDirty ? 'Save rule changes, then preview them on existing mail' : 'Run saved rules on existing mail'}
             >
-              <Play size={17} /> Run rules
+              <Play size={17} /> {rulesDirty ? 'Save & run' : 'Run rules'}
             </button>
             <button className="btn btn-ghost" type="button" onClick={handleAddRule}><Plus size={18} /> Add Rule</button>
             <button className="btn btn-primary" type="button" onClick={onSaveRules} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
@@ -696,7 +700,7 @@ function FiltersPane({
       />
       {rulesDirty && (
         <p className="filter-rule-save-note" role="status">
-          Save your rule changes before running them on existing mail.
+          You have unsaved rule changes. Save them now, or choose Save &amp; run to save them before opening the preview.
         </p>
       )}
       {cleanupUndo && rulesDirty && (
@@ -767,13 +771,13 @@ function FiltersPane({
                   aria-label={`Run ${rule.name || 'Untitled Rule'} now`}
                   title={
                     rulesDirty
-                      ? 'Save rule changes before running them'
+                      ? `Save rule changes, then run ${rule.name || 'Untitled Rule'}`
                       : rule.enabled === false
                         ? 'Enable this rule before running it'
                         : `Run ${rule.name || 'Untitled Rule'} now`
                   }
-                  disabled={rulesDirty || rule.enabled === false}
-                  onClick={() => setRunDialogRuleIds([runIdentity])}
+                  disabled={saving || rule.enabled === false}
+                  onClick={() => void handleOpenRunDialog([runIdentity])}
                 >
                   <Play size={15} />
                 </button>

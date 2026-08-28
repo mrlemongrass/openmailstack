@@ -164,6 +164,28 @@ test('one owner cannot exhaust stored-message capacity reserved for another acco
   ], []), true);
 });
 
+test('maximum preview selections canonicalize to the smaller representation', () => {
+  const store = new RuleRunPreviewSelectionStore({ createToken: () => 'max-token' });
+  const messages = Array.from({ length: 100000 }, (_value, index) => ({
+    folder: 'INBOX',
+    uid: index + 1,
+  }));
+  const token = store.create('owner', 'revision');
+  assert.equal(store.append(token, 'owner', 'revision', messages, messages), true);
+  assert.equal(store.markPreviewComplete(token, 'owner', 'revision'), true);
+  assert.equal(store.beginApply(
+    token,
+    'owner',
+    'revision',
+    'allExcept',
+    messages.slice(0, 50001),
+  ), true);
+  assert.equal(store.entries.get(token).selection.mode, 'only');
+  assert.equal(store.entries.get(token).selection.messageCount, 49999);
+  assert.equal(store.isSelected(token, 'owner', 'revision', 'INBOX', 1), false);
+  assert.equal(store.isSelected(token, 'owner', 'revision', 'INBOX', 100000), true);
+});
+
 test('selection storage supports a sparse arbitrary subset beyond ten thousand messages', () => {
   const store = new RuleRunPreviewSelectionStore({
     createToken: () => 'large-token',

@@ -165,6 +165,28 @@ const sameMessages = (
     return true;
 };
 
+const invertMessages = (
+    source: Map<string, Set<number>>,
+    excluded: Map<string, Set<number>>,
+): { messagesByFolder: Map<string, Set<number>>; messageCount: number } => {
+    const messagesByFolder = new Map<string, Set<number>>();
+    let messageCount = 0;
+    for (const [folder, sourceUids] of source) {
+        const excludedUids = excluded.get(folder);
+        for (const uid of sourceUids) {
+            if (excludedUids?.has(uid)) continue;
+            let folderUids = messagesByFolder.get(folder);
+            if (!folderUids) {
+                folderUids = new Set<number>();
+                messagesByFolder.set(folder, folderUids);
+            }
+            folderUids.add(uid);
+            messageCount += 1;
+        }
+    }
+    return { messagesByFolder, messageCount };
+};
+
 export class RuleRunPreviewSelectionStore {
     private readonly entries = new Map<string, PreviewEntry>();
     private readonly ttlMs: number;
@@ -287,16 +309,19 @@ export class RuleRunPreviewSelectionStore {
     ): boolean {
         const entry = this.getEntry(token, owner, binding);
         if (!entry || entry.complete || entry.selection) return false;
+        const batchMatchedByFolder = new Map<string, Set<number>>();
+        addMessages(batchMatchedByFolder, matchedMessages);
         if (actionableMessages.some(message => (
-            !matchedMessages.some(candidate => (
-                candidate.folder === message.folder && candidate.uid === message.uid
-            ))
+            !hasMessage(batchMatchedByFolder, message.folder, message.uid)
             && !hasMessage(entry.matchedByFolder, message.folder, message.uid)
         ))) return false;
 
-        const additions = matchedMessages.filter(message => (
-            !hasMessage(entry.matchedByFolder, message.folder, message.uid)
-        ));
+        const additions: RuleRunPreviewMessageRef[] = [];
+        for (const [folder, uids] of batchMatchedByFolder) {
+            for (const uid of uids) {
+                if (!hasMessage(entry.matchedByFolder, folder, uid)) additions.push({ folder, uid });
+            }
+        }
         if (entry.matchedCount + additions.length > this.maxMessagesPerEntry) return false;
         while (
             this.storedMessageCount(owner) + additions.length > this.maxStoredMessagesPerOwner
@@ -345,11 +370,21 @@ export class RuleRunPreviewSelectionStore {
         if (messages.some(message => !hasMessage(entry.actionableByFolder, message.folder, message.uid))) {
             return false;
         }
-        const messagesByFolder = new Map<string, Set<number>>();
-        const messageCount = addMessages(messagesByFolder, messages);
+        let normalizedMode = mode;
+        let messagesByFolder = new Map<string, Set<number>>();
+        let messageCount = addMessages(messagesByFolder, messages);
         if (messageCount !== messages.length || messageCount > this.maxMessagesPerEntry) return false;
+        let actionableCount = 0;
+        for (const uids of entry.actionableByFolder.values()) actionableCount += uids.size;
+        if (messageCount > actionableCount - messageCount) {
+            normalizedMode = mode === 'only' ? 'allExcept' : 'only';
+            ({ messagesByFolder, messageCount } = invertMessages(
+                entry.actionableByFolder,
+                messagesByFolder,
+            ));
+        }
         if (entry.selection) {
-            return entry.selection.mode === mode
+            return entry.selection.mode === normalizedMode
                 && entry.selection.messageCount === messageCount
                 && sameMessages(entry.selection.messagesByFolder, messagesByFolder);
         }
@@ -365,7 +400,7 @@ export class RuleRunPreviewSelectionStore {
             && this.evictOldest(token)
         ) {}
         if (this.storedMessageCount() + messageCount > this.maxStoredMessages) return false;
-        entry.selection = { mode, messagesByFolder, messageCount };
+        entry.selection = { mode: normalizedMode, messagesByFolder, messageCount };
         return true;
     }
 

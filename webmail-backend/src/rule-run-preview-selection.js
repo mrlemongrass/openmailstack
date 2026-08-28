@@ -89,6 +89,25 @@ const sameMessages = (left, right) => {
     }
     return true;
 };
+const invertMessages = (source, excluded) => {
+    const messagesByFolder = new Map();
+    let messageCount = 0;
+    for (const [folder, sourceUids] of source) {
+        const excludedUids = excluded.get(folder);
+        for (const uid of sourceUids) {
+            if (excludedUids?.has(uid))
+                continue;
+            let folderUids = messagesByFolder.get(folder);
+            if (!folderUids) {
+                folderUids = new Set();
+                messagesByFolder.set(folder, folderUids);
+            }
+            folderUids.add(uid);
+            messageCount += 1;
+        }
+    }
+    return { messagesByFolder, messageCount };
+};
 class RuleRunPreviewSelectionStore {
     entries = new Map();
     ttlMs;
@@ -200,10 +219,18 @@ class RuleRunPreviewSelectionStore {
         const entry = this.getEntry(token, owner, binding);
         if (!entry || entry.complete || entry.selection)
             return false;
-        if (actionableMessages.some(message => (!matchedMessages.some(candidate => (candidate.folder === message.folder && candidate.uid === message.uid))
+        const batchMatchedByFolder = new Map();
+        addMessages(batchMatchedByFolder, matchedMessages);
+        if (actionableMessages.some(message => (!hasMessage(batchMatchedByFolder, message.folder, message.uid)
             && !hasMessage(entry.matchedByFolder, message.folder, message.uid))))
             return false;
-        const additions = matchedMessages.filter(message => (!hasMessage(entry.matchedByFolder, message.folder, message.uid)));
+        const additions = [];
+        for (const [folder, uids] of batchMatchedByFolder) {
+            for (const uid of uids) {
+                if (!hasMessage(entry.matchedByFolder, folder, uid))
+                    additions.push({ folder, uid });
+            }
+        }
         if (entry.matchedCount + additions.length > this.maxMessagesPerEntry)
             return false;
         while (this.storedMessageCount(owner) + additions.length > this.maxStoredMessagesPerOwner
@@ -241,12 +268,20 @@ class RuleRunPreviewSelectionStore {
         if (messages.some(message => !hasMessage(entry.actionableByFolder, message.folder, message.uid))) {
             return false;
         }
-        const messagesByFolder = new Map();
-        const messageCount = addMessages(messagesByFolder, messages);
+        let normalizedMode = mode;
+        let messagesByFolder = new Map();
+        let messageCount = addMessages(messagesByFolder, messages);
         if (messageCount !== messages.length || messageCount > this.maxMessagesPerEntry)
             return false;
+        let actionableCount = 0;
+        for (const uids of entry.actionableByFolder.values())
+            actionableCount += uids.size;
+        if (messageCount > actionableCount - messageCount) {
+            normalizedMode = mode === 'only' ? 'allExcept' : 'only';
+            ({ messagesByFolder, messageCount } = invertMessages(entry.actionableByFolder, messagesByFolder));
+        }
         if (entry.selection) {
-            return entry.selection.mode === mode
+            return entry.selection.mode === normalizedMode
                 && entry.selection.messageCount === messageCount
                 && sameMessages(entry.selection.messagesByFolder, messagesByFolder);
         }
@@ -259,7 +294,7 @@ class RuleRunPreviewSelectionStore {
             && this.evictOldest(token)) { }
         if (this.storedMessageCount() + messageCount > this.maxStoredMessages)
             return false;
-        entry.selection = { mode, messagesByFolder, messageCount };
+        entry.selection = { mode: normalizedMode, messagesByFolder, messageCount };
         return true;
     }
     createApplySelector(token, owner, binding) {

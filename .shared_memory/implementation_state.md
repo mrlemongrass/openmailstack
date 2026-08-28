@@ -1284,6 +1284,27 @@ React frontend:
   gates, live service/restart/journal/auth checks, artifact equality, and the
   released public sign-in shell passed.
 
+## 2026-08-28 CalDAV managed Birthdays boundary
+
+- The reserved contact-derived calendar identified by `dav_slug=birthdays` is
+  an OMS Web projection and is not exposed through CalDAV. Calendar-home
+  discovery filters it, and direct cached collection/event hrefs return `404`
+  across read, sync, metadata, write, and delete methods.
+- Do not delete or rename the managed row to solve an Apple Calendar permission
+  alert. Ordinary calendars, including one merely displayed as Birthdays under
+  a non-reserved slug, remain discoverable and writable according to their
+  existing owner/share/subscription policy.
+- Physical macOS 26.6.2 evidence showed the pre-fix loop as home `PROPFIND`
+  followed by two `403` `PROPPATCH` requests to collection `296`. After the
+  guarded release, the same Mac rediscovered the smaller home set and touched
+  only collections `1`, `186`, and `187`, all with `207`; it made no request to
+  `296`.
+- Candidate proof: focused CalDAV/Birthdays 37/37, backend 871 pass plus seven
+  optional skips, frontend 221/221 through complete integration, guarded
+  bridge/active protocol gates, exact live artifact equality, and healthy
+  services. Rollbacks are `protocol-guarded-webmail-20260828T171555Z` and
+  `protocol-guarded-webmail-20260828T172344Z`.
+
 Validation:
 
 - `docs/webmail-release-validation.md` defines local gates, clean-VM checks, and the mail/calendar/contacts/mobile/security client matrix for modern webmail releases.

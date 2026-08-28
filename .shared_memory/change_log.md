@@ -2428,3 +2428,27 @@ Future entry template:
   `protocol-guarded-webmail-20260826T221607Z`; active services, zero application
   restarts, Nginx, journals, auth boundaries, exact artifacts, and the public
   sign-in shell are clean.
+
+## 2026-08-28 — Hide Managed Birthdays From CalDAV
+
+- Reproduced the owner's macOS Calendar permission alert from live traffic:
+  home discovery advertised managed collection `296`, then macOS sent two
+  routine metadata `PROPPATCH` requests that alone returned `403`.
+- Removed only the reserved `dav_slug=birthdays` identity from CalDAV discovery
+  and made cached collection/event hrefs return `404`. OMS Web birthday
+  projection data remains intact, while a non-managed calendar merely named
+  Birthdays remains visible.
+- Added a route regression for home discovery, cached `PROPFIND`/`REPORT`/event
+  read-write-delete/collection metadata-delete behavior, reserved creation,
+  zero mutation, and display-name-versus-slug identity.
+- Passed focused CalDAV/Birthdays 37/37, complete backend 878 total with 871
+  pass and seven optional skips, frontend 221/221, generated-runtime build,
+  whitespace, and complete integration.
+- Guarded bridge and active releases passed public IMAPS plus ActiveSync
+  Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks are
+  `protocol-guarded-webmail-20260828T171555Z` and
+  `protocol-guarded-webmail-20260828T172344Z`.
+- The physical Mac then rediscovered only calendars `1`, `186`, and `187`, with
+  no request to `296`; all observed metadata writes returned `207`. Live code
+  matches the repository, services are healthy, and no human calendar/contact
+  data was changed.

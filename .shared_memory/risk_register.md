@@ -323,6 +323,14 @@ Operational/release risks:
 - ActiveSync debug logging still prints decoded non-mail-sync payloads, including calendar event summaries. SendMail payloads are sanitized, but broader ActiveSync log redaction remains a privacy hardening follow-up.
 - CalDAV event ETags are now content-derived, but clients that already consumed a sync token while UID-only ETags were active may not refetch the stale event until another event edit or sync-token bump forces a fresh incremental change.
 - If a future macOS Calendar delete again requires a manual sync-token bump, do not keep bumping tokens as normal operations. Inspect macOS CalDAV request/response logs and fix the delta-sync behavior instead.
+- Managed contact-derived Birthdays is deliberately absent from CalDAV as of
+  2026-08-28. If macOS reports permission errors for it again, first confirm
+  whether calendar-home discovery or a cached client href is targeting the
+  reserved `dav_slug=birthdays` identity. Do not delete the managed row or bump
+  sync tokens; refresh/relaunch Calendar and inspect fresh DAV traffic before
+  considering an account re-add. The post-release physical request sequence no
+  longer targeted the collection, but direct confirmation that an already
+  displayed alert disappeared remains a separate UI observation.
 - If macOS Contacts already consumed the Action 8 contact sync token before the CardDAV/`REV` fix, do not assume the existing stale display proves the new code failed. Have the user perform one additional edit to the test contact, or request explicit permission for a one-time contact token/data touch before mutating live contact data.
 - If macOS Contacts still retains the deleted Action 7 contact after the depth-1 PROPFIND tombstone fix and a Contacts refresh/reopen, inspect fresh CardDAV logs before touching live state. Do not bump contact tokens or mutate the deleted contact row without explicit user approval.
 - If macOS Contacts shows duplicates that web Contacts and iOS do not show, first have the user select only the OpenMailStack/CardDAV account in the macOS Contacts sidebar instead of All Contacts. Focused live checks on 2026-07-11 found no duplicate active DAV UID rows for `thang@housevo.us`; do not assume macOS All Contacts duplicates are server duplicates.

@@ -747,7 +747,7 @@ test('concurrent PUTs cannot create one logical iCalendar UID at two opaque href
   assert.match(await responses.find(response => response.status === 403).text(), /no-uid-conflict/);
 });
 
-test('CalDAV exposes Birthdays read-only and reserves its managed collection identity', async (t) => {
+test('CalDAV omits managed Birthdays and retires cached collection hrefs', async (t) => {
   resetDatabase();
   calendar.name = 'Birthdays';
   calendar.dav_slug = 'birthdays';
@@ -756,18 +756,57 @@ test('CalDAV exposes Birthdays read-only and reserves its managed collection ide
   const before = cloneDatabase(database);
   const beforeRevision = calendar.sync_token;
   const server = await startServer(t);
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const managedCollectionUrl = numericCollectionUrl(server, user);
+  const managedEventUrl = numericEventUrl(server, user, managedUid);
 
-  assert.equal((await putEvent(server, managedUid, 'Changed')).status, 403);
-  assert.equal((await deleteEvent(server, managedUid)).status, 403);
-  assert.equal((await deleteCollection(server)).status, 403);
-  const managedProppatch = await fetch(collectionUrl(server), {
+  const home = await fetch(`${origin}/caldav/calendars/${encodeURIComponent(user)}/`, {
+    method: 'PROPFIND',
+    headers: { Authorization: auth, Depth: '1' },
+  });
+  assert.equal(home.status, 207);
+  const homeXml = await home.text();
+  assert.doesNotMatch(homeXml, /<D:displayname>Birthdays<\/D:displayname>/);
+  assert.doesNotMatch(homeXml, new RegExp(`/caldav/calendars/${encodeURIComponent(user)}/${calendar.id}/`));
+
+  const cachedPropfind = await fetch(managedCollectionUrl, {
+    method: 'PROPFIND',
+    headers: { Authorization: auth, Depth: '1' },
+  });
+  assert.equal(cachedPropfind.status, 404);
+
+  const cachedReport = await fetch(managedCollectionUrl, {
+    method: 'REPORT',
+    headers: { Authorization: auth, 'Content-Type': 'application/xml' },
+    body: '<C:calendar-query xmlns:C="urn:ietf:params:xml:ns:caldav"/>',
+  });
+  assert.equal(cachedReport.status, 404);
+
+  assert.equal((await fetch(managedEventUrl, { headers: { Authorization: auth } })).status, 404);
+  assert.equal((await fetch(managedEventUrl, {
+    method: 'HEAD',
+    headers: { Authorization: auth },
+  })).status, 404);
+  assert.equal((await fetch(managedEventUrl, {
+    method: 'PUT',
+    headers: { Authorization: auth, 'Content-Type': 'text/calendar' },
+    body: ical(managedUid, 'Changed'),
+  })).status, 404);
+  assert.equal((await fetch(managedEventUrl, {
+    method: 'DELETE',
+    headers: { Authorization: auth },
+  })).status, 404);
+  assert.equal((await fetch(managedCollectionUrl, {
+    method: 'DELETE',
+    headers: { Authorization: auth },
+  })).status, 404);
+  const managedProppatch = await fetch(managedCollectionUrl, {
     method: 'PROPPATCH',
     headers: { Authorization: auth, 'Content-Type': 'application/xml' },
     body: '<D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><D:displayname>Mutable</D:displayname></D:prop></D:set></D:propertyupdate>',
   });
-  assert.equal(managedProppatch.status, 403);
+  assert.equal(managedProppatch.status, 404);
 
-  const origin = `http://127.0.0.1:${server.address().port}`;
   const reservedCreate = await fetch(`${origin}/caldav/calendars/${encodeURIComponent(user)}/birthdays/`, {
     method: 'MKCALENDAR',
     headers: { Authorization: auth, 'Content-Type': 'application/xml' },
@@ -777,9 +816,15 @@ test('CalDAV exposes Birthdays read-only and reserves its managed collection ide
   assert.equal(calendar.sync_token, beforeRevision);
   assert.deepEqual(database, before);
 
-  const readable = await fetch(eventUrl(server, managedUid), { headers: { Authorization: auth } });
-  assert.equal(readable.status, 200);
-  assert.equal(await readable.text(), ical(managedUid, 'Managed'));
+  resetDatabase();
+  calendar.name = 'Birthdays';
+  calendar.dav_slug = 'family-birthdays';
+  const ordinaryHome = await fetch(`${origin}/caldav/calendars/${encodeURIComponent(user)}/`, {
+    method: 'PROPFIND',
+    headers: { Authorization: auth, Depth: '1' },
+  });
+  assert.equal(ordinaryHome.status, 207);
+  assert.match(await ordinaryHome.text(), /<D:displayname>Birthdays<\/D:displayname>/);
 });
 
 test('subscribed calendars are readable but reject CalDAV event writes and deletes', async (t) => {

@@ -75,6 +75,13 @@ function calendarResourceName(event) {
 function isCalendarContentReadOnly(calendar) {
     return (0, birthday_calendar_1.isManagedBirthdayCalendar)(calendar) || Boolean(String(calendar?.subscribed_url || '').trim());
 }
+function isCalDavExposedCalendar(calendar) {
+    return !(0, birthday_calendar_1.isManagedBirthdayCalendar)(calendar);
+}
+async function getCalDavCalendarByToken(user, token) {
+    const calendar = await (0, calendar_utils_1.getCalendarByToken)(user, token);
+    return calendar && isCalDavExposedCalendar(calendar) ? calendar : null;
+}
 function isDuplicateEntry(error) {
     return Boolean(error && typeof error === 'object' && error.code === 'ER_DUP_ENTRY');
 }
@@ -283,7 +290,7 @@ async function handlePropfind(req, res, user) {
     else if (isAuthenticatedCalendarHome(path, user)) {
         // List all calendars
         try {
-            const rows = await (0, calendar_utils_1.getVisibleCalendars)(user);
+            const rows = (await (0, calendar_utils_1.getVisibleCalendars)(user)).filter(isCalDavExposedCalendar);
             let responses = rows.map((cal) => `
   <D:response>
     <D:href>${escapeXml((0, calendar_utils_1.getCalendarHref)(user, cal))}</D:href>
@@ -329,7 +336,7 @@ async function handlePropfind(req, res, user) {
         const legacyMatch = path.match(/^\/([^\/]+)\/Calendar\/?$/i);
         let cal = null;
         if (calMatch) {
-            cal = await (0, calendar_utils_1.getCalendarByToken)(user, calMatch[1]);
+            cal = await getCalDavCalendarByToken(user, calMatch[1]);
             if (!cal)
                 return res.status(404).send();
             calendarId = cal.id.toString();
@@ -410,7 +417,7 @@ async function handleReport(req, res, user) {
     const calMatch = calendarCollectionMatch(path);
     const legacyMatch = path.match(/^\/([^\/]+)\/([^\/]+)\/$/);
     if (calMatch) {
-        cal = await (0, calendar_utils_1.getCalendarByToken)(user, calMatch[1]);
+        cal = await getCalDavCalendarByToken(user, calMatch[1]);
         if (!cal)
             return res.status(404).send();
         calendarId = cal.id.toString();
@@ -540,7 +547,7 @@ async function handleGet(req, res, user, headOnly = false) {
     const eventMatch = calendarEventMatch(path);
     if (!eventMatch)
         return res.status(404).send();
-    const cal = await (0, calendar_utils_1.getCalendarByToken)(user, eventMatch[1]);
+    const cal = await getCalDavCalendarByToken(user, eventMatch[1]);
     if (!cal)
         return res.status(404).send();
     const calendarId = cal.id.toString();
@@ -576,7 +583,7 @@ async function handlePut(req, res, user) {
     const calMatch = calendarEventMatch(path);
     const legacyMatch = path.match(/^\/([^\/]+)\/([^\/]+)\/([^\/]+)\.ics/);
     if (calMatch) {
-        const cal = await (0, calendar_utils_1.getCalendarByToken)(user, calMatch[1]);
+        const cal = await getCalDavCalendarByToken(user, calMatch[1]);
         if (!cal)
             return res.status(404).send();
         if (isCalendarContentReadOnly(cal) || cal.access_role === 'read')
@@ -700,11 +707,9 @@ async function handleProppatch(req, res, user) {
     const calMatch = calendarCollectionMatch(path);
     const legacyMatch = path.match(/^\/([^\/]+)\/([^\/]+)\/?$/);
     if (calMatch) {
-        const cal = await (0, calendar_utils_1.getCalendarByToken)(user, calMatch[1]);
+        const cal = await getCalDavCalendarByToken(user, calMatch[1]);
         if (!cal)
             return res.status(404).send();
-        if ((0, birthday_calendar_1.isManagedBirthdayCalendar)(cal))
-            return res.status(403).send();
         if (cal.access_role && cal.access_role !== 'owner')
             return res.status(403).send();
         targetCalendar = cal;
@@ -802,11 +807,9 @@ async function handleDelete(req, res, user) {
     const eventMatch = calendarEventMatch(path);
     const collectionMatch = calendarCollectionMatch(path);
     if (collectionMatch) {
-        const cal = await (0, calendar_utils_1.getCalendarByToken)(user, collectionMatch[1]);
+        const cal = await getCalDavCalendarByToken(user, collectionMatch[1]);
         if (!cal)
             return res.status(404).send();
-        if ((0, birthday_calendar_1.isManagedBirthdayCalendar)(cal))
-            return res.status(403).send();
         const connection = await db_1.pool.getConnection();
         try {
             await connection.beginTransaction();
@@ -843,7 +846,7 @@ async function handleDelete(req, res, user) {
     }
     if (!eventMatch)
         return res.status(400).send();
-    const cal = await (0, calendar_utils_1.getCalendarByToken)(user, eventMatch[1]);
+    const cal = await getCalDavCalendarByToken(user, eventMatch[1]);
     if (!cal)
         return res.status(404).send();
     if (isCalendarContentReadOnly(cal) || cal.access_role === 'read')

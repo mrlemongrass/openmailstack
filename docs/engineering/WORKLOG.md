@@ -10574,3 +10574,60 @@ content delta, and targeted source hashes match live. The public entry serves
 `index-DphdNnc8.js`, `react-D0JuimcS.js`, and `index-DnkyOgjT.css`. Fresh public
 Chromium rendered the branded sign-in shell; its only console error was the
 expected unauthenticated `/api/auth/me` `401`.
+
+## 2026-08-28 — macOS Calendar Managed Birthdays Discovery
+
+### Selected task
+
+Stop the managed contact-derived Birthdays collection from producing repeated
+macOS Calendar permission errors without deleting its server-side projection or
+changing ordinary CalDAV calendar behavior.
+
+### Diagnosis and change
+
+- Live macOS 26.6.2 traffic repeatedly fetched the authenticated calendar home,
+  then sent two `PROPPATCH` requests to each advertised collection. Ordinary
+  collections `1`, `186`, and `187` returned `207`; managed Birthdays collection
+  `296` alone returned `403`, matching the owner's “Access ... is not permitted”
+  alert. MariaDB confirmed `296` is the reserved `dav_slug=birthdays` collection,
+  not a broken share or stale deleted calendar.
+- CalDAV now excludes only the reserved managed Birthdays identity from
+  calendar-home discovery and resolves its cached collection/event hrefs as
+  absent. The policy is centralized across `PROPFIND`, `REPORT`, `GET`, `HEAD`,
+  `PUT`, `PROPPATCH`, and `DELETE`; creation of the reserved `birthdays` slug
+  remains forbidden.
+- The Birthday database row and contact-derived OMS Web projection remain
+  untouched. A user-created calendar whose display name is Birthdays but whose
+  slug is not reserved remains discoverable.
+
+### Proof and release
+
+- The focused route regression was red while the home response still contained
+  `<D:displayname>Birthdays</D:displayname>`, then passed after the implementation.
+  Full CalDAV plus birthday-projection coverage passed 37/37.
+- Complete backend verification passed 878 tests: 871 pass, seven documented
+  optional skips, zero failures. Backend TypeScript build and generated runtime
+  parity, `git diff --check`, and the complete repository integration gate
+  passed; integration included frontend 221/221 and ended with
+  `[ok] Integration checks completed.`
+- Guarded bridge and active deployments passed pre/post public IMAPS and
+  ActiveSync Mail/Ping/Contacts/Calendar gates with exact canary cleanup.
+  Rollbacks are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260828T171555Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260828T172344Z`.
+- Repository and live `caldav.js` are byte-identical. Backend, Scheduler worker,
+  Dovecot, Postfix, Nginx, MariaDB, and Rspamd are active; both application units
+  have zero restarts; local/public readiness is `401`; Nginx validates; and the
+  release-window application warning journal is empty.
+- The physical Mac automatically rediscovered after release. Its home response
+  dropped from 2818 to 2255 bytes, it successfully `PROPPATCH`ed only collections
+  `1`, `186`, and `187`, and it made zero requests to cached collection `296`.
+  The server-side Birthdays row still exists, and no human calendar event or
+  contact was mutated.
+
+### Residual limit
+
+The protocol behavior that caused the alert is physically closed, but the owner
+has not yet explicitly confirmed that the already displayed macOS alert cleared.
+If it remains visible after Calendar refresh/relaunch, inspect fresh CalDAV
+traffic before removing/re-adding the account or touching calendar data.

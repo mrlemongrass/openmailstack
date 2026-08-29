@@ -2519,3 +2519,31 @@ Future entry template:
   `protocol-guarded-webmail-20260828T234056Z`. Services/restarts, Nginx, application
   journals, auth boundaries, and exact backend/frontend/VERSION artifacts are clean;
   public assets are `index-CjSZYTru.js` and `index-B_oziJgF.css`.
+
+## 2026-08-29 — Outlook-style Calendar Interaction Release
+
+- Added an official-source Outlook Calendar parity baseline with an explicit
+  evidence boundary and ship/later/Microsoft-only matrix; this release is not a
+  blanket Office 365 parity claim.
+- Added Calendar rail right-click/ellipsis/keyboard/touch management, Add calendar,
+  blank creation, validated `.ics` import, credential-free HTTPS subscriptions,
+  rename/color/share/export, protected delete/remove, OMS Scheduler booking access,
+  and reversible Show only/Show all/restore-selected visibility.
+- Added visible subscription pending/progress/success/failure/retry states. Manual
+  refresh is owner-only, generation-bound, and admitted at one per owner/two global.
+- Added month/week/day empty-slot context actions with exact 15-minute pointer
+  placement plus access-aware event View/Edit, generic meeting link, Duplicate,
+  `.ics`, Print, and occurrence/series Delete actions. Read-only calendars cannot
+  mutate events, and synthetic provider meeting links were removed.
+- Candidate proof passes backend 915 total (908 pass, seven optional skips),
+  frontend 238/238, lint/build, complete integration, desktop/mobile fixture
+  Chromium, and final independent Specification/Standards reviews with no findings.
+- Commit `3d59c09677b6ddbf04b9b9e0b3d9308ae216bd4d` passed guarded bridge and
+  active IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar pre/post gates. Rollbacks
+  are `protocol-guarded-webmail-20260829T181341Z` and
+  `protocol-guarded-webmail-20260829T182115Z`.
+- Complete staging smoke, seven active zero-restart services, Nginx, app warning
+  journals, auth boundaries, repository/live backend/VERSION/frontend equality,
+  and public sign-in Chromium are clean. Public assets are `index-Rslz6Gc5.js`,
+  `react-D0JuimcS.js`, and `index-BSiv14AS.css`. Fixture browser QA changed no real
+  user calendar, event, share, subscription, or Scheduler data.

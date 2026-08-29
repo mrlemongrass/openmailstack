@@ -10850,3 +10850,101 @@ show the exact saved criteria responsible for each match before any move occurs.
   unrelated inbound-client reverse-DNS warnings remain non-blocking advisories.
   Browser QA used fixture APIs, and no real user mailbox or saved rule was changed;
   guarded protocol canary data was removed by each successful gate.
+
+## 2026-08-29 — Outlook-style Calendar Management and Context Actions
+
+### Selected task
+
+Add the familiar Outlook-on-the-web Calendar management and context-action
+surface that was missing from OpenMailStack: calendar-list right-click/overflow
+actions, empty-grid and event right-click actions, Add calendar, Scheduler booking
+page access, reversible visibility controls, and safe rename/delete behavior.
+
+### Research and product boundary
+
+- Added `docs/product/outlook-calendar-parity-2026-08-29.md`, a 28-source
+  first-party Microsoft research baseline that distinguishes documented behavior,
+  screenshot-observed placement, portable OMS decisions, deferred workflows, and
+  Microsoft-only integrations. This is a bounded interaction release, not a
+  blanket Office 365 parity claim.
+- Adopted the useful interaction grammar without copying Microsoft-only wiring:
+  Teams links become generic validated conference links, Personal Bookings maps
+  to OMS Scheduler, and OneNote remains a future OMS Notes workflow.
+- Kept calendar groups/order, directory/resource and personal-account sources,
+  recipient-scoped shared/subscribed color, complete RSVP/iTIP communication,
+  Show as/categories/private enforcement, OMS Notes capture, and Teams provisioning
+  outside this release because their persistent or protocol contracts are not yet
+  complete.
+
+### Changes made
+
+- Added a desktop calendar rail and opaque focus-managed mobile drawer with a mini
+  calendar, `Add calendar`, `Go to my booking page`, copy-link action, collapsible
+  `My calendars`, per-row visibility, Show only, Show all, and restore-selected
+  behavior. Right-click, visible ellipsis, keyboard Context Menu/Shift+F10, and
+  touch all reach the same ownership-aware row commands.
+- Added blank-calendar creation, validated one-time `.ics` import, credential-free
+  HTTPS subscription, rename/color, enforced sharing/revocation, full-calendar
+  export, and confirmed delete/remove. The primary and managed Birthdays calendars
+  are protected; shared/subscribed calendars use Remove rather than deleting their
+  source. Failed or empty imports do not leave a blank calendar behind.
+- Added visible subscription `Waiting`, `Syncing…`, `Updated`, failure, and Retry
+  states. Manual refresh is owner-only, bound to the admitted URL/sync-token
+  generation, limited to one active request per owner and two globally, and cannot
+  stamp an old result onto a replaced feed.
+- Added empty-slot `New event` and `Go to today` menus across month/week/day.
+  Timed pointer coordinates snap to the clicked 15-minute increment; Day view has
+  one roving keyboard tab stop.
+- Added access-aware event menus and matching `More actions`: View/Edit, conditional
+  Join/Copy meeting link for recognized HTTPS conference URLs, Duplicate with a
+  new UID, Download `.ics`, Print, and editable occurrence-versus-series Delete.
+  Read-only events never expose mutation. Removed the prior synthetic random
+  provider meeting-link generation.
+- Added transactional calendar deletion, primary/Birthdays protection, share-only
+  removal, targeted subscription refresh outcomes, exact subscription-generation
+  guards, and status fields in the backend API. Generated JS/declaration/map
+  artifacts remain synchronized with TypeScript.
+
+### Candidate proof
+
+- Independent final Specification and Standards reviews returned no findings.
+- Complete backend verification: 915 total, 908 passed, seven documented optional
+  skips, zero failures. Complete frontend verification: 238/238; lint and
+  production builds passed.
+- The exact candidate completed `tests/integration/run.sh` with final marker
+  `[ok] Integration checks completed.` Whitespace and generated-runtime checks pass.
+- Fixture-backed Chromium at desktop and 390 px verified sidebar management,
+  reversible visibility, Add + `.ics` import, subscription failure/progress/retry,
+  access-aware and recurring event menus, empty-grid actions, one Day-grid tab stop,
+  opaque mobile drawer, and pointer placement at 10:45/10:15. No unexpected console
+  or page errors occurred. The fixture did not read or mutate real user calendar,
+  event, sharing, or Scheduler data.
+
+### Release and live proof
+
+- Commit `3d59c09677b6ddbf04b9b9e0b3d9308ae216bd4d` passed guarded bridge and
+  active deployments. Both stages passed pre/post public IMAPS plus ActiveSync
+  Mail/Ping/Contacts/Calendar gates with exact canary cleanup. Rollbacks are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260829T181341Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260829T182115Z`.
+- Complete staging smoke passed services, listeners, configuration, Rspamd, TLS/
+  STARTTLS, web/auth, DKIM, and Scheduler-worker checks. OpenMailStack, Scheduler
+  worker, Dovecot, Postfix, Nginx, MariaDB, and Rspamd are active/running with
+  `NRestarts=0`; application warning journals are empty and Nginx validates.
+- Local/public `/api/auth/me` and the protected subscription-refresh route return
+  `401`; the public app returns `200`. Repository/live backend content, `VERSION`,
+  and the complete frontend tree are checksum-exact. Public Chromium loaded
+  `index-Rslz6Gc5.js`, `react-D0JuimcS.js`, and `index-BSiv14AS.css`, rendered the
+  branded sign-in form, and reported only the expected unauthenticated auth `401`.
+- Staging smoke retained the pre-existing Postfix TLS-parameter deprecation and
+  Rspamd task-timeout advisories; neither caused a failed configuration, scan,
+  protocol, or service-health gate.
+
+### Residual limits and next task
+
+The next bounded Calendar tranche should implement the invitation communication
+model—RSVP/iTIP, organizer Cancel versus attendee Decline, Propose new time, and
+Reply/Reply all/Forward through Compose—before exposing those Outlook commands.
+Persistent calendar groups/order and server-enforced Show as/category/private
+semantics remain separate tranches. Do not infer those workflows from this
+interaction release.

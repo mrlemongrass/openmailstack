@@ -353,3 +353,27 @@ Previously documented audit fixes:
 - Earlier admin portal review actions covered directory traversal, CSRF, and stored XSS fixes.
 - The old standalone audit/review markdown files were consolidated into this risk register and the project roadmap during the 2026-06-21 documentation cleanup.
 - When touching affected areas, verify the code directly rather than relying only on action logs.
+
+## 2026-08-29 Calendar interaction parity boundaries
+
+- Outlook-style Calendar management and core context actions are live at
+  `3d59c09677b6ddbf04b9b9e0b3d9308ae216bd4d`, but this is not blanket Office 365
+  parity. Persistent calendar groups/order, directory/resource and personal-account
+  sources, recipient-scoped shared/subscribed color, complete RSVP/iTIP communication,
+  Show as/categories/private enforcement, OMS Notes capture, and Teams provisioning
+  remain unshipped. Keep unsupported commands absent instead of presenting decorative
+  controls that cannot complete their protocol/storage workflows.
+- Calendar visibility is local reversible view state, never deletion. Preserve the
+  selected set across Show only/Show all/restore flows. Primary and managed Birthdays
+  calendars must remain deletion-protected, and shared/subscribed calendars must use
+  recipient removal semantics rather than deleting their source.
+- Manual web-subscription refresh holds a backend request and worker database
+  connection during a bounded remote fetch. Keep the current one-active-per-owner,
+  two-global admission control, credential-free HTTPS URL validation, timeout/event
+  bounds, per-calendar database lock, and exact URL/sync-token generation checks.
+  A stale failure must never overwrite the status of a replacement feed.
+- Event context actions must stay access-, recurrence-, and capability-aware. Do not
+  expose mutation for read-only calendars, organizer Cancel/attendee Decline until
+  iTIP transmission is complete, Private until every sharing path redacts details,
+  or generated conference URLs that have no real provider. Duplicate must always
+  create an unsaved event with a fresh UID.

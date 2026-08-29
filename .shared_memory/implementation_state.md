@@ -1458,3 +1458,43 @@ frontend, and VERSION artifacts are clean. The public app serves
 `index-CjSZYTru.js` and `index-B_oziJgF.css`; public Chromium rendered the branded
 sign-in form with only its expected unauthenticated auth `401`. No real user mail
 or saved rule was changed.
+
+## 2026-08-29 Outlook-style Calendar Management and Context Actions
+
+**Status: guarded-deployed in active mode and live-verified.** Calendar now has a
+desktop rail and opaque focus-managed mobile drawer with Add calendar, OMS Scheduler
+booking-page access/copy, a collapsible owned/shared/subscribed list, per-calendar
+visibility, Show only, Show all, restore-selected, and ownership-aware row actions
+through right-click, ellipsis, keyboard, and touch.
+
+Owned calendars support blank creation, validated one-time `.ics` import,
+credential-free HTTPS subscription, rename/color/share/export, and confirmed
+secondary deletion. Primary and managed Birthdays identities are protected;
+shared/subscribed sources use Remove. Subscription state exposes waiting, active
+progress, updated time, failure, and retry. Manual refresh is owner-only, limited
+to one active request per owner and two globally, and bound to the admitted feed
+URL/sync-token generation.
+
+Month/week/day empty slots expose New event and Go to today. Timed clicks/right-
+clicks snap to the exact 15-minute pointer position and Day has one roving tab stop.
+Event menus are access-aware and expose View/Edit, validated generic conference
+links, Duplicate, Download `.ics`, Print, and editable occurrence/series Delete.
+Read-only items expose no mutation, and synthetic provider meeting links are gone.
+
+The first-party research baseline is
+`docs/product/outlook-calendar-parity-2026-08-29.md`. Commit
+`3d59c09677b6ddbf04b9b9e0b3d9308ae216bd4d` passes backend 915 total (908 pass,
+seven optional skips), frontend 238/238, lint/build, complete integration,
+desktop/mobile fixture Chromium, and no-finding Specification/Standards reviews.
+Guarded bridge/active releases passed public IMAPS plus ActiveSync Mail/Ping/
+Contacts/Calendar pre/post gates; rollbacks are
+`protocol-guarded-webmail-20260829T181341Z` and
+`protocol-guarded-webmail-20260829T182115Z`. Staging smoke, services/restarts,
+Nginx, app journals, auth boundaries, exact backend/VERSION/frontend artifacts,
+and released public sign-in Chromium are clean. Browser QA mutated no real user
+calendar data.
+
+Persistent calendar groups/order, directory/resource and personal-account sources,
+recipient-scoped shared/subscribed color, complete RSVP/iTIP and meeting messaging,
+Show as/categories/private enforcement, OMS Notes capture, and Teams provisioning
+are not implemented by this release.

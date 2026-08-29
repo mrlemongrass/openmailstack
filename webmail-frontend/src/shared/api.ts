@@ -7,6 +7,7 @@ import type {
   MailFolder, FolderDeleteResult, FolderMutationResponse, FolderMutationWarning, FolderMarkReadResponse, Signature, Rule, RuleAnalysis, RuleRunPageResponse, RuleRunRequest,
   ContactsResponse, Contact, ContactLabel, ContactGroup,
   CalendarsResponse, Calendar, CalendarUpdateResponse, CalendarDeleteResponse,
+  CalendarSubscriptionRefreshResponse,
   CalendarShare,
   Note, NoteAttachment,
   UserIdentities,
@@ -549,60 +550,121 @@ export async function shareContact(id: number | string, recipientEmail: string, 
 }
 
 // ---- Calendar ----
-export async function fetchCalendars(): Promise<CalendarsResponse> {
-  const res = await fetch('/api/apps/calendars');
-  return res.json();
+async function calendarApiResponse<T extends { success?: boolean; error?: string }>(
+  response: Response,
+  fallback: string,
+): Promise<T> {
+  const body = await response.json().catch(() => ({ success: false })) as T;
+  if (!response.ok || !body.success) {
+    const message = response.status < 500 && body.error ? body.error : fallback;
+    throw new Error(message);
+  }
+  return body;
 }
 
-export async function saveCalendar(calendar: Partial<Calendar>): Promise<Calendar> {
-  const method = calendar.id ? 'PUT' : 'POST';
-  const url = calendar.id ? `/api/apps/calendars/${calendar.id}` : '/api/apps/calendars';
-  const res = await fetch(url, {
-    method,
+export async function fetchCalendars(): Promise<CalendarsResponse> {
+  const response = await fetch('/api/apps/calendars');
+  return calendarApiResponse<CalendarsResponse>(response, 'Calendars could not be loaded.');
+}
+
+export async function createCalendar(
+  calendar: Pick<Calendar, 'name' | 'color'> & { subscribed_url?: string },
+): Promise<number> {
+  const response = await fetch('/api/apps/calendars', {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(calendar),
   });
-  const data = await res.json();
-  return data.calendar;
+  const body = await calendarApiResponse<{ success: boolean; id?: number; error?: string }>(
+    response,
+    'The calendar could not be created.',
+  );
+  if (!Number.isInteger(body.id) || Number(body.id) <= 0) {
+    throw new Error('The server did not return the new calendar.');
+  }
+  return Number(body.id);
+}
+
+export async function updateCalendar(
+  id: number,
+  changes: Pick<Calendar, 'name' | 'color'>,
+): Promise<void> {
+  const response = await fetch(`/api/apps/calendars/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(changes),
+  });
+  await calendarApiResponse(response, 'The calendar could not be updated.');
+}
+
+export async function importCalendar(id: number, icsData: string): Promise<number> {
+  const response = await fetch(`/api/apps/calendars/${id}/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ics_data: icsData }),
+  });
+  const body = await calendarApiResponse<{ success: boolean; count?: number; error?: string }>(
+    response,
+    'The calendar file could not be imported.',
+  );
+  return Number(body.count || 0);
+}
+
+export async function refreshCalendarSubscription(id: number): Promise<CalendarSubscriptionRefreshResponse> {
+  const response = await fetch(`/api/apps/calendars/${id}/subscription/refresh`, { method: 'POST' });
+  return calendarApiResponse<CalendarSubscriptionRefreshResponse>(
+    response,
+    'The calendar subscription could not be refreshed.',
+  );
 }
 
 export async function deleteCalendarApi(id: number): Promise<CalendarDeleteResponse> {
-  const res = await fetch(`/api/apps/calendars/${id}`, { method: 'DELETE' });
-  return res.json();
+  const response = await fetch(`/api/apps/calendars/${id}`, { method: 'DELETE' });
+  return calendarApiResponse<CalendarDeleteResponse>(response, 'The calendar could not be deleted.');
 }
 
 export async function saveEvent(icsData: string, calendarId?: number): Promise<CalendarUpdateResponse> {
-  const res = await fetch('/api/apps/events', {
+  const response = await fetch('/api/apps/events', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ data: icsData, calendar_id: calendarId }),
   });
-  return res.json();
+  return calendarApiResponse<CalendarUpdateResponse>(response, 'The event could not be saved.');
 }
 
 export async function deleteEvent(calendarId: number, uid: string, excludeDate?: string): Promise<void> {
   const url = excludeDate
     ? `/api/apps/events/${calendarId}/${uid}?exclude=${encodeURIComponent(excludeDate)}`
     : `/api/apps/events/${calendarId}/${uid}`;
-  await fetch(url, { method: 'DELETE' });
+  const response = await fetch(url, { method: 'DELETE' });
+  await calendarApiResponse(response, 'The event could not be deleted.');
 }
 
 export async function fetchCalendarShares(calendarId: number): Promise<CalendarShare[]> {
-  const res = await fetch(`/api/apps/calendars/${calendarId}/shares`);
-  const data = await res.json();
-  return data.shares || [];
+  const response = await fetch(`/api/apps/calendars/${calendarId}/shares`);
+  const data = await calendarApiResponse<{
+    success: boolean;
+    error?: string;
+    shares?: Array<CalendarShare & { shared_with_user_id?: string }>;
+  }>(response, 'Calendar sharing permissions could not be loaded.');
+  return (data.shares || []).flatMap(share => {
+    const email = share.email || share.shared_with_user_id;
+    return email ? [{ email, permission: share.permission, calendarId }] : [];
+  });
 }
 
 export async function shareCalendar(calendarId: number, email: string, permission: string): Promise<void> {
-  await fetch(`/api/apps/calendars/${calendarId}/shares`, {
+  const response = await fetch(`/api/apps/calendars/${calendarId}/shares`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, permission }),
   });
+  await calendarApiResponse(response, 'The calendar could not be shared.');
 }
 
 export async function unshareCalendar(calendarId: number, email: string): Promise<void> {
-  await fetch(`/api/apps/calendars/${calendarId}/shares/${encodeURIComponent(email)}`, { method: 'DELETE' });
+  const response = await fetch(`/api/apps/calendars/${calendarId}/shares/${encodeURIComponent(email)}`, { method: 'DELETE' });
+  await calendarApiResponse(response, 'The sharing permission could not be removed.');
 }
 
 // ---- Notes ----

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   format, startOfWeek, endOfWeek, addDays, isSameDay,
   setHours, setMinutes, differenceInMinutes,
@@ -6,11 +6,12 @@ import {
 import type { useCalendar } from '../hooks/useCalendar';
 import type { CalendarEvent } from '../../shared/types';
 import { formatHourLabel, formatWallTime } from '../calendarTime';
+import { calendarKeyboardPoint, calendarTimeAtPointer, weekGridTargetIndex } from '../calendarSurfaceNavigation';
 
 const HOUR_HEIGHT = 56;
 const HOURS = Array.from({ length: 24 }, (_, i) => i); // 0..23
 
-function eventStyle(evt: CalendarEvent, col: number, totalCols: number): React.CSSProperties {
+function eventStyle(evt: CalendarEvent, col: number, totalCols: number, color: string): React.CSSProperties {
   const startMin = evt.start.getHours() * 60 + evt.start.getMinutes();
   const endMin = evt.end.getHours() * 60 + evt.end.getMinutes();
   const dur = Math.max(endMin - startMin, 15); // minimum 15min height
@@ -30,7 +31,7 @@ function eventStyle(evt: CalendarEvent, col: number, totalCols: number): React.C
     overflow: 'hidden',
     cursor: 'pointer',
     zIndex: 2,
-    background: evt.calendarId ? `hsl(${(evt.calendarId * 67) % 360}, 65%, 55%)` : 'var(--accent-primary)',
+    background: color,
     color: '#fff',
   };
 }
@@ -67,7 +68,7 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
   const [dragOverDay, setDragOverDay] = useState<Date | null>(null);
 
-  const isVisible = (evt: CalendarEvent) => cal.calendarVisibility[evt.calendarId] !== false;
+  const isVisible = (evt: CalendarEvent) => cal.isCalendarVisible(evt.calendarId);
   const visibleEvents = cal.events.filter(isVisible);
 
   const allDayEvents = visibleEvents.filter((e) => e.isAllDay || (differenceInMinutes(e.end, e.start) >= 1440));
@@ -75,6 +76,11 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const now = cal.displayNow;
   const currentTimeTop = (now.getHours() * 60 + now.getMinutes()) / 60 * HOUR_HEIGHT;
   const currentDayIndex = days.findIndex((day) => isSameDay(day, cal.displayNow));
+  const [focusedSlot, setFocusedSlot] = useState(() => (
+    (currentDayIndex >= 0 ? currentDayIndex : 0) * HOURS.length
+    + (currentDayIndex >= 0 ? cal.displayNow.getHours() : 9)
+  ));
+  const slotRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -96,22 +102,65 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
       </div>
 
       {/* All-day events */}
-      {allDayEvents.length > 0 && (
-        <div style={{ borderBottom: '1px solid var(--border-glass)' }}>
+      <div style={{ borderBottom: '1px solid var(--border-glass)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '52px repeat(7, minmax(0, 1fr))' }}>
             <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', padding: '2px 4px',
               display: 'flex', alignItems: 'center' }}>all-day</div>
             {days.map((day) => {
               const dayAllDay = allDayEvents.filter((e) => isSameDay(e.start, day));
               return (
-                <div key={day.toISOString()} style={{ padding: '1px 2px', minHeight: 20 }}>
+                <div
+                  key={day.toISOString()}
+                  style={{ padding: '1px 2px', minHeight: 24, cursor: 'pointer' }}
+                  role="group"
+                  tabIndex={0}
+                  aria-label={`${format(day, 'EEEE, MMMM d')}. Press Enter to create an all-day event.`}
+                  aria-keyshortcuts="Shift+F10"
+                  onClick={() => cal.openNewEvent(day, true)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.currentTarget.focus();
+                    cal.openSlotContextMenu({ x: event.clientX, y: event.clientY }, day, true);
+                  }}
+                  onKeyDown={(event) => {
+                    if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+                      event.preventDefault();
+                      cal.openSlotContextMenu(calendarKeyboardPoint(event.currentTarget), day, true);
+                    } else if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      cal.openNewEvent(day, true);
+                    }
+                  }}
+                >
                   {dayAllDay.map((evt) => (
-                    <div key={evt.id || evt.id || evt.title} style={{
+                    <div key={evt.id || evt.title} style={{
                       padding: '1px 4px', borderRadius: 3, fontSize: '0.65rem',
                       background: 'var(--accent-primary)', color: '#fff',
                       marginBottom: 1, cursor: 'pointer', overflow: 'hidden',
                       whiteSpace: 'nowrap', textOverflow: 'ellipsis',
-                    }} onClick={() => cal.editExistingEvent(evt)}>
+                    }}
+                      role="button"
+                      tabIndex={0}
+                      aria-keyshortcuts="Shift+F10"
+                      onClick={(event) => { event.stopPropagation(); cal.editExistingEvent(evt); }}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        event.currentTarget.focus();
+                        cal.openEventContextMenu({ x: event.clientX, y: event.clientY }, evt);
+                      }}
+                      onKeyDown={(event) => {
+                        if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          cal.openEventContextMenu(calendarKeyboardPoint(event.currentTarget), evt);
+                        } else if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          cal.editExistingEvent(evt);
+                        }
+                      }}
+                    >
                       {evt.title}
                     </div>
                   ))}
@@ -120,7 +169,6 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
             })}
           </div>
         </div>
-      )}
 
       {/* Time grid */}
       <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
@@ -146,25 +194,59 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
               borderLeft: '1px solid var(--border-glass)',
               background: isSameDay(day, cal.displayNow) ? 'rgba(59,130,246,0.03)' : 'transparent',
             }}>
-              {HOURS.map((h) => (
-                <div key={h} style={{
+              {HOURS.map((h) => {
+                const slotIndex = colIdx * HOURS.length + h;
+                return <div key={h} style={{
                   borderBottom: '1px solid var(--border-glass)',
                   cursor: 'pointer',
                   background: dragOverDay && isSameDay(dragOverDay, day) ? 'rgba(59,130,246,0.06)' : undefined,
                 }}
-                  onClick={() => {
-                    cal.setNewEvent({
-                      title: '', start: setHours(setMinutes(day, 0), h),
-                      end: setHours(setMinutes(day, 0), h + 1),
-                      isAllDay: false, location: '', description: '',
-                      calendarId: cal.calendars[0]?.id || 0,
-                    });
-                    cal.setIsEventModalOpen(true);
+                  role="button"
+                  tabIndex={focusedSlot === slotIndex ? 0 : -1}
+                  ref={element => { slotRefs.current[slotIndex] = element; }}
+                  onFocus={() => setFocusedSlot(slotIndex)}
+                  aria-label={`Create an event ${format(day, 'EEEE, MMMM d')} at ${formatHourLabel(h, cal.calendarSettings.clockFormat)}`}
+                  aria-keyshortcuts="Shift+F10"
+                  onClick={(event) => cal.openNewEvent(calendarTimeAtPointer(
+                    day,
+                    h,
+                    event.clientY,
+                    event.currentTarget.getBoundingClientRect(),
+                  ))}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.currentTarget.focus();
+                    cal.openSlotContextMenu(
+                      { x: event.clientX, y: event.clientY },
+                      calendarTimeAtPointer(
+                        day,
+                        h,
+                        event.clientY,
+                        event.currentTarget.getBoundingClientRect(),
+                      ),
+                    );
+                  }}
+                  onKeyDown={(event) => {
+                    const start = setHours(setMinutes(day, 0), h);
+                    if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+                      event.preventDefault();
+                      cal.openSlotContextMenu(calendarKeyboardPoint(event.currentTarget), start);
+                  } else if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    cal.openNewEvent(start);
+                  } else {
+                    const target = weekGridTargetIndex(event.key, slotIndex);
+                    if (target !== null) {
+                      event.preventDefault();
+                      setFocusedSlot(target);
+                      slotRefs.current[target]?.focus();
+                    }
+                    }
                   }}
                   onDragOver={(e) => { e.preventDefault(); setDragOverDay(day); }}
                   onDragLeave={() => setDragOverDay(null)}
-                />
-              ))}
+                />;
+              })}
             </div>
           ))}
 
@@ -178,11 +260,31 @@ export function WeekView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
             return laned.map(({ evt, col, total }) => (
               <div key={evt.id || evt.id || `${evt.title}-${evt.start.getTime()}`}
                 style={{
-                  ...eventStyle(evt, col, total),
+                  ...eventStyle(evt, col, total, cal.calendars.find(calendar => calendar.id === evt.calendarId)?.color || '#3B82F6'),
                   gridColumn: colIdx + 2,
                   gridRow: '1 / 25',
                 }}
+                role="button"
+                tabIndex={0}
+                aria-keyshortcuts="Shift+F10"
                 onClick={(e) => { e.stopPropagation(); cal.editExistingEvent(evt); }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.currentTarget.focus();
+                  cal.openEventContextMenu({ x: event.clientX, y: event.clientY }, evt);
+                }}
+                onKeyDown={(event) => {
+                  if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    cal.openEventContextMenu(calendarKeyboardPoint(event.currentTarget), evt);
+                  } else if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    cal.editExistingEvent(evt);
+                  }
+                }}
                 title={`${evt.title}\n${formatWallTime(evt.start, cal.calendarSettings.clockFormat)} – ${formatWallTime(evt.end, cal.calendarSettings.clockFormat)}`}
               >
                 <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

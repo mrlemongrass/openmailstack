@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Save, Trash2, Video, Paperclip, Plus, Minus, Repeat2 } from 'lucide-react';
+import { X, Save, Paperclip, Plus, Minus, Repeat2, MoreHorizontal } from 'lucide-react';
 import type { useCalendar } from './hooks/useCalendar';
 import { format } from 'date-fns';
 import * as api from '../shared/api';
 import { useToast } from '../shared/components/Toast';
-import type { Contact } from '../shared/types';
+import type { CalendarEvent, Contact } from '../shared/types';
 import { uniqueContactSuggestions } from '../shared/contactSuggestions';
 import { useModalFocus } from '../shared/hooks/useModalFocus';
 import {
@@ -18,12 +18,6 @@ import {
 } from './calendarTime';
 import { freeBusyStatusForUser } from './freeBusy';
 
-const VIDEO_PROVIDERS = [
-  { name: 'Google Meet', prefix: 'https://meet.google.com/' },
-  { name: 'Zoom', prefix: 'https://zoom.us/j/' },
-  { name: 'Microsoft Teams', prefix: 'https://teams.microsoft.com/l/meetup-join/' },
-];
-
 function parseWallInput(value: string, allDay: boolean): Date {
   if (!allDay) return new Date(value);
   const [year, month, day] = value.split('-').map(Number);
@@ -35,13 +29,6 @@ function allDaySpan(start: Date | undefined, end: Date | undefined): number {
   const startDay = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
   const endDay = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
   return Math.max(1, Math.round((endDay - startDay) / 86400000));
-}
-
-function generateVideoId(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let id = '';
-  for (let i = 0; i < 12; i++) id += chars[Math.floor(Math.random() * chars.length)];
-  return id;
 }
 
 export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
@@ -157,6 +144,10 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
   const evt = cal.newEvent;
   const isEditing = !!cal.editingEvent;
+  const isReadOnly = isEditing && !cal.canModifyEditingEvent;
+  const eventCalendars = isReadOnly
+    ? cal.calendars.filter(calendar => calendar.id === evt.calendarId)
+    : cal.writableCalendars;
   const eventTimeKind = (evt.timeKind || 'zoned') as CalendarTimeKind;
   const eventTimeZoneValue = eventTimeKind === 'floating'
     ? '__floating__'
@@ -191,10 +182,17 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
     }
   };
 
-  // #4 Video call generation
-  const addVideoLink = (provider: typeof VIDEO_PROVIDERS[number]) => {
-    const id = generateVideoId();
-    cal.setNewEvent((prev) => ({ ...prev, location: `${provider.name}: ${provider.prefix}${id}` }));
+  const openMoreActions = (button: HTMLButtonElement) => {
+    if (!cal.editingEvent?.id) return;
+    const bounds = button.getBoundingClientRect();
+    const event = cal.editingEvent as CalendarEvent;
+    cal.setIsEventModalOpen(false);
+    window.setTimeout(() => {
+      cal.openEventContextMenu({
+        x: Math.min(bounds.right, window.innerWidth - 8),
+        y: Math.min(bounds.bottom + 4, window.innerHeight - 8),
+      }, event);
+    }, 0);
   };
 
   // #10 Event attachments
@@ -228,17 +226,37 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
       >
         {/* Header */}
         <div className="event-dialog-header">
-          <span id="event-dialog-title" style={{ fontWeight: 600 }}>{isEditing ? 'Edit Event' : 'New Event'}</span>
+          <span id="event-dialog-title" style={{ fontWeight: 600 }}>
+            {isReadOnly ? 'Event details' : isEditing ? 'Edit event' : 'New event'}
+          </span>
           <div style={{ display: 'flex', gap: 4 }}>
-            {isEditing && cal.editingEvent?.id && <button className="btn btn-danger" onClick={async () => { await cal.deleteEvent(cal.editingEvent!.id!, cal.editingEvent!.calendarId || 0); showToast({ type: 'success', message: 'Event deleted' }); cal.setIsEventModalOpen(false); }} style={{ padding: '4px 10px' }}><Trash2 size={14} /> Delete</button>}
+            {isEditing && cal.editingEvent?.id && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                aria-label="More event actions"
+                aria-haspopup="menu"
+                onClick={event => openMoreActions(event.currentTarget)}
+                style={{ padding: '4px 10px' }}
+              >
+                <MoreHorizontal size={16} aria-hidden="true" /> More actions
+              </button>
+            )}
             <button className="btn btn-ghost" aria-label="Close event editor" onClick={() => cal.setIsEventModalOpen(false)} style={{ padding: 4 }}><X size={18} /></button>
           </div>
         </div>
         {/* Body */}
         <div className="event-dialog-body">
           {cal.eventError && <div style={{ padding: '8px 12px', borderRadius: 'var(--radius-md)', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)', fontSize: '0.8rem' }}>{cal.eventError}</div>}
+          {isReadOnly && (
+            <div className="calendar-read-only-note" role="note">
+              You can view this event, but you do not have permission to change it.
+            </div>
+          )}
 
-          <input className="glass-input" placeholder="Event title" autoFocus
+          <fieldset className="event-dialog-fields" disabled={isReadOnly}>
+
+          <input className="glass-input" placeholder="Event title" autoFocus={!isReadOnly}
             value={evt.title || ''} onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, title: e.target.value }))} />
 
           {repeatSummary && (
@@ -313,12 +331,12 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
           )}
 
           {/* Calendar selector */}
-          {cal.calendars.length > 0 && (
-            <select className="glass-select glass-input" value={evt.calendarId || cal.calendars[0]?.id}
+          {eventCalendars.length > 0 && (
+            <select className="glass-select glass-input" value={evt.calendarId || eventCalendars[0]?.id}
               aria-label="Calendar"
               onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, calendarId: parseInt(e.target.value) }))}
               style={{ fontSize: '0.85rem' }}>
-              {cal.calendars.map((c) => (
+              {eventCalendars.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
@@ -326,17 +344,6 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
           <input className="glass-input" placeholder="Location" value={evt.location || ''}
             onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, location: e.target.value }))} />
-
-          {/* #4 Video call links */}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <Video size={14} style={{ color: 'var(--text-secondary)' }} />
-            {VIDEO_PROVIDERS.map((p) => (
-              <button key={p.name} className="btn btn-ghost" onClick={() => addVideoLink(p)}
-                style={{ fontSize: '0.75rem', padding: '3px 8px' }}>
-                + {p.name}
-              </button>
-            ))}
-          </div>
 
           {/* Guests */}
           <div>
@@ -467,13 +474,16 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
               </select>
             </>
           )}
+          </fieldset>
         </div>
         {/* Footer */}
         <div className="event-dialog-footer">
-          <button className="btn btn-ghost" onClick={() => cal.setIsEventModalOpen(false)}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSave} disabled={cal.eventSaving}>
-            <Save size={14} /> {cal.eventSaving ? 'Saving...' : 'Save Event'}
-          </button>
+          <button className="btn btn-ghost" onClick={() => cal.setIsEventModalOpen(false)}>{isReadOnly ? 'Close' : 'Cancel'}</button>
+          {!isReadOnly && (
+            <button className="btn btn-primary" onClick={handleSave} disabled={cal.eventSaving || cal.writableCalendars.length === 0}>
+              <Save size={14} /> {cal.eventSaving ? 'Saving...' : 'Save event'}
+            </button>
+          )}
         </div>
       </div>
     </div>

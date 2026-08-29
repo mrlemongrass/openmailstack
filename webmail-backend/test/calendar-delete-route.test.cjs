@@ -14,10 +14,12 @@ let settingsUpdates = 0;
 
 function resetState() {
   state = {
-    calendars: new Set([calendarId, 8]),
+    calendars: new Set([1, calendarId]),
+    ownedCalendars: new Set([1, calendarId]),
     events: new Map([[calendarId, 3]]),
     tombstones: new Map([[calendarId, 2]]),
     shares: new Map([[calendarId, 1]]),
+    sharedWithUser: new Set(),
   };
   failStatement = null;
   managedCalendar = false;
@@ -27,9 +29,11 @@ function resetState() {
 function cloneState(source) {
   return {
     calendars: new Set(source.calendars),
+    ownedCalendars: new Set(source.ownedCalendars),
     events: new Map(source.events),
     tombstones: new Map(source.tombstones),
     shares: new Map(source.shares),
+    sharedWithUser: new Set(source.sharedWithUser),
   };
 }
 
@@ -37,13 +41,13 @@ const db = require('../src/db.js');
 db.pool.query = async (sql) => {
   const compact = String(sql).replace(/\s+/g, ' ').trim();
   if (compact === 'SELECT id, dav_slug FROM calendars WHERE id = ? AND user_id = ? LIMIT 1') {
-    return [state.calendars.has(calendarId)
+    return [state.ownedCalendars.has(calendarId)
       ? [{ id: calendarId, dav_slug: managedCalendar ? 'birthdays' : 'disposable' }]
       : [], []];
   }
   if (compact.startsWith('UPDATE calendars SET name = ?')) {
     settingsUpdates += 1;
-    return [{ affectedRows: state.calendars.has(calendarId) ? 1 : 0 }, []];
+    return [{ affectedRows: state.ownedCalendars.has(calendarId) ? 1 : 0 }, []];
   }
   throw new Error(`Unexpected calendar pool query: ${compact}`);
 };
@@ -62,13 +66,21 @@ db.pool.getConnection = async () => {
         throw new Error('Injected calendar delete failure');
       }
       if (compact.startsWith('SELECT id, dav_slug, subscribed_url FROM calendars')) {
-        return [working.calendars.has(calendarId)
-          ? [{
+        if (!compact.includes('WHERE user_id = ? ORDER BY id ASC')) {
+          return [working.ownedCalendars.has(calendarId) ? [{
             id: calendarId,
             dav_slug: managedCalendar ? 'birthdays' : 'disposable',
             subscribed_url: null,
-          }]
-          : [], []];
+          }] : [], []];
+        }
+        return [[...working.ownedCalendars].sort((left, right) => left - right).map(id => ({
+          id,
+          dav_slug: id === calendarId && managedCalendar ? 'birthdays' : id === 1 ? 'calendar' : 'disposable',
+          subscribed_url: null,
+        })), []];
+      }
+      if (compact.startsWith('SELECT cs.calendar_id FROM calendar_shares')) {
+        return [working.sharedWithUser.has(Number(params[0])) ? [{ calendar_id: Number(params[0]) }] : [], []];
       }
       if (compact === 'SELECT COUNT(*) AS event_count FROM events WHERE calendar_id = ?') {
         return [[{ event_count: working.events.get(Number(params[0])) || 0 }], []];
@@ -85,9 +97,20 @@ db.pool.getConnection = async () => {
         working.shares.delete(Number(params[0]));
         return [{ affectedRows: 1 }, []];
       }
+      if (compact === 'DELETE FROM calendar_shares WHERE calendar_id = ? AND shared_with_user_id = ?') {
+        const id = Number(params[0]);
+        const existed = working.sharedWithUser.delete(id);
+        if (existed) {
+          const remaining = Math.max(0, (working.shares.get(id) || 0) - 1);
+          if (remaining) working.shares.set(id, remaining);
+          else working.shares.delete(id);
+        }
+        return [{ affectedRows: existed ? 1 : 0 }, []];
+      }
       if (compact === 'DELETE FROM calendars WHERE id = ? AND user_id = ?') {
         const id = Number(params[0]);
         const existed = working.calendars.delete(id);
+        working.ownedCalendars.delete(id);
         return [{ affectedRows: existed ? 1 : 0 }, []];
       }
       throw new Error(`Unexpected calendar delete query: ${compact}`);
@@ -127,12 +150,12 @@ require.cache[indexPath] = {
 
 const { appsApiRouter } = require('../src/apps-api.js');
 
-function deleteCalendar(port) {
+function deleteCalendar(port, id = calendarId) {
   return new Promise((resolve, reject) => {
     const request = http.request({
       hostname: '127.0.0.1',
       port,
-      path: `/api/apps/calendars/${calendarId}`,
+      path: `/api/apps/calendars/${id}`,
       method: 'DELETE',
     }, response => {
       let body = '';
@@ -219,6 +242,37 @@ test('web calendar deletion rolls every collection table back when cleanup fails
 
   assert.equal(response.status, 500);
   assert.deepEqual(state, before);
+});
+
+test('web calendar deletion transactionally protects the primary owned calendar', async t => {
+  resetState();
+  const before = cloneState(state);
+  const server = await withServer(t);
+
+  const response = await deleteCalendar(server.address().port, 1);
+
+  assert.equal(response.status, 409);
+  assert.match(response.body.error, /primary calendar/i);
+  assert.deepEqual(state, before);
+});
+
+test('removing a shared calendar only removes the current user share', async t => {
+  resetState();
+  state.ownedCalendars.delete(calendarId);
+  state.sharedWithUser.add(calendarId);
+  state.shares.set(calendarId, 2);
+  const server = await withServer(t);
+
+  const response = await deleteCalendar(server.address().port);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.removed, true);
+  assert.equal(response.body.deletedEvents, 0);
+  assert.equal(state.calendars.has(calendarId), true);
+  assert.equal(state.events.get(calendarId), 3);
+  assert.equal(state.tombstones.get(calendarId), 2);
+  assert.equal(state.shares.get(calendarId), 1);
+  assert.equal(state.sharedWithUser.has(calendarId), false);
 });
 
 test('web settings and deletion cannot mutate the managed Birthdays calendar', async t => {

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { io as createSocket } from 'socket.io-client';
-import type { Calendar, CalendarEvent } from '../../shared/types';
+import type { Calendar, CalendarEvent, CalendarSubscriptionRefreshResponse } from '../../shared/types';
+import type { ContextMenuPoint } from '../../shared/context-menu-navigation';
 import * as api from '../../shared/api';
 import { useCalendarSettings } from '../../shared/hooks/useCalendarSettings';
 import { useCalendarTimeZone } from '../../shared/hooks/useCalendarTimeZone';
@@ -18,6 +19,17 @@ import {
   normalizeFreeBusyResponse,
   type FreeBusyLookup,
 } from '../freeBusy';
+import {
+  calendarIsVisible,
+  canEditCalendarEvents,
+  duplicateCalendarEventDraft,
+  type CalendarVisibilityOverride,
+  writableCalendarForEvent,
+} from '../calendarContextActions';
+
+export type CalendarContextMenuState =
+  | { kind: 'slot'; point: ContextMenuPoint; start: Date; isAllDay: boolean }
+  | { kind: 'event'; point: ContextMenuPoint; event: CalendarEvent };
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -45,12 +57,14 @@ export function useCalendar() {
   const [editingEvent, setEditingEvent] = useState<Partial<CalendarEvent> | null>(null);
   const [eventError, setEventError] = useState('');
   const [eventSaving, setEventSaving] = useState(false);
+  const [calendarContextMenu, setCalendarContextMenu] = useState<CalendarContextMenuState | null>(null);
   const [calendarVisibility, setCalendarVisibility] = useState<Record<number, boolean>>(() => {
     try {
       const stored = localStorage.getItem('oms_calendar_visibility');
       return stored ? JSON.parse(stored) : {};
     } catch { return {}; }
   });
+  const [calendarVisibilityOverride, setCalendarVisibilityOverride] = useState<CalendarVisibilityOverride>(null);
   const [quickCreateText, setQuickCreateText] = useState('');
   const [now, setNow] = useState(() => new Date());
 
@@ -100,6 +114,16 @@ export function useCalendar() {
       end: projectInstantToWallDate(sourceEnd, timeKind, displayTimeZone),
     };
   }), [sourceEvents, displayTimeZone]);
+
+  const writableCalendars = useMemo(
+    () => calendars.filter(canEditCalendarEvents),
+    [calendars],
+  );
+  const canModifyEditingEvent = useMemo(() => {
+    if (!editingEvent) return true;
+    const sourceCalendar = calendars.find(calendar => calendar.id === editingEvent.calendarId);
+    return Boolean(sourceCalendar && canEditCalendarEvents(sourceCalendar));
+  }, [calendars, editingEvent]);
 
   const refreshCalendars = useCallback(async () => {
     setIsRefreshing(true);
@@ -187,6 +211,15 @@ export function useCalendar() {
   // Event CRUD
   const saveEvent = useCallback(async () => {
     if (!newEvent.title?.trim()) { setEventError('Title is required'); return false; }
+    if (!canModifyEditingEvent) {
+      setEventError('You only have permission to view this event.');
+      return false;
+    }
+    const targetCalendar = calendars.find(calendar => calendar.id === newEvent.calendarId);
+    if (!targetCalendar || !canEditCalendarEvents(targetCalendar)) {
+      setEventError('Choose a calendar you can edit.');
+      return false;
+    }
     setEventSaving(true); setEventError('');
     try {
       const icalData = buildCalendarEventIcal(newEvent, displayTimeZone, editingEvent?.id);
@@ -206,22 +239,96 @@ export function useCalendar() {
       setEventSaving(false);
       return true;
     } catch (e: unknown) { setEventError(errorMessage(e, 'Failed to save')); setEventSaving(false); return false; }
-  }, [newEvent, editingEvent, refreshCalendars, displayTimeZone, calendarSettings.defaultEventDurationMinutes, calendarSettings.defaultReminderMinutes]);
+  }, [newEvent, editingEvent, refreshCalendars, displayTimeZone, calendarSettings.defaultEventDurationMinutes, calendarSettings.defaultReminderMinutes, canModifyEditingEvent, calendars]);
 
   const deleteEvent = useCallback(async (eventId: string, calendarId: number, excludeDate?: string) => {
+    setEventError('');
     try {
       await api.deleteEvent(calendarId, eventId, excludeDate);
       await refreshCalendars();
-    } catch (e) { console.error('Delete failed', e); }
+      return true;
+    } catch (e: unknown) {
+      setEventError(errorMessage(e, 'The event could not be deleted.'));
+      return false;
+    }
+  }, [refreshCalendars]);
+
+  const createCalendar = useCallback(async (
+    calendar: Pick<Calendar, 'name' | 'color'> & { subscribed_url?: string; ics_data?: string },
+  ) => {
+    const { ics_data, ...draft } = calendar;
+    if (ics_data !== undefined && !ics_data.trim()) {
+      throw new Error('The selected .ics file is empty.');
+    }
+    const calendarId = await api.createCalendar(draft);
+    let subscription: CalendarSubscriptionRefreshResponse | undefined;
+    try {
+      if (ics_data !== undefined) await api.importCalendar(calendarId, ics_data);
+    } catch (error) {
+      try {
+        await api.deleteCalendarApi(calendarId);
+      } catch {
+        const message = errorMessage(error, 'The calendar file could not be imported.');
+        throw new Error(`${message} The empty calendar could not be removed automatically.`);
+      }
+      throw error;
+    }
+    if (draft.subscribed_url) {
+      try {
+        subscription = await api.refreshCalendarSubscription(calendarId);
+      } catch (error) {
+        subscription = {
+          success: false,
+          status: 'error',
+          last_fetch_error: errorMessage(error, 'The first subscription sync could not be checked.'),
+        };
+      }
+    }
+    await refreshCalendars();
+    return { calendarId, subscription };
+  }, [refreshCalendars]);
+
+  const refreshCalendarSubscription = useCallback(async (calendarId: number) => {
+    try {
+      return await api.refreshCalendarSubscription(calendarId);
+    } finally {
+      await refreshCalendars();
+    }
+  }, [refreshCalendars]);
+
+  const updateCalendar = useCallback(async (
+    calendarId: number,
+    changes: Pick<Calendar, 'name' | 'color'>,
+  ) => {
+    await api.updateCalendar(calendarId, changes);
+    await refreshCalendars();
+  }, [refreshCalendars]);
+
+  const removeCalendar = useCallback(async (calendarId: number) => {
+    await api.deleteCalendarApi(calendarId);
+    setCalendarVisibility(previous => {
+      const next = { ...previous };
+      delete next[calendarId];
+      return next;
+    });
+    setCalendarVisibilityOverride(previous => (
+      previous?.kind === 'only' && previous.calendarId === calendarId ? null : previous
+    ));
+    await refreshCalendars();
   }, [refreshCalendars]);
 
   const openNewEvent = useCallback((start?: Date, isAllDay = false) => {
     setEditingEvent(null);
+    setEventError('');
     const eventStart = start || projectInstantToWallDate(new Date(), 'utc', displayTimeZone);
     setNewEvent({
       title: '', start: eventStart, end: isAllDay ? addWallDays(eventStart, 1) : new Date(eventStart.getTime() + calendarSettings.defaultEventDurationMinutes * 60000),
       isAllDay, timeKind: isAllDay ? 'all-day' : 'zoned', timeZone: isAllDay ? null : displayTimeZone,
-      location: '', description: '', calendarId: calendarSettings.defaultCalendarId || calendars[0]?.id || 0,
+      location: '', description: '', calendarId: writableCalendarForEvent(
+        0,
+        calendars,
+        calendarSettings.defaultCalendarId,
+      )?.id || 0,
       notifications: calendarSettings.defaultReminderMinutes > 0
         ? [{ id: 1, type: 'notification', time: calendarSettings.defaultReminderMinutes }]
         : undefined,
@@ -230,10 +337,73 @@ export function useCalendar() {
   }, [calendars, calendarSettings.defaultCalendarId, calendarSettings.defaultEventDurationMinutes, calendarSettings.defaultReminderMinutes, displayTimeZone]);
 
   const editExistingEvent = useCallback((event: CalendarEvent) => {
+    setEventError('');
     setEditingEvent(event);
     setNewEvent(calendarEventDraftForEdit(event, displayTimeZone));
     setIsEventModalOpen(true);
   }, [displayTimeZone]);
+
+  const duplicateEvent = useCallback((event: CalendarEvent) => {
+    const targetCalendar = writableCalendarForEvent(
+      event.calendarId,
+      calendars,
+      calendarSettings.defaultCalendarId,
+    );
+    if (!targetCalendar) {
+      setEventError('No editable calendar is available for this copy.');
+      return false;
+    }
+    setEventError('');
+    setEditingEvent(null);
+    setNewEvent({ ...duplicateCalendarEventDraft(event), calendarId: targetCalendar.id });
+    setIsEventModalOpen(true);
+    return true;
+  }, [calendars, calendarSettings.defaultCalendarId]);
+
+  const openSlotContextMenu = useCallback((
+    point: ContextMenuPoint,
+    start: Date,
+    isAllDay = false,
+  ) => {
+    setCalendarContextMenu({ kind: 'slot', point, start, isAllDay });
+  }, []);
+
+  const openEventContextMenu = useCallback((point: ContextMenuPoint, event: CalendarEvent) => {
+    setCalendarContextMenu({ kind: 'event', point, event });
+  }, []);
+
+  const closeCalendarContextMenu = useCallback(() => setCalendarContextMenu(null), []);
+
+  const isCalendarVisible = useCallback((calendarId: number) => (
+    calendarIsVisible(calendarId, calendarVisibility, calendarVisibilityOverride)
+  ), [calendarVisibility, calendarVisibilityOverride]);
+
+  const toggleCalendarVisibility = useCallback((calendarId: number) => {
+    setCalendarVisibility(previous => {
+      const baseline = calendarVisibilityOverride
+        ? Object.fromEntries(calendars.map(calendar => [
+          calendar.id,
+          calendarIsVisible(calendar.id, previous, calendarVisibilityOverride),
+        ]))
+        : previous;
+      return { ...baseline, [calendarId]: baseline[calendarId] === false };
+    });
+    setCalendarVisibilityOverride(null);
+  }, [calendars, calendarVisibilityOverride]);
+
+  const showOnlyCalendar = useCallback((calendarId: number) => {
+    setCalendarVisibilityOverride({ kind: 'only', calendarId });
+  }, []);
+
+  const hideAllCalendars = useCallback(() => {
+    setCalendarVisibility(Object.fromEntries(calendars.map(calendar => [calendar.id, false])));
+    setCalendarVisibilityOverride(null);
+  }, [calendars]);
+
+  const showAllCalendars = useCallback(() => setCalendarVisibilityOverride({ kind: 'all' }), []);
+  const showSelectedCalendars = useCallback(() => setCalendarVisibilityOverride(null), []);
+  const showAllCalendarsOverride = calendarVisibilityOverride?.kind === 'all';
+  const hasCalendarVisibilityOverride = calendarVisibilityOverride !== null;
 
   // Free/busy
   const [freeBusyLookup, setFreeBusyLookup] = useState<FreeBusyLookup>(() => createUnavailableFreeBusyLookup([]));
@@ -283,8 +453,13 @@ export function useCalendar() {
     isLoading: isLoading || settingsLoading, isRefreshing, calendarError: settingsError || calendarError,
     refreshCalendars, retryCalendar,
     newEvent, setNewEvent, editingEvent, eventError, eventSaving,
-    saveEvent, deleteEvent, openNewEvent, editExistingEvent,
+    writableCalendars, canModifyEditingEvent,
+    saveEvent, deleteEvent, openNewEvent, editExistingEvent, duplicateEvent,
+    createCalendar, updateCalendar, removeCalendar, refreshCalendarSubscription,
+    calendarContextMenu, openSlotContextMenu, openEventContextMenu, closeCalendarContextMenu,
     calendarVisibility, setCalendarVisibility,
+    showAllCalendarsOverride, hasCalendarVisibilityOverride, isCalendarVisible, toggleCalendarVisibility,
+    showOnlyCalendar, hideAllCalendars, showAllCalendars, showSelectedCalendars,
     quickCreateText, setQuickCreateText,
     freeBusy: freeBusyLookup.busy,
     freeBusyUnavailable: freeBusyLookup.unavailable,

@@ -1,5 +1,9 @@
+import { useCallback, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultLayout } from 'react-resizable-panels';
+import { CalendarRange, X } from 'lucide-react';
 import { useMediaQuery } from '../shared/hooks/useMediaQuery';
+import { useModalFocus } from '../shared/hooks/useModalFocus';
 import { useCalendar } from './hooks/useCalendar';
 import { CalendarSidebar } from './CalendarSidebar';
 import { MonthView } from './views/MonthView';
@@ -7,10 +11,9 @@ import { WeekView } from './views/WeekView';
 import { DayView } from './views/DayView';
 import { CalendarToolbar } from './CalendarToolbar';
 import { EventModal } from './EventModal';
+import { CalendarContextMenus } from './CalendarContextMenus';
 import { Skeleton } from '../shared/components/Skeleton';
-import { EmptyState } from '../shared/components/EmptyState';
 import { ErrorBanner } from '../shared/components/ErrorBanner';
-import { CalendarDays } from 'lucide-react';
 
 function ResizeHandle() {
   return (
@@ -33,16 +36,6 @@ function renderCalendarContent(cal: ReturnType<typeof useCalendar>) {
     );
   }
 
-  if (!cal.isLoading && cal.events.length === 0) {
-    return (
-      <EmptyState
-        icon={CalendarDays}
-        title="No events"
-        description="Your calendar is empty. Click any date to create your first event."
-      />
-    );
-  }
-
   switch (cal.calendarView) {
     case 'month':
       return <MonthView cal={cal} />;
@@ -59,9 +52,69 @@ function renderCalendarContent(cal: ReturnType<typeof useCalendar>) {
   }
 }
 
+function MobileCalendarDrawer({
+  cal,
+  open,
+  onClose,
+}: {
+  cal: ReturnType<typeof useCalendar>;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const [nestedDialogOpen, setNestedDialogOpen] = useState(false);
+  const closeDrawer = useCallback(() => {
+    setNestedDialogOpen(false);
+    onClose();
+  }, [onClose]);
+  useModalFocus({
+    dialogRef,
+    open,
+    active: open && !nestedDialogOpen,
+    onClose: closeDrawer,
+  });
+  if (!open) return null;
+
+  return createPortal(
+    <div
+      className="mobile-calendar-overlay"
+      hidden={nestedDialogOpen}
+      onMouseDown={event => {
+        if (event.target === event.currentTarget) closeDrawer();
+      }}
+    >
+      <aside
+        ref={dialogRef}
+        className="mobile-calendar-drawer glass-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Calendars"
+        tabIndex={-1}
+      >
+        <header className="mobile-calendar-heading">
+          <span><CalendarRange size={18} aria-hidden="true" /> Calendars</span>
+          <button type="button" className="btn btn-ghost" aria-label="Close calendars" onClick={closeDrawer}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="mobile-calendar-content">
+          <CalendarSidebar
+            cal={cal}
+            onNestedDialogChange={setNestedDialogOpen}
+            onRequestClose={closeDrawer}
+          />
+        </div>
+      </aside>
+    </div>,
+    document.body,
+  );
+}
+
 export function CalendarLayout() {
   const cal = useCalendar();
   const isMobile = useMediaQuery('(max-width: 767px)');
+  const [mobileCalendarsOpen, setMobileCalendarsOpen] = useState(false);
+  const closeMobileCalendars = useCallback(() => setMobileCalendarsOpen(false), []);
 
   const calendarPanelLayout = useDefaultLayout({
     id: 'oms-cal-v11',
@@ -71,8 +124,10 @@ export function CalendarLayout() {
   if (isMobile) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <CalendarToolbar cal={cal} />
+        <CalendarToolbar cal={cal} onOpenCalendars={() => setMobileCalendarsOpen(true)} />
         {renderCalendarContent(cal)}
+        <MobileCalendarDrawer cal={cal} open={mobileCalendarsOpen} onClose={closeMobileCalendars} />
+        <CalendarContextMenus cal={cal} />
         <EventModal cal={cal} />
       </div>
     );
@@ -98,6 +153,7 @@ export function CalendarLayout() {
           </div>
         </Panel>
       </PanelGroup>
+      <CalendarContextMenus cal={cal} />
       <EventModal cal={cal} />
     </div>
   );

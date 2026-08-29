@@ -40,6 +40,13 @@ const SCHEDULER_EDITOR_SECTIONS: Array<{ id: SchedulerEditorSection; label: stri
   { id: 'public', label: 'Public' },
   { id: 'advanced', label: 'Advanced' },
 ];
+const SCHEDULER_TABS = new Set<SchedulerTab>(['events', 'bookings', 'availability', 'workflows', 'tools', 'profile']);
+
+function initialSchedulerTab(): SchedulerTab {
+  if (typeof window === 'undefined') return 'events';
+  const section = new URLSearchParams(window.location.search).get('section') as SchedulerTab | null;
+  return section && SCHEDULER_TABS.has(section) ? section : 'events';
+}
 
 const minutesToTime = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 const timeToMinutes = (value: string) => {
@@ -346,8 +353,8 @@ function ProfilePanel({ state, onSaved }: { state: SchedulerState; onSaved: () =
 
 export function SchedulerRoutes() {
   const { showToast } = useToast();
-  const [tab, setTab] = useState<SchedulerTab>('events');
-  const [visitedTabs, setVisitedTabs] = useState<Set<SchedulerTab>>(() => new Set(['events']));
+  const [tab, setTab] = useState<SchedulerTab>(initialSchedulerTab);
+  const [visitedTabs, setVisitedTabs] = useState<Set<SchedulerTab>>(() => new Set([initialSchedulerTab()]));
   const [state, setState] = useState<SchedulerState | null>(null);
   const [filter, setFilter] = useState('upcoming');
   const [editor, setEditor] = useState<Partial<SchedulerEventType> | null | undefined>(undefined);

@@ -21,6 +21,8 @@ const activeSubscriptionLocks = new Set();
 let fakeNow = 0;
 let expireRunAfterStatementContaining = null;
 let subscriptionSelectionSql = '';
+let subscriptionSelectionParams = [];
+let failSubscriptionSelection = false;
 
 function cloneState() {
   return {
@@ -67,7 +69,9 @@ db.pool.query = async (sql, params = []) => {
     ], []];
   }
   if (compact.startsWith('SELECT id, user_id, subscribed_url')) {
+    if (failSubscriptionSelection) throw new Error('Injected subscription selection failure');
     subscriptionSelectionSql = compact;
+    subscriptionSelectionParams = params;
     return [[calendar], []];
   }
   throw new Error(`Unexpected subscription pool query: ${compact}`);
@@ -189,10 +193,10 @@ db.pool.getConnection = async () => {
 };
 
 const { runCalendarSubscriptionFetchOnce } = require('../src/calendar-subscription.js');
-const runSubscriptionWorker = (overrides = {}) => runCalendarSubscriptionFetchOnce({
+const runSubscriptionWorker = (overrides = {}, options = {}) => runCalendarSubscriptionFetchOnce({
   fetchSubscription: async () => Buffer.from(feedBody, 'utf8'),
   ...overrides,
-});
+}, options);
 
 function feed(titleA = 'A', includeB = true) {
   return [
@@ -662,6 +666,48 @@ test('subscription selection prioritizes never-fetched and oldest feeds before c
     subscriptionSelectionSql,
     /ORDER BY \(last_fetched_at IS NOT NULL\) ASC, last_fetched_at ASC, id ASC/i,
   );
+});
+
+test('targeted subscription refresh selects only the requested calendar', async () => {
+  feedBody = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//OpenMailStack//Subscription Test//EN',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const outcome = await runSubscriptionWorker({}, { calendarId: calendar.id });
+  assert.match(subscriptionSelectionSql, /AND id = \?/i);
+  assert.match(subscriptionSelectionSql, /LIMIT 1$/i);
+  assert.deepEqual(subscriptionSelectionParams, [calendar.id]);
+  assert.deepEqual(outcome, { status: 'synced' });
+});
+
+test('targeted subscription refresh can bind selection to the admitted feed generation', async () => {
+  feedBody = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//OpenMailStack//Subscription Test//EN',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const expectedSyncToken = String(calendar.sync_token);
+  const outcome = await runSubscriptionWorker({}, {
+    calendarId: calendar.id,
+    expectedSubscribedUrl: calendar.subscribed_url,
+    expectedSyncToken,
+  });
+  assert.match(subscriptionSelectionSql, /AND id = \?/i);
+  assert.match(subscriptionSelectionSql, /AND subscribed_url = \? AND sync_token = \?/i);
+  assert.deepEqual(subscriptionSelectionParams, [calendar.id, calendar.subscribed_url, expectedSyncToken]);
+  assert.deepEqual(outcome, { status: 'synced' });
+});
+
+test('targeted subscription refresh returns an explicit setup failure outcome', async () => {
+  failSubscriptionSelection = true;
+  try {
+    const outcome = await runSubscriptionWorker({}, { calendarId: calendar.id });
+    assert.deepEqual(outcome, {
+      status: 'error',
+      error: 'Calendar subscription synchronization could not start',
+    });
+  } finally {
+    failSubscriptionSelection = false;
+  }
 });
 
 test('subscription event count is capped before database apply', async () => {

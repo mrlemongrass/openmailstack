@@ -44,6 +44,7 @@ const calendar_utils_1 = require("./calendar-utils");
 const eas_calendar_1 = require("./eas-calendar");
 const birthday_calendar_1 = require("./birthday-calendar");
 const calendar_subscription_http_1 = require("./calendar-subscription-http");
+const calendar_subscription_1 = require("./calendar-subscription");
 const calendar_ical_validation_1 = require("./calendar-ical-validation");
 const contact_utils_1 = require("./contact-utils");
 exports.appsApiRouter = (0, express_1.Router)();
@@ -93,6 +94,25 @@ function normalizedCalendarSubscriptionUrl(value) {
     return (0, calendar_subscription_http_1.validateCalendarSubscriptionUrl)(value).toString();
 }
 const MAX_WEB_CALENDAR_RESOURCES = 1_000;
+const MAX_CONCURRENT_MANUAL_SUBSCRIPTION_REFRESHES = 2;
+let activeManualSubscriptionRefreshes = 0;
+const activeManualSubscriptionOwners = new Set();
+function beginManualSubscriptionRefresh(user) {
+    if (activeManualSubscriptionRefreshes >= MAX_CONCURRENT_MANUAL_SUBSCRIPTION_REFRESHES
+        || activeManualSubscriptionOwners.has(user)) {
+        return null;
+    }
+    activeManualSubscriptionRefreshes += 1;
+    activeManualSubscriptionOwners.add(user);
+    let released = false;
+    return () => {
+        if (released)
+            return;
+        released = true;
+        activeManualSubscriptionRefreshes = Math.max(0, activeManualSubscriptionRefreshes - 1);
+        activeManualSubscriptionOwners.delete(user);
+    };
+}
 function validatedWebCalendarEvent(input) {
     const validated = (0, calendar_ical_validation_1.validateICalendarDocument)(input, {
         maxResourceComponents: MAX_WEB_CALENDAR_RESOURCES,
@@ -1913,6 +1933,71 @@ exports.appsApiRouter.post('/calendars', async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 });
+exports.appsApiRouter.post('/calendars/:id/subscription/refresh', async (req, res) => {
+    const user = req.username;
+    const calendarId = Number(req.params.id);
+    if (!Number.isSafeInteger(calendarId) || calendarId <= 0) {
+        return res.status(400).json({ success: false, error: 'Invalid calendar ID' });
+    }
+    let releaseRefresh = null;
+    try {
+        const [calendarRows] = await db_1.pool.query(`SELECT id, subscribed_url, sync_token
+             FROM calendars
+             WHERE id = ? AND user_id = ?
+             LIMIT 1`, [calendarId, user]);
+        if (calendarRows.length !== 1) {
+            return res.status(404).json({ success: false, error: 'Calendar not found' });
+        }
+        if (!String(calendarRows[0].subscribed_url || '').trim()) {
+            return res.status(409).json({ success: false, error: 'Calendar is not a web subscription' });
+        }
+        const admittedSubscribedUrl = String(calendarRows[0].subscribed_url);
+        const admittedSyncToken = String(calendarRows[0].sync_token ?? '');
+        releaseRefresh = beginManualSubscriptionRefresh(user);
+        if (!releaseRefresh) {
+            res.setHeader('Retry-After', '5');
+            return res.status(429).json({
+                success: false,
+                error: 'Another calendar subscription refresh is already running. Try again shortly.',
+            });
+        }
+        await db_1.pool.query(`UPDATE calendars
+             SET last_fetched_at = NULL, last_fetch_error = NULL
+             WHERE id = ? AND user_id = ? AND subscribed_url = ? AND sync_token = ?`, [calendarId, user, admittedSubscribedUrl, admittedSyncToken]);
+        const outcome = await (0, calendar_subscription_1.runCalendarSubscriptionFetchOnce)({}, {
+            calendarId,
+            expectedSubscribedUrl: admittedSubscribedUrl,
+            expectedSyncToken: admittedSyncToken,
+        });
+        if (!outcome || outcome.status === 'error') {
+            const workerError = outcome?.error || 'Calendar subscription synchronization did not start';
+            await db_1.pool.query(`UPDATE calendars
+                 SET last_fetched_at = NOW(), last_fetch_error = ?
+                 WHERE id = ? AND user_id = ? AND subscribed_url = ? AND sync_token = ?`, [workerError, calendarId, user, admittedSubscribedUrl, admittedSyncToken]);
+        }
+        const [statusRows] = await db_1.pool.query(`SELECT last_fetched_at, last_fetch_error
+             FROM calendars
+             WHERE id = ? AND user_id = ?
+             LIMIT 1`, [calendarId, user]);
+        if (statusRows.length !== 1) {
+            return res.status(404).json({ success: false, error: 'Calendar not found' });
+        }
+        const lastFetchError = String(statusRows[0].last_fetch_error || '').trim() || null;
+        const lastFetchedAt = statusRows[0].last_fetched_at || null;
+        return res.json({
+            success: true,
+            status: lastFetchError ? 'error' : lastFetchedAt ? 'synced' : 'pending',
+            last_fetched_at: lastFetchedAt,
+            last_fetch_error: lastFetchError,
+        });
+    }
+    catch (error) {
+        return res.status(500).json({ success: false, error: error?.message || 'Calendar subscription could not be refreshed' });
+    }
+    finally {
+        releaseRefresh?.();
+    }
+});
 exports.appsApiRouter.put('/calendars/:id', async (req, res) => {
     const user = req.username;
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
@@ -2196,44 +2281,69 @@ exports.appsApiRouter.delete('/calendars/:id', async (req, res) => {
     if (!Number.isInteger(calendarId) || calendarId <= 0) {
         return res.status(400).json({ success: false, error: 'Invalid calendar id' });
     }
+    const connection = await db_1.pool.getConnection();
     try {
-        const visibleCalendars = await (0, calendar_utils_1.getVisibleCalendars)(user);
-        const calendar = visibleCalendars.find((cal) => cal.id === calendarId);
-        if (!calendar) {
-            return res.status(404).json({ success: false, error: 'Calendar not found' });
-        }
-        if ((0, birthday_calendar_1.isManagedBirthdayCalendar)(calendar)) {
-            return res.status(409).json({ success: false, error: 'The Birthdays calendar is managed from Contacts' });
-        }
-        if (visibleCalendars.length <= 1) {
-            return res.status(409).json({ success: false, error: 'You must keep at least one calendar' });
-        }
-        const connection = await db_1.pool.getConnection();
-        try {
-            await connection.beginTransaction();
-            const [eventRows] = await connection.query('SELECT COUNT(*) AS event_count FROM events WHERE calendar_id = ?', [calendarId]);
-            const deletedEvents = Number(eventRows[0]?.event_count || 0);
-            await connection.query('DELETE FROM events WHERE calendar_id = ?', [calendarId]);
-            await connection.query('DELETE FROM calendar_tombstones WHERE calendar_id = ?', [calendarId]);
-            await connection.query('DELETE FROM calendar_shares WHERE calendar_id = ?', [calendarId]);
-            const [result] = await connection.query('DELETE FROM calendars WHERE id = ? AND user_id = ?', [calendarId, user]);
-            if (result.affectedRows === 0) {
+        await connection.beginTransaction();
+        const [ownedCalendars] = await connection.query(`SELECT id, dav_slug, subscribed_url
+             FROM calendars
+             WHERE user_id = ?
+             ORDER BY id ASC
+             FOR UPDATE`, [user]);
+        const ownedCalendar = ownedCalendars.find((calendar) => Number(calendar.id) === calendarId);
+        if (!ownedCalendar) {
+            const [sharedRows] = await connection.query(`SELECT cs.calendar_id
+                 FROM calendar_shares cs
+                 JOIN calendars c ON c.id = cs.calendar_id
+                 WHERE cs.calendar_id = ? AND cs.shared_with_user_id = ?
+                 LIMIT 1
+                 FOR UPDATE`, [calendarId, user]);
+            if (sharedRows.length === 0) {
                 await connection.rollback();
                 return res.status(404).json({ success: false, error: 'Calendar not found' });
             }
+            await connection.query('DELETE FROM calendar_shares WHERE calendar_id = ? AND shared_with_user_id = ?', [calendarId, user]);
             await connection.commit();
-            res.json({ success: true, deletedEvents });
+            emitCalendarUpdated(user, calendarId);
+            return res.json({ success: true, removed: true, deletedEvents: 0 });
         }
-        catch (e) {
+        if ((0, birthday_calendar_1.isManagedBirthdayCalendar)(ownedCalendar)) {
             await connection.rollback();
-            throw e;
+            return res.status(409).json({ success: false, error: 'The Birthdays calendar is managed from Contacts' });
         }
-        finally {
-            connection.release();
+        const primaryCalendar = ownedCalendars.find((calendar) => (!(0, birthday_calendar_1.isManagedBirthdayCalendar)(calendar)
+            && !String(calendar.subscribed_url || '').trim()));
+        if (!String(ownedCalendar.subscribed_url || '').trim()
+            && Number(primaryCalendar?.id) === calendarId) {
+            await connection.rollback();
+            return res.status(409).json({ success: false, error: 'The primary calendar cannot be deleted' });
         }
+        const [eventRows] = await connection.query('SELECT COUNT(*) AS event_count FROM events WHERE calendar_id = ?', [calendarId]);
+        const deletedEvents = Number(eventRows[0]?.event_count || 0);
+        await connection.query('DELETE FROM events WHERE calendar_id = ?', [calendarId]);
+        await connection.query('DELETE FROM calendar_tombstones WHERE calendar_id = ?', [calendarId]);
+        await connection.query('DELETE FROM calendar_shares WHERE calendar_id = ?', [calendarId]);
+        const [result] = await connection.query('DELETE FROM calendars WHERE id = ? AND user_id = ?', [calendarId, user]);
+        if (result.affectedRows === 0) {
+            await connection.rollback();
+            return res.status(404).json({ success: false, error: 'Calendar not found' });
+        }
+        await connection.commit();
+        emitCalendarUpdated(user, calendarId);
+        res.json({
+            success: true,
+            deletedEvents,
+            removed: Boolean(String(ownedCalendar.subscribed_url || '').trim()),
+        });
     }
     catch (e) {
+        try {
+            await connection.rollback();
+        }
+        catch { }
         res.status(500).json({ success: false, error: e.message });
+    }
+    finally {
+        connection.release();
     }
 });
 exports.appsApiRouter.post('/events', async (req, res) => {

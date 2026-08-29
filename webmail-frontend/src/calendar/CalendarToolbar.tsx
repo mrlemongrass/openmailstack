@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { CalendarRange, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { format, addMonths, subMonths, addWeeks, subWeeks, addDays, subDays } from 'date-fns';
 import type { useCalendar } from './hooks/useCalendar';
 import { useToast } from '../shared/components/Toast';
@@ -66,18 +66,28 @@ function parseQuickCreate(text: string, currentWallTime: Date): { title: string;
   return { title, start, duration };
 }
 
-export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }) {
+export function CalendarToolbar({
+  cal,
+  onOpenCalendars,
+}: {
+  cal: ReturnType<typeof useCalendar>;
+  onOpenCalendars?: () => void;
+}) {
   const { showToast } = useToast();
   const isMobile = useMediaQuery('(max-width: 767px)');
   const handleQuickCreate = () => {
     const parsed = parseQuickCreate(cal.quickCreateText, cal.displayNow);
     if (parsed) {
+      if (cal.writableCalendars.length === 0) {
+        showToast({ type: 'error', message: 'No editable calendar is available.' });
+        return;
+      }
       cal.setNewEvent({
         title: parsed.title,
         start: parsed.start,
         end: new Date(parsed.start.getTime() + parsed.duration * 60000),
         isAllDay: false, location: '', description: '',
-        calendarId: cal.calendars[0]?.id || 0,
+        calendarId: cal.writableCalendars[0]?.id || 0,
       });
       cal.setIsEventModalOpen(true);
       cal.setQuickCreateText('');
@@ -94,13 +104,18 @@ export function CalendarToolbar({ cal }: { cal: ReturnType<typeof useCalendar> }
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
       borderBottom: '1px solid var(--border-glass)', flexWrap: 'wrap' }}>
+      {isMobile && onOpenCalendars && (
+        <button type="button" className="btn btn-ghost" aria-label="Open calendars" onClick={onOpenCalendars}>
+          <CalendarRange size={17} aria-hidden="true" /> Calendars
+        </button>
+      )}
       <button className="btn btn-ghost" onClick={() => { cal.setCurrentDate(cal.displayNow); showToast({ type: 'info', message: 'Jumped to today' }); }}
         style={{ fontSize: '0.85rem' }}>Today</button>
       <button className="btn btn-ghost" aria-label={`Previous ${cal.calendarView}`} style={{ padding: '4px 8px' }} onClick={nav.prev}><ChevronLeft size={16} /></button>
       <button className="btn btn-ghost" aria-label={`Next ${cal.calendarView}`} style={{ padding: '4px 8px' }} onClick={nav.next}><ChevronRight size={16} /></button>
       <span style={{ fontWeight: 600, fontSize: '1rem' }}>{nav.label}</span>
       <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-        · {cal.events.filter((e) => cal.calendarVisibility[e.calendarId] !== false).length} events
+        · {cal.events.filter((e) => cal.isCalendarVisible(e.calendarId)).length} events
       </span>
       <span title={`Calendar times shown in ${cal.displayTimeZone}`} style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
         {cal.calendarSettings.timeZoneMode === 'system' ? 'System' : 'Home'} · {cal.displayTimeZone.replace(/_/g, ' ')} ({shortTimeZoneName(new Date(), cal.displayTimeZone)})

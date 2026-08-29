@@ -6,7 +6,15 @@ export interface CalendarSubscriptionWorkerDependencies {
     fetchSubscription: (url: unknown, options?: CalendarSubscriptionFetchOptions) => Promise<Buffer>;
     now: () => number;
 }
+export interface CalendarSubscriptionRunOutcome {
+    status: 'synced' | 'pending' | 'error';
+    error?: string;
+}
 export declare const ensureCalendarSubscriptionSchema: () => Promise<void>;
-export declare const runCalendarSubscriptionFetchOnce: (overrides?: Partial<CalendarSubscriptionWorkerDependencies>) => Promise<void>;
+export declare const runCalendarSubscriptionFetchOnce: (overrides?: Partial<CalendarSubscriptionWorkerDependencies>, options?: {
+    calendarId?: number;
+    expectedSubscribedUrl?: string;
+    expectedSyncToken?: string;
+}) => Promise<CalendarSubscriptionRunOutcome | undefined>;
 export declare const startCalendarSubscriptionWorker: () => void;
 //# sourceMappingURL=calendar-subscription.d.ts.map

@@ -20,6 +20,11 @@ export interface CalendarSubscriptionWorkerDependencies {
     now: () => number;
 }
 
+export interface CalendarSubscriptionRunOutcome {
+    status: 'synced' | 'pending' | 'error';
+    error?: string;
+}
+
 const defaultWorkerDependencies: CalendarSubscriptionWorkerDependencies = {
     fetchSubscription: fetchCalendarSubscription,
     now: Date.now,
@@ -206,8 +211,21 @@ function normalizedLegacySingleEventBlock(icalData: string, expectedUid: string)
 
 export const runCalendarSubscriptionFetchOnce = async (
     overrides: Partial<CalendarSubscriptionWorkerDependencies> = {},
-) => {
+    options: {
+        calendarId?: number;
+        expectedSubscribedUrl?: string;
+        expectedSyncToken?: string;
+    } = {},
+): Promise<CalendarSubscriptionRunOutcome | undefined> => {
     const dependencies = { ...defaultWorkerDependencies, ...overrides };
+    const requestedCalendarId = Number(options.calendarId);
+    const targetOneCalendar = Number.isSafeInteger(requestedCalendarId) && requestedCalendarId > 0;
+    const targetExpectedGeneration = targetOneCalendar
+        && typeof options.expectedSubscribedUrl === 'string'
+        && typeof options.expectedSyncToken === 'string';
+    let targetedOutcome: CalendarSubscriptionRunOutcome | undefined = targetOneCalendar
+        ? { status: 'pending' }
+        : undefined;
     try {
         await ensureCalendarSubscriptionSchema();
 
@@ -215,10 +233,20 @@ export const runCalendarSubscriptionFetchOnce = async (
             `SELECT id, user_id, subscribed_url, sync_token, last_fetched_at, last_fetch_error
              FROM calendars
              WHERE subscribed_url IS NOT NULL AND subscribed_url != ''
+             ${targetOneCalendar ? 'AND id = ?' : ''}
+             ${targetExpectedGeneration ? 'AND subscribed_url = ? AND sync_token = ?' : ''}
              AND (last_fetched_at IS NULL OR last_fetched_at < DATE_SUB(NOW(), INTERVAL 15 MINUTE))
              AND (last_fetch_error IS NULL OR last_fetched_at < DATE_SUB(NOW(), INTERVAL 1 HOUR))
              ORDER BY (last_fetched_at IS NOT NULL) ASC, last_fetched_at ASC, id ASC
-             LIMIT ${MAX_CALENDAR_SUBSCRIPTIONS_PER_RUN}`
+             LIMIT ${targetOneCalendar ? 1 : MAX_CALENDAR_SUBSCRIPTIONS_PER_RUN}`,
+            targetOneCalendar
+                ? [
+                    requestedCalendarId,
+                    ...(targetExpectedGeneration
+                        ? [options.expectedSubscribedUrl, options.expectedSyncToken]
+                        : []),
+                ]
+                : [],
         );
         const runDeadline = dependencies.now() + MAX_CALENDAR_SUBSCRIPTION_RUN_MS;
 
@@ -420,6 +448,7 @@ export const runCalendarSubscriptionFetchOnce = async (
                 assertSubscriptionRunBudget(dependencies.now, runDeadline);
                 await connection.commit();
                 transactionStarted = false;
+                if (targetOneCalendar) targetedOutcome = { status: 'synced' };
                 console.log(`[CalendarSub] Synced ${feedEvents.size} events to calendar ${cal.id}`);
             } catch (error) {
                 if (transactionStarted) {
@@ -432,6 +461,7 @@ export const runCalendarSubscriptionFetchOnce = async (
                 }
                 if (!staleResponse) {
                     const safeError = safeSubscriptionError(error, subscribedUrl);
+                    if (targetOneCalendar) targetedOutcome = { status: 'error', error: safeError };
                     if (lockAcquired && connectionUsable) {
                         try {
                             await connection.query(
@@ -466,8 +496,15 @@ export const runCalendarSubscriptionFetchOnce = async (
         }
     } catch (error) {
         const safeError = safeSubscriptionError(error, '');
+        if (targetOneCalendar) {
+            targetedOutcome = {
+                status: 'error',
+                error: 'Calendar subscription synchronization could not start',
+            };
+        }
         console.error(`[CalendarSub] Subscription fetcher failed: ${safeError}`);
     }
+    return targetedOutcome;
 };
 
 export const startCalendarSubscriptionWorker = () => {

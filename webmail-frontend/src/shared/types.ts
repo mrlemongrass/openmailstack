@@ -532,8 +532,12 @@ export interface Calendar {
   name: string;
   color: string;
   isVisible?: boolean;
-  access_role?: string;
-  subscribed_url?: string;
+  access_role?: 'owner' | 'read' | 'write';
+  dav_slug?: string | null;
+  subscribed_url?: string | null;
+  last_fetched_at?: string | null;
+  last_fetch_error?: string | null;
+  event_count?: number;
   events: CalendarEvent[];
 }
 
@@ -559,12 +563,20 @@ export interface CalendarUpdateResponse {
 export interface CalendarDeleteResponse {
   success: boolean;
   deletedEvents?: number;
+  removed?: boolean;
   error?: string;
+}
+
+export interface CalendarSubscriptionRefreshResponse {
+  success: boolean;
+  status: 'pending' | 'synced' | 'error';
+  last_fetched_at?: string | null;
+  last_fetch_error?: string | null;
 }
 
 export interface CalendarShare {
   email: string;
-  permission: string;
+  permission: 'read' | 'write';
   calendarId?: number;
 }
 

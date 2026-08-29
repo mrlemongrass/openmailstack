@@ -16,6 +16,8 @@ export interface CalendarRow {
     event_count?: number;
     access_role?: string;
     subscribed_url?: string;
+    last_fetched_at?: Date | string | null;
+    last_fetch_error?: string | null;
 }
 
 export type CalendarMutationConnection = Pick<PoolConnection, 'query'>;

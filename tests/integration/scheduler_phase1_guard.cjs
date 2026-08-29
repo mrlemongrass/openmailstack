@@ -63,7 +63,8 @@ requireText('webmail-backend/src/api.ts', /scheduler_mailbox_entitlements SET en
 requireText('webmail-frontend/src/App.tsx', /scheduler\/:handle\/:slug\?/, 'Public Scheduler frontend route is missing');
 requireText('webmail-frontend/src/App.tsx', /scheduler-app/, 'Authenticated Scheduler route is missing');
 requireText('webmail-frontend/src/shared/layouts/AppShell.tsx', /label: 'Scheduler'.*CalendarClock/s, 'Scheduler navigation is missing');
-requireText('webmail-frontend/src/shared/layouts/AppShell.tsx', /SCHEDULER_ENTITLEMENT_CHANGED/, 'Scheduler navigation does not refresh after entitlement changes');
+requireText('webmail-frontend/src/shared/layouts/AppShell.tsx', /useSchedulerStatus\(/, 'Scheduler navigation does not consume the shared entitlement status');
+requireText('webmail-frontend/src/shared/hooks/useSchedulerStatus.ts', /SCHEDULER_ENTITLEMENT_CHANGED/, 'Scheduler status does not refresh after entitlement changes');
 requireText('webmail-frontend/src/admin/MailboxesPanel.tsx', /notifySchedulerEntitlementChanged/, 'Scheduler admin changes do not notify the application shell');
 requireText('webmail-frontend/src/admin/MailboxesPanel.tsx', /Scheduler access/, 'Admin mailbox entitlement control is missing');
 requireText('webmail-frontend/src/scheduler/routes.tsx', /Open booking site/, 'Scheduler owner UI must expose the public booking site');

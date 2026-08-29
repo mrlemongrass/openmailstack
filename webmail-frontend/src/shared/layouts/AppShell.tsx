@@ -3,11 +3,11 @@ import { Outlet, Link, useLocation } from 'react-router';
 import { useAuth } from '../hooks/useAuth';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { Settings, ShieldAlert, Activity, Mail, CalendarDays, Users, StickyNote, CalendarClock, MoreHorizontal } from 'lucide-react';
-import { SCHEDULER_ENTITLEMENT_CHANGED } from '../../scheduler/entitlement';
 import { resolveBrandingPresentation } from '../../branding';
 import { useBranding } from '../../branding-context';
 import { useCalendarSettings } from '../hooks/useCalendarSettings';
 import { useCalendarTimeZone } from '../hooks/useCalendarTimeZone';
+import { useSchedulerStatus } from '../hooks/useSchedulerStatus';
 
 function HeaderClock({ timeZone, clockFormat }: { timeZone: string; clockFormat: '12h' | '24h' }) {
   const [now, setNow] = useState(() => new Date());
@@ -52,7 +52,8 @@ export function AppShell() {
   const brandingPresentation = resolveBrandingPresentation(branding);
   const isMobile = useMediaQuery('(max-width: 767px)');
   const activeApp = useActiveApp();
-  const [schedulerEnabled, setSchedulerEnabled] = useState(false);
+  const schedulerStatus = useSchedulerStatus(user?.email);
+  const schedulerEnabled = Boolean(schedulerStatus?.enabled);
   const [moreOpen, setMoreOpen] = useState(false);
   const {
     settings: calendarSettings,
@@ -61,30 +62,6 @@ export function AppShell() {
     refresh: refreshCalendarSettings,
   } = useCalendarSettings();
   const displayTimeZone = useCalendarTimeZone(calendarSettings);
-
-  useEffect(() => {
-    let cancelled = false;
-    const refreshSchedulerStatus = () => {
-      fetch('/api/scheduler/v1/status', { credentials: 'include' })
-        .then(async response => response.ok ? response.json() as Promise<{ enabled?: boolean }> : null)
-        .then(result => { if (!cancelled) setSchedulerEnabled(Boolean(result?.enabled)); })
-        .catch(() => { if (!cancelled) setSchedulerEnabled(false); });
-    };
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') refreshSchedulerStatus();
-    };
-
-    refreshSchedulerStatus();
-    window.addEventListener(SCHEDULER_ENTITLEMENT_CHANGED, refreshSchedulerStatus);
-    window.addEventListener('focus', refreshSchedulerStatus);
-    document.addEventListener('visibilitychange', refreshWhenVisible);
-    return () => {
-      cancelled = true;
-      window.removeEventListener(SCHEDULER_ENTITLEMENT_CHANGED, refreshSchedulerStatus);
-      window.removeEventListener('focus', refreshSchedulerStatus);
-      document.removeEventListener('visibilitychange', refreshWhenVisible);
-    };
-  }, [user?.email]);
 
   const navItems = [
     { id: 'mail', label: 'Mail', icon: Mail, path: '/mail/inbox' },

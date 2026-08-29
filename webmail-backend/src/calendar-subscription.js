@@ -187,17 +187,34 @@ function normalizedLegacySingleEventBlock(icalData, expectedUid) {
         return null;
     return block.join('\r\n');
 }
-const runCalendarSubscriptionFetchOnce = async (overrides = {}) => {
+const runCalendarSubscriptionFetchOnce = async (overrides = {}, options = {}) => {
     const dependencies = { ...defaultWorkerDependencies, ...overrides };
+    const requestedCalendarId = Number(options.calendarId);
+    const targetOneCalendar = Number.isSafeInteger(requestedCalendarId) && requestedCalendarId > 0;
+    const targetExpectedGeneration = targetOneCalendar
+        && typeof options.expectedSubscribedUrl === 'string'
+        && typeof options.expectedSyncToken === 'string';
+    let targetedOutcome = targetOneCalendar
+        ? { status: 'pending' }
+        : undefined;
     try {
         await (0, exports.ensureCalendarSubscriptionSchema)();
         const [calendars] = await db_1.pool.query(`SELECT id, user_id, subscribed_url, sync_token, last_fetched_at, last_fetch_error
              FROM calendars
              WHERE subscribed_url IS NOT NULL AND subscribed_url != ''
+             ${targetOneCalendar ? 'AND id = ?' : ''}
+             ${targetExpectedGeneration ? 'AND subscribed_url = ? AND sync_token = ?' : ''}
              AND (last_fetched_at IS NULL OR last_fetched_at < DATE_SUB(NOW(), INTERVAL 15 MINUTE))
              AND (last_fetch_error IS NULL OR last_fetched_at < DATE_SUB(NOW(), INTERVAL 1 HOUR))
              ORDER BY (last_fetched_at IS NOT NULL) ASC, last_fetched_at ASC, id ASC
-             LIMIT ${exports.MAX_CALENDAR_SUBSCRIPTIONS_PER_RUN}`);
+             LIMIT ${targetOneCalendar ? 1 : exports.MAX_CALENDAR_SUBSCRIPTIONS_PER_RUN}`, targetOneCalendar
+            ? [
+                requestedCalendarId,
+                ...(targetExpectedGeneration
+                    ? [options.expectedSubscribedUrl, options.expectedSyncToken]
+                    : []),
+            ]
+            : []);
         const runDeadline = dependencies.now() + exports.MAX_CALENDAR_SUBSCRIPTION_RUN_MS;
         for (const cal of calendars) {
             const remainingRunMs = runDeadline - dependencies.now();
@@ -364,6 +381,8 @@ const runCalendarSubscriptionFetchOnce = async (overrides = {}) => {
                 assertSubscriptionRunBudget(dependencies.now, runDeadline);
                 await connection.commit();
                 transactionStarted = false;
+                if (targetOneCalendar)
+                    targetedOutcome = { status: 'synced' };
                 console.log(`[CalendarSub] Synced ${feedEvents.size} events to calendar ${cal.id}`);
             }
             catch (error) {
@@ -378,6 +397,8 @@ const runCalendarSubscriptionFetchOnce = async (overrides = {}) => {
                 }
                 if (!staleResponse) {
                     const safeError = safeSubscriptionError(error, subscribedUrl);
+                    if (targetOneCalendar)
+                        targetedOutcome = { status: 'error', error: safeError };
                     if (lockAcquired && connectionUsable) {
                         try {
                             await connection.query(`UPDATE calendars
@@ -413,8 +434,15 @@ const runCalendarSubscriptionFetchOnce = async (overrides = {}) => {
     }
     catch (error) {
         const safeError = safeSubscriptionError(error, '');
+        if (targetOneCalendar) {
+            targetedOutcome = {
+                status: 'error',
+                error: 'Calendar subscription synchronization could not start',
+            };
+        }
         console.error(`[CalendarSub] Subscription fetcher failed: ${safeError}`);
     }
+    return targetedOutcome;
 };
 exports.runCalendarSubscriptionFetchOnce = runCalendarSubscriptionFetchOnce;
 const startCalendarSubscriptionWorker = () => {

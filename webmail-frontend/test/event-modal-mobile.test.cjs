@@ -81,6 +81,8 @@ function renderEventModal() {
         calendarId: 1,
       },
       calendars: [{ id: 1, name: 'Personal' }],
+      writableCalendars: [{ id: 1, name: 'Personal' }],
+      canModifyEditingEvent: true,
       displayNow: start,
       displayTimeZone: 'America/Phoenix',
       calendarSettings: { defaultEventDurationMinutes: 30 },
@@ -108,7 +110,7 @@ test('event creation is an explicit, labelled modal workflow', () => {
   assert.match(markup, /class="glass-panel event-dialog"[^>]*role="dialog"/);
   assert.match(markup, /aria-modal="true"/);
   assert.match(markup, /aria-labelledby="event-dialog-title"/);
-  assert.match(markup, /id="event-dialog-title"[^>]*>New Event/);
+  assert.match(markup, /id="event-dialog-title"[^>]*>New event/);
   assert.match(markup, /aria-label="Close event editor"/);
   assert.match(markup, /aria-label="Event date"/);
   assert.match(markup, /aria-label="Calendar"/);

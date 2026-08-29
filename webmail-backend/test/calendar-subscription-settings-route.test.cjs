@@ -10,6 +10,13 @@ const calendarId = 41;
 let state;
 let statements;
 let failStatement;
+let refreshWorkerCalendarId;
+let refreshWorkerExpectedSubscribedUrl;
+let refreshWorkerExpectedSyncToken;
+let nextRefreshStatus;
+let nextRefreshOutcome;
+let refreshWorkerGate;
+let refreshWorkerMutation;
 
 function resetState({ subscribedUrl = null, events = [] } = {}) {
   state = {
@@ -27,6 +34,13 @@ function resetState({ subscribedUrl = null, events = [] } = {}) {
   };
   statements = [];
   failStatement = null;
+  refreshWorkerCalendarId = null;
+  refreshWorkerExpectedSubscribedUrl = null;
+  refreshWorkerExpectedSyncToken = null;
+  nextRefreshStatus = { lastFetchedAt: '2026-08-29 13:45:00', error: null };
+  nextRefreshOutcome = null;
+  refreshWorkerGate = null;
+  refreshWorkerMutation = null;
 }
 
 function cloneState(source) {
@@ -38,8 +52,52 @@ function cloneState(source) {
 }
 
 const db = require('../src/db.js');
-db.pool.query = async sql => {
-  throw new Error(`Subscription settings query escaped its transaction: ${String(sql)}`);
+db.pool.query = async (sql, params = []) => {
+  const compact = String(sql).replace(/\s+/g, ' ').trim();
+  if (compact.startsWith('SELECT id, subscribed_url, sync_token FROM calendars')) {
+    const matches = state.calendar
+      && Number(params[0]) === state.calendar.id
+      && String(params[1]) === state.calendar.user_id;
+    return [matches ? [{
+      id: state.calendar.id,
+      subscribed_url: state.calendar.subscribed_url,
+      sync_token: state.calendar.sync_token,
+    }] : [], []];
+  }
+  if (compact.startsWith('UPDATE calendars SET last_fetched_at = NULL, last_fetch_error = NULL')) {
+    if (state.calendar
+      && Number(params[0]) === state.calendar.id
+      && String(params[1]) === state.calendar.user_id
+      && String(params[2]) === state.calendar.subscribed_url
+      && String(params[3]) === String(state.calendar.sync_token)) {
+      state.calendar.last_fetched_at = null;
+      state.calendar.last_fetch_error = null;
+      return [{ affectedRows: 1 }, []];
+    }
+    return [{ affectedRows: 0 }, []];
+  }
+  if (compact.startsWith('UPDATE calendars SET last_fetched_at = NOW(), last_fetch_error = ?')) {
+    if (state.calendar
+      && Number(params[1]) === state.calendar.id
+      && String(params[2]) === state.calendar.user_id
+      && String(params[3]) === state.calendar.subscribed_url
+      && String(params[4]) === String(state.calendar.sync_token)) {
+      state.calendar.last_fetched_at = nextRefreshStatus.lastFetchedAt;
+      state.calendar.last_fetch_error = String(params[0]);
+      return [{ affectedRows: 1 }, []];
+    }
+    return [{ affectedRows: 0 }, []];
+  }
+  if (compact.startsWith('SELECT last_fetched_at, last_fetch_error FROM calendars')) {
+    const matches = state.calendar
+      && Number(params[0]) === state.calendar.id
+      && String(params[1]) === state.calendar.user_id;
+    return [matches ? [{
+      last_fetched_at: state.calendar.last_fetched_at,
+      last_fetch_error: state.calendar.last_fetch_error,
+    }] : [], []];
+  }
+  throw new Error(`Subscription settings query escaped its transaction: ${compact}`);
 };
 db.pool.getConnection = async () => {
   let working = null;
@@ -130,6 +188,24 @@ require.cache[indexPath] = {
   paths: [],
 };
 
+const subscriptionPath = require.resolve('../src/calendar-subscription.js');
+const subscriptionModule = require(subscriptionPath);
+require.cache[subscriptionPath].exports = {
+  ...subscriptionModule,
+  runCalendarSubscriptionFetchOnce: async (_overrides, options = {}) => {
+    refreshWorkerCalendarId = options.calendarId;
+    refreshWorkerExpectedSubscribedUrl = options.expectedSubscribedUrl;
+    refreshWorkerExpectedSyncToken = options.expectedSyncToken;
+    if (refreshWorkerGate) await refreshWorkerGate;
+    state.calendar.last_fetched_at = nextRefreshStatus.lastFetchedAt;
+    state.calendar.last_fetch_error = nextRefreshStatus.error;
+    refreshWorkerMutation?.();
+    return nextRefreshOutcome || (nextRefreshStatus.error
+      ? { status: 'error', error: nextRefreshStatus.error }
+      : { status: 'synced' });
+  },
+};
+
 const { appsApiRouter } = require('../src/apps-api.js');
 
 async function withServer(t) {
@@ -161,6 +237,24 @@ function updateCalendar(port, subscribedUrl, includeSubscription = true) {
     });
     request.on('error', reject);
     request.end(raw);
+  });
+}
+
+function refreshSubscription(port, id = calendarId) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path: `/api/apps/calendars/${id}/subscription/refresh`,
+      method: 'POST',
+    }, response => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(body) }));
+    });
+    request.on('error', reject);
+    request.end();
   });
 }
 
@@ -278,4 +372,87 @@ test('omitting subscribed_url preserves the feed, managed events, and fetch stat
   assert.equal(state.calendar.last_fetch_error, 'old status');
   assert.deepEqual([...state.events.keys()], ['managed-a']);
   assert.equal(state.calendar.sync_token, 6);
+});
+
+test('subscription retry targets the owned calendar and returns a visible worker error', async t => {
+  resetState({ subscribedUrl: 'https://calendar.example.test/feed.ics' });
+  nextRefreshStatus = { lastFetchedAt: '2026-08-29 13:45:00', error: 'Remote calendar returned HTTP 503' };
+  const server = await withServer(t);
+
+  const response = await refreshSubscription(server.address().port);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, 'error');
+  assert.equal(response.body.last_fetch_error, 'Remote calendar returned HTTP 503');
+  assert.equal(refreshWorkerCalendarId, calendarId);
+  assert.equal(refreshWorkerExpectedSubscribedUrl, 'https://calendar.example.test/feed.ics');
+  assert.equal(refreshWorkerExpectedSyncToken, '5');
+});
+
+test('subscription retry reports a worker setup failure instead of pending success', async t => {
+  resetState({ subscribedUrl: 'https://calendar.example.test/feed.ics' });
+  nextRefreshStatus = { lastFetchedAt: '2026-08-29 13:45:00', error: null };
+  nextRefreshOutcome = { status: 'error', error: 'Calendar subscription synchronization could not start' };
+  const server = await withServer(t);
+
+  const response = await refreshSubscription(server.address().port);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, 'error');
+  assert.equal(response.body.last_fetch_error, 'Calendar subscription synchronization could not start');
+});
+
+test('subscription retry cannot stamp an old error onto a replacement feed generation', async t => {
+  resetState({ subscribedUrl: 'https://calendar.example.test/feed.ics' });
+  nextRefreshOutcome = { status: 'error', error: 'Old feed failed' };
+  refreshWorkerMutation = () => {
+    state.calendar.subscribed_url = 'https://calendar.example.test/replacement.ics';
+    state.calendar.sync_token += 1;
+    state.calendar.last_fetched_at = null;
+    state.calendar.last_fetch_error = null;
+  };
+  const server = await withServer(t);
+
+  const response = await refreshSubscription(server.address().port);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, 'pending');
+  assert.equal(response.body.last_fetch_error, null);
+  assert.equal(state.calendar.subscribed_url, 'https://calendar.example.test/replacement.ics');
+});
+
+test('subscription retry admits only one active refresh per owner', async t => {
+  resetState({ subscribedUrl: 'https://calendar.example.test/feed.ics' });
+  let releaseWorker;
+  refreshWorkerGate = new Promise(resolve => { releaseWorker = resolve; });
+  const server = await withServer(t);
+
+  const firstRequest = refreshSubscription(server.address().port);
+  for (let attempt = 0; attempt < 100 && refreshWorkerCalendarId === null; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  assert.equal(refreshWorkerCalendarId, calendarId, 'first refresh did not reach the worker');
+  const overlapping = await refreshSubscription(server.address().port);
+  assert.equal(overlapping.status, 429);
+  assert.equal(overlapping.body.error, 'Another calendar subscription refresh is already running. Try again shortly.');
+
+  releaseWorker();
+  const first = await firstRequest;
+  assert.equal(first.status, 200);
+  assert.equal(first.body.status, 'synced');
+});
+
+test('subscription retry rejects non-owned and non-subscription calendars', async t => {
+  resetState({ subscribedUrl: 'https://calendar.example.test/feed.ics' });
+  state.calendar.user_id = 'someone-else@example.test';
+  const server = await withServer(t);
+  const nonOwner = await refreshSubscription(server.address().port);
+  assert.equal(nonOwner.status, 404);
+  assert.equal(refreshWorkerCalendarId, null);
+
+  state.calendar.user_id = user;
+  state.calendar.subscribed_url = null;
+  const notSubscription = await refreshSubscription(server.address().port);
+  assert.equal(notSubscription.status, 409);
+  assert.equal(refreshWorkerCalendarId, null);
 });

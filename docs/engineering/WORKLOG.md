@@ -10948,3 +10948,88 @@ Reply/Reply all/Forward through Compose—before exposing those Outlook commands
 Persistent calendar groups/order and server-enforced Show as/category/private
 semantics remain separate tranches. Do not infer those workflows from this
 interaction release.
+
+## 2026-08-29 — Durable Calendar Meeting Communication
+
+### Selected task
+
+Complete the next Outlook-style Calendar tranche: make attendee and organizer
+meeting actions real end to end, keep every outbound notification idempotent and
+recoverable, and route ordinary meeting correspondence through normal Mail Compose.
+
+### Changes made
+
+- Added alias-aware invitation projection for attendee, organizer, and unowned
+  meetings. Event menus now expose the current Accept/Tentative/Decline state only
+  to a proven attendee, Cancel meeting only to the owned organizer, and explicit
+  view-only reasons when recurrence or identity state is unsafe.
+- Added RFC 5546 `REPLY` for attendee responses, organizer `CANCEL` for whole
+  series and proven occurrences, and bounded non-recurring `COUNTER` proposals.
+  Decline persists the attendee response rather than masquerading as organizer
+  cancellation; appointments retain their separate local Delete workflow.
+- Made Calendar mutation and universal-outbox reservation one database transaction.
+  Exact-key replay returns the durable result without another send. Retry reuses
+  the frozen MIME/envelope, reauthorizes the sender, and rejects superseded Calendar
+  state. Partial cancellation retries only rejected recipients, and uncertain
+  delivery requires explicit verified absence. Retry payload is retained seven
+  days and then scrubbed while privacy-safe replay metadata remains.
+- Preserved recurrence identity across all-day, floating, UTC, `TZID`, custom-zone,
+  DST, moved exceptions, and exact `DURATION` cases. One-occurrence cancellation
+  is limited to validated daily/weekly cadence with bounded exceptions; monthly/
+  yearly, selector-rich, malformed, `RANGE=THISANDFUTURE`, ambiguous, and overflow
+  cases fail closed while safe whole-series cancellation remains available.
+- Added normal Compose handoff for Reply, Reply all, and Forward. Forward carries
+  the original `.ics` and honors recognized forwarding restrictions. Reply all
+  excludes owned identities and is unavailable if the 50-attendee projection is
+  truncated. A requested Calendar alias now survives identity loading/failure;
+  Send and Schedule remain disabled until the alias is authorized, with visible
+  retry instead of falling back to the primary sender.
+- Added desktop/mobile dialogs and a durable Calendar recovery banner for pending,
+  failed, partial, uncertain, terminal, and successfully reconciled notifications.
+
+### Candidate proof
+
+- Commit `7267b6a8` passes 998 backend tests: 991 passed, seven documented optional
+  skips, zero failures. Frontend passes 252/252, ESLint, TypeScript/backend builds,
+  production frontend build, focused invitation/recurrence/outbox/Compose suites,
+  generated-runtime parity, whitespace, and the exact-tree integration gate with
+  final marker `[ok] Integration checks completed.`
+- Independent final Specification and Standards reviews returned no findings.
+- Fixture-backed Chromium verified attendee RSVP, saved response state, proposal
+  timezone conversion, the 390 px proposal dialog, organizer cancellation,
+  appointment Delete, and Reply Compose. It also forced identity lookup failure,
+  proved the Calendar alias stayed visible while Send was disabled, then proved
+  Retry identities authorized the same alias without changing recipients or
+  subject. The fixture produced no warnings/errors and touched no real mailbox,
+  event, or outbound recipient.
+
+### Release and live proof
+
+- Bridge and active guarded deployments both passed their pre/post public IMAPS
+  plus ActiveSync Mail/Ping/Contacts/Calendar gates with exact synthetic-canary
+  cleanup. Rollbacks are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260829T224524Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260829T225257Z`.
+- The complete staging smoke passed. OpenMailStack, Scheduler worker, Dovecot,
+  Postfix, Nginx, MariaDB, and Rspamd are active/running; both application services
+  report `NRestarts=0`; Nginx validates; application warning journals are empty.
+  The existing Postfix TLS-parameter deprecation and Rspamd task-timeout tuning
+  messages remain non-blocking staging advisories.
+- Local/public `/api/auth/me` return `401`, the public app returns `200`, and the
+  runtime is attested in active mode. Repository/live backend, `VERSION`, and full
+  frontend trees are exact. Public assets include `index-CF0_0CZs.js`,
+  `react-D0JuimcS.js`, and `index-CU4IuR2y.css`; released public Chromium rendered
+  the branded sign-in page, with only the expected unauthenticated auth `401`.
+
+### Residual limits
+
+- One-occurrence cancellation is not offered for monthly/yearly or selector-rich
+  recurrence, `RANGE=THISANDFUTURE`, ambiguous recurrence state, or more than 256
+  exceptions. Propose new time remains non-recurring only.
+- Meeting projection is bounded to 50 attendee rows. The true count is shown, but
+  Reply all fails closed when truncated. Frozen retry payloads have a deliberate
+  seven-day recovery window.
+- This release proves the web application and synthetic public protocol canaries;
+  it does not claim that Outlook, macOS Calendar, or iOS physically consumed these
+  new invitation messages. Server-enforced Show as/category/private, persistent
+  calendar groups/order, and OMS Notes capture remain separate tranches.

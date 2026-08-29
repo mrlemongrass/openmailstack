@@ -2,7 +2,7 @@
 
 Do not treat this as a complete audit. It is a working memory of risks observed during the initial repo review.
 
-Last updated: 2026-08-25
+Last updated: 2026-08-29
 
 ## Resolved Risks
 
@@ -357,9 +357,10 @@ Previously documented audit fixes:
 ## 2026-08-29 Calendar interaction parity boundaries
 
 - Outlook-style Calendar management and core context actions are live at
-  `3d59c09677b6ddbf04b9b9e0b3d9308ae216bd4d`, but this is not blanket Office 365
+  `3d59c09677b6ddbf04b9b9e0b3d9308ae216bd4d`, and bounded meeting communication is
+  live at `7267b6a8`; this is not blanket Office 365
   parity. Persistent calendar groups/order, directory/resource and personal-account
-  sources, recipient-scoped shared/subscribed color, complete RSVP/iTIP communication,
+  sources, recipient-scoped shared/subscribed color,
   Show as/categories/private enforcement, OMS Notes capture, and Teams provisioning
   remain unshipped. Keep unsupported commands absent instead of presenting decorative
   controls that cannot complete their protocol/storage workflows.
@@ -373,7 +374,21 @@ Previously documented audit fixes:
   bounds, per-calendar database lock, and exact URL/sync-token generation checks.
   A stale failure must never overwrite the status of a replacement feed.
 - Event context actions must stay access-, recurrence-, and capability-aware. Do not
-  expose mutation for read-only calendars, organizer Cancel/attendee Decline until
-  iTIP transmission is complete, Private until every sharing path redacts details,
-  or generated conference URLs that have no real provider. Duplicate must always
-  create an unsaved event with a fresh UID.
+  expose mutation for read-only calendars, Private until every sharing path redacts
+  details, or generated conference URLs that have no real provider. Attendee Decline
+  must remain an iTIP response; organizer Cancel must notify the proven roster; plain
+  appointment Delete must not inherit meeting semantics. Duplicate must always create
+  an unsaved event with a fresh UID.
+- Calendar notification recovery depends on the universal outbox. Preserve atomic
+  event-mutation/reservation, exact-key replay, frozen MIME/envelope retries,
+  sender and event-fingerprint reauthorization, partial-recipient targeting, and
+  verified-absence gating for uncertain delivery. Retry MIME is intentionally
+  recoverable for seven days and must then be scrubbed.
+- One-occurrence meeting cancellation is deliberately narrower than recurrence
+  display. Keep monthly/yearly, selector-rich, `RANGE=THISANDFUTURE`, malformed,
+  ambiguous, and more-than-256-exception series out of that action unless membership
+  validation is extended with equivalent tests. Attendee projection is bounded to
+  50; never enable Reply all when the roster is truncated or silently omit recipients.
+- Calendar-to-Mail Compose must preserve the requested alias while identities load
+  or fail. Send and Schedule must remain blocked until that exact sender is currently
+  authorized; never fall back to the primary identity for a meeting reply.

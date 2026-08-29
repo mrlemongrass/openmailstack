@@ -1495,6 +1495,40 @@ and released public sign-in Chromium are clean. Browser QA mutated no real user
 calendar data.
 
 Persistent calendar groups/order, directory/resource and personal-account sources,
-recipient-scoped shared/subscribed color, complete RSVP/iTIP and meeting messaging,
-Show as/categories/private enforcement, OMS Notes capture, and Teams provisioning
-are not implemented by this release.
+recipient-scoped shared/subscribed color, Show as/categories/private enforcement,
+OMS Notes capture, and Teams provisioning are not implemented by this release.
+
+## 2026-08-29 Durable Calendar Meeting Communication
+
+**Status: guarded-deployed in active mode and live-verified.** Commit `7267b6a8`
+adds alias-aware invitation projection plus RFC 5546 attendee `REPLY`, organizer
+series/occurrence `CANCEL`, and bounded non-recurring `COUNTER`. Plain appointments
+retain Delete; attendee invitations expose current RSVP state and never inherit
+organizer actions; unsupported or ambiguous meeting state becomes view-only.
+
+Calendar mutation and universal-outbox reservation commit atomically. Exact-key
+replay never resends; retries reauthorize the frozen sender and recheck the exact
+event fingerprint. Failed/partial/uncertain notification state stays visible in
+Calendar, partial cancellation retries rejected recipients only, uncertain delivery
+requires verified absence, and retry MIME is scrubbed after seven days.
+
+Occurrence cancellation preserves all-day/floating/UTC/`TZID`/custom-zone/DST,
+moved-exception, and exact-duration identities. It is offered only for validated
+simple daily/weekly cadence. Monthly/yearly or selector-rich rules,
+`RANGE=THISANDFUTURE`, malformed/ambiguous state, and more than 256 exceptions fail
+closed while safe series cancellation remains. Projection exposes at most 50
+attendees plus the true count; Reply all is blocked if the roster is truncated.
+
+Reply, Reply all, and Forward use normal Mail Compose. Forward carries the source
+`.ics` and recognized forwarding policy. The requested Calendar alias survives
+identity loading/failure, and Send/Schedule remain disabled with visible retry until
+that exact sender is authorized.
+
+Proof: backend 998 total (991 pass, seven optional skips), frontend 252/252, lint/
+build, exact-tree integration, fixture desktop/mobile Chromium including alias
+failure/retry, and final no-finding Specification/Standards reviews. Guarded bridge/
+active rollbacks are `protocol-guarded-webmail-20260829T224524Z` and
+`protocol-guarded-webmail-20260829T225257Z`; public protocol gates, staging smoke,
+services/restarts, Nginx, app journals, auth boundaries, exact artifacts, and public
+sign-in Chromium are clean. No real invitation was sent during fixture browser QA;
+physical Outlook/Apple-client consumption of the new iTIP messages remains unproven.

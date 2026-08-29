@@ -1,6 +1,6 @@
 # Outlook Calendar Interaction Parity Baseline
 
-Status: `Current first-party research baseline; implementation status must be verified in source and browser`
+Status: `Current first-party research baseline; Calendar management and the bounded meeting-communication tranche are guarded-deployed and live-verified`
 
 Research date: 2026-08-29
 
@@ -99,9 +99,9 @@ OMS should do the same instead of rendering one long menu full of dead commands.
 |---|---|---|
 | Join meeting / Copy meeting link | Teams is natively integrated into new Outlook/web scheduling and adds join details to sent invitations; Microsoft documents joining through the invite link. [M1][M2] The exact two context-menu commands are **screenshot-observed**. | Ship provider-neutral `Join meeting` and `Copy meeting link` only when the event has a validated `https:` conference URL. Do not require Teams. |
 | Print | Outlook on the web documents calendar printing, date range, view, and detailed agenda. [M3] The exact event-row `Print` command is **screenshot-observed**. | Ship `Print event` with an event-focused print layout; keep whole-calendar Print separate. |
-| Accept / Tentative / Decline | Outlook documents these response states, including delegate responses on the owner's behalf. [M4] The supplied screenshot establishes their event-menu placement. | Ship only for a real invitation where OMS can persist and transmit an iTIP response. Show current response and prevent duplicate ambiguous sends. |
-| Propose new time | Microsoft documents this for new Outlook work/school accounts, not personal/IMAP/POP accounts; recurring meetings and organizer-disabled proposals are excluded. [M5] The exact web context-menu placement is **screenshot-observed**. | Later: requires a complete invitation-response workflow, organizer identity, recurrence restrictions, outbound message, and conflict-safe update semantics. |
-| Reply / Reply all / Forward | Microsoft documents reply/reply-all as actions that can remain available even when meeting forwarding is blocked, and documents forwarding an existing meeting request. [M6][M7] Exact context-menu placement is **screenshot-observed**. | Later: route through normal OMS Compose with the source meeting/message identity. Honor organizer `Allow forwarding` policy if known. |
+| Accept / Tentative / Decline | Outlook documents these response states, including delegate responses on the owner's behalf and the option to retain a declined meeting on the calendar. [M4][M17] The supplied screenshot establishes their event-menu placement. | **Shipped 2026-08-29.** For a real owned attendee identity, OMS atomically persists the series `PARTSTAT` and reserves an RFC 5546 `REPLY`. The current response is visible, and ambiguous or duplicate delivery is blocked behind exact recovery. Decline does not silently delete the stored event. [I2] |
+| Propose new time | Microsoft documents this for new Outlook work/school accounts, not personal/IMAP/POP accounts; recurring meetings and organizer-disabled proposals are excluded. [M5] The exact web context-menu placement is **screenshot-observed**. | **Shipped with the same bounds.** OMS emits an RFC 5546 `COUNTER` for a non-recurring attendee invitation without moving the stored event. Recurring meetings and organizer-disabled proposals remain unavailable. [I2] |
+| Reply / Reply all / Forward | Microsoft documents reply/reply-all as actions that can remain available even when meeting forwarding is blocked, and documents forwarding an existing meeting request. [M6][M7] Exact context-menu placement is **screenshot-observed**. | **Shipped 2026-08-29.** All three use normal OMS Compose. Reply targets the organizer; Reply all excludes the current owned identity and fails closed when the attendee projection is truncated; Forward attaches the original `.ics` and honors recognized forwarding restrictions. The exact Calendar alias remains visible and Send/Schedule stay disabled until that sender is authorized. |
 | Charm | Microsoft documents charms for calendars. [C1][C3] Event-level charm in this menu is **screenshot-observed**. | Later optional generic event icon; not core calendar confidence. |
 | Send to OneNote | `Send to OneNote` is a Microsoft cloud add-in available in Outlook for the web/new Outlook; it saves an opened mail or meeting item to a selected OneNote section. [M8] | Microsoft-only. Do not present it without OneNote. A later OMS-native `Save to Notes` can preserve source title, date/time, stable backlink, and chosen attachments. |
 | Show as | New Outlook documents right-clicking a calendar item and selecting Free/Busy/Out of Office-style availability. [M9] | Ship when the event model round-trips availability. Use the values OMS actually supports and update free/busy immediately. |
@@ -109,7 +109,7 @@ OMS should do the same instead of rendering one long menu full of dead commands.
 | Private | Outlook documents private events and warns that delegates with private-item permission can still see details. [M11][C5] Exact context-menu placement is **screenshot-observed**. | Ship only if every sharing/read path enforces private-detail redaction. A lock icon without server enforcement is unsafe. |
 | Duplicate event | Microsoft explicitly documents right-click `Duplicate event` in new Outlook. [M12][M13] | Ship now for owned/readable events. Generate a new UID, clear response state, preserve safe content, and open the copy as an unsaved draft. |
 | Save as `.ics` | Microsoft documents interoperable iCalendar import/subscription, calendar publishing, and classic Outlook iCalendar export. [C2][M14] The exact single-event web command is **screenshot-observed**. | Ship `Download .ics` for any readable event with privacy-safe fields and a stable filename. This is portable and useful even without Outlook parity. |
-| Delete / Cancel | Outlook on the web documents Delete for appointments, Cancel for organized meetings, and occurrence-versus-series scope for recurring items. New Outlook documents right-click Edit or Cancel. [M15][M16] | Current bounded tranche: expose Delete only on an editable calendar and require occurrence-versus-series scope. Later, distinguish organizer Cancel-and-notify and attendee Decline after the invitation workflow can transmit those outcomes correctly. |
+| Delete / Cancel | Outlook on the web documents Delete for appointments, Cancel for organized meetings, and occurrence-versus-series scope for recurring items. New Outlook documents right-click Edit or Cancel. [M15][M16] | **Shipped with role-specific semantics.** Plain appointments retain local Delete. Owned organizers use Cancel-and-notify with RFC 5546 `CANCEL`; whole-series cancellation is supported, while one-occurrence cancellation is offered only when recurrence membership can be proved safely. Attendees use Decline/`REPLY`, not organizer cancellation. [I2] |
 
 ### OMS event-menu ordering
 
@@ -122,8 +122,32 @@ Keep the first menu bounded and contextual:
 5. Show as, Category, and Private, only when supported
 6. Delete/Cancel/Decline with correct recurrence and notification semantics
 
-Reply/forward, new-time proposals, Notes integration, and other advanced actions
-can live behind `More actions` until their end-to-end workflows are complete.
+Reply, Reply all, Forward, and new-time proposals now live in the contextual
+meeting actions. Notes integration and other advanced actions remain deferred.
+
+### Implemented invitation-delivery contract
+
+- Meeting actions are projected from the stored iCalendar organizer and attendee
+  records plus every authorized mailbox alias; an exception-only or otherwise
+  ambiguous identity becomes view-only instead of inheriting unsafe series powers.
+- RSVP, organizer cancellation, and new-time proposals reserve their frozen MIME,
+  envelope, semantic fingerprint, and local Calendar mutation in one transaction.
+  Same-key replay cannot resend. Pending, partial, failed, and uncertain outcomes
+  remain visible in Calendar and use the same universal-outbox recovery contract.
+- A retry reauthorizes the original sender and rechecks the exact Calendar state.
+  Partial cancellation retries only rejected recipients. Uncertain delivery requires
+  the user to verify non-delivery before a successor is allowed. Retry payloads are
+  retained for seven days and then scrubbed; privacy-safe replay metadata remains.
+- Recurrence identity preserves date-only, floating, UTC, `TZID`, custom-zone, DST,
+  and exact `DURATION` semantics. One-occurrence cancellation is limited to simple
+  validated daily/weekly rules with `FREQ`, optional `INTERVAL`, and one of `COUNT`
+  or `UNTIL`. Monthly/yearly rules, selector-rich rules, `RANGE=THISANDFUTURE`,
+  malformed/ambiguous recurrence state, and more than 256 exceptions fail closed.
+- The event projection exposes at most 50 attendees and bounded display names. The
+  full attendee count remains visible; Reply all is unavailable when the roster is
+  truncated so hidden recipients can never be silently omitted.
+- This implements the relevant iTIP methods defined by RFC 5546 while retaining the
+  iCalendar recurrence/value rules from RFC 5545. [I1][I2]
 
 ## 5. `Go to my booking page`
 
@@ -152,11 +176,11 @@ The exact `Go to my booking page` Calendar-rail shortcut is
 | **Ship now** | Calendar visibility | Per-row checkbox, Show only, Show all, and restore prior selection; no data mutation. |
 | **Ship now** | Scheduler bridge | `Go to my booking page` opens the real OMS Scheduler public page when published, offers a nearby copy-link action, and routes unpublished owners directly to Profile/Publish. |
 | **Ship now** | Empty-grid context | New event at exact date/time and Go to today, with equivalent visible/keyboard paths. |
-| **Ship now** | Core event context | View/Edit according to calendar access, conditional generic Join/Copy for recognized conference links, Duplicate into an editable calendar with a new UID, Download `.ics`, event Print, and Delete occurrence/series scope for editable events. Invitation Cancel/Decline remains in the meeting-communication tranche. |
-| **Ship now if already enforced end to end** | Sharing, Show as, Category, Private, RSVP | Expose each only when its API/protocol/storage path is real and permission-safe; otherwise omit rather than ship a decorative control. |
+| **Ship now** | Core event context | View/Edit according to calendar access, conditional generic Join/Copy for recognized conference links, Duplicate into an editable calendar with a new UID, Download `.ics`, event Print, appointment Delete, attendee RSVP, and organizer Cancel with safe recurrence scope. |
+| **Ship now** | Meeting communication | Alias-aware RSVP/iTIP, bounded non-recurring Propose new time, Reply/Reply all/Forward through Compose, forwarding policy, atomic outbox reservation, exact replay, and visible delivery recovery. |
+| **Ship now if already enforced end to end** | Sharing, Show as, Category, Private | Expose each only when its API/protocol/storage path is real and permission-safe; otherwise omit rather than ship a decorative control. |
 | **Later** | Calendar groups and ordering | Persistent group CRUD, Move to, drag/Move up/down, alphabetical reset, and cross-session/device consistency. |
 | **Later** | Additional calendar sources | Directory/resource lookup, shared-calendar discovery, personal-account connections, and policy-aware source limits. Web subscriptions are included now only through the bounded OMS HTTPS feed contract. |
-| **Later** | Meeting communication | RSVP/iTIP hardening, Propose new time, Reply/Reply all/Forward through Compose, organizer policies, and audit/retry behavior. |
 | **Later** | Save to OMS Notes | Event-to-note capture with stable backlink and explicit attachment choices. |
 | **Microsoft-only; do not copy** | Teams provisioning, OneNote add-in, Microsoft Bookings tenant/licensing behavior | Use generic conference URLs, OMS Notes, and OMS Scheduler instead. Preserve workflow value without presenting nonexistent Microsoft integrations. |
 
@@ -175,6 +199,20 @@ This slice is not complete from labels or screenshots alone. Verify:
   scope, and backend error recovery;
 - desktop and mobile browser screenshots, focused regressions, complete relevant
   suites, deployed artifact equality, and protocol-safe release gates.
+
+### 2026-08-29 meeting-communication evidence
+
+Commit `7267b6a8` passes 998 backend tests (991 pass, seven optional skips),
+252/252 frontend tests, lint/build, the exact-tree integration gate, desktop/mobile
+fixture Chromium, forced Calendar-alias lookup failure/retry, and independent
+Specification/Standards reviews with no findings. Guarded bridge and active releases
+passed public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar pre/post gates with
+exact synthetic cleanup; rollbacks are `protocol-guarded-webmail-20260829T224524Z`
+and `protocol-guarded-webmail-20260829T225257Z`. Staging smoke, zero-restart active
+services, Nginx, application journals, auth boundaries, exact live artifacts, and
+public sign-in Chromium are clean. Fixture browser QA sent no real invitation;
+physical Outlook/macOS/iOS consumption of the new iTIP messages remains a separate
+gate.
 
 ## 8. First-party source register
 
@@ -204,5 +242,8 @@ This slice is not complete from labels or screenshots alone. Verify:
 - [M14] [Create an Add to calendar link in an email message](https://support.microsoft.com/en-us/outlook/create-an-add-to-calendar-link-in-an-email-message)
 - [M15] [Create, modify, or delete a meeting request or appointment in Outlook on the web](https://support.microsoft.com/en-us/outlook/create-modify-or-delete-a-meeting-request-or-appointment-in-outlook-on-the-web)
 - [M16] [Change an appointment, meeting, or event in Outlook](https://support.microsoft.com/en-us/outlook/calendar/change-an-appointment-meeting-or-event-in-outlook)
+- [M17] [Show a declined meeting on my calendar in Outlook](https://support.microsoft.com/en-us/outlook/calendar/show-a-declined-meeting-on-my-calendar-in-outlook)
 - [B1] [Personal Bookings Frequently Asked Questions](https://learn.microsoft.com/en-us/microsoft-365/bookings/personal-bookings-faq?view=o365-worldwide)
 - [B2] [Preview and share your personal booking page](https://learn.microsoft.com/en-us/microsoft-365/bookings/preview-share-personal-booking-page?view=o365-worldwide)
+- [I1] [RFC 5545: Internet Calendaring and Scheduling Core Object Specification](https://www.rfc-editor.org/rfc/rfc5545.html)
+- [I2] [RFC 5546: iCalendar Transport-Independent Interoperability Protocol](https://www.rfc-editor.org/rfc/rfc5546.html)

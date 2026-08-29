@@ -2547,3 +2547,26 @@ Future entry template:
   and public sign-in Chromium are clean. Public assets are `index-Rslz6Gc5.js`,
   `react-D0JuimcS.js`, and `index-BSiv14AS.css`. Fixture browser QA changed no real
   user calendar, event, share, subscription, or Scheduler data.
+
+## 2026-08-29 — Durable Calendar Meeting Communication
+
+- Added owned-identity projection and contextual attendee RSVP, organizer Cancel,
+  non-recurring Propose new time, plus Reply/Reply all/Forward through normal Mail
+  Compose. Decline and appointment Delete retain distinct semantics.
+- Added RFC 5546 `REPLY`, `CANCEL`, and `COUNTER` generation with atomic Calendar
+  mutation/universal-outbox reservation, exact replay, partial-recipient retry,
+  visible uncertain-delivery recovery, sender/state reauthorization, and seven-day
+  retry-payload scrubbing.
+- Preserved recurrence/value/duration identity and fail closed for unsafe occurrence
+  membership. Projection is capped at 50 attendees; Reply all is unavailable when
+  truncated. Calendar aliases survive identity lookup failure and cannot send or
+  schedule until explicitly authorized.
+- Commit `7267b6a8` passes backend 991 plus seven optional skips, frontend 252/252,
+  lint/build, exact-tree integration, desktop/mobile fixture Chromium, the forced
+  alias failure/retry browser path, and final no-finding Specification/Standards
+  reviews.
+- Guarded bridge/active protocol releases passed with exact synthetic cleanup;
+  rollbacks are `protocol-guarded-webmail-20260829T224524Z` and
+  `protocol-guarded-webmail-20260829T225257Z`. Staging smoke, active zero-restart
+  services, Nginx, app journals, auth boundaries, exact live artifacts, and public
+  sign-in Chromium are clean. Browser QA sent no real invitation.

@@ -1516,6 +1516,43 @@ Current Calendar interoperability seam, verified locally 2026-07-20:
 - `webmail-backend/src/eas-timezone.ts` encodes and decodes the 172-byte EAS `TIME_ZONE_INFORMATION` value, validates candidate IANA/Windows names against the decoded bias and transition rules, and uses bounded caches/fallbacks. `windows-timezones.ts` carries the CLDR 48 territory-`001` map under the Unicode notice in `THIRD_PARTY_NOTICES.md`.
 - Recurrence exceptions, reminders, and conservative custom/invalid `VTIMEZONE` handling pass the automated and physical macOS/iOS Calendar gates recorded in the worklog. Arbitrary unsupported custom rules remain floating by design.
 
+Current web Calendar invitation seam, guarded-deployed 2026-08-29:
+
+- `webmail-backend/src/calendar-invitations.ts` parses stored iCalendar into an
+  alias-aware attendee/organizer capability projection and prepares RFC 5546
+  `REPLY`, `CANCEL`, and `COUNTER` messages. Projection is bounded to 50 attendee
+  rows and 160-byte display names; the true count and truncation state remain
+  visible, and Reply all fails closed when the complete recipient set was not
+  projected.
+- Authenticated event response, cancellation, and proposal routes in
+  `webmail-backend/src/apps-api.ts` lock the event and its writable calendar,
+  validate the owned sending identity, and commit the Calendar mutation plus a
+  universal-outbox reservation atomically. Same idempotency key replays the
+  durable outcome; a different semantic request cannot reuse it. Delivery uses
+  the existing worker and Sent-copy state machine rather than synchronous SMTP.
+- Calendar recovery stores only the outbound key and bounded privacy-safe action
+  metadata in the browser. Failed, partial, or uncertain delivery can retry the
+  frozen MIME/envelope only after sender authorization and the exact local event
+  fingerprint are rechecked. Partial cancellation targets only rejected
+  recipients; uncertain delivery requires explicit verified absence. Retry MIME
+  remains in the hot outbox for seven days and is then scrubbed.
+- RSVP updates the master attendee `PARTSTAT` and preserves exception-specific
+  data. Series cancellation removes the meeting and records its tombstone.
+  Occurrence cancellation adds the canonical `EXDATE`, cancels a matching moved
+  exception when present, preserves date-only/floating/UTC/`TZID`/DST and exact
+  `DURATION` semantics, and sends a recurrence-specific `CANCEL`.
+- One-occurrence cancellation is deliberately limited to structurally valid
+  daily/weekly rules whose membership OMS can prove. Monthly/yearly or selector-
+  rich rules, malformed rules, `RANGE=THISANDFUTURE`, conflicting identities, and
+  more than 256 exceptions become view-only or retain series-only cancellation.
+  A non-recurring attendee proposal sends `COUNTER` without moving the stored
+  event; recurring and organizer-disabled proposals remain unavailable.
+- `webmail-frontend/src/shared/crossSuiteCompose.ts` carries Reply, Reply all, and
+  Forward into normal Mail Compose as a bounded one-shot handoff. Forward includes
+  the original `.ics` and honors recognized organizer restrictions. The requested
+  Calendar alias is preserved while identities load; Send and Schedule stay
+  disabled until it is authorized, with a visible retry on lookup failure.
+
 Current ActiveSync Mail interoperability seam, deployed and physically verified
 2026-08-18:
 
@@ -1889,6 +1926,10 @@ During repository intake, agents should answer these questions and update this f
 
 ## 16. Change Log for This Document
 
+- 2026-08-29: Documented the guarded-deployed Calendar invitation projection,
+  RFC 5546 response/cancellation/proposal methods, atomic universal-outbox
+  reservation and retry boundary, recurrence fail-closed limits, and alias-safe
+  handoff to normal Mail Compose.
 - 2026-08-23: Documented the production-measured split between quiesced logical
   capture and post-health immutable finalization, strict timing metadata,
   legacy compatibility, and the remaining full-copy availability risk.

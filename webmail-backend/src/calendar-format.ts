@@ -11,6 +11,7 @@ export interface ParsedIcalEvent {
     isAllDay: boolean;
     timeKind: 'utc' | 'zoned' | 'floating' | 'all-day';
     timeZone: string | null;
+    recurrenceWallStart?: WallTimeParts;
     sourceTimeZone?: string;
     timeZoneStatus?: 'valid' | 'canonicalized' | 'unsupported' | 'invalid';
     dtstamp: Date;
@@ -20,6 +21,7 @@ export interface ParsedIcalEvent {
     exdates?: Set<string>;
     excludedOccurrenceIds?: Set<string>;
     recurrenceExceptions?: ParsedRecurrenceException[];
+    recurrenceExceptionIdentityConflict?: boolean;
     attendees?: string;
     activeSyncAttendees?: Array<{ email: string; name?: string; status?: string; type?: string }>;
     organizerEmail?: string;
@@ -41,6 +43,8 @@ export interface ParsedIcalEvent {
 export interface ParsedRecurrenceException {
     recurrenceId: Date;
     deleted: boolean;
+    sourceParameters?: string;
+    sourceValue?: string;
     event?: Omit<ParsedIcalEvent, 'recurrenceExceptions' | 'excludedOccurrenceIds' | 'exdates'>;
 }
 
@@ -199,6 +203,7 @@ interface ParsedIcalDate {
     date: Date;
     timeKind: ParsedIcalEvent['timeKind'];
     timeZone: string | null;
+    wallTime?: WallTimeParts;
     sourceTimeZone?: string;
     timeZoneStatus?: ParsedIcalEvent['timeZoneStatus'];
 }
@@ -266,7 +271,7 @@ function offsetAt(instant: Date, timeZone: string): number {
     return renderedAsUtc - Math.floor(instant.getTime() / 1000) * 1000;
 }
 
-function wallTimeToInstant(parts: WallTimeParts, timeZone: string): Date {
+export function wallTimeToInstant(parts: WallTimeParts, timeZone: string): Date {
     const target = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
     const offsets = new Set<number>();
     for (let sampleHours = -36; sampleHours <= 36; sampleHours += 6) {
@@ -572,6 +577,7 @@ function parseIcalDate(
             date: new Date(Date.UTC(year, month - 1, day, 0, 0, 0)),
             timeKind: 'all-day',
             timeZone: null,
+            wallTime: { year, month, day, hour: 0, minute: 0, second: 0 },
         };
     }
 
@@ -588,6 +594,7 @@ function parseIcalDate(
             date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
             timeKind: 'utc',
             timeZone: 'UTC',
+            wallTime,
         };
     }
 
@@ -601,6 +608,7 @@ function parseIcalDate(
                 date: wallTimeToInstant(wallTime, timeZone),
                 timeKind: 'zoned',
                 timeZone,
+                wallTime,
                 sourceTimeZone: sourceTimeZone !== timeZone || resolution?.status === 'invalid'
                     ? sourceTimeZone
                     : undefined,
@@ -611,6 +619,7 @@ function parseIcalDate(
             date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
             timeKind: 'floating',
             timeZone: null,
+            wallTime,
             sourceTimeZone,
             timeZoneStatus: resolution?.status || 'unsupported',
         };
@@ -620,6 +629,7 @@ function parseIcalDate(
         date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
         timeKind: 'floating',
         timeZone: null,
+        wallTime,
     };
 }
 
@@ -697,11 +707,12 @@ function parseEventComponent(
     const startField = firstIcalValue(eventLines, 'DTSTART');
     const endField = firstIcalValue(eventLines, 'DTEND');
     const allDay = startField
-        ? Boolean(startField.params.toUpperCase().includes('VALUE=DATE') || startField.value.length === 8)
+        ? Boolean(/(?:^|;)VALUE=DATE(?:;|$)/i.test(startField.params) || startField.value.length === 8)
         : Boolean(fallback?.isAllDay);
     const fallbackTime = fallback ? {
         timeKind: fallback.timeKind,
         timeZone: fallback.timeZone,
+        wallTime: fallback.recurrenceWallStart,
         sourceTimeZone: fallback.sourceTimeZone,
         timeZoneStatus: fallback.timeZoneStatus,
     } : undefined;
@@ -771,6 +782,7 @@ function parseEventComponent(
         isAllDay: allDay,
         timeKind: parsedStart.timeKind,
         timeZone: parsedStart.timeZone,
+        recurrenceWallStart: parsedStart.wallTime,
         sourceTimeZone: parsedStart.sourceTimeZone,
         timeZoneStatus: parsedStart.timeZoneStatus,
         dtstamp: firstIcalValue(eventLines, 'DTSTAMP')
@@ -852,6 +864,7 @@ export function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & { t
     const masterLines = directPropertyLines(masterBody);
     const exdates = parseExdates(masterLines, master, timeZones);
     const recurrenceExceptions = new Map<string, ParsedRecurrenceException>();
+    let recurrenceExceptionIdentityConflict = false;
 
     let exceptionBodyCount = 0;
     for (const body of eventBodies) {
@@ -865,9 +878,13 @@ export function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & { t
         if (exceptionBodyCount > 256) continue;
         const recurrenceId = parseIcalDate(recurrenceIdField, master.isAllDay, master, timeZones).date;
         const deleted = firstIcalValue(properties, 'STATUS')?.value?.toUpperCase() === 'CANCELLED';
-        recurrenceExceptions.set(formatActiveSyncDate(recurrenceId), {
+        const recurrenceKey = formatActiveSyncDate(recurrenceId);
+        if (recurrenceExceptions.has(recurrenceKey)) recurrenceExceptionIdentityConflict = true;
+        recurrenceExceptions.set(recurrenceKey, {
             recurrenceId,
             deleted,
+            sourceParameters: recurrenceIdField.params,
+            sourceValue: recurrenceIdField.value,
             event: deleted ? undefined : parseEventComponent(uid, body, timeZones, master),
         });
     }
@@ -878,6 +895,7 @@ export function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & { t
         excludedOccurrenceIds: exdates.occurrenceIds,
         recurrenceExceptions: Array.from(recurrenceExceptions.values()),
         recurrenceExceptionOverflow: exceptionBodyCount > 256,
+        recurrenceExceptionIdentityConflict,
     };
 }
 
@@ -932,6 +950,15 @@ export function expandRecurringEvent(
     );
     const durationMs = event.end.getTime() - event.start.getTime();
     let occurrenceStart = new Date(event.start);
+    const recurrenceWall = event.timeKind === 'zoned' && event.timeZone
+        ? (() => {
+            const wall = event.recurrenceWallStart || wallTimeAt(event.start, event.timeZone!);
+            return new Date(Date.UTC(
+                wall.year, wall.month - 1, wall.day,
+                wall.hour, wall.minute, wall.second,
+            ));
+        })()
+        : null;
     let generated = 0;
 
     while (generated < maxOccurrences) {
@@ -958,24 +985,41 @@ export function expandRecurringEvent(
             }
         }
 
-        occurrenceStart = addRecurrenceInterval(
-            occurrenceStart,
-            event.recurrence.frequency,
-            event.recurrence.interval,
-            event.timeKind === 'zoned' ? event.timeZone : null
-        );
+        if (recurrenceWall && event.timeZone) {
+            if (event.recurrence.frequency === 'DAILY') recurrenceWall.setUTCDate(recurrenceWall.getUTCDate() + event.recurrence.interval);
+            if (event.recurrence.frequency === 'WEEKLY') recurrenceWall.setUTCDate(recurrenceWall.getUTCDate() + event.recurrence.interval * 7);
+            if (event.recurrence.frequency === 'MONTHLY') recurrenceWall.setUTCMonth(recurrenceWall.getUTCMonth() + event.recurrence.interval);
+            if (event.recurrence.frequency === 'YEARLY') recurrenceWall.setUTCFullYear(recurrenceWall.getUTCFullYear() + event.recurrence.interval);
+            occurrenceStart = wallTimeToInstant({
+                year: recurrenceWall.getUTCFullYear(),
+                month: recurrenceWall.getUTCMonth() + 1,
+                day: recurrenceWall.getUTCDate(),
+                hour: recurrenceWall.getUTCHours(),
+                minute: recurrenceWall.getUTCMinutes(),
+                second: recurrenceWall.getUTCSeconds(),
+            }, event.timeZone);
+        } else {
+            occurrenceStart = addRecurrenceInterval(
+                occurrenceStart,
+                event.recurrence.frequency,
+                event.recurrence.interval,
+                null,
+            );
+        }
         generated += 1;
     }
 
     for (const exception of exceptionByOccurrence.values()) {
         if (exception.deleted || !exception.event) continue;
+        const occurrenceId = formatActiveSyncDate(exception.recurrenceId);
+        if (event.excludedOccurrenceIds?.has(occurrenceId)) continue;
         if (exception.event.end < rangeStart || exception.event.start > rangeEnd) continue;
         occurrences.push({
             ...exception.event,
             uid: event.uid,
             recurrence: event.recurrence,
             recurrenceLabel: event.recurrenceLabel,
-            occurrenceId: formatActiveSyncDate(exception.recurrenceId),
+            occurrenceId,
         });
     }
 

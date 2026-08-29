@@ -65,6 +65,7 @@ test('active durable immediate row survives bridge retry and worker rollback qua
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
+      if (compact.startsWith('ALTER TABLE outbound_submission_registry')) return [[], []];
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) return [allColumns.map(COLUMN_NAME => ({
         COLUMN_NAME,
         COLUMN_TYPE: COLUMN_NAME === 'attempts' ? 'int unsigned' : '',

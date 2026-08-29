@@ -1,4 +1,5 @@
 import type { Calendar, CalendarEvent } from '../shared/types';
+import { buildCalendarEventIcal, calendarEventDraftForEdit } from './calendarTime';
 
 const HTTP_URL = /https?:\/\/[^\s<>"']+/gi;
 const CONFERENCE_HOST = /(^|\.)(meet\.google\.com|teams\.microsoft\.com|zoom\.us|webex\.com|meet\.jit\.si|whereby\.com)$/i;
@@ -50,7 +51,24 @@ export function eventIcsFilename(event: Pick<CalendarEvent, 'title'>): string {
   return `${stem}.ics`;
 }
 
-export function duplicateCalendarEventDraft(event: CalendarEvent): Partial<CalendarEvent> {
+function standaloneCalendarEventDraft(
+  event: CalendarEvent,
+  displayTimeZone: string,
+): Partial<CalendarEvent> {
+  const normalized = calendarEventDraftForEdit({
+    ...event,
+    seriesStart: undefined,
+    seriesEnd: undefined,
+    seriesTitle: undefined,
+    seriesLocation: undefined,
+    seriesDescription: undefined,
+    seriesNotifications: undefined,
+    seriesIsAllDay: undefined,
+    seriesTimeKind: undefined,
+    seriesTimeZone: undefined,
+    seriesSourceTimeZone: undefined,
+    seriesTimeZoneStatus: undefined,
+  }, displayTimeZone);
   const {
     id: _id,
     occurrenceId: _occurrenceId,
@@ -70,15 +88,41 @@ export function duplicateCalendarEventDraft(event: CalendarEvent): Partial<Calen
     seriesTimeZoneStatus: _seriesTimeZoneStatus,
     sourceStart: _sourceStart,
     sourceEnd: _sourceEnd,
+    invitation: _invitation,
     ...copy
-  } = event;
+  } = normalized;
 
   return {
     ...copy,
-    title: `${event.title || 'Untitled event'} (copy)`,
-    start: new Date(event.start),
-    end: new Date(event.end),
+    start: new Date(normalized.start || event.start),
+    end: new Date(normalized.end || event.end),
   };
+}
+
+export function duplicateCalendarEventDraft(
+  event: CalendarEvent,
+  displayTimeZone = 'UTC',
+): Partial<CalendarEvent> {
+  return {
+    ...standaloneCalendarEventDraft(event, displayTimeZone),
+    title: `${event.title || 'Untitled event'} (copy)`,
+  };
+}
+
+export function downloadableCalendarEventIcal(
+  event: CalendarEvent,
+  displayTimeZone: string,
+  createUid: () => string = () => crypto.randomUUID(),
+  now: () => Date = () => new Date(),
+): string {
+  const draft = standaloneCalendarEventDraft(event, displayTimeZone);
+  return buildCalendarEventIcal(
+    draft,
+    displayTimeZone,
+    event.occurrenceId ? null : event.id,
+    createUid,
+    now,
+  );
 }
 
 export function isManagedCalendar(calendar: Pick<Calendar, 'dav_slug'>): boolean {

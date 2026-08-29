@@ -8,6 +8,7 @@ export interface UniversalOutboundReservation {
     sendAtSql: string;
     mailOptions: string;
     displayMetadata: string;
+    replayMetadata: string | null;
     draftUid: number | null;
     submissionKind: 'immediate' | 'scheduled';
     submissionOrigin: OutboundSubmissionOrigin;
@@ -35,6 +36,7 @@ export interface UniversalOutboundIdentityRow {
     save_in_sent_items: number | boolean;
     rejected_recipients_json: string | null;
     last_error_code: string | null;
+    display_metadata_json?: string | null;
     registry_only?: number | boolean;
 }
 
@@ -76,6 +78,7 @@ export const ensureOutboundRegistrySchema = async (db: any): Promise<void> => {
                 send_at DATETIME NOT NULL,
                 smtp_accepted TINYINT(1) NOT NULL DEFAULT 0,
                 save_in_sent_items TINYINT(1) NOT NULL DEFAULT 1,
+                replay_metadata_json MEDIUMTEXT NULL,
                 terminal_at DATETIME NULL,
                 hot_row_removed_at DATETIME NULL,
                 replay_expires_at DATETIME NULL,
@@ -86,6 +89,11 @@ export const ensureOutboundRegistrySchema = async (db: any): Promise<void> => {
                 KEY idx_outbound_registry_expiry (replay_expires_at, submission_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
+        await db.query(
+            `ALTER TABLE outbound_submission_registry
+             ADD COLUMN IF NOT EXISTS replay_metadata_json MEDIUMTEXT NULL
+             AFTER save_in_sent_items`,
+        );
     })();
     schemaPromises.set(db, promise);
     try {
@@ -118,13 +126,15 @@ const registryProjectionSql = `
            DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
            CASE WHEN smtp_accepted = 1 THEN UTC_TIMESTAMP() ELSE NULL END AS smtp_accepted_at,
            save_in_sent_items, '[]' AS rejected_recipients_json, last_error_code,
+           replay_metadata_json AS display_metadata_json,
            1 AS registry_only
     FROM outbound_submission_registry`;
 
-export const findUniversalOutboundIdentity = async (
+const findUniversalOutboundIdentityWithLock = async (
     db: any,
     username: string,
     lookup: { id: number } | { idempotencyKey: string },
+    forUpdate: boolean,
 ): Promise<UniversalOutboundIdentityRow | null> => {
     const byId = 'id' in lookup;
     const hotParams = byId ? [lookup.id, username] : [username, lookup.idempotencyKey];
@@ -133,8 +143,9 @@ export const findUniversalOutboundIdentity = async (
         `SELECT id, submission_kind, submission_origin, idempotency_key, request_fingerprint,
                 status, message_id, send_at,
                 DATE_FORMAT(send_at, '%Y-%m-%dT%H:%i:%s.000Z') AS send_at_utc,
-                smtp_accepted_at, save_in_sent_items, rejected_recipients_json, last_error_code
-         FROM scheduled_emails WHERE ${hotWhere} LIMIT 1`,
+                smtp_accepted_at, save_in_sent_items, rejected_recipients_json, last_error_code,
+                display_metadata_json
+         FROM scheduled_emails WHERE ${hotWhere} LIMIT 1${forUpdate ? ' FOR UPDATE' : ''}`,
         hotParams,
     );
     if (hotRows?.[0]) return hotRows[0];
@@ -143,11 +154,27 @@ export const findUniversalOutboundIdentity = async (
         ? 'submission_id = ? AND username = ?'
         : 'username = ? AND idempotency_key = ?';
     const [registryRows]: any = await db.query(
-        `${registryProjectionSql} WHERE ${registryWhere} AND terminal_status IS NOT NULL LIMIT 1`,
+        `${registryProjectionSql} WHERE ${registryWhere} AND terminal_status IS NOT NULL LIMIT 1${forUpdate ? ' FOR UPDATE' : ''}`,
         hotParams,
     );
     return registryRows?.[0] || null;
 };
+
+export const findUniversalOutboundIdentity = async (
+    db: any,
+    username: string,
+    lookup: { id: number } | { idempotencyKey: string },
+): Promise<UniversalOutboundIdentityRow | null> => (
+    findUniversalOutboundIdentityWithLock(db, username, lookup, false)
+);
+
+export const findUniversalOutboundIdentityForUpdate = async (
+    db: any,
+    username: string,
+    lookup: { id: number } | { idempotencyKey: string },
+): Promise<UniversalOutboundIdentityRow | null> => (
+    findUniversalOutboundIdentityWithLock(db, username, lookup, true)
+);
 
 export const reserveUniversalOutbound = async (
     db: any,
@@ -177,11 +204,12 @@ export const reserveUniversalOutbound = async (
         await connection.query(
             `INSERT INTO outbound_submission_registry
                 (username, idempotency_key, request_fingerprint, submission_id,
-                 submission_origin, submission_kind, send_at, save_in_sent_items)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                 submission_origin, submission_kind, send_at, save_in_sent_items,
+                 replay_metadata_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [reservation.username, reservation.idempotencyKey, reservation.requestFingerprint, id,
                 reservation.submissionOrigin, reservation.submissionKind, reservation.sendAtSql,
-                reservation.saveSentCopy ? 1 : 0],
+                reservation.saveSentCopy ? 1 : 0, reservation.replayMetadata],
         );
         await connection.commit();
         return { id, replayed: false };
@@ -206,6 +234,62 @@ export const reserveUniversalOutbound = async (
         throw new UniversalOutboundFingerprintConflictError();
     }
     return { id: Number(existing.id), replayed: true, existing };
+};
+
+/**
+ * Reserve an outbound payload as part of a transaction already owned by the
+ * caller. This is the atomic seam for domain mutations that must not commit
+ * without their notification. Schema readiness must be established before the
+ * caller starts the transaction.
+ */
+export const reserveUniversalOutboundInTransaction = async (
+    connection: any,
+    reservation: UniversalOutboundReservation,
+): Promise<UniversalOutboundReservationResult> => {
+    const [existingRows]: any = await connection.query(
+        `SELECT submission_id, request_fingerprint, submission_origin, submission_kind
+         FROM outbound_submission_registry
+         WHERE username = ? AND idempotency_key = ?
+         LIMIT 1 FOR UPDATE`,
+        [reservation.username, reservation.idempotencyKey],
+    );
+    const existing = existingRows?.[0];
+    if (existing) {
+        if (String(existing.request_fingerprint || '') !== reservation.requestFingerprint
+            || String(existing.submission_origin || '') !== reservation.submissionOrigin
+            || String(existing.submission_kind || '') !== reservation.submissionKind) {
+            throw new UniversalOutboundFingerprintConflictError();
+        }
+        return { id: Number(existing.submission_id), replayed: true };
+    }
+
+    const [result]: any = await connection.query(
+        `INSERT INTO scheduled_emails
+            (username, send_at, mail_options, display_metadata_json, draft_uid, payload_version,
+             submission_kind, submission_origin, idempotency_key, request_fingerprint,
+             save_in_sent_items, status, available_at, attempts, sender_address,
+             message_id, envelope_json, raw_message, sent_raw_message)
+         VALUES (?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?, 'scheduled', ?, 0, ?, ?, ?, ?, ?)`,
+        [reservation.username, reservation.sendAtSql, reservation.mailOptions,
+            reservation.displayMetadata, reservation.draftUid,
+            reservation.submissionKind, reservation.submissionOrigin, reservation.idempotencyKey,
+            reservation.requestFingerprint, reservation.saveSentCopy ? 1 : 0,
+            reservation.sendAtSql, reservation.senderAddress, reservation.messageId,
+            reservation.envelopeJson, reservation.rawMessage, reservation.sentRawMessage],
+    );
+    const id = Number(result?.insertId);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Outbound submission was not persisted');
+    await connection.query(
+        `INSERT INTO outbound_submission_registry
+            (username, idempotency_key, request_fingerprint, submission_id,
+             submission_origin, submission_kind, send_at, save_in_sent_items,
+             replay_metadata_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [reservation.username, reservation.idempotencyKey, reservation.requestFingerprint, id,
+            reservation.submissionOrigin, reservation.submissionKind, reservation.sendAtSql,
+            reservation.saveSentCopy ? 1 : 0, reservation.replayMetadata],
+    );
+    return { id, replayed: false };
 };
 
 export const abortUniversalOutboundReservation = async (

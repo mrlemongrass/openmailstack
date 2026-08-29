@@ -249,6 +249,11 @@ const compileOutboundMessage = async (input) => {
         inReplyTo: inReplyTo || undefined,
         references: references.length > 0 ? references.join(' ') : undefined,
         attachments: input.attachments || [],
+        icalEvent: input.icalEvent ? {
+            method: input.icalEvent.method,
+            content: input.icalEvent.content,
+            filename: input.icalEvent.filename || 'invite.ics',
+        } : undefined,
         headers,
         messageId,
         date,

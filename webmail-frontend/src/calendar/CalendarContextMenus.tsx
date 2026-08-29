@@ -1,30 +1,72 @@
 import { useState } from 'react';
 import {
+  CalendarClock,
   CalendarPlus,
+  Check,
+  CircleHelp,
   Copy,
   CopyPlus,
   Download,
   ExternalLink,
+  Forward,
   Pencil,
   Printer,
+  Reply,
+  ReplyAll,
   Trash2,
+  XCircle,
 } from 'lucide-react';
 import { format } from 'date-fns';
-import type { CalendarEvent } from '../shared/types';
+import type { CalendarEvent, CalendarInvitationResponse } from '../shared/types';
 import { ContextMenu, type ContextMenuItem } from '../shared/components/ContextMenu';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
+import { openCrossSuiteCompose } from '../shared/crossSuiteCompose';
 import type { useCalendar } from './hooks/useCalendar';
-import { buildCalendarEventIcal, formatWallTime } from './calendarTime';
-import { canEditCalendarEvents, eventIcsFilename, meetingUrlForEvent } from './calendarContextActions';
+import { formatWallTime, wallDateToInstant } from './calendarTime';
+import {
+  canEditCalendarEvents,
+  downloadableCalendarEventIcal,
+  eventIcsFilename,
+  meetingUrlForEvent,
+} from './calendarContextActions';
+import { calendarInvitationComposeDraft } from './calendarInvitationActions';
+import { CalendarNewTimeProposalDialog } from './CalendarInvitationDialogs';
 
 interface EventDeleteTarget {
   event: CalendarEvent;
   scope: 'event' | 'occurrence' | 'series';
 }
 
+type MeetingResponse = Exclude<CalendarInvitationResponse, 'needs-action'>;
+
+interface InvitationResponseTarget {
+  event: CalendarEvent;
+  response: MeetingResponse;
+}
+
+interface InvitationCancellationTarget {
+  event: CalendarEvent;
+  scope: 'occurrence' | 'series';
+}
+
+const MEETING_RESPONSES: Array<{
+  response: MeetingResponse;
+  label: string;
+  currentLabel: string;
+  icon: typeof Check;
+}> = [
+  { response: 'accepted', label: 'Accept', currentLabel: 'Accepted', icon: Check },
+  { response: 'tentative', label: 'Tentative', currentLabel: 'Tentative', icon: CircleHelp },
+  { response: 'declined', label: 'Decline', currentLabel: 'Declined', icon: XCircle },
+];
+
+function invitationError(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 function downloadEvent(event: CalendarEvent, displayTimeZone: string) {
-  const ical = buildCalendarEventIcal(event, displayTimeZone, event.id);
+  const ical = downloadableCalendarEventIcal(event, displayTimeZone);
   const url = URL.createObjectURL(new Blob([ical], { type: 'text/calendar;charset=utf-8' }));
   const link = document.createElement('a');
   link.href = url;
@@ -68,7 +110,44 @@ async function copyMeetingLink(url: string) {
 export function CalendarContextMenus({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const { showToast } = useToast();
   const [deleteTarget, setDeleteTarget] = useState<EventDeleteTarget | null>(null);
+  const [responseTarget, setResponseTarget] = useState<InvitationResponseTarget | null>(null);
+  const [cancellationTarget, setCancellationTarget] = useState<InvitationCancellationTarget | null>(null);
+  const [proposalEvent, setProposalEvent] = useState<CalendarEvent | null>(null);
   const context = cal.calendarContextMenu;
+
+  const queueResponse = (event: CalendarEvent, response: MeetingResponse) => {
+    void cal.respondToInvitation(event, response).then(
+      () => showToast({ type: 'success', message: 'Meeting response sent' }),
+      (error: unknown) => showToast({
+        type: 'error',
+        message: invitationError(error, 'Your meeting response could not be sent.'),
+      }),
+    );
+  };
+
+  const queueCancellation = (event: CalendarEvent, scope: 'occurrence' | 'series') => {
+    void cal.cancelInvitation(event, scope).then(
+      () => showToast({ type: 'success', message: scope === 'occurrence' ? 'Occurrence cancellation sent' : 'Meeting cancellation sent' }),
+      (error: unknown) => showToast({
+        type: 'error',
+        message: invitationError(error, 'The meeting could not be canceled.'),
+      }),
+    );
+  };
+
+  const openInvitationCompose = (
+    action: 'reply' | 'reply-all' | 'forward',
+    event: CalendarEvent,
+  ) => {
+    try {
+      openCrossSuiteCompose(calendarInvitationComposeDraft(action, event));
+    } catch (error) {
+      showToast({
+        type: 'error',
+        message: invitationError(error, 'Compose could not be opened for this meeting.'),
+      });
+    }
+  };
 
   let items: ContextMenuItem[] = [];
   let label = 'Calendar actions';
@@ -94,14 +173,84 @@ export function CalendarContextMenus({ cal }: { cal: ReturnType<typeof useCalend
     const meetingUrl = meetingUrlForEvent(context.event);
     const sourceCalendar = cal.calendars.find(calendar => calendar.id === context.event.calendarId);
     const canEdit = Boolean(sourceCalendar && canEditCalendarEvents(sourceCalendar));
+    const invitation = context.event.invitation;
+    const isAttendee = invitation?.role === 'attendee';
+    const isOrganizer = invitation?.role === 'organizer';
+    const currentResponse = invitation?.recurring ? invitation.seriesResponse : invitation?.response;
+    const canEditDetails = canEdit && !invitation;
     const canDuplicate = cal.writableCalendars.length > 0;
+    const invitationPending = Boolean(
+      cal.invitationActionPending?.startsWith(`${context.event.calendarId}:${context.event.id}:`),
+    );
+    const invitationItems: ContextMenuItem[] = [];
+
+    if (invitation && isAttendee && invitation.canRespond !== false && canEdit) {
+      invitationItems.push(...MEETING_RESPONSES.map(({ response, label: responseLabel, currentLabel, icon }, index) => ({
+        id: `respond-${response}`,
+        label: currentResponse === response
+          ? `${currentLabel} (current)`
+          : invitation.recurring ? `${responseLabel} entire series` : responseLabel,
+        icon,
+        separatorBefore: index === 0,
+        disabled: invitationPending || currentResponse === response,
+        onSelect: () => {
+          if (invitation.recurring) setResponseTarget({ event: context.event, response });
+          else queueResponse(context.event, response);
+        },
+      })));
+      if (invitation.canProposeNewTime) {
+        invitationItems.push({
+          id: 'propose-new-time',
+          label: 'Propose new time',
+          icon: CalendarClock,
+          disabled: invitationPending,
+          onSelect: () => setProposalEvent(context.event),
+        });
+      }
+    }
+
+    if (invitation && (isAttendee || isOrganizer)) {
+      if (isAttendee) {
+        invitationItems.push({
+          id: 'reply',
+          label: 'Reply',
+          icon: Reply,
+          separatorBefore: true,
+          onSelect: () => openInvitationCompose('reply', context.event),
+        });
+      }
+      invitationItems.push({
+        id: 'reply-all',
+        label: invitation.attendeesTruncated ? 'Reply all unavailable (large meeting)' : 'Reply all',
+        icon: ReplyAll,
+        separatorBefore: !isAttendee,
+        disabled: invitation.attendeesTruncated,
+        onSelect: () => openInvitationCompose('reply-all', context.event),
+      });
+      invitationItems.push({
+        id: 'forward',
+        label: 'Forward',
+        icon: Forward,
+        disabled: !invitation.canForward,
+        onSelect: () => openInvitationCompose('forward', context.event),
+      });
+    }
+
     items = [
       {
         id: 'open-event',
-        label: canEdit ? 'Edit event' : 'View event',
+        label: canEditDetails ? 'Edit event' : 'View event',
         icon: Pencil,
         onSelect: () => cal.editExistingEvent(context.event),
       },
+      ...(invitation?.actionUnavailableReason ? [{
+        id: 'meeting-actions-unavailable',
+        label: invitation.actionUnavailableReason,
+        icon: CircleHelp,
+        disabled: true,
+        onSelect: () => undefined,
+      }] satisfies ContextMenuItem[] : []),
+      ...invitationItems,
       ...(meetingUrl ? [
         {
           id: 'join-meeting',
@@ -148,7 +297,31 @@ export function CalendarContextMenus({ cal }: { cal: ReturnType<typeof useCalend
         icon: Download,
         onSelect: () => downloadEvent(context.event, cal.displayTimeZone),
       },
-      ...(canEdit && context.event.recurrence && context.event.occurrenceId ? [
+      ...(canEdit && isOrganizer && invitation.canCancel && context.event.recurrence && context.event.occurrenceId ? [
+        ...(invitation.canCancelOccurrence ? [{
+          id: 'cancel-occurrence',
+          label: 'Cancel this occurrence',
+          icon: XCircle,
+          danger: true,
+          separatorBefore: true,
+          onSelect: () => setCancellationTarget({ event: context.event, scope: 'occurrence' }),
+        }] satisfies ContextMenuItem[] : []),
+        {
+          id: 'cancel-series',
+          label: 'Cancel entire series',
+          icon: XCircle,
+          danger: true,
+          separatorBefore: !invitation.canCancelOccurrence,
+          onSelect: () => setCancellationTarget({ event: context.event, scope: 'series' }),
+        },
+      ] satisfies ContextMenuItem[] : canEdit && isOrganizer && invitation.canCancel ? [{
+        id: 'cancel-meeting',
+        label: context.event.recurrence ? 'Cancel entire series' : 'Cancel meeting',
+        icon: XCircle,
+        danger: true,
+        separatorBefore: true,
+        onSelect: () => setCancellationTarget({ event: context.event, scope: 'series' }),
+      }] satisfies ContextMenuItem[] : !invitation && canEdit && context.event.recurrence && context.event.occurrenceId ? [
         {
           id: 'delete-occurrence',
           label: 'Delete this occurrence',
@@ -164,7 +337,7 @@ export function CalendarContextMenus({ cal }: { cal: ReturnType<typeof useCalend
           danger: true,
           onSelect: () => setDeleteTarget({ event: context.event, scope: 'series' }),
         },
-      ] satisfies ContextMenuItem[] : canEdit ? [{
+      ] satisfies ContextMenuItem[] : !invitation && canEdit ? [{
         id: 'delete-event',
         label: context.event.recurrence ? 'Delete entire series' : 'Delete event',
         icon: Trash2,
@@ -213,6 +386,50 @@ export function CalendarContextMenus({ cal }: { cal: ReturnType<typeof useCalend
           });
         }}
       />
+      <ConfirmDialog
+        open={Boolean(responseTarget)}
+        title={`${MEETING_RESPONSES.find(option => option.response === responseTarget?.response)?.label || 'Respond to'} entire series?`}
+        message={`Your response will apply to every occurrence of “${responseTarget?.event.title || 'Untitled meeting'}”, and a reply will be sent to the organizer.`}
+        confirmLabel={`${MEETING_RESPONSES.find(option => option.response === responseTarget?.response)?.label || 'Respond to'} series`}
+        danger={responseTarget?.response === 'declined'}
+        onCancel={() => setResponseTarget(null)}
+        onConfirm={() => {
+          const target = responseTarget;
+          setResponseTarget(null);
+          if (target) queueResponse(target.event, target.response);
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(cancellationTarget)}
+        title={cancellationTarget?.scope === 'occurrence' ? 'Cancel this occurrence?' : 'Cancel meeting?'}
+        message={cancellationTarget?.scope === 'occurrence'
+          ? `This occurrence of “${cancellationTarget.event.title || 'Untitled meeting'}” will be removed and a cancellation will be sent to attendees.`
+          : `“${cancellationTarget?.event.title || 'Untitled meeting'}” will be canceled and attendees will be notified. This cannot be undone.`}
+        confirmLabel={cancellationTarget?.scope === 'occurrence' ? 'Cancel occurrence' : 'Cancel meeting'}
+        danger
+        onCancel={() => setCancellationTarget(null)}
+        onConfirm={() => {
+          const target = cancellationTarget;
+          setCancellationTarget(null);
+          if (target) queueCancellation(target.event, target.scope);
+        }}
+      />
+      {proposalEvent && (
+        <CalendarNewTimeProposalDialog
+          event={proposalEvent}
+          displayTimeZone={cal.displayTimeZone}
+          pending={Boolean(cal.invitationActionPending?.endsWith(':propose'))}
+          onClose={() => setProposalEvent(null)}
+          onSubmit={async proposal => {
+            const timeKind = proposalEvent.isAllDay ? 'all-day' : 'zoned';
+            const start = wallDateToInstant(proposal.start, timeKind, proposalEvent.isAllDay ? null : cal.displayTimeZone);
+            const end = wallDateToInstant(proposal.end, timeKind, proposalEvent.isAllDay ? null : cal.displayTimeZone);
+            await cal.proposeInvitationTime(proposalEvent, { ...proposal, start, end });
+            setProposalEvent(null);
+            showToast({ type: 'success', message: 'New-time proposal sent' });
+          }}
+        />
+      )}
     </>
   );
 }

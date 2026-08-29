@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.slugifyCalendarName = slugifyCalendarName;
 exports.extractIcalEventUid = extractIcalEventUid;
 exports.wallTimeAt = wallTimeAt;
+exports.wallTimeToInstant = wallTimeToInstant;
 exports.parseIcalEvent = parseIcalEvent;
 exports.expandRecurringEvent = expandRecurringEvent;
 exports.formatActiveSyncDate = formatActiveSyncDate;
@@ -467,6 +468,7 @@ function parseIcalDate(field, allDay, fallback, timeZones = new Map()) {
             date: new Date(Date.UTC(year, month - 1, day, 0, 0, 0)),
             timeKind: 'all-day',
             timeZone: null,
+            wallTime: { year, month, day, hour: 0, minute: 0, second: 0 },
         };
     }
     const hour = Number(compact.slice(9, 11)) || 0;
@@ -481,6 +483,7 @@ function parseIcalDate(field, allDay, fallback, timeZones = new Map()) {
             date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
             timeKind: 'utc',
             timeZone: 'UTC',
+            wallTime,
         };
     }
     if (sourceTimeZone) {
@@ -493,6 +496,7 @@ function parseIcalDate(field, allDay, fallback, timeZones = new Map()) {
                 date: wallTimeToInstant(wallTime, timeZone),
                 timeKind: 'zoned',
                 timeZone,
+                wallTime,
                 sourceTimeZone: sourceTimeZone !== timeZone || resolution?.status === 'invalid'
                     ? sourceTimeZone
                     : undefined,
@@ -503,6 +507,7 @@ function parseIcalDate(field, allDay, fallback, timeZones = new Map()) {
             date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
             timeKind: 'floating',
             timeZone: null,
+            wallTime,
             sourceTimeZone,
             timeZoneStatus: resolution?.status || 'unsupported',
         };
@@ -511,6 +516,7 @@ function parseIcalDate(field, allDay, fallback, timeZones = new Map()) {
         date: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
         timeKind: 'floating',
         timeZone: null,
+        wallTime,
     };
 }
 function parseRrule(value, start) {
@@ -584,11 +590,12 @@ function parseEventComponent(uid, componentBody, timeZones, fallback, isTask = f
     const startField = firstIcalValue(eventLines, 'DTSTART');
     const endField = firstIcalValue(eventLines, 'DTEND');
     const allDay = startField
-        ? Boolean(startField.params.toUpperCase().includes('VALUE=DATE') || startField.value.length === 8)
+        ? Boolean(/(?:^|;)VALUE=DATE(?:;|$)/i.test(startField.params) || startField.value.length === 8)
         : Boolean(fallback?.isAllDay);
     const fallbackTime = fallback ? {
         timeKind: fallback.timeKind,
         timeZone: fallback.timeZone,
+        wallTime: fallback.recurrenceWallStart,
         sourceTimeZone: fallback.sourceTimeZone,
         timeZoneStatus: fallback.timeZoneStatus,
     } : undefined;
@@ -656,6 +663,7 @@ function parseEventComponent(uid, componentBody, timeZones, fallback, isTask = f
         isAllDay: allDay,
         timeKind: parsedStart.timeKind,
         timeZone: parsedStart.timeZone,
+        recurrenceWallStart: parsedStart.wallTime,
         sourceTimeZone: parsedStart.sourceTimeZone,
         timeZoneStatus: parsedStart.timeZoneStatus,
         dtstamp: firstIcalValue(eventLines, 'DTSTAMP')
@@ -733,6 +741,7 @@ function parseIcalEvent(uid, ical) {
     const masterLines = directPropertyLines(masterBody);
     const exdates = parseExdates(masterLines, master, timeZones);
     const recurrenceExceptions = new Map();
+    let recurrenceExceptionIdentityConflict = false;
     let exceptionBodyCount = 0;
     for (const body of eventBodies) {
         if (body === masterBody)
@@ -749,9 +758,14 @@ function parseIcalEvent(uid, ical) {
             continue;
         const recurrenceId = parseIcalDate(recurrenceIdField, master.isAllDay, master, timeZones).date;
         const deleted = firstIcalValue(properties, 'STATUS')?.value?.toUpperCase() === 'CANCELLED';
-        recurrenceExceptions.set(formatActiveSyncDate(recurrenceId), {
+        const recurrenceKey = formatActiveSyncDate(recurrenceId);
+        if (recurrenceExceptions.has(recurrenceKey))
+            recurrenceExceptionIdentityConflict = true;
+        recurrenceExceptions.set(recurrenceKey, {
             recurrenceId,
             deleted,
+            sourceParameters: recurrenceIdField.params,
+            sourceValue: recurrenceIdField.value,
             event: deleted ? undefined : parseEventComponent(uid, body, timeZones, master),
         });
     }
@@ -761,6 +775,7 @@ function parseIcalEvent(uid, ical) {
         excludedOccurrenceIds: exdates.occurrenceIds,
         recurrenceExceptions: Array.from(recurrenceExceptions.values()),
         recurrenceExceptionOverflow: exceptionBodyCount > 256,
+        recurrenceExceptionIdentityConflict,
     };
 }
 function addRecurrenceInterval(date, frequency, interval, timeZone) {
@@ -802,6 +817,12 @@ function expandRecurringEvent(event, rangeStart, rangeEnd, maxOccurrences = 400)
     const exceptionByOccurrence = new Map((event.recurrenceExceptions || []).map(exception => [formatActiveSyncDate(exception.recurrenceId), exception]));
     const durationMs = event.end.getTime() - event.start.getTime();
     let occurrenceStart = new Date(event.start);
+    const recurrenceWall = event.timeKind === 'zoned' && event.timeZone
+        ? (() => {
+            const wall = event.recurrenceWallStart || wallTimeAt(event.start, event.timeZone);
+            return new Date(Date.UTC(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute, wall.second));
+        })()
+        : null;
     let generated = 0;
     while (generated < maxOccurrences) {
         if (event.recurrence.count && generated >= event.recurrence.count)
@@ -828,11 +849,34 @@ function expandRecurringEvent(event, rangeStart, rangeEnd, maxOccurrences = 400)
                 });
             }
         }
-        occurrenceStart = addRecurrenceInterval(occurrenceStart, event.recurrence.frequency, event.recurrence.interval, event.timeKind === 'zoned' ? event.timeZone : null);
+        if (recurrenceWall && event.timeZone) {
+            if (event.recurrence.frequency === 'DAILY')
+                recurrenceWall.setUTCDate(recurrenceWall.getUTCDate() + event.recurrence.interval);
+            if (event.recurrence.frequency === 'WEEKLY')
+                recurrenceWall.setUTCDate(recurrenceWall.getUTCDate() + event.recurrence.interval * 7);
+            if (event.recurrence.frequency === 'MONTHLY')
+                recurrenceWall.setUTCMonth(recurrenceWall.getUTCMonth() + event.recurrence.interval);
+            if (event.recurrence.frequency === 'YEARLY')
+                recurrenceWall.setUTCFullYear(recurrenceWall.getUTCFullYear() + event.recurrence.interval);
+            occurrenceStart = wallTimeToInstant({
+                year: recurrenceWall.getUTCFullYear(),
+                month: recurrenceWall.getUTCMonth() + 1,
+                day: recurrenceWall.getUTCDate(),
+                hour: recurrenceWall.getUTCHours(),
+                minute: recurrenceWall.getUTCMinutes(),
+                second: recurrenceWall.getUTCSeconds(),
+            }, event.timeZone);
+        }
+        else {
+            occurrenceStart = addRecurrenceInterval(occurrenceStart, event.recurrence.frequency, event.recurrence.interval, null);
+        }
         generated += 1;
     }
     for (const exception of exceptionByOccurrence.values()) {
         if (exception.deleted || !exception.event)
+            continue;
+        const occurrenceId = formatActiveSyncDate(exception.recurrenceId);
+        if (event.excludedOccurrenceIds?.has(occurrenceId))
             continue;
         if (exception.event.end < rangeStart || exception.event.start > rangeEnd)
             continue;
@@ -841,7 +885,7 @@ function expandRecurringEvent(event, rangeStart, rangeEnd, maxOccurrences = 400)
             uid: event.uid,
             recurrence: event.recurrence,
             recurrenceLabel: event.recurrenceLabel,
-            occurrenceId: formatActiveSyncDate(exception.recurrenceId),
+            occurrenceId,
         });
     }
     occurrences.sort((left, right) => left.start.getTime() - right.start.getTime());

@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultLayout } from 'react-resizable-panels';
-import { CalendarRange, X } from 'lucide-react';
+import { AlertTriangle, CalendarRange, RefreshCw, RotateCcw, X } from 'lucide-react';
 import { useMediaQuery } from '../shared/hooks/useMediaQuery';
 import { useModalFocus } from '../shared/hooks/useModalFocus';
 import { useCalendar } from './hooks/useCalendar';
@@ -21,6 +21,81 @@ function ResizeHandle() {
       <div style={{ position: 'absolute', top: 0, bottom: 0, left: 6, right: 6,
         background: 'rgba(255,255,255,0.08)', borderRadius: 4 }} />
     </PanelResizeHandle>
+  );
+}
+
+export function CalendarInvitationRecoveryBanner({ cal }: { cal: ReturnType<typeof useCalendar> }) {
+  if (cal.invitationRecoveryNotices.length === 0) return null;
+  return (
+    <div className="calendar-invitation-recovery" role="status" aria-live="polite">
+      {cal.invitationRecoveryNotices.map(notice => {
+        const recovery = notice.attempt.recovery || {};
+        const rejectedCount = notice.result?.rejectedRecipients?.length || 0;
+        const message = notice.error || (notice.state === 'partial'
+          ? `${rejectedCount || 'Some'} attendee${rejectedCount === 1 ? '' : 's'} still need the notification.`
+          : notice.state === 'failed'
+            ? 'The calendar change was saved, but its notification was not delivered.'
+            : notice.state === 'uncertain'
+              ? 'Delivery is uncertain. Check before sending anything again.'
+              : notice.state === 'terminal'
+                ? 'This protected notification can no longer be retried.'
+              : notice.state === 'prepared'
+                ? 'Submitting this calendar action. Its delivery key is protected.'
+              : notice.state === 'pending'
+                ? 'The calendar change was saved and its notification is still being delivered.'
+                : 'Delivery status could not be checked. The original attempt is still protected.');
+        const canRetry = notice.state === 'failed' || notice.state === 'partial'
+          || notice.state === 'uncertain'
+          || (notice.state === 'unavailable' && typeof recovery.retryOf === 'string');
+        const canCheck = notice.state !== 'terminal';
+        const canDismiss = notice.state === 'failed' || notice.state === 'partial'
+          || notice.state === 'terminal';
+        const isBusy = Boolean(cal.invitationActionPending);
+        return (
+          <div className="calendar-invitation-recovery-item" key={`${notice.attempt.recordId}:${notice.attempt.key}`}>
+            <AlertTriangle size={18} aria-hidden="true" />
+            <div className="calendar-invitation-recovery-copy">
+              <strong>Calendar notification</strong>
+              <span>{message}</span>
+            </div>
+            <div className="calendar-invitation-recovery-actions">
+              {canRetry ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={isBusy}
+                  onClick={() => { void cal.retryInvitationDelivery(notice); }}
+                >
+                  <RotateCcw size={15} aria-hidden="true" />
+                  {notice.state === 'uncertain'
+                    ? "I verified it wasn't delivered — retry"
+                    : notice.state === 'unavailable' ? 'Resume retry' : 'Retry notification'}
+                </button>
+              ) : canCheck ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={isBusy}
+                  onClick={() => { void cal.checkInvitationDelivery(notice); }}
+                >
+                  <RefreshCw size={15} aria-hidden="true" /> Check delivery
+                </button>
+              ) : null}
+              {canDismiss && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  aria-label="Dismiss calendar delivery notice"
+                  onClick={() => { void cal.dismissInvitationRecovery(notice); }}
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -125,6 +200,7 @@ export function CalendarLayout() {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <CalendarToolbar cal={cal} onOpenCalendars={() => setMobileCalendarsOpen(true)} />
+        <CalendarInvitationRecoveryBanner cal={cal} />
         {renderCalendarContent(cal)}
         <MobileCalendarDrawer cal={cal} open={mobileCalendarsOpen} onClose={closeMobileCalendars} />
         <CalendarContextMenus cal={cal} />
@@ -149,6 +225,7 @@ export function CalendarLayout() {
         <Panel id="calendar-view" defaultSize="80%" minSize="25%">
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <CalendarToolbar cal={cal} />
+            <CalendarInvitationRecoveryBanner cal={cal} />
             {renderCalendarContent(cal)}
           </div>
         </Panel>

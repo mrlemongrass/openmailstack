@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.startScheduledSender = exports.runScheduledSender = exports.submitOutbound = exports.projectScheduledOutboundInstant = exports.listScheduledOutboundRows = exports.getOutboundSubmission = exports.OutboundSubmissionUnavailableError = exports.OutboundIdempotencyConflictError = exports.OutboundIdempotencyKeyError = exports.abortScheduledEmailBeforeDelivery = exports.removeTerminalScheduledEmail = exports.releaseScheduledCancellation = exports.completeScheduledCancellation = exports.claimScheduledCancellation = exports.MySqlScheduledEmailStore = exports.ensureScheduledEmailsSchema = exports.processScheduledEmail = exports.classifyScheduledSmtpError = exports.computeOutboundRequestFingerprint = exports.OutboundReleaseBridgeError = void 0;
+exports.startScheduledSender = exports.runScheduledSender = exports.purgeExpiredCalendarInvitationRetryPayloads = exports.submitOutbound = exports.reserveOutboundInTransaction = exports.projectScheduledOutboundInstant = exports.listScheduledOutboundRows = exports.getOutboundSubmission = exports.OutboundSubmissionUnavailableError = exports.OutboundIdempotencyConflictError = exports.OutboundIdempotencyKeyError = exports.abortScheduledEmailBeforeDelivery = exports.removeTerminalScheduledEmail = exports.releaseScheduledCancellation = exports.completeScheduledCancellation = exports.claimScheduledCancellation = exports.MySqlScheduledEmailStore = exports.ensureScheduledEmailsSchema = exports.processScheduledEmail = exports.classifyScheduledSmtpError = exports.computeOutboundRequestFingerprint = exports.OutboundReleaseBridgeError = void 0;
 const db_1 = require("./db");
 const crypto_1 = __importDefault(require("crypto"));
 const auth_1 = require("./auth");
@@ -517,9 +517,21 @@ class MySqlScheduledEmailStore {
             await connection.beginTransaction();
             await connection.query(`UPDATE scheduled_emails
                  SET status = 'delivery_uncertain', last_error_code = 'lease_expired_during_smtp',
-                     raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE raw_message END,
-                     sent_raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE sent_raw_message END,
-                     envelope_json = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE envelope_json END,
+                     raw_message = CASE
+                         WHEN submission_kind = 'immediate'
+                          AND NOT (JSON_VALID(display_metadata_json)
+                           AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                         THEN NULL ELSE raw_message END,
+                     sent_raw_message = CASE
+                         WHEN submission_kind = 'immediate'
+                          AND NOT (JSON_VALID(display_metadata_json)
+                           AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                         THEN NULL ELSE sent_raw_message END,
+                     envelope_json = CASE
+                         WHEN submission_kind = 'immediate'
+                          AND NOT (JSON_VALID(display_metadata_json)
+                           AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                         THEN NULL ELSE envelope_json END,
                      mail_options = CASE WHEN submission_kind = 'immediate' THEN '{}' ELSE mail_options END,
                      last_error_at = UTC_TIMESTAMP(), lease_owner = NULL, lease_expires_at = NULL
                  WHERE id = ? AND username = ? AND submission_kind = 'immediate'
@@ -578,9 +590,21 @@ class MySqlScheduledEmailStore {
             await connection.beginTransaction();
             await connection.query(`UPDATE scheduled_emails
                  SET status = 'delivery_uncertain', last_error_code = 'lease_expired_during_smtp',
-                     raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE raw_message END,
-                     sent_raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE sent_raw_message END,
-                     envelope_json = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE envelope_json END,
+                     raw_message = CASE
+                         WHEN submission_kind = 'immediate'
+                          AND NOT (JSON_VALID(display_metadata_json)
+                           AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                         THEN NULL ELSE raw_message END,
+                     sent_raw_message = CASE
+                         WHEN submission_kind = 'immediate'
+                          AND NOT (JSON_VALID(display_metadata_json)
+                           AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                         THEN NULL ELSE sent_raw_message END,
+                     envelope_json = CASE
+                         WHEN submission_kind = 'immediate'
+                          AND NOT (JSON_VALID(display_metadata_json)
+                           AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                         THEN NULL ELSE envelope_json END,
                      mail_options = CASE WHEN submission_kind = 'immediate' THEN '{}' ELSE mail_options END,
                      last_error_at = UTC_TIMESTAMP(), lease_owner = NULL, lease_expires_at = NULL
                  WHERE status = 'smtp_inflight' AND lease_expires_at <= UTC_TIMESTAMP()`);
@@ -656,8 +680,19 @@ class MySqlScheduledEmailStore {
         if (Array.isArray(rejectedRecipients) && rejectedRecipients.length > 0) {
             await this.update(`UPDATE scheduled_emails
                  SET status = 'partial_delivery', sent_copy_completed_at = UTC_TIMESTAMP(),
-                     completed_at = UTC_TIMESTAMP(), raw_message = NULL, sent_raw_message = NULL,
-                     envelope_json = NULL,
+                     completed_at = UTC_TIMESTAMP(),
+                     raw_message = CASE
+                         WHEN JSON_VALID(display_metadata_json)
+                          AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation'
+                         THEN raw_message ELSE NULL END,
+                     sent_raw_message = CASE
+                         WHEN JSON_VALID(display_metadata_json)
+                          AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation'
+                         THEN sent_raw_message ELSE NULL END,
+                     envelope_json = CASE
+                         WHEN JSON_VALID(display_metadata_json)
+                          AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation'
+                         THEN envelope_json ELSE NULL END,
                      mail_options = CASE WHEN submission_kind = 'immediate' THEN '{}' ELSE mail_options END,
                      last_error_code = 'partial_recipient_rejection', last_error_at = UTC_TIMESTAMP(),
                      lease_owner = NULL, lease_expires_at = NULL
@@ -686,9 +721,21 @@ class MySqlScheduledEmailStore {
     async failed(row, workerId, code) {
         await this.update(`UPDATE scheduled_emails
              SET status = 'failed', last_error_code = ?, last_error_at = UTC_TIMESTAMP(),
-                 raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE raw_message END,
-                 sent_raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE sent_raw_message END,
-                 envelope_json = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE envelope_json END,
+                 raw_message = CASE
+                     WHEN submission_kind = 'immediate'
+                      AND NOT (JSON_VALID(display_metadata_json)
+                       AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                     THEN NULL ELSE raw_message END,
+                 sent_raw_message = CASE
+                     WHEN submission_kind = 'immediate'
+                      AND NOT (JSON_VALID(display_metadata_json)
+                       AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                     THEN NULL ELSE sent_raw_message END,
+                 envelope_json = CASE
+                     WHEN submission_kind = 'immediate'
+                      AND NOT (JSON_VALID(display_metadata_json)
+                       AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                     THEN NULL ELSE envelope_json END,
                  mail_options = CASE WHEN submission_kind = 'immediate' THEN '{}' ELSE mail_options END,
                  lease_owner = NULL, lease_expires_at = NULL
              WHERE id = ? AND lease_owner = ? AND smtp_accepted_at IS NULL`, [code.slice(0, 80), row.id, workerId], 'Scheduled email lease was lost while recording failure');
@@ -696,9 +743,21 @@ class MySqlScheduledEmailStore {
     async uncertain(row, workerId, code) {
         await this.update(`UPDATE scheduled_emails
              SET status = 'delivery_uncertain', last_error_code = ?, last_error_at = UTC_TIMESTAMP(),
-                 raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE raw_message END,
-                 sent_raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE sent_raw_message END,
-                 envelope_json = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE envelope_json END,
+                 raw_message = CASE
+                     WHEN submission_kind = 'immediate'
+                      AND NOT (JSON_VALID(display_metadata_json)
+                       AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                     THEN NULL ELSE raw_message END,
+                 sent_raw_message = CASE
+                     WHEN submission_kind = 'immediate'
+                      AND NOT (JSON_VALID(display_metadata_json)
+                       AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                     THEN NULL ELSE sent_raw_message END,
+                 envelope_json = CASE
+                     WHEN submission_kind = 'immediate'
+                      AND NOT (JSON_VALID(display_metadata_json)
+                       AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation')
+                     THEN NULL ELSE envelope_json END,
                  mail_options = CASE WHEN submission_kind = 'immediate' THEN '{}' ELSE mail_options END,
                  lease_owner = NULL, lease_expires_at = NULL
              WHERE id = ? AND lease_owner = ? AND status = 'smtp_inflight'`, [code.slice(0, 80), row.id, workerId], 'Scheduled email lease was lost while recording uncertain delivery');
@@ -873,13 +932,79 @@ const listScheduledOutboundRows = async (db, username) => {
 exports.listScheduledOutboundRows = listScheduledOutboundRows;
 const projectScheduledOutboundInstant = (row) => (0, universal_outbox_1.projectMixedBasisInstant)(row);
 exports.projectScheduledOutboundInstant = projectScheduledOutboundInstant;
-const outboundDisplayMetadata = (metadata, senderAddress) => JSON.stringify({
+const outboundDisplayMetadata = (metadata, senderAddress, recovery) => JSON.stringify({
     from: String(metadata.from || senderAddress || ''),
     to: String(metadata.to || ''),
     cc: String(metadata.cc || ''),
     bcc: String(metadata.bcc || ''),
     subject: String(metadata.subject || ''),
+    ...(recovery ? { recovery } : {}),
 });
+/**
+ * Persist an outbound submission without taking ownership of the surrounding
+ * transaction or performing SMTP. The scheduled sender claims the due row
+ * after the caller commits.
+ */
+const reserveOutboundInTransaction = async (connection, input) => {
+    requireActiveOutboundRelease();
+    if (input.submissionKind !== 'immediate' && input.submissionKind !== 'scheduled') {
+        throw new Error('Outbound submission kind is invalid');
+    }
+    const idempotencyKey = normalizeOutboundIdempotencyKey(input.idempotencyKey);
+    const message = input.message;
+    if (!Buffer.isBuffer(message.raw) || (message.sentRaw !== undefined && !Buffer.isBuffer(message.sentRaw))
+        || !message.messageId || !message.envelope || !Array.isArray(message.envelope.to)
+        || message.envelope.to.length === 0) {
+        throw new Error('Outbound submission payload is incomplete');
+    }
+    const requestedSendAt = message.sendAt instanceof Date ? message.sendAt : new Date(message.sendAt);
+    if (!Number.isFinite(requestedSendAt.getTime()))
+        throw new Error('Outbound submission time is invalid');
+    const sendAt = input.submissionKind === 'scheduled' ? requestedSendAt : new Date();
+    const saveSentCopy = message.saveSentCopy !== false;
+    if (input.origin !== undefined && input.origin !== 'web' && input.origin !== 'activesync') {
+        throw new Error('Outbound submission origin is invalid');
+    }
+    const submissionOrigin = input.origin || 'web';
+    const requestFingerprint = (0, exports.computeOutboundRequestFingerprint)({
+        submissionKind: input.submissionKind,
+        sendAt,
+        username: message.username,
+        senderAddress: message.senderAddress,
+        recipients: message.envelope.to,
+        fingerprintSource: {
+            request: input.fingerprintSource,
+            saveSentCopy,
+        },
+    });
+    try {
+        return await (0, universal_outbox_1.reserveUniversalOutboundInTransaction)(connection, {
+            username: message.username,
+            sendAtSql: outboundSqlUtcDate(sendAt),
+            mailOptions: JSON.stringify(message.metadata),
+            displayMetadata: outboundDisplayMetadata(message.metadata, message.senderAddress, message.recovery),
+            replayMetadata: message.recovery ? JSON.stringify({ recovery: message.recovery }) : null,
+            draftUid: message.draftUid || null,
+            submissionKind: input.submissionKind,
+            submissionOrigin,
+            idempotencyKey,
+            requestFingerprint,
+            saveSentCopy,
+            senderAddress: message.senderAddress,
+            messageId: message.messageId,
+            envelopeJson: JSON.stringify(message.envelope),
+            rawMessage: message.raw,
+            sentRawMessage: message.sentRaw || message.raw,
+        });
+    }
+    catch (error) {
+        if (error instanceof universal_outbox_1.UniversalOutboundFingerprintConflictError) {
+            throw new OutboundIdempotencyConflictError();
+        }
+        throw new OutboundSubmissionUnavailableError(error);
+    }
+};
+exports.reserveOutboundInTransaction = reserveOutboundInTransaction;
 const getScheduledCredential = async (username) => {
     if (config_1.delegatedAuthEnabled)
         return '';
@@ -976,7 +1101,8 @@ const submitOutbound = async (db, input, runtime = {}) => {
             username: message.username,
             sendAtSql,
             mailOptions: JSON.stringify(message.metadata),
-            displayMetadata: outboundDisplayMetadata(message.metadata, message.senderAddress),
+            displayMetadata: outboundDisplayMetadata(message.metadata, message.senderAddress, message.recovery),
+            replayMetadata: message.recovery ? JSON.stringify({ recovery: message.recovery }) : null,
             draftUid: message.draftUid || null,
             submissionKind: input.submissionKind,
             submissionOrigin,
@@ -1045,6 +1171,21 @@ const submitOutbound = async (db, input, runtime = {}) => {
 };
 exports.submitOutbound = submitOutbound;
 const runningScheduledDatabases = new WeakSet();
+const purgeExpiredCalendarInvitationRetryPayloads = async (db, batchSize = 100) => {
+    const limit = Math.max(1, Math.min(1000, Math.trunc(batchSize)));
+    const [result] = await db.query(`UPDATE scheduled_emails
+         SET raw_message = NULL, sent_raw_message = NULL, envelope_json = NULL
+         WHERE status IN ('failed', 'partial_delivery', 'delivery_uncertain')
+           AND JSON_VALID(display_metadata_json)
+           AND JSON_UNQUOTE(JSON_EXTRACT(display_metadata_json, '$.recovery.kind')) = 'calendar-invitation'
+           AND COALESCE(completed_at, last_error_at, updated_at, created_at)
+               <= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 7 DAY)
+           AND (raw_message IS NOT NULL OR sent_raw_message IS NOT NULL OR envelope_json IS NOT NULL)
+         ORDER BY id
+         LIMIT ?`, [limit]);
+    return Number(result?.affectedRows || 0);
+};
+exports.purgeExpiredCalendarInvitationRetryPayloads = purgeExpiredCalendarInvitationRetryPayloads;
 const runScheduledSender = async (dependencies = defaultScheduledDependencies, db = db_1.pool, workerId) => {
     if (config_1.outboundReleaseMode === 'bridge')
         return 0;
@@ -1055,6 +1196,7 @@ const runScheduledSender = async (dependencies = defaultScheduledDependencies, d
     try {
         await (0, exports.ensureScheduledEmailsSchema)(db);
         await (0, universal_outbox_1.backfillOutboundRegistry)(db, 100);
+        await (0, exports.purgeExpiredCalendarInvitationRetryPayloads)(db, 100);
         if (config_1.outboundCompactionMode === 'registry-verified-v1') {
             await (0, universal_outbox_1.compactUniversalOutbox)(db, { mode: config_1.outboundCompactionMode, batchSize: 100 });
         }

@@ -1,5 +1,6 @@
 import { Mail, Phone, MapPin } from 'lucide-react';
 import type { Contact } from '../shared/types';
+import { openCrossSuiteCompose } from '../shared/crossSuiteCompose';
 
 export function ContactQuickActions({ contact }: { contact: Contact }) {
     const primaryEmail = contact.email || contact.emails_json?.[0]?.value || '';
@@ -18,10 +19,7 @@ export function ContactQuickActions({ contact }: { contact: Contact }) {
 
     const handleEmailClick = (e: React.MouseEvent) => {
         e.preventDefault();
-        // Cross-suite integration: use both event (same-route) and storage (cross-route) for compose
-        sessionStorage.setItem('oms_compose_to', primaryEmail);
-        window.dispatchEvent(new CustomEvent('oms:compose', { detail: { to: primaryEmail } }));
-        window.location.href = '/mail/inbox';
+        openCrossSuiteCompose({ to: primaryEmail });
     };
 
     return (

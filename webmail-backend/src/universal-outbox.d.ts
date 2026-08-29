@@ -6,6 +6,7 @@ export interface UniversalOutboundReservation {
     sendAtSql: string;
     mailOptions: string;
     displayMetadata: string;
+    replayMetadata: string | null;
     draftUid: number | null;
     submissionKind: 'immediate' | 'scheduled';
     submissionOrigin: OutboundSubmissionOrigin;
@@ -32,6 +33,7 @@ export interface UniversalOutboundIdentityRow {
     save_in_sent_items: number | boolean;
     rejected_recipients_json: string | null;
     last_error_code: string | null;
+    display_metadata_json?: string | null;
     registry_only?: number | boolean;
 }
 export interface UniversalOutboundReservationResult {
@@ -53,7 +55,19 @@ export declare const findUniversalOutboundIdentity: (db: any, username: string, 
 } | {
     idempotencyKey: string;
 }) => Promise<UniversalOutboundIdentityRow | null>;
+export declare const findUniversalOutboundIdentityForUpdate: (db: any, username: string, lookup: {
+    id: number;
+} | {
+    idempotencyKey: string;
+}) => Promise<UniversalOutboundIdentityRow | null>;
 export declare const reserveUniversalOutbound: (db: any, reservation: UniversalOutboundReservation) => Promise<UniversalOutboundReservationResult>;
+/**
+ * Reserve an outbound payload as part of a transaction already owned by the
+ * caller. This is the atomic seam for domain mutations that must not commit
+ * without their notification. Schema readiness must be established before the
+ * caller starts the transaction.
+ */
+export declare const reserveUniversalOutboundInTransaction: (connection: any, reservation: UniversalOutboundReservation) => Promise<UniversalOutboundReservationResult>;
 export declare const abortUniversalOutboundReservation: (db: any, id: number, username: string) => Promise<boolean>;
 export declare const backfillOutboundRegistry: (db: any, batchSize?: number) => Promise<{
     inserted: number;

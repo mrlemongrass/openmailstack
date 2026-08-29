@@ -452,6 +452,63 @@ test('recurring-instance delete structurally adds all-day and TZID EXDATE values
   assert.equal(await deleteEvent(port, zonedUid, '2026-08-17T16:00:00.000Z'), 200);
   assert.match(storedEvents.get(zonedUid), /EXDATE;TZID=America\/Phoenix:20260817T090000/);
   assert.equal(validateICalendarDocument(storedEvents.get(zonedUid)).canonicalUid, zonedUid);
+  const beforeTimedDateOnly = storedEvents.get(zonedUid);
+  const beforeTimedDateOnlyRevision = calendarRevision;
+  assert.equal(await deleteEvent(port, zonedUid, '2026-08-18'), 400);
+  assert.equal(storedEvents.get(zonedUid), beforeTimedDateOnly);
+  assert.equal(calendarRevision, beforeTimedDateOnlyRevision);
+});
+
+test('recurring-instance delete matches cross-TZID exceptions and rejects this-and-future ranges', async (t) => {
+  resetState();
+  const app = express();
+  app.use(express.json());
+  app.use('/api/apps', appsApiRouter);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const port = server.address().port;
+
+  const crossZoneUid = 'cross-zone-series';
+  const crossZone = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//OpenMailStack//Calendar Route Test//EN',
+    'BEGIN:VEVENT', `UID:${crossZoneUid}`, 'DTSTAMP:20260815T120000Z',
+    'DTSTART;TZID=America/New_York:20260901T090000', 'DTEND;TZID=America/New_York:20260901T100000',
+    'RRULE:FREQ=WEEKLY;COUNT=3', 'SUMMARY:Cross-zone series', 'END:VEVENT',
+    'BEGIN:VEVENT', `UID:${crossZoneUid}`, 'DTSTAMP:20260815T120000Z',
+    'RECURRENCE-ID;TZID=America/Chicago:20260908T080000',
+    'DTSTART;TZID=America/Chicago:20260908T083000', 'DTEND;TZID=America/Chicago:20260908T093000',
+    'SUMMARY:Moved cross-zone occurrence', 'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n');
+  storedEvents.set(crossZoneUid, crossZone);
+  eventRevisions.set(crossZoneUid, 1);
+  resourceNames.set(crossZoneUid, 'cross-zone-series.ics');
+
+  assert.equal(await deleteEvent(port, crossZoneUid, '2026-09-08T13:00:00.000Z'), 200);
+  const cancelledCrossZone = storedEvents.get(crossZoneUid);
+  assert.match(cancelledCrossZone, /EXDATE;TZID=America\/New_York:20260908T090000/);
+  assert.match(
+    cancelledCrossZone,
+    /RECURRENCE-ID;TZID=America\/Chicago:20260908T080000[\s\S]*?STATUS:CANCELLED/,
+  );
+
+  const rangeUid = 'cross-zone-range-series';
+  const rangeSeries = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//OpenMailStack//Calendar Route Test//EN',
+    'BEGIN:VEVENT', `UID:${rangeUid}`, 'DTSTAMP:20260815T120000Z',
+    'DTSTART;TZID=America/New_York:20260901T090000', 'DTEND;TZID=America/New_York:20260901T100000',
+    'RRULE:FREQ=WEEKLY;COUNT=3', 'SUMMARY:Range series', 'END:VEVENT',
+    'BEGIN:VEVENT', `UID:${rangeUid}`, 'DTSTAMP:20260815T120000Z',
+    'RECURRENCE-ID;TZID=America/Chicago;RANGE=THISANDFUTURE:20260908T080000',
+    'DTSTART;TZID=America/Chicago:20260908T083000', 'DTEND;TZID=America/Chicago:20260908T093000',
+    'SUMMARY:Shifted future occurrences', 'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n');
+  storedEvents.set(rangeUid, rangeSeries);
+  eventRevisions.set(rangeUid, calendarRevision);
+  resourceNames.set(rangeUid, 'cross-zone-range-series.ics');
+
+  assert.equal(await deleteEvent(port, rangeUid, '2026-09-15T13:00:00.000Z'), 400);
+  assert.equal(storedEvents.get(rangeUid), rangeSeries);
 });
 
 test('an identical web event save does not advance the collection revision', async (t) => {

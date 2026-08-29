@@ -20,6 +20,10 @@ function loadTypeScriptModule(relativePath) {
   }).outputText;
   const loaded = new Module(sourcePath, module);
   loaded.paths = module.paths;
+  loaded.require = id => {
+    if (id === './calendarTime') return loadTypeScriptModule('../src/calendar/calendarTime.ts');
+    return Module.prototype.require.call(loaded, id);
+  };
   loaded._compile(compiled, sourcePath);
   return loaded.exports;
 }
@@ -27,6 +31,7 @@ function loadTypeScriptModule(relativePath) {
 test('calendar event context actions recognize portable meeting links and make a safe duplicate', () => {
   const {
     duplicateCalendarEventDraft,
+    downloadableCalendarEventIcal,
     eventIcsFilename,
     meetingUrlForEvent,
   } = loadTypeScriptModule('../src/calendar/calendarContextActions.ts');
@@ -54,13 +59,56 @@ test('calendar event context actions recognize portable meeting links and make a
   const duplicate = duplicateCalendarEventDraft(event);
   assert.equal(duplicate.title, 'Roadmap / launch? (copy)');
   assert.equal(duplicate.calendarId, 42);
-  assert.equal(duplicate.start.getTime(), event.start.getTime());
-  assert.equal(duplicate.end.getTime(), event.end.getTime());
+  const wallAsUtc = value => Date.UTC(
+    value.getFullYear(), value.getMonth(), value.getDate(),
+    value.getHours(), value.getMinutes(), value.getSeconds(),
+  );
+  assert.equal(wallAsUtc(duplicate.start), event.start.getTime());
+  assert.equal(wallAsUtc(duplicate.end), event.end.getTime());
+  assert.equal(duplicate.timeKind, 'utc');
   assert.equal(duplicate.id, undefined);
   assert.equal(duplicate.occurrenceId, undefined);
   assert.equal(duplicate.rawIcal, undefined);
   assert.equal(duplicate.recurrence, undefined);
   assert.equal(duplicate.seriesTitle, undefined);
+
+  const projectedUtcOccurrence = {
+    ...event,
+    start: new Date(2026, 8, 8, 9, 0),
+    end: new Date(2026, 8, 8, 10, 0),
+    sourceStart: new Date('2026-09-08T16:00:00Z'),
+    sourceEnd: new Date('2026-09-08T17:00:00Z'),
+    timeKind: 'utc',
+    rawIcal: [
+      'BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:opaque-event-uid',
+      'DTSTART:20260901T160000Z', 'DTEND:20260901T170000Z',
+      'RRULE:FREQ=WEEKLY', 'EXDATE:20260915T160000Z', 'END:VEVENT', 'END:VCALENDAR',
+    ].join('\r\n'),
+  };
+  const downloaded = downloadableCalendarEventIcal(
+    projectedUtcOccurrence,
+    'America/Phoenix',
+    () => 'download-uid',
+    () => new Date('2026-08-29T12:00:00Z'),
+  );
+  assert.match(downloaded, /UID:download-uid@openmailstack/);
+  assert.match(downloaded, /DTSTART:20260908T160000Z/);
+  assert.match(downloaded, /DTEND:20260908T170000Z/);
+  assert.doesNotMatch(downloaded, /RRULE|EXDATE|RECURRENCE-ID/);
+
+  const zonedDuplicate = duplicateCalendarEventDraft({
+    ...event,
+    occurrenceId: undefined,
+    start: new Date(2026, 8, 1, 12, 0),
+    end: new Date(2026, 8, 1, 13, 0),
+    sourceStart: new Date('2026-09-01T16:00:00Z'),
+    sourceEnd: new Date('2026-09-01T17:00:00Z'),
+    timeKind: 'zoned',
+    timeZone: 'America/Los_Angeles',
+  }, 'America/New_York');
+  assert.equal(zonedDuplicate.start.getHours(), 9);
+  assert.equal(zonedDuplicate.end.getHours(), 10);
+  assert.equal(zonedDuplicate.timeZone, 'America/Los_Angeles');
 });
 
 test('calendar event context actions reject unsafe links', () => {
@@ -182,6 +230,7 @@ test('unpublished Scheduler links open the Profile section', () => {
 test('month, week, and day surfaces wire empty-slot and event context menus', () => {
   const layout = source('src/calendar/CalendarLayout.tsx');
   const menus = source('src/calendar/CalendarContextMenus.tsx');
+  const invitationDialogs = source('src/calendar/CalendarInvitationDialogs.tsx');
   const month = source('src/calendar/views/MonthView.tsx');
   const week = source('src/calendar/views/WeekView.tsx');
   const day = source('src/calendar/views/DayView.tsx');
@@ -207,9 +256,24 @@ test('month, week, and day surfaces wire empty-slot and event context menus', ()
     'Delete event',
     'Delete this occurrence',
     'Delete entire series',
+    'Accept',
+    'Tentative',
+    'Decline',
+    'Propose new time',
+    'Reply',
+    'Reply all',
+    'Forward',
+    'Cancel meeting',
+    'Cancel this occurrence',
   ]) {
     assert.match(menus, new RegExp(action.replace('.', '\\.')));
   }
+  assert.match(invitationDialogs, /role="dialog"/);
+  assert.match(invitationDialogs, /aria-modal="true"/);
+  assert.match(invitationDialogs, /Proposed start/);
+  assert.match(invitationDialogs, /Proposed end/);
+  assert.match(invitationDialogs, /Note to organizer/);
+  assert.match(invitationDialogs, /Send proposal/);
 });
 
 test('mobile Calendar exposes an opaque focus-managed calendar drawer', () => {

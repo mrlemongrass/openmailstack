@@ -8,6 +8,7 @@ export interface ParsedIcalEvent {
     isAllDay: boolean;
     timeKind: 'utc' | 'zoned' | 'floating' | 'all-day';
     timeZone: string | null;
+    recurrenceWallStart?: WallTimeParts;
     sourceTimeZone?: string;
     timeZoneStatus?: 'valid' | 'canonicalized' | 'unsupported' | 'invalid';
     dtstamp: Date;
@@ -17,6 +18,7 @@ export interface ParsedIcalEvent {
     exdates?: Set<string>;
     excludedOccurrenceIds?: Set<string>;
     recurrenceExceptions?: ParsedRecurrenceException[];
+    recurrenceExceptionIdentityConflict?: boolean;
     attendees?: string;
     activeSyncAttendees?: Array<{
         email: string;
@@ -46,6 +48,8 @@ export interface ParsedIcalEvent {
 export interface ParsedRecurrenceException {
     recurrenceId: Date;
     deleted: boolean;
+    sourceParameters?: string;
+    sourceValue?: string;
     event?: Omit<ParsedIcalEvent, 'recurrenceExceptions' | 'excludedOccurrenceIds' | 'exdates'>;
 }
 export interface RecurrenceRule {
@@ -66,6 +70,7 @@ export interface WallTimeParts {
     second: number;
 }
 export declare function wallTimeAt(instant: Date, timeZone: string): WallTimeParts;
+export declare function wallTimeToInstant(parts: WallTimeParts, timeZone: string): Date;
 export declare function parseIcalEvent(uid: string, ical: string): ParsedIcalEvent & {
     type?: 'event' | 'task';
 };

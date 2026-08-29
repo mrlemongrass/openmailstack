@@ -23,7 +23,7 @@ import {
 } from '../mail-pagination';
 import { createMailSearchInputController } from '../mail-search-input';
 import { createMailSearchRequestCoordinator, isMailSearchAbort } from '../mail-search-request';
-import { mailIdentities, selectComposeFrom } from '../mail-runtime-settings';
+import { mailIdentities, resolveComposeIdentity, selectComposeFrom } from '../mail-runtime-settings';
 import { createDraftSaveCoordinator } from '../draft-save-coordinator';
 import { draftComposeState, hydrateDraftAttachments, hydrateForwardContent } from '../draft-resume';
 import { createComposePreparationCoordinator } from '../compose-preparation-coordinator';
@@ -392,11 +392,15 @@ export function useMail(_opts: UseMailOptions) {
   const [composeSubject, setComposeSubject] = useState('');
   const [composeBody, setComposeBody] = useState('');
   const [selectedComposeFrom, setComposeFrom] = useState('');
-  const composeFrom = selectComposeFrom(
+  const composeIdentity = useMemo(() => resolveComposeIdentity(
     selectedComposeFrom,
     identities,
     _opts.mailSettings.identity.defaultFrom,
-  );
+    _opts.userIdentitiesReady,
+    _opts.userIdentitiesError,
+  ), [identities, selectedComposeFrom, _opts.mailSettings.identity.defaultFrom,
+    _opts.userIdentitiesError, _opts.userIdentitiesReady]);
+  const composeFrom = composeIdentity.address;
   const [composeSignature, setComposeSignature] = useState('none');
   const [composeAttachments, setComposeAttachments] = useState<File[]>([]);
   const [composeAttachmentRevision, setComposeAttachmentRevision] = useState(0);
@@ -552,6 +556,7 @@ export function useMail(_opts: UseMailOptions) {
   }, []);
 
   const startCompose = useCallback((initial: {
+    from?: string;
     to?: string;
     cc?: string;
     bcc?: string;
@@ -585,7 +590,7 @@ export function useMail(_opts: UseMailOptions) {
     setComposeSubject(initial.subject || '');
     setComposeBody(initial.body || '');
     setComposeAttachments(initial.attachments || []);
-    setComposeFrom('');
+    setComposeFrom(initial.from || '');
     setComposeSignature('none');
     setComposeMode('plain');
     setShowCc(Boolean(initial.cc));
@@ -1209,6 +1214,10 @@ export function useMail(_opts: UseMailOptions) {
 
   // Compose send
   const handleSend = useCallback(async (sendAt?: Date | null) => {
+    if (!composeIdentity.ready) {
+      setComposeError(composeIdentity.message);
+      return false;
+    }
     let preparedAttempt: PreparedOutboundSendAttempt | null = null;
     setSending(true);
     setComposeError(null);
@@ -1346,7 +1355,7 @@ export function useMail(_opts: UseMailOptions) {
     } finally {
       setSending(false);
     }
-  }, [composeFrom, composeInReplyTo, composeReferences, composeReplyTo, composeTo, composeCc, composeBcc,
+  }, [composeFrom, composeIdentity, composeInReplyTo, composeReferences, composeReplyTo, composeTo, composeCc, composeBcc,
     composeSubject, composeBody, composeMode, composeAttachments,
     finishComposeAfterConfirmedSend, saveCurrentDraft,
     _opts.mailSettings.compose.undoSendSeconds, _opts.mailSettings.identity.alwaysBccSelf,
@@ -1995,7 +2004,12 @@ export function useMail(_opts: UseMailOptions) {
     composeReplyTo, setComposeReplyTo,
     composeInReplyTo, setComposeInReplyTo, composeReferences, setComposeReferences,
     composeSubject, setComposeSubject, composeBody, setComposeBody,
-    composeFrom, setComposeFrom, composeIdentities: identities, composeSignature, setComposeSignature,
+    composeFrom, setComposeFrom, composeIdentities: identities,
+    composeIdentityReady: composeIdentity.ready,
+    composeIdentityState: composeIdentity.state,
+    composeIdentityMessage: composeIdentity.message,
+    composeRequestedFrom: composeIdentity.requestedAddress,
+    composeSignature, setComposeSignature,
     composeAttachments, setComposeAttachments: updateComposeAttachments,
     composeMode, setComposeMode,
     draftUid, setDraftUid, draftId, setDraftId,

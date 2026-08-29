@@ -89,6 +89,12 @@ export interface OutboundAttachment {
     contentType?: string;
 }
 
+export interface OutboundICalendarEvent {
+    method: 'REQUEST' | 'REPLY' | 'CANCEL' | 'COUNTER';
+    content: string | Buffer;
+    filename?: string;
+}
+
 export interface OutboundMessageInput {
     sender: OwnedSenderIdentity;
     to?: string | string[];
@@ -102,6 +108,7 @@ export interface OutboundMessageInput {
     inReplyTo?: string;
     references?: string | string[];
     attachments?: OutboundAttachment[];
+    icalEvent?: OutboundICalendarEvent;
     headers?: Record<string, string>;
     messageId?: string;
     date?: Date;
@@ -319,6 +326,11 @@ export const compileOutboundMessage = async (input: OutboundMessageInput): Promi
         inReplyTo: inReplyTo || undefined,
         references: references.length > 0 ? references.join(' ') : undefined,
         attachments: input.attachments || [],
+        icalEvent: input.icalEvent ? {
+            method: input.icalEvent.method,
+            content: input.icalEvent.content,
+            filename: input.icalEvent.filename || 'invite.ics',
+        } : undefined,
         headers,
         messageId,
         date,

@@ -18,6 +18,11 @@ import {
   loadMailIdentitiesRuntimeState,
   loadMailSettingsRuntimeState,
 } from './mail-runtime-settings';
+import {
+  crossSuiteComposeFiles,
+  takeCrossSuiteComposeDraft,
+  type CrossSuiteComposeDraft,
+} from '../shared/crossSuiteCompose';
 
 export function MailRoutes() {
   const { appearance } = useAppearance();
@@ -86,19 +91,26 @@ export function MailRoutes() {
 
   // Listen for cross-suite compose events + check for pending compose on mount
   useEffect(() => {
-    // Check for pending compose from cross-route navigation (sessionStorage fallback)
-    const pendingTo = sessionStorage.getItem('oms_compose_to');
-    if (pendingTo) {
+    const openDraft = (draft: CrossSuiteComposeDraft) => startCompose({
+      from: draft.from,
+      to: draft.to,
+      cc: draft.cc,
+      bcc: draft.bcc,
+      subject: draft.subject,
+      body: draft.body,
+      attachments: crossSuiteComposeFiles(draft),
+    });
+    const pendingDraft = takeCrossSuiteComposeDraft(sessionStorage);
+    if (pendingDraft) openDraft(pendingDraft);
+    // Backward compatibility for one-field handoffs from older loaded clients.
+    const legacyPendingTo = sessionStorage.getItem('oms_compose_to');
+    if (legacyPendingTo) {
       sessionStorage.removeItem('oms_compose_to');
-      startCompose({ to: pendingTo });
+      startCompose({ to: legacyPendingTo });
     }
-    // Live event listener for same-route compose triggers
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.to) {
-        sessionStorage.removeItem('oms_compose_to');
-        startCompose({ to: detail.to });
-      }
+      const detail = (e as CustomEvent<CrossSuiteComposeDraft>).detail;
+      if (detail && typeof detail === 'object') openDraft(detail);
     };
     window.addEventListener('oms:compose', handler);
     return () => window.removeEventListener('oms:compose', handler);

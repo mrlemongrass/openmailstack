@@ -1042,6 +1042,107 @@ test('an uncertain immediate attempt blocks rescheduling the unchanged message a
   assert.equal(submitCount, 1);
 });
 
+test('calendar recovery retains failed and partial attempts without persisting meeting content', async () => {
+  const {
+    createOutboundSendAttemptCoordinator,
+    sendOutboundMessage,
+  } = loadTypeScriptModule('../src/mail/immediate-send.ts');
+  const repository = atomicAttemptRepository();
+  const attempts = createOutboundSendAttemptCoordinator({
+    repository,
+    createKey: () => '00000000-0000-4000-8000-000000000131',
+  });
+  const recovery = { kind: 'calendar-invitation', version: 1, action: 'respond' };
+  const formData = new FormData();
+  formData.set('action', 'respond');
+
+  const failed = await sendOutboundMessage({
+    scope: { mailbox: 'owner@example.test', replyParent: 'calendar:opaque' },
+    formData,
+    delivery: { kind: 'immediate' },
+    attempts,
+    recovery,
+    submit: async () => ({ success: true, deliveryStatus: 'failed' }),
+  });
+  assert.equal(failed.deliveryStatus, 'failed');
+  assert.deepEqual(repository.snapshot()[0].recovery, recovery);
+  assert.doesNotMatch(JSON.stringify(repository.snapshot()), /subject|title|calendarId|eventId|uid|mailbox/i);
+
+  const reconciled = await attempts.reconcileMailbox(
+    'owner@example.test',
+    async () => ({ success: true, deliveryStatus: 'partial', rejectedRecipients: ['one@example.test'] }),
+  );
+  assert.equal(reconciled.partial, 1);
+  assert.equal(reconciled.recoveries?.[0].state, 'partial');
+  assert.equal(repository.snapshot().length, 1);
+});
+
+test('prepared and submitted hooks are awaited in delivery order', async () => {
+  const {
+    createOutboundSendAttemptCoordinator,
+    sendOutboundMessage,
+  } = loadTypeScriptModule('../src/mail/immediate-send.ts');
+  const order = [];
+  const attempts = createOutboundSendAttemptCoordinator({
+    repository: atomicAttemptRepository(),
+    createKey: () => '00000000-0000-4000-8000-000000000132',
+  });
+  const formData = new FormData();
+  formData.set('action', 'respond');
+
+  await sendOutboundMessage({
+    scope: { mailbox: 'owner@example.test', replyParent: 'calendar:hooks' },
+    formData,
+    delivery: { kind: 'immediate' },
+    attempts,
+    onPrepared: async () => {
+      await Promise.resolve();
+      order.push('prepared');
+    },
+    submit: async () => {
+      order.push('submit');
+      return { success: true, deliveryStatus: 'accepted' };
+    },
+    onSubmitted: async () => {
+      await Promise.resolve();
+      order.push('submitted');
+    },
+  });
+  assert.deepEqual(order, ['prepared', 'submit', 'submitted']);
+});
+
+test('reload reconciliation replaces a failed predecessor with its registered retry successor', async () => {
+  const { createOutboundSendAttemptCoordinator } = loadTypeScriptModule('../src/mail/immediate-send.ts');
+  const repository = atomicAttemptRepository();
+  const keys = [
+    '00000000-0000-4000-8000-000000000133',
+    '00000000-0000-4000-8000-000000000134',
+  ];
+  const attempts = createOutboundSendAttemptCoordinator({ repository, createKey: () => keys.shift() });
+  const predecessor = await attempts.prepare({
+    scope: { mailbox: 'owner@example.test', replyParent: 'calendar:original' },
+    fingerprint: 'original calendar action',
+    delivery: { kind: 'immediate' },
+    recovery: { kind: 'calendar-invitation', version: 1, action: 'cancel' },
+  });
+  const successor = await attempts.prepare({
+    scope: { mailbox: 'owner@example.test', replyParent: `calendar-invitation-retry:${predecessor.key}` },
+    fingerprint: `retry:${predecessor.key}`,
+    delivery: { kind: 'immediate' },
+    recovery: {
+      kind: 'calendar-invitation', version: 1, action: 'cancel', retryOf: predecessor.key,
+    },
+  });
+
+  const reconciled = await attempts.reconcileMailbox('owner@example.test', async key => (
+    key === successor.key
+      ? { success: true, deliveryStatus: 'pending' }
+      : { success: true, deliveryStatus: 'failed' }
+  ));
+  assert.deepEqual(reconciled.recoveries?.map(item => item.attempt.key), [successor.key]);
+  assert.deepEqual(repository.snapshot().map(record => record.key), [successor.key]);
+});
+
 test('explicitly verified non-delivery clears uncertainty and rotates the next send key', async () => {
   const { createOutboundSendAttemptCoordinator } = loadTypeScriptModule('../src/mail/immediate-send.ts');
   const repository = atomicAttemptRepository();

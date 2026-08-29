@@ -120,6 +120,31 @@ test('draft MIME can retain Bcc while delivery MIME never exposes it', async () 
   assert.deepEqual(delivery.envelope, draft.envelope);
 });
 
+test('canonical outbound MIME emits iTIP as a text/calendar alternative and .ics attachment', async () => {
+  const { simpleParser } = require('mailparser');
+  const { compileOutboundMessage } = require('../src/outbound-mail.js');
+  const ical = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//OpenMailStack//Test//EN',
+    'METHOD:REPLY', 'BEGIN:VEVENT', 'UID:meeting@example.test',
+    'DTSTAMP:20260829T183000Z', 'ORGANIZER:mailto:organizer@example.net',
+    'ATTENDEE;PARTSTAT=ACCEPTED:mailto:owner@example.test',
+    'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n');
+  const compiled = await compileOutboundMessage({
+    sender: { address: 'owner@example.test', name: 'Owner' },
+    to: 'organizer@example.net',
+    subject: 'Accepted: Planning',
+    text: 'Accepted: Planning',
+    icalEvent: { method: 'REPLY', filename: 'invite.ics', content: ical },
+  });
+
+  const raw = compiled.raw.toString('utf8');
+  assert.match(raw, /Content-Type: text\/calendar; charset=utf-8; method=REPLY/i);
+  assert.match(raw, /Content-Type: application\/ics/i);
+  const parsed = await simpleParser(compiled.raw);
+  assert.equal(parsed.attachments.some(attachment => attachment.filename === 'invite.ics'), true);
+});
+
 test('SMTP recipient outcomes expose partial rejection without retrying accepted recipients', () => {
   const {
     classifySmtpRecipientOutcome,

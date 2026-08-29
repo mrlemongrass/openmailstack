@@ -98,6 +98,20 @@ test('parseIcalEvent handles all-day events', () => {
   assert.equal(parsed.timeZone, null);
 });
 
+test('explicit VALUE=DATE-TIME remains a timed zoned event', () => {
+  const parsed = parseIcalEvent('explicit-date-time', [
+    'BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:explicit-date-time',
+    'DTSTART;TZID=Asia/Kathmandu;VALUE=DATE-TIME:20260901T090000',
+    'DTEND;TZID=Asia/Kathmandu;VALUE=DATE-TIME:20260901T093000',
+    'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n'));
+
+  assert.equal(parsed.isAllDay, false);
+  assert.equal(parsed.timeKind, 'zoned');
+  assert.equal(parsed.start.toISOString(), '2026-09-01T03:15:00.000Z');
+  assert.equal(parsed.end.toISOString(), '2026-09-01T03:45:00.000Z');
+});
+
 test('parseIcalEvent reads simple recurrence rules', () => {
   const parsed = parseIcalEvent('recurring', [
     'BEGIN:VCALENDAR',
@@ -174,6 +188,45 @@ test('expandRecurringEvent keeps zoned weekly events at the same wall time acros
       '2026-03-15T13:00:00.000Z',
     ]
   );
+});
+
+test('zoned recurrence keeps its nominal wall clock after a spring-gap occurrence', () => {
+  const parsed = parseIcalEvent('gap-series', [
+    'BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:gap-series',
+    'DTSTART;TZID=America/New_York:20260301T023000',
+    'DTEND;TZID=America/New_York:20260301T033000',
+    'RRULE:FREQ=WEEKLY;COUNT=3', 'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n'));
+  const occurrences = expandRecurringEvent(
+    parsed,
+    new Date('2026-03-01T00:00:00Z'),
+    new Date('2026-03-31T23:59:59Z'),
+  );
+
+  assert.deepEqual(occurrences.map(event => event.start.toISOString()), [
+    '2026-03-01T07:30:00.000Z',
+    '2026-03-08T07:30:00.000Z',
+    '2026-03-15T06:30:00.000Z',
+  ]);
+});
+
+test('zoned recurrence preserves the source wall clock when DTSTART itself falls in a spring gap', () => {
+  const parsed = parseIcalEvent('gap-start-series', [
+    'BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:gap-start-series',
+    'DTSTART;TZID=America/New_York:20260308T023000',
+    'DTEND;TZID=America/New_York:20260308T033000',
+    'RRULE:FREQ=WEEKLY;COUNT=2', 'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n'));
+  const occurrences = expandRecurringEvent(
+    parsed,
+    new Date('2026-03-01T00:00:00Z'),
+    new Date('2026-03-31T23:59:59Z'),
+  );
+
+  assert.deepEqual(occurrences.map(event => event.start.toISOString()), [
+    '2026-03-08T07:30:00.000Z',
+    '2026-03-15T06:30:00.000Z',
+  ]);
 });
 
 test('parseIcalEvent follows RFC 5545 for DST gaps and preserves a positive duration', () => {
@@ -339,6 +392,39 @@ test('expandRecurringEvent applies deleted and modified recurrence exceptions', 
     ['2026-07-24T17:00:00.000Z', 'Weekly planning'],
   ]);
   assert.equal(occurrences[1].occurrenceId, '20260717T170000Z');
+});
+
+test('an EXDATE suppresses a matching modified recurrence exception', () => {
+  const parsed = parseIcalEvent('excluded-exception-series', [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:excluded-exception-series',
+    'SUMMARY:Weekly planning',
+    'DTSTART:20260703T170000Z',
+    'DTEND:20260703T180000Z',
+    'RRULE:FREQ=WEEKLY;COUNT=3',
+    'EXDATE:20260710T170000Z',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:excluded-exception-series',
+    'RECURRENCE-ID:20260710T170000Z',
+    'SUMMARY:Moved planning',
+    'DTSTART:20260710T190000Z',
+    'DTEND:20260710T200000Z',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n'));
+
+  const occurrences = expandRecurringEvent(
+    parsed,
+    new Date('2026-07-01T00:00:00Z'),
+    new Date('2026-07-31T23:59:59Z'),
+  );
+
+  assert.deepEqual(occurrences.map(event => event.start.toISOString()), [
+    '2026-07-03T17:00:00.000Z',
+    '2026-07-17T17:00:00.000Z',
+  ]);
 });
 
 test('an explicit exception TZID overrides a UTC master timezone', () => {

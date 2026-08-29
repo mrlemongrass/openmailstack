@@ -114,6 +114,7 @@ test('calendar actions enforce access, recurrence confirmation, overflow access,
   const { act } = React;
   const { createRoot } = require('react-dom/client');
   const { CalendarContextMenus } = require('../src/calendar/CalendarContextMenus.tsx');
+  const { CalendarInvitationRecoveryBanner } = require('../src/calendar/CalendarLayout.tsx');
   const { EventModal } = require('../src/calendar/EventModal.tsx');
   const root = createRoot(document.getElementById('root'));
 
@@ -195,6 +196,261 @@ test('calendar actions enforce access, recurrence confirmation, overflow access,
   await act(async () => button('View event').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })));
   assert.equal(opened.at(-1).id, 'read-only');
 
+  const responses = [];
+  const proposals = [];
+  const cancellations = [];
+  const attendeeInvitation = {
+    ...baseEvent,
+    id: 'meeting-attendee',
+    invitation: {
+      role: 'attendee',
+      organizerEmail: 'organizer@example.test',
+      attendeeEmail: 'owner@example.test',
+      response: 'tentative',
+      responseRequested: true,
+      attendees: [
+        { email: 'owner@example.test', response: 'tentative', role: 'required' },
+        { email: 'other@example.test', response: 'accepted', role: 'required' },
+      ],
+      attendeeCount: 2,
+      attendeesTruncated: false,
+      recurring: false,
+      canRespond: true,
+      canCancel: false,
+      canCancelOccurrence: false,
+      canProposeNewTime: true,
+      canForward: true,
+      sequence: 1,
+    },
+    rawIcal: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR',
+  };
+  const invitationCalendarContext = {
+    ...baseCalendarContext,
+    calendarContextMenu: { kind: 'event', point: { x: 42, y: 42 }, event: attendeeInvitation },
+    invitationActionPending: null,
+    respondToInvitation: async (...args) => { responses.push(args); return { success: true }; },
+    proposeInvitationTime: async (...args) => { proposals.push(args); return { success: true }; },
+    cancelInvitation: async (...args) => { cancellations.push(args); return { success: true }; },
+  };
+  await act(async () => root.render(React.createElement(CalendarContextMenus, { cal: invitationCalendarContext })));
+  assert.ok(button('View event'), 'attendees must not be offered organizer-style event editing');
+  assert.equal(button('Edit event'), undefined);
+  assert.ok(button('Accept'));
+  assert.equal(button('Tentative (current)').disabled, true);
+  assert.ok(button('Decline'));
+  assert.ok(button('Propose new time'));
+  assert.ok(button('Reply'));
+  assert.ok(button('Reply all'));
+  assert.ok(button('Forward'));
+  assert.equal(button('Delete event'), undefined, 'declining an invitation is distinct from deleting an appointment');
+  await act(async () => {
+    button('Accept').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await new Promise(resolve => dom.window.setTimeout(resolve, 5));
+  });
+  assert.deepEqual(responses[0], [attendeeInvitation, 'accepted']);
+
+  await act(async () => root.render(React.createElement(CalendarContextMenus, { cal: invitationCalendarContext })));
+  await act(async () => button('Propose new time').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })));
+  const proposalDialog = document.querySelector('[role="dialog"]');
+  assert.match(proposalDialog.textContent, /Propose new time/);
+  await act(async () => {
+    button('Send proposal', proposalDialog).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await new Promise(resolve => dom.window.setTimeout(resolve, 5));
+  });
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0][0].id, 'meeting-attendee');
+  assert.equal(proposals[0][1].start.toISOString(), '2026-08-29T18:00:00.000Z');
+  assert.equal(proposals[0][1].end.toISOString(), '2026-08-29T18:30:00.000Z');
+
+  await act(async () => root.render(React.createElement(CalendarContextMenus, {
+    cal: {
+      ...invitationCalendarContext,
+      calendarContextMenu: {
+        kind: 'event', point: { x: 43, y: 43 }, event: {
+          ...attendeeInvitation,
+          invitation: {
+            ...attendeeInvitation.invitation,
+            attendeeCount: 75,
+            attendeesTruncated: true,
+          },
+        },
+      },
+    },
+  })));
+  assert.equal(button('Reply all'), undefined);
+  assert.equal(button('Reply all unavailable (large meeting)').disabled, true);
+
+  const organizerInvitation = {
+    ...attendeeInvitation,
+    id: 'meeting-organizer',
+    invitation: {
+      ...attendeeInvitation.invitation,
+      role: 'organizer',
+      organizerEmail: 'owner@example.test',
+      attendeeEmail: undefined,
+      canRespond: false,
+      canCancel: true,
+      canCancelOccurrence: false,
+    },
+  };
+  await act(async () => root.render(React.createElement(CalendarContextMenus, {
+    cal: {
+      ...invitationCalendarContext,
+      calendarContextMenu: { kind: 'event', point: { x: 44, y: 44 }, event: organizerInvitation },
+    },
+  })));
+  assert.ok(button('View event'));
+  assert.ok(button('Cancel meeting'));
+  assert.equal(button('Delete event'), undefined, 'organizer cancellation must notify attendees');
+  await act(async () => button('Cancel meeting').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })));
+  const cancelDialog = document.querySelector('[role="dialog"]');
+  assert.match(cancelDialog.textContent, /attendees will be notified/);
+  await act(async () => {
+    button('Cancel meeting', cancelDialog).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await new Promise(resolve => dom.window.setTimeout(resolve, 5));
+  });
+  assert.deepEqual(cancellations[0], [organizerInvitation, 'series']);
+
+  await act(async () => root.render(React.createElement(CalendarContextMenus, {
+    cal: {
+      ...invitationCalendarContext,
+      calendarContextMenu: {
+        kind: 'event', point: { x: 44, y: 44 }, event: {
+          ...organizerInvitation,
+          id: 'exception-only-organizer',
+          invitation: { ...organizerInvitation.invitation, canCancel: false },
+        },
+      },
+    },
+  })));
+  assert.equal(button('Cancel meeting'), undefined, 'exception-only organizers cannot cancel the series');
+  assert.equal(button('Delete event'), undefined, 'unsupported meeting cancellation must not degrade to local Delete');
+
+  const unownedInvitation = {
+    ...attendeeInvitation,
+    id: 'meeting-unowned',
+    invitation: {
+      ...attendeeInvitation.invitation,
+      role: 'unowned',
+      attendeeEmail: undefined,
+      canProposeNewTime: false,
+      canForward: false,
+    },
+  };
+  await act(async () => root.render(React.createElement(CalendarContextMenus, {
+    cal: {
+      ...invitationCalendarContext,
+      calendarContextMenu: { kind: 'event', point: { x: 45, y: 45 }, event: unownedInvitation },
+    },
+  })));
+  assert.ok(button('View event'));
+  assert.equal(button('Edit event'), undefined);
+  assert.equal(button('Delete event'), undefined);
+  assert.equal(button('Accept'), undefined);
+  assert.equal(button('Reply all'), undefined);
+
+  const unsupportedInvitation = {
+    ...unownedInvitation,
+    id: 'unsupported-recurrence-meeting',
+    invitation: {
+      ...unownedInvitation.invitation,
+      recurring: true,
+      actionUnavailableReason: 'Meeting actions unavailable for this recurrence',
+    },
+  };
+  await act(async () => root.render(React.createElement(CalendarContextMenus, {
+    cal: {
+      ...invitationCalendarContext,
+      calendarContextMenu: { kind: 'event', point: { x: 45, y: 45 }, event: unsupportedInvitation },
+    },
+  })));
+  assert.ok(button('View event'));
+  assert.equal(button('Edit event'), undefined);
+  assert.equal(button('Delete event'), undefined);
+  assert.equal(button('Meeting actions unavailable for this recurrence').disabled, true);
+
+  const recurringInvitation = {
+    ...attendeeInvitation,
+    id: 'meeting-series',
+    recurrence: 'FREQ=WEEKLY',
+    occurrenceId: '20260829T180000Z',
+    invitation: {
+      ...attendeeInvitation.invitation,
+      recurring: true,
+      canProposeNewTime: false,
+    },
+  };
+  await act(async () => root.render(React.createElement(CalendarContextMenus, {
+    cal: {
+      ...invitationCalendarContext,
+      calendarContextMenu: { kind: 'event', point: { x: 46, y: 46 }, event: recurringInvitation },
+    },
+  })));
+  assert.ok(button('Accept entire series'));
+  assert.equal(button('Tentative (current)'), undefined);
+  assert.equal(button('Tentative entire series').disabled, false);
+  assert.ok(button('Decline entire series'));
+  assert.equal(button('Propose new time'), undefined);
+  await act(async () => button('Decline entire series').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })));
+  const responseDialog = document.querySelector('[role="dialog"]');
+  assert.match(responseDialog.textContent, /apply to every occurrence/);
+  await act(async () => {
+    button('Decline series', responseDialog).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await new Promise(resolve => dom.window.setTimeout(resolve, 5));
+  });
+  assert.deepEqual(responses.at(-1), [recurringInvitation, 'declined']);
+
+  const monthlyOrganizer = {
+    ...organizerInvitation,
+    id: 'monthly-organizer',
+    recurrence: 'FREQ=MONTHLY;COUNT=4',
+    occurrenceId: '20260929T180000Z',
+    invitation: {
+      ...organizerInvitation.invitation,
+      recurring: true,
+      canCancelOccurrence: false,
+    },
+  };
+  await act(async () => root.render(React.createElement(CalendarContextMenus, {
+    cal: {
+      ...invitationCalendarContext,
+      calendarContextMenu: { kind: 'event', point: { x: 47, y: 47 }, event: monthlyOrganizer },
+    },
+  })));
+  assert.equal(button('Cancel this occurrence'), undefined);
+  assert.ok(button('Cancel entire series'));
+
+  const recoveryNotice = {
+    attempt: {
+      recordId: 'calendar-retry-record',
+      key: 'calendar-retry-key',
+      recovery: { kind: 'calendar-invitation', version: 1, action: 'respond' },
+    },
+    state: 'failed',
+  };
+  function RecoveryHarness() {
+    const [notices, setNotices] = React.useState([recoveryNotice]);
+    return React.createElement(CalendarInvitationRecoveryBanner, {
+      cal: {
+        invitationRecoveryNotices: notices,
+        invitationActionPending: null,
+        retryInvitationDelivery: async notice => {
+          setNotices(current => current.map(item => item === notice
+            ? { ...item, error: 'Your sending identity is unavailable.' }
+            : item));
+        },
+        checkInvitationDelivery: async () => undefined,
+        dismissInvitationRecovery: async () => undefined,
+      },
+    });
+  }
+  await act(async () => root.render(React.createElement(RecoveryHarness)));
+  await act(async () => {
+    button('Retry notification').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await new Promise(resolve => dom.window.setTimeout(resolve, 5));
+  });
+  assert.match(document.body.textContent, /Your sending identity is unavailable\./);
+
   const modalClosed = [];
   const overflowOpened = [];
   const noop = () => undefined;
@@ -237,6 +493,52 @@ test('calendar actions enforce access, recurrence confirmation, overflow access,
   assert.deepEqual(modalClosed, [false]);
   assert.deepEqual(overflowOpened[0][0], { x: 110, y: 56 });
   assert.equal(overflowOpened[0][1].id, 'event-1');
+
+  const projectedGuests = Array.from({ length: 50 }, (_, index) => `guest${index}@example.test`);
+  const largeInvitation = {
+    ...baseEvent,
+    id: 'large-invitation',
+    invitation: {
+      ...attendeeInvitation.invitation,
+      attendeeCount: 75,
+      attendeesTruncated: true,
+    },
+  };
+  await act(async () => {
+    root.render(React.createElement(EventModal, {
+      cal: {
+        isEventModalOpen: true,
+        editingEvent: largeInvitation,
+        newEvent: {
+          ...largeInvitation,
+          guests: projectedGuests,
+          timeKind: 'zoned',
+          timeZone: 'America/Phoenix',
+        },
+        calendars: [ownerCalendar],
+        writableCalendars: [ownerCalendar],
+        canModifyEditingEvent: false,
+        displayNow: baseEvent.start,
+        displayTimeZone: 'America/Phoenix',
+        calendarSettings: { clockFormat: '12h', defaultEventDurationMinutes: 30 },
+        isAdvancedEventMode: false,
+        eventSaving: false,
+        eventError: null,
+        freeBusy: {},
+        freeBusyUnavailable: [],
+        freeBusyLoading: false,
+        setNewEvent: noop,
+        setIsEventModalOpen: noop,
+        setIsAdvancedEventMode: noop,
+        lookupFreeBusy: noop,
+        draftWallDateToInstant: date => date,
+        saveEvent: async () => true,
+        openEventContextMenu: noop,
+      },
+    }));
+    await new Promise(resolve => dom.window.setTimeout(resolve, 5));
+  });
+  assert.match(document.body.textContent, /Showing 50 of 75 guests\. 25 more are not shown\./);
 
   let shareLoads = 0;
   const { CalendarSharingDialog } = loadManagementDialogs({

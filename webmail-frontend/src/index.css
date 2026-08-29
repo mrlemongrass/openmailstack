@@ -1086,6 +1086,26 @@ body {
   padding: 16px 16px 0;
 }
 
+.compose-identity-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 28%, var(--border-glass));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--surface-color));
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.compose-identity-notice.warning {
+  border-color: color-mix(in srgb, #f59e0b 42%, var(--border-glass));
+  background: color-mix(in srgb, #f59e0b 10%, var(--surface-color));
+  color: var(--text-primary);
+}
+
 .compose-body {
   display: flex;
   flex: 1;
@@ -1265,6 +1285,41 @@ body {
   justify-content: flex-end;
   gap: var(--space-2);
   border-top: 1px solid var(--border-glass);
+}
+
+.calendar-proposal-dialog {
+  width: min(540px, 100%);
+}
+
+.calendar-proposal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.calendar-proposal-description {
+  max-width: 440px;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.calendar-proposal-form {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.calendar-proposal-form .event-time-fields > * {
+  flex: 1;
+}
+
+.calendar-proposal-note {
+  min-height: 96px;
+  resize: vertical;
 }
 
 .event-time-fields {
@@ -4665,5 +4720,74 @@ li[data-checked="true"] .ql-checkbox {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* Calendar invitation delivery recovery */
+.calendar-invitation-recovery {
+  display: grid;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-glass);
+  background: color-mix(in srgb, var(--warning, #f59e0b) 7%, var(--bg-secondary));
+}
+
+.calendar-invitation-recovery-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.calendar-invitation-recovery-item > svg {
+  flex: 0 0 auto;
+  color: var(--warning, #f59e0b);
+}
+
+.calendar-invitation-recovery-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.calendar-invitation-recovery-copy strong,
+.calendar-invitation-recovery-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-invitation-recovery-copy span {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.calendar-invitation-recovery-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 767px) {
+  .calendar-invitation-recovery-item {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .calendar-invitation-recovery-copy {
+    width: calc(100% - 32px);
+  }
+
+  .calendar-invitation-recovery-copy strong,
+  .calendar-invitation-recovery-copy span {
+    white-space: normal;
+  }
+
+  .calendar-invitation-recovery-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 }

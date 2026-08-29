@@ -3,6 +3,13 @@ import { io as createSocket } from 'socket.io-client';
 import type { Calendar, CalendarEvent, CalendarSubscriptionRefreshResponse } from '../../shared/types';
 import type { ContextMenuPoint } from '../../shared/context-menu-navigation';
 import * as api from '../../shared/api';
+import {
+  createBrowserOutboundSendAttemptCoordinator,
+  sendOutboundMessage,
+  type OutboundSendRecovery,
+  type OutboundSendRecoveryMetadata,
+  type PreparedOutboundSendAttempt,
+} from '../../mail/immediate-send';
 import { useCalendarSettings } from '../../shared/hooks/useCalendarSettings';
 import { useCalendarTimeZone } from '../../shared/hooks/useCalendarTimeZone';
 import {
@@ -31,6 +38,27 @@ export type CalendarContextMenuState =
   | { kind: 'slot'; point: ContextMenuPoint; start: Date; isAllDay: boolean }
   | { kind: 'event'; point: ContextMenuPoint; event: CalendarEvent };
 
+type CalendarInvitationRecoveryMetadata = OutboundSendRecoveryMetadata & {
+  kind: 'calendar-invitation';
+  version: 1;
+  action: 'respond' | 'cancel' | 'propose-time';
+  retryOf?: string;
+  verifiedAbsent?: boolean;
+};
+
+function calendarInvitationRecovery(
+  attempt: PreparedOutboundSendAttempt,
+): CalendarInvitationRecoveryMetadata | null {
+  const recovery = attempt.recovery;
+  if (recovery?.kind !== 'calendar-invitation' || recovery.version !== 1
+    || !['respond', 'cancel', 'propose-time'].includes(String(recovery.action))
+    || (recovery.retryOf !== undefined && typeof recovery.retryOf !== 'string')
+    || (recovery.verifiedAbsent !== undefined && recovery.verifiedAbsent !== true)) {
+    return null;
+  }
+  return recovery as CalendarInvitationRecoveryMetadata;
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -57,6 +85,9 @@ export function useCalendar() {
   const [editingEvent, setEditingEvent] = useState<Partial<CalendarEvent> | null>(null);
   const [eventError, setEventError] = useState('');
   const [eventSaving, setEventSaving] = useState(false);
+  const [invitationActionPending, setInvitationActionPending] = useState<string | null>(null);
+  const invitationSendAttempts = useRef(createBrowserOutboundSendAttemptCoordinator());
+  const [invitationRecoveryNotices, setInvitationRecoveryNotices] = useState<OutboundSendRecovery[]>([]);
   const [calendarContextMenu, setCalendarContextMenu] = useState<CalendarContextMenuState | null>(null);
   const [calendarVisibility, setCalendarVisibility] = useState<Record<number, boolean>>(() => {
     try {
@@ -67,6 +98,36 @@ export function useCalendar() {
   const [calendarVisibilityOverride, setCalendarVisibilityOverride] = useState<CalendarVisibilityOverride>(null);
   const [quickCreateText, setQuickCreateText] = useState('');
   const [now, setNow] = useState(() => new Date());
+
+  const removeInvitationRecovery = useCallback((attempt: PreparedOutboundSendAttempt) => {
+    setInvitationRecoveryNotices(current => current.filter(item => (
+      item.attempt.recordId !== attempt.recordId || item.attempt.key !== attempt.key
+    )));
+  }, []);
+
+  const upsertInvitationRecovery = useCallback((recovery: OutboundSendRecovery) => {
+    if (!calendarInvitationRecovery(recovery.attempt)) return;
+    setInvitationRecoveryNotices(current => [
+      ...current.filter(item => item.attempt.recordId !== recovery.attempt.recordId),
+      recovery,
+    ]);
+  }, []);
+
+  const trackInvitationDelivery = useCallback(async (
+    attempt: PreparedOutboundSendAttempt,
+    result: Awaited<ReturnType<typeof api.fetchOutboundMessageStatus>>,
+  ) => {
+    const state = result.deliveryStatus;
+    if (state === 'accepted') {
+      await invitationSendAttempts.current.markDefinitive(attempt);
+      removeInvitationRecovery(attempt);
+    } else if (state === 'uncertain') {
+      await invitationSendAttempts.current.markUncertain(attempt);
+      upsertInvitationRecovery({ attempt, state, result });
+    } else if (state === 'failed' || state === 'partial' || state === 'pending') {
+      upsertInvitationRecovery({ attempt, state, result });
+    }
+  }, [removeInvitationRecovery, upsertInvitationRecovery]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000);
@@ -122,7 +183,11 @@ export function useCalendar() {
   const canModifyEditingEvent = useMemo(() => {
     if (!editingEvent) return true;
     const sourceCalendar = calendars.find(calendar => calendar.id === editingEvent.calendarId);
-    return Boolean(sourceCalendar && canEditCalendarEvents(sourceCalendar));
+    return Boolean(
+      sourceCalendar
+      && canEditCalendarEvents(sourceCalendar)
+      && !editingEvent.invitation,
+    );
   }, [calendars, editingEvent]);
 
   const refreshCalendars = useCallback(async () => {
@@ -158,6 +223,35 @@ export function useCalendar() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [refreshCalendars]);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const identities = await api.fetchIdentities();
+      const mailboxes = [...new Set([
+        identities.address,
+        ...identities.aliases.map(alias => alias.address),
+      ].map(address => address.trim().toLowerCase()).filter(Boolean))];
+      const reconciliations = await Promise.all(mailboxes.map(mailbox => (
+        invitationSendAttempts.current.reconcileMailbox(
+          mailbox,
+          api.fetchOutboundMessageStatusByKey,
+        )
+      )));
+      if (!active) return;
+      const recovered = reconciliations.flatMap(result => result.recoveries || []);
+      setInvitationRecoveryNotices(current => {
+        const byRecord = new Map(current.map(item => [item.attempt.recordId, item]));
+        recovered.forEach(item => {
+          if (calendarInvitationRecovery(item.attempt)) byRecord.set(item.attempt.recordId, item);
+        });
+        return [...byRecord.values()];
+      });
+    })().catch(error => {
+      console.error('Failed to reconcile Calendar notification delivery', error);
+    });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let isActive = true;
@@ -252,6 +346,306 @@ export function useCalendar() {
       return false;
     }
   }, [refreshCalendars]);
+
+  const respondToInvitation = useCallback(async (
+    event: CalendarEvent,
+    response: 'accepted' | 'tentative' | 'declined',
+  ) => {
+    const actionKey = `${event.calendarId}:${event.id}:respond`;
+    setInvitationActionPending(actionKey);
+    setEventError('');
+    let preparedAttempt: PreparedOutboundSendAttempt | null = null;
+    let deliveryTracked = false;
+    try {
+      const mailbox = event.invitation?.attendeeEmail;
+      if (!mailbox) throw new Error('The attendee identity for this meeting is unavailable.');
+      const fingerprint = new FormData();
+      fingerprint.set('action', 'respond');
+      fingerprint.set('calendarId', String(event.calendarId));
+      fingerprint.set('eventId', event.id);
+      fingerprint.set('response', response);
+      const recovery: CalendarInvitationRecoveryMetadata = {
+        kind: 'calendar-invitation',
+        version: 1,
+        action: 'respond',
+      };
+      const result = await sendOutboundMessage({
+        scope: { mailbox, replyParent: `calendar:${event.calendarId}:${event.id}:respond` },
+        formData: fingerprint,
+        delivery: { kind: 'immediate' },
+        attempts: invitationSendAttempts.current,
+        recovery,
+        onPrepared: attempt => {
+          preparedAttempt = attempt;
+          upsertInvitationRecovery({ attempt, state: attempt.blocked ? 'uncertain' : 'prepared' });
+        },
+        onSubmitted: (result, attempt) => {
+          if (result.deliveryStatus === 'pending') upsertInvitationRecovery({ attempt, state: 'pending', result });
+        },
+        submit: (_payload, requestKey) => api.respondToCalendarInvitation(
+          event.calendarId, event.id, response, requestKey,
+        ),
+        loadStatus: api.fetchOutboundMessageStatus,
+      });
+      if (preparedAttempt) {
+        await trackInvitationDelivery(preparedAttempt, result);
+        deliveryTracked = true;
+      }
+      if (result.deliveryStatus === 'failed') {
+        throw new Error('Your response was saved, but the notification was not sent.');
+      }
+      if (result.deliveryStatus === 'uncertain') {
+        throw new Error('Your response was saved, but delivery is uncertain. Do not resend until you verify it.');
+      }
+      if (result.deliveryStatus === 'partial') {
+        throw new Error('Your response was sent to only some recipients.');
+      }
+      await refreshCalendars();
+      return result;
+    } catch (error) {
+      if (preparedAttempt && !deliveryTracked) {
+        if ((error as { definitive?: boolean })?.definitive) removeInvitationRecovery(preparedAttempt);
+        else upsertInvitationRecovery({ attempt: preparedAttempt, state: 'unavailable' });
+      }
+      setEventError(errorMessage(error, 'Your meeting response could not be sent.'));
+      throw error;
+    } finally {
+      setInvitationActionPending(current => current === actionKey ? null : current);
+    }
+  }, [refreshCalendars, removeInvitationRecovery, trackInvitationDelivery, upsertInvitationRecovery]);
+
+  const cancelInvitation = useCallback(async (
+    event: CalendarEvent,
+    scope: 'occurrence' | 'series',
+  ) => {
+    const actionKey = `${event.calendarId}:${event.id}:cancel`;
+    setInvitationActionPending(actionKey);
+    setEventError('');
+    let preparedAttempt: PreparedOutboundSendAttempt | null = null;
+    let deliveryTracked = false;
+    try {
+      const mailbox = event.invitation?.organizerEmail;
+      if (!mailbox) throw new Error('The organizer identity for this meeting is unavailable.');
+      const occurrenceId = scope === 'occurrence' ? event.occurrenceId : undefined;
+      const fingerprint = new FormData();
+      fingerprint.set('action', 'cancel');
+      fingerprint.set('calendarId', String(event.calendarId));
+      fingerprint.set('eventId', event.id);
+      fingerprint.set('scope', scope);
+      if (occurrenceId) fingerprint.set('occurrenceId', occurrenceId);
+      const recovery: CalendarInvitationRecoveryMetadata = {
+        kind: 'calendar-invitation',
+        version: 1,
+        action: 'cancel',
+      };
+      const result = await sendOutboundMessage({
+        scope: { mailbox, replyParent: `calendar:${event.calendarId}:${event.id}:cancel` },
+        formData: fingerprint,
+        delivery: { kind: 'immediate' },
+        attempts: invitationSendAttempts.current,
+        recovery,
+        onPrepared: attempt => {
+          preparedAttempt = attempt;
+          upsertInvitationRecovery({ attempt, state: attempt.blocked ? 'uncertain' : 'prepared' });
+        },
+        onSubmitted: (result, attempt) => {
+          if (result.deliveryStatus === 'pending') upsertInvitationRecovery({ attempt, state: 'pending', result });
+        },
+        submit: (_payload, requestKey) => api.cancelCalendarInvitation(
+          event.calendarId, event.id, scope, occurrenceId, requestKey,
+        ),
+        loadStatus: api.fetchOutboundMessageStatus,
+      });
+      if (preparedAttempt) {
+        await trackInvitationDelivery(preparedAttempt, result);
+        deliveryTracked = true;
+      }
+      if (result.deliveryStatus === 'failed') {
+        throw new Error('The meeting was canceled, but attendees were not notified.');
+      }
+      if (result.deliveryStatus === 'uncertain') {
+        throw new Error('The meeting was canceled, but notification delivery is uncertain. Do not resend yet.');
+      }
+      if (result.deliveryStatus === 'partial') {
+        throw new Error('The meeting was canceled, but only some attendees were notified.');
+      }
+      await refreshCalendars();
+      return result;
+    } catch (error) {
+      if (preparedAttempt && !deliveryTracked) {
+        if ((error as { definitive?: boolean })?.definitive) removeInvitationRecovery(preparedAttempt);
+        else upsertInvitationRecovery({ attempt: preparedAttempt, state: 'unavailable' });
+      }
+      setEventError(errorMessage(error, 'The meeting could not be canceled.'));
+      throw error;
+    } finally {
+      setInvitationActionPending(current => current === actionKey ? null : current);
+    }
+  }, [refreshCalendars, removeInvitationRecovery, trackInvitationDelivery, upsertInvitationRecovery]);
+
+  const proposeInvitationTime = useCallback(async (
+    event: CalendarEvent,
+    proposal: { start: Date; end: Date; comment?: string },
+  ) => {
+    const actionKey = `${event.calendarId}:${event.id}:propose`;
+    setInvitationActionPending(actionKey);
+    setEventError('');
+    let preparedAttempt: PreparedOutboundSendAttempt | null = null;
+    let deliveryTracked = false;
+    try {
+      const mailbox = event.invitation?.attendeeEmail;
+      if (!mailbox) throw new Error('The attendee identity for this meeting is unavailable.');
+      const fingerprint = new FormData();
+      fingerprint.set('action', 'propose-time');
+      fingerprint.set('calendarId', String(event.calendarId));
+      fingerprint.set('eventId', event.id);
+      fingerprint.set('start', proposal.start.toISOString());
+      fingerprint.set('end', proposal.end.toISOString());
+      fingerprint.set('comment', proposal.comment || '');
+      const recovery: CalendarInvitationRecoveryMetadata = {
+        kind: 'calendar-invitation',
+        version: 1,
+        action: 'propose-time',
+      };
+      const result = await sendOutboundMessage({
+        scope: { mailbox, replyParent: `calendar:${event.calendarId}:${event.id}:propose-time` },
+        formData: fingerprint,
+        delivery: { kind: 'immediate' },
+        attempts: invitationSendAttempts.current,
+        recovery,
+        onPrepared: attempt => {
+          preparedAttempt = attempt;
+          upsertInvitationRecovery({ attempt, state: attempt.blocked ? 'uncertain' : 'prepared' });
+        },
+        onSubmitted: (result, attempt) => {
+          if (result.deliveryStatus === 'pending') upsertInvitationRecovery({ attempt, state: 'pending', result });
+        },
+        submit: (_payload, requestKey) => api.proposeCalendarInvitationTime(
+          event.calendarId, event.id, proposal, requestKey,
+        ),
+        loadStatus: api.fetchOutboundMessageStatus,
+      });
+      if (preparedAttempt) {
+        await trackInvitationDelivery(preparedAttempt, result);
+        deliveryTracked = true;
+      }
+      if (result.deliveryStatus === 'failed') throw new Error('The new-time proposal was not sent.');
+      if (result.deliveryStatus === 'uncertain') {
+        throw new Error('Proposal delivery is uncertain. Do not resend until you verify it.');
+      }
+      if (result.deliveryStatus === 'partial') throw new Error('The proposal was sent to only some recipients.');
+      return result;
+    } catch (error) {
+      if (preparedAttempt && !deliveryTracked) {
+        if ((error as { definitive?: boolean })?.definitive) removeInvitationRecovery(preparedAttempt);
+        else upsertInvitationRecovery({ attempt: preparedAttempt, state: 'unavailable' });
+      }
+      setEventError(errorMessage(error, 'The new-time proposal could not be sent.'));
+      throw error;
+    } finally {
+      setInvitationActionPending(current => current === actionKey ? null : current);
+    }
+  }, [removeInvitationRecovery, trackInvitationDelivery, upsertInvitationRecovery]);
+
+  const checkInvitationDelivery = useCallback(async (notice: OutboundSendRecovery) => {
+    try {
+      const result = await api.fetchOutboundMessageStatusByKey(notice.attempt.key);
+      await trackInvitationDelivery(notice.attempt, result);
+    } catch (error) {
+      upsertInvitationRecovery({
+        ...notice,
+        state: 'unavailable',
+        result: undefined,
+        error: errorMessage(error, 'Delivery status could not be checked.'),
+      });
+    }
+  }, [trackInvitationDelivery, upsertInvitationRecovery]);
+
+  const retryInvitationDelivery = useCallback(async (notice: OutboundSendRecovery) => {
+    const recovery = calendarInvitationRecovery(notice.attempt);
+    if (!recovery) return;
+    const retryOf = notice.state === 'unavailable' && recovery.retryOf
+      ? recovery.retryOf
+      : notice.attempt.key;
+    const verifiedAbsent = notice.state === 'uncertain' || recovery.verifiedAbsent === true;
+    const actionKey = `${notice.attempt.recordId}:retry`;
+    setInvitationActionPending(actionKey);
+    setEventError('');
+    let nextAttempt: PreparedOutboundSendAttempt | null = null;
+    try {
+      const identities = await api.fetchIdentities();
+      const mailbox = identities.address.trim().toLowerCase();
+      if (!mailbox) throw new Error('Your sending identity is unavailable.');
+      const fingerprint = new FormData();
+      fingerprint.set('action', 'retry-calendar-invitation');
+      fingerprint.set('retryOf', retryOf);
+      const nextRecovery: CalendarInvitationRecoveryMetadata = {
+        kind: 'calendar-invitation',
+        version: 1,
+        action: recovery.action,
+        retryOf,
+        ...(verifiedAbsent ? { verifiedAbsent: true } : {}),
+      };
+      const result = await sendOutboundMessage({
+        scope: {
+          mailbox,
+          replyParent: `calendar-invitation-retry:${retryOf}`,
+        },
+        formData: fingerprint,
+        delivery: { kind: 'immediate' },
+        attempts: invitationSendAttempts.current,
+        recovery: nextRecovery,
+        onPrepared: async attempt => {
+          nextAttempt = attempt;
+          upsertInvitationRecovery({ attempt, state: attempt.blocked ? 'uncertain' : 'prepared' });
+        },
+        onSubmitted: async (result, attempt) => {
+          if (result.deliveryStatus === 'pending') upsertInvitationRecovery({ attempt, state: 'pending', result });
+          const predecessor = invitationRecoveryNotices.find(item => (
+            item.attempt.key === retryOf && item.attempt.key !== attempt.key
+          ));
+          if (predecessor) {
+            await invitationSendAttempts.current.markDefinitive(predecessor.attempt);
+            removeInvitationRecovery(predecessor.attempt);
+          }
+        },
+        submit: (_payload, requestKey) => api.retryCalendarInvitationNotification(
+          retryOf,
+          requestKey,
+          verifiedAbsent,
+        ),
+        loadStatus: api.fetchOutboundMessageStatus,
+      });
+      if (nextAttempt) await trackInvitationDelivery(nextAttempt, result);
+      if (result.deliveryStatus === 'accepted') await refreshCalendars();
+    } catch (error) {
+      const definitive = Boolean((error as { definitive?: boolean })?.definitive);
+      const terminal = (error as { code?: unknown })?.code === 'RETRY_PAYLOAD_UNAVAILABLE';
+      if (nextAttempt && definitive) removeInvitationRecovery(nextAttempt);
+      else if (nextAttempt) upsertInvitationRecovery({
+        attempt: nextAttempt,
+        state: 'unavailable',
+        error: errorMessage(error, 'The meeting notification could not be retried.'),
+      });
+      const message = errorMessage(error, 'The meeting notification could not be retried.');
+      if (terminal) {
+        await invitationSendAttempts.current.markDefinitive(notice.attempt).catch(storageError => {
+          console.error('Failed to clear expired Calendar notification recovery', storageError);
+        });
+        upsertInvitationRecovery({ ...notice, state: 'terminal', result: undefined, error: message });
+      } else if (definitive) upsertInvitationRecovery({ ...notice, error: message });
+      else if (!nextAttempt) upsertInvitationRecovery({ ...notice, error: message });
+      setEventError(message);
+    } finally {
+      setInvitationActionPending(current => current === actionKey ? null : current);
+    }
+  }, [invitationRecoveryNotices, refreshCalendars, removeInvitationRecovery, trackInvitationDelivery, upsertInvitationRecovery]);
+
+  const dismissInvitationRecovery = useCallback(async (notice: OutboundSendRecovery) => {
+    if (notice.state !== 'failed' && notice.state !== 'partial' && notice.state !== 'terminal') return;
+    await invitationSendAttempts.current.markDefinitive(notice.attempt);
+    removeInvitationRecovery(notice.attempt);
+  }, [removeInvitationRecovery]);
 
   const createCalendar = useCallback(async (
     calendar: Pick<Calendar, 'name' | 'color'> & { subscribed_url?: string; ics_data?: string },
@@ -355,10 +749,10 @@ export function useCalendar() {
     }
     setEventError('');
     setEditingEvent(null);
-    setNewEvent({ ...duplicateCalendarEventDraft(event), calendarId: targetCalendar.id });
+    setNewEvent({ ...duplicateCalendarEventDraft(event, displayTimeZone), calendarId: targetCalendar.id });
     setIsEventModalOpen(true);
     return true;
-  }, [calendars, calendarSettings.defaultCalendarId]);
+  }, [calendars, calendarSettings.defaultCalendarId, displayTimeZone]);
 
   const openSlotContextMenu = useCallback((
     point: ContextMenuPoint,
@@ -455,6 +849,8 @@ export function useCalendar() {
     newEvent, setNewEvent, editingEvent, eventError, eventSaving,
     writableCalendars, canModifyEditingEvent,
     saveEvent, deleteEvent, openNewEvent, editExistingEvent, duplicateEvent,
+    invitationActionPending, respondToInvitation, cancelInvitation, proposeInvitationTime,
+    invitationRecoveryNotices, checkInvitationDelivery, retryInvitationDelivery, dismissInvitationRecovery,
     createCalendar, updateCalendar, removeCalendar, refreshCalendarSubscription,
     calendarContextMenu, openSlotContextMenu, openEventContextMenu, closeCalendarContextMenu,
     calendarVisibility, setCalendarVisibility,

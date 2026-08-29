@@ -166,7 +166,7 @@ test('mail settings and identities fall back independently', async () => {
 });
 
 test('compose sender remains valid as identities arrive and are revoked', () => {
-  const { mailIdentities, selectComposeFrom } = loadTypeScriptModule('../src/mail/mail-runtime-settings.ts', {
+  const { mailIdentities, resolveComposeIdentity, selectComposeFrom } = loadTypeScriptModule('../src/mail/mail-runtime-settings.ts', {
     '../settings/settingsApi': { defaultMailSettings: {} },
   });
   const identities = mailIdentities({
@@ -182,6 +182,53 @@ test('compose sender remains valid as identities arrive and are revoked', () => 
   assert.equal(selectComposeFrom('support@example.com', identities, 'sales@example.com'), 'support@example.com');
   assert.equal(selectComposeFrom('revoked@example.com', identities, 'sales@example.com'), 'sales@example.com');
   assert.equal(selectComposeFrom('sales@example.com', identities.slice(0, 1), 'sales@example.com'), 'owner@example.com');
+
+  assert.deepEqual(
+    resolveComposeIdentity('support@example.com', [], 'owner@example.com', false, ''),
+    {
+      address: 'support@example.com',
+      requestedAddress: 'support@example.com',
+      ready: false,
+      state: 'loading',
+      message: 'Verifying that support@example.com is an authorized sending identity…',
+    },
+  );
+  assert.deepEqual(
+    resolveComposeIdentity(
+      'support@example.com',
+      [],
+      'owner@example.com',
+      false,
+      'Sending identities could not be loaded.',
+    ),
+    {
+      address: 'support@example.com',
+      requestedAddress: 'support@example.com',
+      ready: false,
+      state: 'unavailable',
+      message: 'Sending identities could not be loaded.',
+    },
+  );
+  assert.deepEqual(
+    resolveComposeIdentity('support@example.com', identities, 'owner@example.com', true, ''),
+    {
+      address: 'support@example.com',
+      requestedAddress: 'support@example.com',
+      ready: true,
+      state: 'ready',
+      message: '',
+    },
+  );
+  assert.deepEqual(
+    resolveComposeIdentity('revoked@example.com', identities, 'owner@example.com', true, ''),
+    {
+      address: 'revoked@example.com',
+      requestedAddress: 'revoked@example.com',
+      ready: false,
+      state: 'unauthorized',
+      message: 'revoked@example.com is not currently authorized for sending. Choose another From address or retry identities.',
+    },
+  );
 });
 
 test('unimplemented mail controls are absent while inline Send and Archive remains', () => {

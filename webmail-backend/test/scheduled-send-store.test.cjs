@@ -22,6 +22,7 @@ test('scheduled send schema upgrades legacy rows additively and installs claim i
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
+      if (compact.startsWith('ALTER TABLE outbound_submission_registry')) return [[], []];
       statements.push({ sql: compact, params });
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) {
         return [legacyColumns.map(COLUMN_NAME => ({ COLUMN_NAME })), []];
@@ -163,6 +164,7 @@ test('same-key replay is a no-send projection and changed content conflicts', as
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
+      if (compact.startsWith('ALTER TABLE outbound_submission_registry')) return [[], []];
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) {
         return [allColumns.map(COLUMN_NAME => ({
           COLUMN_NAME,
@@ -276,6 +278,7 @@ test('scheduled same-key replay survives a soft hide and changed content conflic
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
+      if (compact.startsWith('ALTER TABLE outbound_submission_registry')) return [[], []];
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) return [allColumns.map(COLUMN_NAME => ({
         COLUMN_NAME,
         COLUMN_TYPE: COLUMN_NAME === 'attempts' ? 'int unsigned' : '',
@@ -365,6 +368,7 @@ test('immediate and scheduled submission keys fail closed before persistence or 
       const compact = String(sql).replace(/\s+/g, ' ').trim();
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS scheduled_emails')) return [[], []];
       if (compact.startsWith('CREATE TABLE IF NOT EXISTS outbound_submission_registry')) return [[], []];
+      if (compact.startsWith('ALTER TABLE outbound_submission_registry')) return [[], []];
       if (compact.includes('INFORMATION_SCHEMA.COLUMNS')) return [allColumns.map(COLUMN_NAME => ({
         COLUMN_NAME,
         COLUMN_TYPE: COLUMN_NAME === 'attempts' ? 'int unsigned' : '',
@@ -506,7 +510,7 @@ test('cancellation retains the queued payload until its Draft restore is durable
   assert.deepEqual(completeUpdate.params.slice(-4), [27, 44, 'owner@example.test', 'cancel-44']);
 });
 
-test('terminal immediate outcomes scrub mail content while scheduled recovery payload stays available', async () => {
+test('terminal outcomes scrub immediate content except bounded calendar invitation retry payloads', async () => {
   const statements = [];
   const db = {
     async query(sql, params = []) {
@@ -530,14 +534,41 @@ test('terminal immediate outcomes scrub mail content while scheduled recovery pa
   const failed = statements.find(statement => statement.sql.includes("SET status = 'failed'"));
   const uncertain = statements.find(statement => statement.sql.includes("SET status = 'delivery_uncertain'"));
   const partial = statements.find(statement => statement.sql.includes("SET status = 'partial_delivery'"));
+  assert.match(failed.sql, /JSON_EXTRACT\(display_metadata_json, '\$\.recovery\.kind'\)/);
+  assert.match(failed.sql, /'calendar-invitation'/);
+  assert.match(failed.sql, /THEN NULL ELSE raw_message END/);
+  assert.match(failed.sql, /THEN NULL ELSE envelope_json END/);
+  assert.match(uncertain.sql, /JSON_EXTRACT\(display_metadata_json, '\$\.recovery\.kind'\)/);
+  assert.match(uncertain.sql, /'calendar-invitation'/);
+  assert.match(uncertain.sql, /THEN NULL ELSE raw_message END/);
+  assert.match(uncertain.sql, /THEN NULL ELSE sent_raw_message END/);
+  assert.match(uncertain.sql, /THEN NULL ELSE envelope_json END/);
   for (const statement of [failed, uncertain]) {
-    assert.match(statement.sql, /raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE raw_message END/);
-    assert.match(statement.sql, /sent_raw_message = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE sent_raw_message END/);
-    assert.match(statement.sql, /envelope_json = CASE WHEN submission_kind = 'immediate' THEN NULL ELSE envelope_json END/);
     assert.match(statement.sql, /mail_options = CASE WHEN submission_kind = 'immediate' THEN '\{\}' ELSE mail_options END/);
   }
+  assert.match(partial.sql, /JSON_EXTRACT\(display_metadata_json, '\$\.recovery\.kind'\)/);
+  assert.match(partial.sql, /THEN raw_message ELSE NULL END/);
   assert.match(partial.sql, /mail_options = CASE WHEN submission_kind = 'immediate' THEN '\{\}' ELSE mail_options END/);
   assert.doesNotMatch(partial.sql, /mail_options = '\{\}'/);
+});
+
+test('calendar invitation retry payloads are scrubbed after seven days without optional compaction', async () => {
+  const statements = [];
+  const db = {
+    async query(sql, params = []) {
+      statements.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
+      return [{ affectedRows: 3 }, []];
+    },
+  };
+  const { purgeExpiredCalendarInvitationRetryPayloads } = require('../src/scheduled-send.js');
+  const purged = await purgeExpiredCalendarInvitationRetryPayloads(db, 25);
+
+  assert.equal(purged, 3);
+  assert.deepEqual(statements[0].params, [25]);
+  assert.match(statements[0].sql, /INTERVAL 7 DAY/);
+  assert.match(statements[0].sql, /'calendar-invitation'/);
+  assert.match(statements[0].sql, /'delivery_uncertain'/);
+  assert.match(statements[0].sql, /SET raw_message = NULL, sent_raw_message = NULL, envelope_json = NULL/);
 });
 
 test('worker cycles do not overlap in-process and use a fresh claim token on each run', async () => {

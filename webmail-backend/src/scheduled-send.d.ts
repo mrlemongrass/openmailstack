@@ -108,6 +108,7 @@ export interface PersistedOutboundMessage {
     raw: Buffer;
     sentRaw?: Buffer;
     metadata: Record<string, any>;
+    recovery?: Record<string, string | number | boolean | null | undefined>;
     draftUid?: number | null;
     saveSentCopy?: boolean;
 }
@@ -142,6 +143,10 @@ export interface SubmitOutboundRuntime {
     workerId?: string;
     dependencies?: Partial<ScheduledEmailDependencies>;
 }
+export interface OutboundTransactionReservation {
+    id: number;
+    replayed: boolean;
+}
 export declare class OutboundIdempotencyKeyError extends Error {
     readonly code = "OUTBOUND_IDEMPOTENCY_KEY_INVALID";
     readonly status = 400;
@@ -160,7 +165,14 @@ export declare class OutboundSubmissionUnavailableError extends Error {
 export declare const getOutboundSubmission: (db: any, username: string, lookup: OutboundSubmissionLookup) => Promise<OutboundSubmissionStatus | null>;
 export declare const listScheduledOutboundRows: (db: any, username: string) => Promise<any[]>;
 export declare const projectScheduledOutboundInstant: (row: any) => Date;
+/**
+ * Persist an outbound submission without taking ownership of the surrounding
+ * transaction or performing SMTP. The scheduled sender claims the due row
+ * after the caller commits.
+ */
+export declare const reserveOutboundInTransaction: (connection: any, input: OutboundSubmissionInput) => Promise<OutboundTransactionReservation>;
 export declare const submitOutbound: (db: any, input: OutboundSubmissionInput, runtime?: SubmitOutboundRuntime) => Promise<OutboundSubmissionResult>;
+export declare const purgeExpiredCalendarInvitationRetryPayloads: (db: any, batchSize?: number) => Promise<number>;
 export declare const runScheduledSender: (dependencies?: ScheduledEmailDependencies, db?: any, workerId?: string) => Promise<number>;
 export declare const startScheduledSender: () => void;
 //# sourceMappingURL=scheduled-send.d.ts.map

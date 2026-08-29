@@ -145,6 +145,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const evt = cal.newEvent;
   const isEditing = !!cal.editingEvent;
   const isReadOnly = isEditing && !cal.canModifyEditingEvent;
+  const visibleGuestCount = Array.isArray(evt.guests) ? evt.guests.length : guests.length;
   const eventCalendars = isReadOnly
     ? cal.calendars.filter(calendar => calendar.id === evt.calendarId)
     : cal.writableCalendars;
@@ -403,6 +404,12 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                 </div>
               );
             })}
+            {isReadOnly && cal.editingEvent?.invitation?.attendeesTruncated && (
+              <div className="calendar-read-only-note" role="note" style={{ marginTop: 6 }}>
+                Showing {visibleGuestCount} of {cal.editingEvent.invitation.attendeeCount} guests.{' '}
+                {Math.max(0, cal.editingEvent.invitation.attendeeCount - visibleGuestCount)} more are not shown.
+              </div>
+            )}
           </div>
 
           {/* #10 Event attachments */}

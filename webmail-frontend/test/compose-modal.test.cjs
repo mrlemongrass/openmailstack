@@ -86,6 +86,13 @@ function renderCompose(overrides = {}) {
       composeBody: '',
       composeFrom: 'localtest@housevo.us',
       composeIdentities: [{ address: 'localtest@housevo.us', name: 'Local Test' }],
+      composeIdentityReady: true,
+      composeIdentityState: 'ready',
+      composeIdentityMessage: '',
+      composeRequestedFrom: '',
+      userIdentitiesReady: true,
+      userIdentitiesError: '',
+      retryUserIdentities: async () => undefined,
       composeSignature: 'none',
       composeError: null,
       immediateSendPhase: 'idle',
@@ -149,6 +156,26 @@ test('mobile compose uses an opaque full-screen sheet with grouped actions', () 
     css,
     /@media \(max-width: 767px\)[\s\S]*\.compose-modal-overlay\s*\{[\s\S]*padding:\s*0[\s\S]*\.compose-dialog\s*\{[\s\S]*width:\s*100%[\s\S]*height:\s*100dvh[\s\S]*max-height:\s*none[\s\S]*border-radius:\s*0/,
   );
+});
+
+test('compose keeps a requested alias visible and blocks send when identities fail to load', () => {
+  const markup = renderCompose({
+    composeFrom: 'calendar-alias@example.test',
+    composeIdentities: [],
+    composeIdentityReady: false,
+    composeIdentityState: 'unavailable',
+    composeIdentityMessage: 'Sending identities could not be loaded.',
+    composeRequestedFrom: 'calendar-alias@example.test',
+    userIdentitiesReady: false,
+    userIdentitiesError: 'Sending identities could not be loaded.',
+  });
+
+  assert.match(markup, /calendar-alias@example\.test/);
+  assert.match(markup, /role="alert"/);
+  assert.match(markup, /Sending identities could not be loaded\./);
+  assert.match(markup, />Retry identities</);
+  assert.match(markup, /<button(?=[^>]*aria-label="Schedule send")(?=[^>]*disabled="")[^>]*>/);
+  assert.match(markup, /class="btn btn-primary"[^>]*disabled[^>]*><svg[^>]*><\/svg> Send<\/button>/);
 });
 
 test('compose autocomplete deduplicates case-insensitive email matches', () => {

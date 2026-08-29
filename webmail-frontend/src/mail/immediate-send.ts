@@ -15,6 +15,8 @@ export interface OutboundSendDelivery {
   scheduledFor?: string;
 }
 
+export type OutboundSendRecoveryMetadata = Record<string, string | number | boolean | null>;
+
 interface PersistedOutboundSendAttempt {
   recordId: string;
   key: string;
@@ -27,6 +29,7 @@ interface PersistedOutboundSendAttempt {
   expiresAt: number;
   scheduledFor?: string;
   uncertainAt?: number;
+  recovery?: OutboundSendRecoveryMetadata;
 }
 
 export interface OutboundSendAttemptRepository {
@@ -43,6 +46,7 @@ export interface PreparedOutboundSendAttempt {
   blockReason?: OutboundSendBlockReason;
   deliveryKind: OutboundSendDelivery['kind'];
   scheduledFor?: string;
+  recovery?: OutboundSendRecoveryMetadata;
 }
 
 export type OutboundSendBlockReason = 'delivery_uncertain' | 'delivery_change_pending';
@@ -52,6 +56,7 @@ export interface OutboundSendAttemptCoordinator {
     scope: OutboundSendScope;
     fingerprint: string;
     delivery: OutboundSendDelivery;
+    recovery?: OutboundSendRecoveryMetadata;
   }): Promise<PreparedOutboundSendAttempt>;
   markDefinitive(attempt: PreparedOutboundSendAttempt): Promise<void>;
   markUncertain(attempt: PreparedOutboundSendAttempt): Promise<void>;
@@ -71,15 +76,25 @@ export interface OutboundSendReconciliation {
   pending: number;
   uncertain: number;
   unavailable: number;
+  recoveries?: OutboundSendRecovery[];
+}
+
+export interface OutboundSendRecovery {
+  attempt: PreparedOutboundSendAttempt;
+  state: ProtectedOutboundSendCheckState;
+  result?: SendMessageResponse;
+  error?: string;
 }
 
 export type ProtectedOutboundSendCheckState =
+  | 'prepared'
   | 'accepted'
   | 'partial'
   | 'failed'
   | 'scheduled'
   | 'pending'
   | 'uncertain'
+  | 'terminal'
   | 'unavailable';
 
 export interface ProtectedOutboundSendCheck {
@@ -248,7 +263,7 @@ export function createOutboundSendAttemptCoordinator({
   }));
 
   return {
-    async prepare({ scope, fingerprint, delivery }) {
+    async prepare({ scope, fingerprint, delivery, recovery }) {
       const scheduledFor = normalizedScheduledFor(delivery);
       const [ownerDigest, scopeDigest, contentDigest, deliveryDigest, undoDeliveryDigest] = await Promise.all([
         sha256(`oms-send-owner-v1\u0000${canonicalMailbox(scope.mailbox)}`),
@@ -275,6 +290,7 @@ export function createOutboundSendAttemptCoordinator({
         if (existing) {
           existing.updatedAt = preparedAt;
           existing.expiresAt = expirationTime(preparedAt, existing.scheduledFor);
+          if (recovery && !existing.recovery) existing.recovery = recovery;
           const blockReason: OutboundSendBlockReason | undefined = existing.uncertainAt !== undefined
             ? 'delivery_uncertain'
             : existing.scheduledFor === undefined && scheduledFor !== undefined
@@ -291,6 +307,7 @@ export function createOutboundSendAttemptCoordinator({
                 ? existing.deliveryDigest === undoDeliveryDigest ? 'undo' : 'scheduled'
                 : 'immediate',
               ...(existing.scheduledFor ? { scheduledFor: existing.scheduledFor } : {}),
+              ...(existing.recovery ? { recovery: existing.recovery } : {}),
             },
           };
         }
@@ -309,6 +326,7 @@ export function createOutboundSendAttemptCoordinator({
           updatedAt: preparedAt,
           expiresAt: expirationTime(preparedAt, scheduledFor),
           ...(scheduledFor ? { scheduledFor } : {}),
+          ...(recovery ? { recovery } : {}),
         });
         return {
           records: retained,
@@ -318,6 +336,7 @@ export function createOutboundSendAttemptCoordinator({
             blocked: false,
             deliveryKind: delivery.kind,
             ...(scheduledFor ? { scheduledFor } : {}),
+            ...(recovery ? { recovery } : {}),
           },
         };
       });
@@ -356,6 +375,7 @@ export function createOutboundSendAttemptCoordinator({
         uncertain: 0,
         unavailable: 0,
       };
+      const registeredRetryParents = new Set<string>();
       await Promise.all(owned.map(async record => {
         const attempt: PreparedOutboundSendAttempt = {
           recordId: record.recordId,
@@ -363,15 +383,24 @@ export function createOutboundSendAttemptCoordinator({
           blocked: record.uncertainAt !== undefined,
           deliveryKind: record.scheduledFor ? 'scheduled' : 'immediate',
           ...(record.scheduledFor ? { scheduledFor: record.scheduledFor } : {}),
+          ...(record.recovery ? { recovery: record.recovery } : {}),
         };
         try {
           const result = await loadStatus(record.key);
+          const retryOf = record.recovery?.retryOf;
+          if (typeof retryOf === 'string' && UUID_PATTERN.test(retryOf)) {
+            registeredRetryParents.add(retryOf);
+          }
           if (result.submissionKind === 'scheduled' && result.scheduledId) {
             await updateMatching(attempt, () => null);
             summary.cleared += 1;
             summary.scheduled += 1;
           } else if (result.deliveryStatus === 'pending') {
             summary.pending += 1;
+            if (record.recovery) {
+              summary.recoveries ||= [];
+              summary.recoveries.push({ attempt, state: 'pending', result });
+            }
           } else if (result.deliveryStatus === 'uncertain') {
             await updateMatching(attempt, current => ({
               ...current,
@@ -379,24 +408,59 @@ export function createOutboundSendAttemptCoordinator({
               uncertainAt: current.uncertainAt ?? checkedAt,
             }));
             summary.uncertain += 1;
+            if (record.recovery) {
+              summary.recoveries ||= [];
+              summary.recoveries.push({ attempt, state: 'uncertain', result });
+            }
           } else if (
             result.deliveryStatus === 'accepted'
             || result.deliveryStatus === 'partial'
             || result.deliveryStatus === 'failed'
           ) {
-            await updateMatching(attempt, () => null);
-            summary.cleared += 1;
+            if (result.deliveryStatus === 'accepted' || !record.recovery) {
+              await updateMatching(attempt, () => null);
+              summary.cleared += 1;
+            } else {
+              summary.recoveries ||= [];
+              summary.recoveries.push({ attempt, state: result.deliveryStatus, result });
+            }
             summary[result.deliveryStatus] += 1;
           } else {
             summary.unavailable += 1;
+            if (record.recovery) {
+              summary.recoveries ||= [];
+              summary.recoveries.push({ attempt, state: 'unavailable' });
+            }
           }
         } catch {
           // A 404 may mean this record belongs to a different authenticated
           // mailbox. Retain all lookup failures rather than destroying a key
           // whose terminal status cannot be proved for the current owner.
           summary.unavailable += 1;
+          if (record.recovery) {
+            summary.recoveries ||= [];
+            summary.recoveries.push({ attempt, state: 'unavailable' });
+          }
         }
       }));
+      if (registeredRetryParents.size > 0) {
+        const removedParents = await repository.update(records => {
+          let removed = 0;
+          const retained = records.filter(record => {
+            const shouldRemove = record.ownerDigest === ownerDigest
+              && registeredRetryParents.has(record.key);
+            if (shouldRemove) removed += 1;
+            return !shouldRemove;
+          });
+          return { records: retained, value: removed };
+        });
+        summary.cleared += removedParents;
+        if (summary.recoveries) {
+          summary.recoveries = summary.recoveries.filter(recovery => (
+            !registeredRetryParents.has(recovery.attempt.key)
+          ));
+        }
+      }
       return summary;
     },
   };
@@ -476,7 +540,9 @@ interface SendOutboundMessageOptions {
   loadStatus?: (statusUrl: string) => Promise<SendMessageResponse>;
   wait?: (milliseconds: number) => Promise<void>;
   onPending?: (result: SendMessageResponse) => void;
-  onPrepared?: (attempt: PreparedOutboundSendAttempt) => void;
+  recovery?: OutboundSendRecoveryMetadata;
+  onPrepared?: (attempt: PreparedOutboundSendAttempt) => void | Promise<void>;
+  onSubmitted?: (result: SendMessageResponse, attempt: PreparedOutboundSendAttempt) => void | Promise<void>;
   maxPolls?: number;
 }
 
@@ -489,12 +555,14 @@ export async function sendOutboundMessage({
   loadStatus,
   wait = waitFor,
   onPending,
+  recovery,
   onPrepared,
+  onSubmitted,
   maxPolls = 60,
 }: SendOutboundMessageOptions): Promise<SendMessageResponse> {
   const fingerprint = await outboundMessageFingerprint(formData);
-  const prepared = await attempts.prepare({ scope, fingerprint, delivery });
-  onPrepared?.(prepared);
+  const prepared = await attempts.prepare({ scope, fingerprint, delivery, recovery });
+  await onPrepared?.(prepared);
   if (prepared.blocked) throw new UncertainSendBlockedError(prepared.blockReason);
 
   formData.delete('delaySeconds');
@@ -505,6 +573,7 @@ export async function sendOutboundMessage({
   try {
     let result = await submit(formData, prepared.key);
     submissionAcknowledged = true;
+    await onSubmitted?.(result, prepared);
     let statusUrl = result.statusUrl;
     let polls = 0;
     while (result.deliveryStatus === 'pending' && !result.scheduledId) {
@@ -523,6 +592,10 @@ export async function sendOutboundMessage({
 
     if (result.deliveryStatus === 'uncertain') {
       await attempts.markUncertain(prepared);
+    } else if (prepared.recovery
+      && (result.deliveryStatus === 'failed' || result.deliveryStatus === 'partial')) {
+      // Retain the exact key and recovery context so Calendar can offer a
+      // bounded retry instead of stranding an already-committed RSVP/cancel.
     } else {
       await attempts.markDefinitive(prepared);
     }

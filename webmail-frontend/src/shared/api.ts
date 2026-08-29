@@ -7,6 +7,7 @@ import type {
   MailFolder, FolderDeleteResult, FolderMutationResponse, FolderMutationWarning, FolderMarkReadResponse, Signature, Rule, RuleAnalysis, RuleRunPageResponse, RuleRunRequest,
   ContactsResponse, Contact, ContactLabel, ContactGroup,
   CalendarsResponse, Calendar, CalendarUpdateResponse, CalendarDeleteResponse,
+  CalendarInvitationActionResponse, CalendarInvitationResponse,
   CalendarSubscriptionRefreshResponse,
   CalendarShare,
   Note, NoteAttachment,
@@ -177,12 +178,14 @@ export async function fetchMessage(folder: string, uid: number): Promise<Message
 export class OutboundSendRequestError extends Error {
   readonly definitive: boolean;
   readonly status?: number;
+  readonly code?: string;
 
-  constructor(message: string, definitive: boolean, status?: number) {
+  constructor(message: string, definitive: boolean, status?: number, code?: string) {
     super(message);
     this.name = 'OutboundSendRequestError';
     this.definitive = definitive;
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -550,14 +553,15 @@ export async function shareContact(id: number | string, recipientEmail: string, 
 }
 
 // ---- Calendar ----
-async function calendarApiResponse<T extends { success?: boolean; error?: string }>(
+async function calendarApiResponse<T extends { success?: boolean; error?: string; code?: string }>(
   response: Response,
   fallback: string,
 ): Promise<T> {
   const body = await response.json().catch(() => ({ success: false })) as T;
   if (!response.ok || !body.success) {
     const message = response.status < 500 && body.error ? body.error : fallback;
-    throw new Error(message);
+    const definitive = response.status >= 400 && response.status < 500 && response.status !== 429;
+    throw new OutboundSendRequestError(message, definitive, response.status, body.code);
   }
   return body;
 }
@@ -638,6 +642,88 @@ export async function deleteEvent(calendarId: number, uid: string, excludeDate?:
     : `/api/apps/events/${calendarId}/${uid}`;
   const response = await fetch(url, { method: 'DELETE' });
   await calendarApiResponse(response, 'The event could not be deleted.');
+}
+
+async function calendarInvitationAction(
+  calendarId: number,
+  uid: string,
+  action: 'respond' | 'cancel' | 'propose-time',
+  body: Record<string, unknown>,
+  idempotencyKey: string,
+  fallback: string,
+): Promise<CalendarInvitationActionResponse> {
+  const response = await fetch(
+    `/api/apps/events/${calendarId}/${encodeURIComponent(uid)}/${action}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(body),
+    },
+  );
+  return calendarApiResponse<CalendarInvitationActionResponse>(response, fallback);
+}
+
+export async function respondToCalendarInvitation(
+  calendarId: number,
+  uid: string,
+  response: Exclude<CalendarInvitationResponse, 'needs-action'>,
+  idempotencyKey: string,
+  retryOf?: string,
+): Promise<CalendarInvitationActionResponse> {
+  return calendarInvitationAction(
+    calendarId, uid, 'respond', { response, ...(retryOf ? { retryOf } : {}) }, idempotencyKey,
+    'Your meeting response could not be sent.',
+  );
+}
+
+export async function cancelCalendarInvitation(
+  calendarId: number,
+  uid: string,
+  scope: 'occurrence' | 'series',
+  occurrenceId: string | undefined,
+  idempotencyKey: string,
+  retryOf?: string,
+): Promise<CalendarInvitationActionResponse> {
+  return calendarInvitationAction(
+    calendarId, uid, 'cancel', {
+      scope,
+      ...(occurrenceId ? { occurrenceId } : {}),
+      ...(retryOf ? { retryOf } : {}),
+    }, idempotencyKey,
+    'The meeting could not be canceled.',
+  );
+}
+
+export async function retryCalendarInvitationNotification(
+  retryOf: string,
+  idempotencyKey: string,
+  verifiedAbsent = false,
+): Promise<CalendarInvitationActionResponse> {
+  const response = await fetch('/api/apps/calendar-invitations/retry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ retryOf, ...(verifiedAbsent ? { verifiedAbsent: true } : {}) }),
+  });
+  return calendarApiResponse<CalendarInvitationActionResponse>(
+    response,
+    'The meeting notification could not be retried.',
+  );
+}
+
+export async function proposeCalendarInvitationTime(
+  calendarId: number,
+  uid: string,
+  proposal: { start: Date; end: Date; comment?: string },
+  idempotencyKey: string,
+): Promise<CalendarInvitationActionResponse> {
+  return calendarInvitationAction(
+    calendarId,
+    uid,
+    'propose-time',
+    { start: proposal.start.toISOString(), end: proposal.end.toISOString(), comment: proposal.comment || '' },
+    idempotencyKey,
+    'The new-time proposal could not be sent.',
+  );
 }
 
 export async function fetchCalendarShares(calendarId: number): Promise<CalendarShare[]> {

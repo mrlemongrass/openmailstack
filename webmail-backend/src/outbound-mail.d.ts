@@ -23,6 +23,11 @@ export interface OutboundAttachment {
     content: Buffer;
     contentType?: string;
 }
+export interface OutboundICalendarEvent {
+    method: 'REQUEST' | 'REPLY' | 'CANCEL' | 'COUNTER';
+    content: string | Buffer;
+    filename?: string;
+}
 export interface OutboundMessageInput {
     sender: OwnedSenderIdentity;
     to?: string | string[];
@@ -36,6 +41,7 @@ export interface OutboundMessageInput {
     inReplyTo?: string;
     references?: string | string[];
     attachments?: OutboundAttachment[];
+    icalEvent?: OutboundICalendarEvent;
     headers?: Record<string, string>;
     messageId?: string;
     date?: Date;

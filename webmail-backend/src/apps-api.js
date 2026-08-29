@@ -38,6 +38,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.contactActivityAttendeePattern = exports.contactActivityAddressPattern = exports.appsApiRouter = void 0;
 const express_1 = require("express");
+const crypto = __importStar(require("crypto"));
 const db_1 = require("./db");
 const auth_1 = require("./auth");
 const calendar_utils_1 = require("./calendar-utils");
@@ -46,7 +47,12 @@ const birthday_calendar_1 = require("./birthday-calendar");
 const calendar_subscription_http_1 = require("./calendar-subscription-http");
 const calendar_subscription_1 = require("./calendar-subscription");
 const calendar_ical_validation_1 = require("./calendar-ical-validation");
+const calendar_format_1 = require("./calendar-format");
 const contact_utils_1 = require("./contact-utils");
+const calendar_invitations_1 = require("./calendar-invitations");
+const outbound_mail_1 = require("./outbound-mail");
+const scheduled_send_1 = require("./scheduled-send");
+const universal_outbox_1 = require("./universal-outbox");
 exports.appsApiRouter = (0, express_1.Router)();
 // Middleware to protect routes and extract username
 const authenticateApp = (req, res, next) => {
@@ -240,14 +246,25 @@ function calendarProperty(line) {
     const header = line.slice(0, separator);
     return { name: header.split(';', 1)[0].toUpperCase(), header, value: line.slice(separator + 1) };
 }
-function calendarParameterIdentity(header) {
-    return header.split(';').slice(1).map(parameter => parameter.toUpperCase()).sort().join(';');
+function calendarRecurrenceIdentity(header, value) {
+    const valueType = header.match(/(?:^|;)VALUE=(?:"([^"]+)"|([^;]+))/i)?.slice(1).find(Boolean)
+        || (/^\d{8}(?:,|$)/.test(value) ? 'DATE' : 'DATE-TIME');
+    const timeZone = header.match(/(?:^|;)TZID=(?:"([^"]+)"|([^;]+))/i)?.slice(1).find(Boolean) || '';
+    return `${valueType.toUpperCase()}\0${timeZone.trim()}`;
 }
 function addRecurringOccurrenceExclusion(source, exclude) {
     const resource = validatedWebCalendarEvent(source);
+    const parsedEvent = (0, calendar_utils_1.parseIcalEvent)(resource.uid, resource.icalData);
+    if (parsedEvent.recurrenceExceptionOverflow) {
+        throw new calendar_ical_validation_1.ICalendarValidationError('This recurring event has too many exceptions to remove one occurrence safely');
+    }
+    if (parsedEvent.recurrenceExceptionIdentityConflict) {
+        throw new calendar_ical_validation_1.ICalendarValidationError('This recurring event has ambiguous exception identities');
+    }
     const lines = unfoldedCalendarLines(resource.icalData);
     const stack = [];
     const masters = [];
+    const exceptions = [];
     let current = null;
     for (let index = 0; index < lines.length; index += 1) {
         const boundary = lines[index].match(/^(BEGIN|END):([A-Z0-9-]+)$/i);
@@ -260,8 +277,11 @@ function addRecurringOccurrenceExclusion(source, exclude) {
         if (boundary?.[1].toUpperCase() === 'END') {
             if (current && stack.length === 2 && stack[1] === 'VEVENT') {
                 const recurringInstance = current.direct.some(lineIndex => calendarProperty(lines[lineIndex]).name === 'RECURRENCE-ID');
-                if (!recurringInstance)
-                    masters.push({ end: index, direct: current.direct });
+                const component = { end: index, direct: current.direct };
+                if (recurringInstance)
+                    exceptions.push(component);
+                else
+                    masters.push(component);
                 current = null;
             }
             stack.pop();
@@ -279,42 +299,191 @@ function addRecurringOccurrenceExclusion(source, exclude) {
     const dtstartIndex = master.direct.find(index => calendarProperty(lines[index]).name === 'DTSTART');
     if (dtstartIndex === undefined)
         throw new calendar_ical_validation_1.ICalendarValidationError('Recurring event DTSTART is missing');
-    const dtstart = calendarProperty(lines[dtstartIndex]);
-    const parameters = dtstart.header.slice('DTSTART'.length);
+    if (exceptions.some(exception => exception.direct.some(index => {
+        const property = calendarProperty(lines[index]);
+        return property.name === 'RECURRENCE-ID' && /(?:^|;)RANGE=/i.test(property.header);
+    }))) {
+        throw new calendar_ical_validation_1.ICalendarValidationError('This event uses a this-and-future recurrence change that cannot be removed as one occurrence yet');
+    }
     const occurrence = parseOccurrenceExclusion(exclude);
-    const dateValue = /(?:^|;)VALUE=DATE(?:;|$)/i.test(parameters) || /^\d{8}$/.test(dtstart.value);
-    if (!dateValue && !occurrence.localDateTime) {
-        throw new calendar_ical_validation_1.ICalendarValidationError('Timed recurring occurrences require a date and time');
-    }
-    let exclusionValue;
-    if (dateValue) {
-        exclusionValue = occurrence.date;
-    }
-    else if (dtstart.value.endsWith('Z')) {
-        exclusionValue = occurrence.instant
-            ? compactUtcDateTime(occurrence.instant)
-            : `${occurrence.localDateTime}Z`;
-    }
-    else {
-        const timeZone = parameters.match(/(?:^|;)TZID=(?:"([^"]+)"|([^;]+))/i)?.slice(1).find(Boolean);
-        exclusionValue = timeZone && occurrence.instant
-            ? compactDateTimeInZone(occurrence.instant, timeZone)
-            : occurrence.localDateTime || `${occurrence.date}T000000`;
-    }
-    const parameterIdentity = calendarParameterIdentity(`EXDATE${parameters}`);
+    const normalizedOccurrence = occurrence.instant
+        ? compactUtcDateTime(occurrence.instant)
+        : occurrence.localDateTime || occurrence.date;
+    const recurrenceIdentity = calendarProperty((0, calendar_invitations_1.calendarRecurrenceIdLine)(resource.icalData, normalizedOccurrence));
+    const parameters = recurrenceIdentity.header.slice('RECURRENCE-ID'.length);
+    const exclusionValue = recurrenceIdentity.value;
+    const parameterIdentity = calendarRecurrenceIdentity(`EXDATE${parameters}`, exclusionValue);
     const alreadyExcluded = master.direct.some(index => {
         const property = calendarProperty(lines[index]);
         return property.name === 'EXDATE'
-            && calendarParameterIdentity(property.header) === parameterIdentity
+            && calendarRecurrenceIdentity(property.header, property.value) === parameterIdentity
             && property.value.split(',').includes(exclusionValue);
     });
-    if (alreadyExcluded)
+    const insertions = [];
+    let changed = false;
+    if (!alreadyExcluded) {
+        insertions.push({ index: master.end, line: `EXDATE${parameters}:${exclusionValue}` });
+        changed = true;
+    }
+    const recurrenceParameterIdentity = calendarRecurrenceIdentity(`RECURRENCE-ID${parameters}`, exclusionValue);
+    const utcOccurrenceValue = occurrence.instant ? compactUtcDateTime(occurrence.instant) : null;
+    const exceptionInstantBySource = new Map((parsedEvent.recurrenceExceptions || []).map(exception => [
+        JSON.stringify([exception.sourceParameters || '', exception.sourceValue || '']),
+        compactUtcDateTime(exception.recurrenceId),
+    ]));
+    for (const exception of exceptions) {
+        const recurrenceId = exception.direct
+            .map(index => ({ index, property: calendarProperty(lines[index]) }))
+            .find(candidate => candidate.property.name === 'RECURRENCE-ID');
+        if (!recurrenceId)
+            continue;
+        const recurrenceHeaderWithoutRange = recurrenceId.property.header.replace(/;RANGE=[^;:]*/i, '');
+        const exactSeriesIdentity = calendarRecurrenceIdentity(recurrenceHeaderWithoutRange, recurrenceId.property.value) === recurrenceParameterIdentity
+            && recurrenceId.property.value === exclusionValue;
+        const equivalentUtcIdentity = Boolean(utcOccurrenceValue
+            && recurrenceId.property.value === utcOccurrenceValue
+            && !/(?:^|;)TZID=/i.test(recurrenceId.property.header));
+        const equivalentParsedIdentity = Boolean(utcOccurrenceValue
+            && exceptionInstantBySource.get(JSON.stringify([
+                recurrenceId.property.header.slice('RECURRENCE-ID'.length),
+                recurrenceId.property.value,
+            ])) === utcOccurrenceValue);
+        if (!exactSeriesIdentity && !equivalentUtcIdentity && !equivalentParsedIdentity)
+            continue;
+        const statusIndex = exception.direct.find(index => calendarProperty(lines[index]).name === 'STATUS');
+        if (statusIndex === undefined) {
+            insertions.push({ index: exception.end, line: 'STATUS:CANCELLED' });
+            changed = true;
+        }
+        else if (calendarProperty(lines[statusIndex]).value.toUpperCase() !== 'CANCELLED') {
+            lines[statusIndex] = 'STATUS:CANCELLED';
+            changed = true;
+        }
+    }
+    if (!changed)
         return resource.icalData;
-    lines.splice(master.end, 0, `EXDATE${parameters}:${exclusionValue}`);
+    insertions.sort((left, right) => right.index - left.index);
+    for (const insertion of insertions)
+        lines.splice(insertion.index, 0, insertion.line);
     const rebuilt = validatedWebCalendarEvent(lines.join('\r\n'));
     if (rebuilt.uid !== resource.uid)
         throw new calendar_ical_validation_1.ICalendarValidationError('Recurring event identity changed');
     return rebuilt.icalData;
+}
+function recurringOccurrenceIsCancelled(source, exclude) {
+    const occurrence = parseOccurrenceExclusion(exclude);
+    const parsed = (0, calendar_utils_1.parseIcalEvent)(validatedWebCalendarEvent(source).uid, source);
+    const targetId = occurrence.instant
+        ? compactUtcDateTime(occurrence.instant)
+        : occurrence.localDateTime ? `${occurrence.localDateTime}Z` : occurrence.date;
+    if (parsed.excludedOccurrenceIds?.has(targetId))
+        return true;
+    return (parsed.recurrenceExceptions || []).some(exception => {
+        if (!exception.deleted)
+            return false;
+        if (occurrence.instant) {
+            return (0, calendar_utils_1.formatActiveSyncDate)(exception.recurrenceId) === compactUtcDateTime(occurrence.instant);
+        }
+        if (!occurrence.localDateTime) {
+            return exception.recurrenceId.toISOString().slice(0, 10).replaceAll('-', '') === occurrence.date;
+        }
+        return (0, calendar_utils_1.formatActiveSyncDate)(exception.recurrenceId).replace(/Z$/, '') === occurrence.localDateTime;
+    });
+}
+function recurringOccurrenceExists(source, exclude) {
+    const occurrence = parseOccurrenceExclusion(exclude);
+    const anchor = occurrence.instant || new Date(Date.UTC(Number(occurrence.date.slice(0, 4)), Number(occurrence.date.slice(4, 6)) - 1, Number(occurrence.date.slice(6, 8)), occurrence.localDateTime ? Number(occurrence.localDateTime.slice(9, 11)) : 12, occurrence.localDateTime ? Number(occurrence.localDateTime.slice(11, 13)) : 0, occurrence.localDateTime ? Number(occurrence.localDateTime.slice(13, 15)) : 0));
+    const parsed = (0, calendar_utils_1.parseIcalEvent)(validatedWebCalendarEvent(source).uid, source);
+    if (!parsed.recurrence)
+        return false;
+    const rawRuleParts = parsed.recurrence.raw.split(';');
+    const unsupportedRuleParts = rawRuleParts.filter(part => {
+        const name = part.split('=', 1)[0].trim().toUpperCase();
+        return !['FREQ', 'INTERVAL', 'COUNT', 'UNTIL'].includes(name);
+    });
+    const parsedRuleParts = rawRuleParts.map(part => {
+        const separator = part.indexOf('=');
+        return separator < 1
+            ? { name: '', value: '' }
+            : { name: part.slice(0, separator).trim().toUpperCase(), value: part.slice(separator + 1).trim() };
+    });
+    const ruleValues = new Map(parsedRuleParts.map(part => [part.name, part.value]));
+    const duplicateRulePart = new Set(parsedRuleParts.map(part => part.name)).size !== parsedRuleParts.length;
+    const interval = ruleValues.get('INTERVAL');
+    const count = ruleValues.get('COUNT');
+    const until = ruleValues.get('UNTIL');
+    const invalidInterval = interval !== undefined
+        && (!/^\d+$/.test(interval) || Number(interval) < 1 || Number(interval) > 365);
+    const invalidCount = count !== undefined
+        && (!/^\d+$/.test(count) || Number(count) < 1 || !Number.isSafeInteger(Number(count)));
+    const untilMatch = until === undefined
+        ? null
+        : parsed.isAllDay
+            ? until.match(/^(\d{4})(\d{2})(\d{2})$/)
+            : parsed.timeKind === 'utc' || parsed.timeKind === 'zoned'
+                ? until.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/)
+                : until.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/);
+    const invalidUntil = until !== undefined && (!untilMatch || !validCalendarDateTimeParts(untilMatch.slice(1).map(Number)));
+    if (unsupportedRuleParts.length > 0 || duplicateRulePart
+        || ruleValues.get('FREQ')?.toUpperCase() !== parsed.recurrence.frequency
+        || invalidInterval || invalidCount || invalidUntil || (count !== undefined && until !== undefined)) {
+        throw new calendar_invitations_1.CalendarInvitationActionError('UNSUPPORTED_RECURRENCE_RULE', 'This recurrence pattern cannot yet be validated safely for one-occurrence cancellation.', 409);
+    }
+    if (parsed.recurrence.frequency !== 'DAILY' && parsed.recurrence.frequency !== 'WEEKLY') {
+        throw new calendar_invitations_1.CalendarInvitationActionError('UNSUPPORTED_RECURRENCE_RULE', 'Monthly and yearly recurrence membership cannot yet be validated safely for one-occurrence cancellation.', 409);
+    }
+    if (parsed.recurrence.frequency === 'DAILY' || parsed.recurrence.frequency === 'WEEKLY') {
+        const wallKey = (value) => parsed.timeKind === 'zoned' && parsed.timeZone
+            ? compactDateTimeInZone(value, parsed.timeZone)
+            : (0, calendar_utils_1.formatActiveSyncDate)(value).replace(/Z$/, '');
+        const startKey = parsed.timeKind === 'zoned' && parsed.recurrenceWallStart
+            ? [
+                String(parsed.recurrenceWallStart.year).padStart(4, '0'),
+                String(parsed.recurrenceWallStart.month).padStart(2, '0'),
+                String(parsed.recurrenceWallStart.day).padStart(2, '0'),
+                'T',
+                String(parsed.recurrenceWallStart.hour).padStart(2, '0'),
+                String(parsed.recurrenceWallStart.minute).padStart(2, '0'),
+                String(parsed.recurrenceWallStart.second).padStart(2, '0'),
+            ].join('')
+            : wallKey(parsed.start);
+        let candidateKey = wallKey(anchor);
+        if (parsed.isAllDay && !occurrence.localDateTime) {
+            candidateKey = `${occurrence.date}${startKey.slice(8)}`;
+        }
+        if (parsed.timeKind === 'zoned' && parsed.timeZone && occurrence.instant) {
+            const renderedCandidate = compactDateTimeInZone(anchor, parsed.timeZone);
+            candidateKey = `${renderedCandidate.slice(0, 8)}${startKey.slice(8)}`;
+            const expectedInstant = (0, calendar_format_1.wallTimeToInstant)({
+                year: Number(candidateKey.slice(0, 4)),
+                month: Number(candidateKey.slice(4, 6)),
+                day: Number(candidateKey.slice(6, 8)),
+                hour: Number(candidateKey.slice(9, 11)),
+                minute: Number(candidateKey.slice(11, 13)),
+                second: Number(candidateKey.slice(13, 15)),
+            }, parsed.timeZone);
+            if (expectedInstant.getTime() !== anchor.getTime())
+                return false;
+        }
+        if (startKey.slice(8) !== candidateKey.slice(8))
+            return false;
+        const dayValue = (key) => Date.UTC(Number(key.slice(0, 4)), Number(key.slice(4, 6)) - 1, Number(key.slice(6, 8)));
+        const elapsedDays = (dayValue(candidateKey) - dayValue(startKey)) / (24 * 60 * 60 * 1000);
+        const cadenceDays = (parsed.recurrence.frequency === 'WEEKLY' ? 7 : 1)
+            * Math.max(1, parsed.recurrence.interval || 1);
+        if (!Number.isInteger(elapsedDays) || elapsedDays < 0 || elapsedDays % cadenceDays !== 0)
+            return false;
+        const ordinal = elapsedDays / cadenceDays;
+        if (parsed.recurrence.count && ordinal >= parsed.recurrence.count)
+            return false;
+        const candidateForUntil = parsed.isAllDay
+            ? new Date(dayValue(candidateKey))
+            : anchor;
+        if (parsed.recurrence.until && candidateForUntil > parsed.recurrence.until)
+            return false;
+        return true;
+    }
+    return false;
 }
 function legacyCalendarBoundary(line) {
     const separator = line.indexOf(':');
@@ -1675,7 +1844,6 @@ exports.appsApiRouter.delete('/notes/:id', async (req, res) => {
 const multer_1 = __importDefault(require("multer"));
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
-const crypto = __importStar(require("crypto"));
 const notesUploadDir = path.join(__dirname, '..', 'uploads', 'notes');
 if (!fs.existsSync(notesUploadDir)) {
     fs.mkdirSync(notesUploadDir, { recursive: true });
@@ -1854,6 +2022,7 @@ exports.appsApiRouter.delete('/notes/:id/attachments/:attachmentId', async (req,
 exports.appsApiRouter.get('/calendars', async (req, res) => {
     const user = req.username;
     try {
+        const identities = await (0, outbound_mail_1.listOwnedSenderIdentities)(db_1.pool, user);
         const calendars = await (0, calendar_utils_1.getVisibleCalendars)(user);
         const result = [];
         for (const cal of calendars) {
@@ -1866,39 +2035,49 @@ exports.appsApiRouter.get('/calendars', async (req, res) => {
             expansionEnd.setUTCHours(23, 59, 59, 999);
             const parsedEvents = events.flatMap((ev) => {
                 const parsed = (0, calendar_utils_1.parseIcalEvent)(ev.uid, ev.ical_data || '');
+                if (parsed.meetingStatus === '5')
+                    return [];
                 const occurrences = parsed.recurrence
                     ? (0, calendar_utils_1.expandRecurringEvent)(parsed, expansionStart, expansionEnd)
                     : [parsed];
-                return occurrences.map((occurrence) => ({
-                    id: ev.uid,
-                    occurrenceId: occurrence.occurrenceId,
-                    calendarId: cal.id,
-                    title: occurrence.title,
-                    start: occurrence.start,
-                    end: occurrence.end,
-                    isAllDay: occurrence.isAllDay,
-                    timeKind: occurrence.timeKind,
-                    timeZone: occurrence.timeZone,
-                    location: occurrence.location,
-                    description: occurrence.description,
-                    recurrence: occurrence.recurrence?.raw || '',
-                    recurrenceLabel: occurrence.recurrenceLabel,
-                    notifications: occurrence.notifications,
-                    sourceTimeZone: occurrence.sourceTimeZone,
-                    timeZoneStatus: occurrence.timeZoneStatus,
-                    seriesStart: parsed.start,
-                    seriesEnd: parsed.end,
-                    seriesTitle: parsed.title,
-                    seriesLocation: parsed.location,
-                    seriesDescription: parsed.description,
-                    seriesNotifications: parsed.notifications,
-                    seriesIsAllDay: parsed.isAllDay,
-                    seriesTimeKind: parsed.timeKind,
-                    seriesTimeZone: parsed.timeZone,
-                    seriesSourceTimeZone: parsed.sourceTimeZone,
-                    seriesTimeZoneStatus: parsed.timeZoneStatus,
-                    rawIcal: ev.ical_data || ''
-                }));
+                const invitations = (0, calendar_invitations_1.projectCalendarInvitationOccurrences)(ev.ical_data || '', identities.addresses, occurrences.map(occurrence => occurrence.occurrenceId));
+                return occurrences.map((occurrence, occurrenceIndex) => {
+                    const invitation = invitations[occurrenceIndex];
+                    return ({
+                        id: ev.uid,
+                        occurrenceId: occurrence.occurrenceId,
+                        calendarId: cal.id,
+                        title: occurrence.title,
+                        start: occurrence.start,
+                        end: occurrence.end,
+                        isAllDay: occurrence.isAllDay,
+                        timeKind: occurrence.timeKind,
+                        timeZone: occurrence.timeZone,
+                        location: occurrence.location,
+                        description: occurrence.description,
+                        recurrence: occurrence.recurrence?.raw || '',
+                        recurrenceLabel: occurrence.recurrenceLabel,
+                        notifications: occurrence.notifications,
+                        sourceTimeZone: occurrence.sourceTimeZone,
+                        timeZoneStatus: occurrence.timeZoneStatus,
+                        seriesStart: parsed.start,
+                        seriesEnd: parsed.end,
+                        seriesTitle: parsed.title,
+                        seriesLocation: parsed.location,
+                        seriesDescription: parsed.description,
+                        seriesNotifications: parsed.notifications,
+                        seriesIsAllDay: parsed.isAllDay,
+                        seriesTimeKind: parsed.timeKind,
+                        seriesTimeZone: parsed.timeZone,
+                        seriesSourceTimeZone: parsed.sourceTimeZone,
+                        seriesTimeZoneStatus: parsed.timeZoneStatus,
+                        rawIcal: ev.ical_data || '',
+                        guests: invitation?.attendees.map(attendee => attendee.email)
+                            || parsed.activeSyncAttendees?.slice(0, 200).map(attendee => attendee.email)
+                            || [],
+                        invitation: invitation || undefined,
+                    });
+                });
             });
             result.push({
                 ...cal,
@@ -2416,6 +2595,663 @@ exports.appsApiRouter.post('/events', async (req, res) => {
         connection?.release();
     }
 });
+function calendarInvitationIdempotencyKey(req) {
+    const value = req.headers['idempotency-key'];
+    if (typeof value !== 'string' || !/^[\x21-\x7e]{8,128}$/.test(value)) {
+        throw new scheduled_send_1.OutboundIdempotencyKeyError('An ASCII Idempotency-Key between 8 and 128 characters is required');
+    }
+    return value;
+}
+function calendarInvitationMessageId(user, idempotencyKey) {
+    const domain = user.slice(user.lastIndexOf('@') + 1) || 'openmailstack.local';
+    const digest = crypto.createHash('sha256').update(`${user}\0${idempotencyKey}`).digest('hex').slice(0, 40);
+    return `<calendar-${digest}@${domain}>`;
+}
+function calendarInvitationSemanticDigest(context) {
+    return crypto.createHash('sha256').update(JSON.stringify(context)).digest('hex');
+}
+function calendarInvitationRetrySemanticDigest(actionDigest, retryOf) {
+    return crypto.createHash('sha256')
+        .update(JSON.stringify({ actionDigest, retryOf }))
+        .digest('hex');
+}
+function calendarInvitationRecoveryMetadata(context, retryOf) {
+    const actionDigest = calendarInvitationSemanticDigest(context);
+    return {
+        kind: 'calendar-invitation',
+        version: 1,
+        calendarId: context.calendarId,
+        uid: context.uid,
+        action: context.action,
+        actionDigest,
+        semanticDigest: calendarInvitationRetrySemanticDigest(actionDigest, retryOf),
+        ...(retryOf ? { retryOf } : {}),
+        ...(context.action === 'respond' ? { response: context.response } : {}),
+        ...(context.action === 'cancel' ? {
+            scope: context.scope,
+            ...(context.occurrenceId ? { occurrenceId: context.occurrenceId } : {}),
+        } : {}),
+    };
+}
+function storedCalendarInvitationRecovery(row) {
+    try {
+        const display = JSON.parse(String(row.display_metadata_json || '{}'));
+        const recovery = display?.recovery;
+        if (recovery?.kind !== 'calendar-invitation' || recovery?.version !== 1
+            || typeof recovery.calendarId !== 'string' || typeof recovery.uid !== 'string'
+            || !['respond', 'cancel', 'propose-time'].includes(recovery.action)
+            || !/^[a-f0-9]{64}$/.test(String(recovery.actionDigest || ''))
+            || !/^[a-f0-9]{64}$/.test(String(recovery.semanticDigest || ''))) {
+            return null;
+        }
+        return recovery;
+    }
+    catch {
+        return null;
+    }
+}
+function calendarInvitationRecoveryMatches(stored, expected) {
+    return stored.kind === expected.kind
+        && stored.version === expected.version
+        && stored.calendarId === expected.calendarId
+        && stored.uid === expected.uid
+        && stored.action === expected.action
+        && stored.actionDigest === expected.actionDigest
+        && stored.semanticDigest === expected.semanticDigest;
+}
+function calendarInvitationActionMatches(stored, expected) {
+    return stored.kind === expected.kind
+        && stored.version === expected.version
+        && stored.calendarId === expected.calendarId
+        && stored.uid === expected.uid
+        && stored.action === expected.action
+        && stored.actionDigest === expected.actionDigest;
+}
+function calendarInvitationContextFromRecovery(recovery) {
+    if (recovery.action === 'respond'
+        && ['accepted', 'tentative', 'declined'].includes(String(recovery.response))) {
+        return {
+            calendarId: recovery.calendarId,
+            uid: recovery.uid,
+            action: 'respond',
+            response: recovery.response,
+        };
+    }
+    if (recovery.action === 'cancel'
+        && (recovery.scope === 'occurrence' || recovery.scope === 'series')) {
+        const occurrenceId = recovery.scope === 'occurrence'
+            && typeof recovery.occurrenceId === 'string' && recovery.occurrenceId
+            ? recovery.occurrenceId
+            : null;
+        if (recovery.scope === 'occurrence' && !occurrenceId)
+            return null;
+        return {
+            calendarId: recovery.calendarId,
+            uid: recovery.uid,
+            action: 'cancel',
+            scope: recovery.scope,
+            occurrenceId,
+        };
+    }
+    if (recovery.action === 'propose-time') {
+        return {
+            calendarId: recovery.calendarId,
+            uid: recovery.uid,
+            action: 'propose-time',
+            start: '',
+            end: '',
+            comment: '',
+        };
+    }
+    return null;
+}
+function calendarInvitationStateDigest(source, actor, context) {
+    const state = context.action === 'respond'
+        ? (0, calendar_invitations_1.calendarInvitationActionStateFingerprint)(source, actor, {
+            action: context.action,
+            response: context.response,
+        })
+        : context.action === 'cancel'
+            ? (0, calendar_invitations_1.calendarInvitationActionStateFingerprint)(source, actor, {
+                action: context.action,
+                scope: context.scope,
+                occurrenceId: context.occurrenceId,
+            })
+            : (0, calendar_invitations_1.calendarInvitationActionStateFingerprint)(source, actor, {
+                action: context.action,
+                start: context.start,
+                end: context.end,
+            });
+    return crypto.createHash('sha256').update(state).digest('hex');
+}
+function calendarInvitationActionResponse(context) {
+    if (context.action === 'respond')
+        return { response: context.response, scope: 'series' };
+    if (context.action === 'cancel')
+        return { scope: context.scope };
+    return { proposed: true };
+}
+function rejectedRecipientsFromOutboundRow(row) {
+    try {
+        const parsed = JSON.parse(String(row.rejected_recipients_json || '[]'));
+        return Array.isArray(parsed) ? parsed.filter(value => typeof value === 'string') : [];
+    }
+    catch {
+        return [];
+    }
+}
+function sendCalendarInvitationSubmissionStatus(res, row, context, replayed) {
+    res.set('Cache-Control', 'no-store');
+    const rejectedRecipients = rejectedRecipientsFromOutboundRow(row);
+    const base = {
+        success: true,
+        outboundId: Number(row.id),
+        replayed,
+        submissionKind: 'immediate',
+        rejectedRecipients,
+        ...calendarInvitationActionResponse(context),
+    };
+    if (['scheduled', 'retry_wait', 'claimed', 'smtp_inflight'].includes(String(row.status))) {
+        res.json({
+            ...base,
+            deliveryStatus: 'pending',
+            statusUrl: `/api/messages/outbound/${Number(row.id)}`,
+            retryAfterMs: 2_000,
+        });
+        return;
+    }
+    if (row.status === 'completed' || row.status === 'partial_delivery' || row.status === 'sent_copy_pending') {
+        res.json({
+            ...base,
+            deliveryStatus: row.status === 'partial_delivery' || rejectedRecipients.length > 0
+                ? 'partial'
+                : 'accepted',
+            sentCopyStatus: row.status === 'sent_copy_pending' ? 'pending' : 'saved',
+        });
+        return;
+    }
+    if (row.status === 'delivery_uncertain') {
+        res.json({
+            ...base,
+            deliveryStatus: 'uncertain',
+            sentCopyStatus: 'unavailable',
+            error: 'OpenMailStack could not confirm whether the mail server accepted this message.',
+        });
+        return;
+    }
+    res.json({
+        ...base,
+        deliveryStatus: 'failed',
+        sentCopyStatus: 'unavailable',
+        error: 'The mail server did not accept this message.',
+    });
+}
+function calendarInvitationRetryKey(req) {
+    const value = req.body?.retryOf;
+    if (value === undefined)
+        return null;
+    if (typeof value !== 'string' || !/^[\x21-\x7e]{8,128}$/.test(value)) {
+        throw new scheduled_send_1.OutboundIdempotencyKeyError('A retryOf idempotency key between 8 and 128 ASCII characters is required');
+    }
+    return value;
+}
+function sendCalendarInvitationError(res, error) {
+    if (error instanceof calendar_invitations_1.CalendarInvitationActionError
+        || error instanceof outbound_mail_1.OutboundMessageValidationError
+        || error instanceof scheduled_send_1.OutboundIdempotencyKeyError
+        || error instanceof scheduled_send_1.OutboundIdempotencyConflictError
+        || error instanceof scheduled_send_1.OutboundReleaseBridgeError
+        || error instanceof scheduled_send_1.OutboundSubmissionUnavailableError) {
+        const candidate = error;
+        const status = [400, 403, 404, 409, 503].includes(Number(candidate.status))
+            ? Number(candidate.status)
+            : 500;
+        res.status(status).json({ success: false, error: candidate.message, code: candidate.code });
+        return;
+    }
+    if (error instanceof calendar_ical_validation_1.ICalendarValidationError) {
+        res.status(400).json({ success: false, error: error.message, code: 'INVALID_EVENT' });
+        return;
+    }
+    console.error('Calendar invitation action failed:', error);
+    res.status(500).json({ success: false, error: 'The meeting action could not be completed' });
+}
+async function reserveCalendarInvitationRetry(connection, user, idempotencyKey, retryOf, expectedContext, verifiedAbsent = false) {
+    const [retryRows] = await connection.query(`SELECT id, submission_kind, submission_origin, idempotency_key, request_fingerprint,
+                status, message_id, send_at, smtp_accepted_at, save_in_sent_items,
+                rejected_recipients_json, last_error_code, display_metadata_json,
+                sender_address, envelope_json, raw_message, sent_raw_message
+         FROM scheduled_emails
+         WHERE username = ? AND idempotency_key = ? LIMIT 1 FOR UPDATE`, [user, retryOf]);
+    const retryRow = retryRows?.[0];
+    const retryRecovery = retryRow ? storedCalendarInvitationRecovery(retryRow) : null;
+    const storedContext = retryRecovery ? calendarInvitationContextFromRecovery(retryRecovery) : null;
+    const context = expectedContext || storedContext;
+    if (!retryRow || !retryRecovery || !context
+        || (expectedContext && !calendarInvitationActionMatches(retryRecovery, calendarInvitationRecoveryMetadata(context, null)))) {
+        throw new calendar_invitations_1.CalendarInvitationActionError('INVALID_RETRY', 'The original meeting notification could not be verified for this retry', 409);
+    }
+    if (retryRecovery.retrySuccessorKey) {
+        if (retryRecovery.retrySuccessorKey === idempotencyKey) {
+            const [successorRows] = await connection.query(`SELECT id, submission_kind, submission_origin, idempotency_key, request_fingerprint,
+                        status, message_id, send_at, smtp_accepted_at, save_in_sent_items,
+                        rejected_recipients_json, last_error_code, display_metadata_json
+                 FROM scheduled_emails
+                 WHERE username = ? AND idempotency_key = ? LIMIT 1 FOR UPDATE`, [user, idempotencyKey]);
+            const successor = successorRows?.[0];
+            const successorRecovery = successor ? storedCalendarInvitationRecovery(successor) : null;
+            if (successor && successorRecovery
+                && successorRecovery.actionDigest === retryRecovery.actionDigest
+                && successorRecovery.semanticDigest === calendarInvitationRetrySemanticDigest(retryRecovery.actionDigest, retryOf)) {
+                return { context, existing: successor };
+            }
+            throw new scheduled_send_1.OutboundIdempotencyConflictError();
+        }
+        throw new calendar_invitations_1.CalendarInvitationActionError('RETRY_ALREADY_STARTED', 'A retry has already been started for this meeting notification', 409);
+    }
+    if (retryRow.status !== 'failed' && retryRow.status !== 'partial_delivery'
+        && !(retryRow.status === 'delivery_uncertain' && verifiedAbsent)) {
+        throw new calendar_invitations_1.CalendarInvitationActionError('RETRY_NOT_ALLOWED', retryRow.status === 'delivery_uncertain'
+            ? 'Confirm that the uncertain notification was independently verified as not delivered before retrying'
+            : 'Only a failed or partially delivered meeting notification can be retried', 409);
+    }
+    if (!/^[a-f0-9]{64}$/.test(String(retryRecovery.stateDigest || ''))
+        || typeof retryRecovery.actor !== 'string' || !retryRecovery.actor) {
+        throw new calendar_invitations_1.CalendarInvitationActionError('RETRY_PAYLOAD_UNAVAILABLE', 'The original meeting state cannot be verified for an exact retry', 409);
+    }
+    const [stateRows] = await connection.query('SELECT ical_data FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1 FOR UPDATE', [context.calendarId, context.uid]);
+    const currentIcal = stateRows?.[0]?.ical_data;
+    const currentStateDigest = typeof currentIcal === 'string'
+        ? calendarInvitationStateDigest(currentIcal, retryRecovery.actor, context)
+        : '';
+    if (currentStateDigest !== retryRecovery.stateDigest) {
+        throw new calendar_invitations_1.CalendarInvitationActionError('INVITATION_ACTION_SUPERSEDED', 'The meeting changed after this notification failed, so the old action cannot be retried safely', 409);
+    }
+    let originalEnvelope;
+    let displayMetadata;
+    try {
+        originalEnvelope = JSON.parse(String(retryRow.envelope_json || ''));
+        displayMetadata = JSON.parse(String(retryRow.display_metadata_json || '{}'));
+    }
+    catch {
+        throw new calendar_invitations_1.CalendarInvitationActionError('RETRY_PAYLOAD_UNAVAILABLE', 'The original meeting notification is no longer available for an exact retry', 409);
+    }
+    const originalRecipients = Array.isArray(originalEnvelope.to)
+        ? originalEnvelope.to.filter(value => typeof value === 'string')
+        : [];
+    const rejected = new Set(rejectedRecipientsFromOutboundRow(retryRow).map(outbound_mail_1.normalizeMailboxAddress).filter(Boolean));
+    const retryRecipients = retryRow.status === 'partial_delivery'
+        ? originalRecipients.filter(recipient => rejected.has((0, outbound_mail_1.normalizeMailboxAddress)(recipient)))
+        : originalRecipients;
+    const raw = Buffer.isBuffer(retryRow.raw_message)
+        ? retryRow.raw_message
+        : retryRow.raw_message ? Buffer.from(retryRow.raw_message) : null;
+    const sentRaw = Buffer.isBuffer(retryRow.sent_raw_message)
+        ? retryRow.sent_raw_message
+        : retryRow.sent_raw_message ? Buffer.from(retryRow.sent_raw_message) : raw;
+    const senderAddress = typeof retryRow.sender_address === 'string'
+        ? retryRow.sender_address
+        : typeof originalEnvelope.from === 'string' ? originalEnvelope.from : '';
+    const currentIdentities = await (0, outbound_mail_1.listOwnedSenderIdentities)(connection, user);
+    const normalizedSender = (0, outbound_mail_1.normalizeMailboxAddress)(senderAddress);
+    if (!normalizedSender || !currentIdentities.addresses.some(address => ((0, outbound_mail_1.normalizeMailboxAddress)(address) === normalizedSender))) {
+        throw new calendar_invitations_1.CalendarInvitationActionError('SENDER_NOT_AUTHORIZED', 'The identity used by the original meeting notification is no longer active for this mailbox', 403);
+    }
+    if (!raw || !sentRaw || !senderAddress || !retryRow.message_id || retryRecipients.length === 0) {
+        throw new calendar_invitations_1.CalendarInvitationActionError('RETRY_PAYLOAD_UNAVAILABLE', 'The original meeting notification is no longer available for an exact retry', 409);
+    }
+    const recovery = {
+        ...retryRecovery,
+        semanticDigest: calendarInvitationRetrySemanticDigest(retryRecovery.actionDigest, retryOf),
+        retryOf,
+    };
+    delete recovery.retrySuccessorKey;
+    retryRecovery.retrySuccessorKey = idempotencyKey;
+    recovery.stateDigest = retryRecovery.stateDigest;
+    recovery.actor = retryRecovery.actor;
+    displayMetadata.recovery = retryRecovery;
+    await connection.query(`UPDATE scheduled_emails SET display_metadata_json = ?
+         WHERE id = ? AND username = ? AND idempotency_key = ?`, [JSON.stringify(displayMetadata), retryRow.id, user, retryOf]);
+    const reservation = await (0, scheduled_send_1.reserveOutboundInTransaction)(connection, {
+        submissionKind: 'immediate',
+        idempotencyKey,
+        fingerprintSource: {
+            calendarId: context.calendarId,
+            uid: context.uid,
+            actionDigest: recovery.actionDigest,
+            retryOf,
+        },
+        message: {
+            username: user,
+            sendAt: new Date(),
+            senderAddress,
+            messageId: String(retryRow.message_id),
+            envelope: { from: senderAddress, to: retryRecipients },
+            raw,
+            sentRaw,
+            metadata: displayMetadata,
+            recovery,
+            saveSentCopy: retryRow.status === 'partial_delivery'
+                ? false
+                : Boolean(retryRow.save_in_sent_items),
+        },
+    });
+    if (reservation.replayed) {
+        const existing = await (0, universal_outbox_1.findUniversalOutboundIdentityForUpdate)(connection, user, { idempotencyKey });
+        const existingRecovery = existing ? storedCalendarInvitationRecovery(existing) : null;
+        if (!existing || !existingRecovery
+            || existingRecovery.retryOf !== retryOf
+            || existingRecovery.semanticDigest !== recovery.semanticDigest) {
+            throw new scheduled_send_1.OutboundIdempotencyConflictError();
+        }
+        return { context, existing };
+    }
+    return { context, reservation };
+}
+async function performCalendarInvitationAction(req, res, action, buildPlan) {
+    const user = req.username;
+    const calendarId = String(req.params.calendar_id);
+    const uid = String(req.params.uid);
+    const context = { calendarId, uid, ...action };
+    let connection = null;
+    let changed = false;
+    try {
+        const idempotencyKey = calendarInvitationIdempotencyKey(req);
+        const retryOf = calendarInvitationRetryKey(req);
+        if (retryOf === idempotencyKey) {
+            throw new calendar_invitations_1.CalendarInvitationActionError('INVALID_RETRY', 'A retry must use a new idempotency key', 409);
+        }
+        const recovery = calendarInvitationRecoveryMetadata(context, retryOf);
+        await (0, scheduled_send_1.ensureScheduledEmailsSchema)(db_1.pool);
+        connection = await db_1.pool.getConnection();
+        await connection.beginTransaction();
+        const existing = await (0, universal_outbox_1.findUniversalOutboundIdentityForUpdate)(connection, user, { idempotencyKey });
+        if (existing) {
+            const existingRecovery = storedCalendarInvitationRecovery(existing);
+            if (existingRecovery) {
+                if (!calendarInvitationRecoveryMatches(existingRecovery, recovery)) {
+                    throw new scheduled_send_1.OutboundIdempotencyConflictError();
+                }
+                await connection.rollback();
+                connection.release();
+                connection = null;
+                sendCalendarInvitationSubmissionStatus(res, existing, context, true);
+                return;
+            }
+        }
+        if (retryOf) {
+            const retry = await reserveCalendarInvitationRetry(connection, user, idempotencyKey, retryOf, context);
+            await connection.commit();
+            connection.release();
+            connection = null;
+            if (retry.existing) {
+                sendCalendarInvitationSubmissionStatus(res, retry.existing, context, true);
+                return;
+            }
+            const reservation = retry.reservation;
+            void (0, scheduled_send_1.runScheduledSender)().catch(error => console.error('Calendar invitation retry worker failed:', error));
+            res.json({
+                success: true,
+                outboundId: reservation.id,
+                replayed: reservation.replayed,
+                submissionKind: 'immediate',
+                deliveryStatus: 'pending',
+                statusUrl: `/api/messages/outbound/${reservation.id}`,
+                retryAfterMs: 2_000,
+                ...calendarInvitationActionResponse(context),
+            });
+            return;
+        }
+        if (!(await userCanWriteCalendarOnConnection(connection, user, calendarId))) {
+            await connection.rollback();
+            connection.release();
+            connection = null;
+            res.status(403).json({ success: false, error: 'Unauthorized calendar' });
+            return;
+        }
+        const [eventRows] = await connection.query(`SELECT uid, resource_name, ical_data, sync_token
+             FROM events WHERE calendar_id = ? AND uid = ? LIMIT 1 FOR UPDATE`, [calendarId, uid]);
+        if (eventRows.length === 0) {
+            await connection.rollback();
+            connection.release();
+            connection = null;
+            res.status(404).json({ success: false, error: 'Event not found' });
+            return;
+        }
+        const event = eventRows[0];
+        const identities = await (0, outbound_mail_1.listOwnedSenderIdentities)(connection, user);
+        const sourceIcal = String(event.ical_data || '');
+        const plan = buildPlan(sourceIcal, identities.addresses);
+        const reservationRecovery = {
+            ...recovery,
+            actor: plan.delivery.sender,
+            stateDigest: calendarInvitationStateDigest(plan.updatedIcal === undefined ? sourceIcal : plan.updatedIcal, plan.delivery.sender, context),
+        };
+        const compiled = await (0, outbound_mail_1.compileOutboundMessage)({
+            sender: { address: plan.delivery.sender, name: identities.name },
+            to: plan.delivery.recipients,
+            subject: plan.delivery.subject,
+            text: plan.delivery.text,
+            headers: { 'Content-Class': 'urn:content-classes:calendarmessage' },
+            icalEvent: {
+                method: plan.delivery.method,
+                filename: 'invite.ics',
+                content: plan.delivery.ical,
+            },
+            messageId: calendarInvitationMessageId(user, idempotencyKey),
+        });
+        const reservation = await (0, scheduled_send_1.reserveOutboundInTransaction)(connection, {
+            submissionKind: 'immediate',
+            idempotencyKey,
+            fingerprintSource: { calendarId, uid, ...plan.fingerprint },
+            message: {
+                username: user,
+                sendAt: new Date(),
+                senderAddress: compiled.envelope.from,
+                messageId: compiled.messageId,
+                envelope: compiled.envelope,
+                raw: compiled.raw,
+                sentRaw: compiled.sentRaw,
+                metadata: compiled.metadata,
+                recovery: reservationRecovery,
+                saveSentCopy: true,
+            },
+        });
+        if (reservation.replayed) {
+            const replay = await (0, universal_outbox_1.findUniversalOutboundIdentityForUpdate)(connection, user, { idempotencyKey });
+            const replayRecovery = replay ? storedCalendarInvitationRecovery(replay) : null;
+            if (!replay || !replayRecovery || !calendarInvitationRecoveryMatches(replayRecovery, recovery)) {
+                throw new scheduled_send_1.OutboundIdempotencyConflictError();
+            }
+            await connection.rollback();
+            connection.release();
+            connection = null;
+            sendCalendarInvitationSubmissionStatus(res, replay, context, true);
+            return;
+        }
+        if (!reservation.replayed && plan.replayOnlyError)
+            throw plan.replayOnlyError;
+        if (!reservation.replayed && plan.updatedIcal !== undefined
+            && plan.updatedIcal !== String(event.ical_data || '')) {
+            const revision = await (0, calendar_utils_1.allocateCalendarCollectionRevisionOnConnection)(connection, calendarId);
+            await connection.query(`DELETE FROM calendar_tombstones
+                 WHERE calendar_id = ? AND BINARY resource_name = BINARY ?`, [calendarId, String(event.resource_name || event.uid)]);
+            const [updateResult] = await connection.query(`UPDATE events SET ical_data = ?, sync_token = ?
+                 WHERE calendar_id = ? AND uid = ? AND sync_token = ?`, [plan.updatedIcal, revision, calendarId, uid, event.sync_token]);
+            if (Number(updateResult.affectedRows) !== 1) {
+                throw new calendar_invitations_1.CalendarInvitationActionError('EVENT_CHANGED', 'The meeting changed while this action was being prepared. Refresh and try again.', 409);
+            }
+            changed = true;
+        }
+        await connection.commit();
+        connection.release();
+        connection = null;
+        if (changed)
+            emitCalendarUpdated(user, calendarId);
+        void (0, scheduled_send_1.runScheduledSender)().catch(error => console.error('Calendar invitation delivery worker failed:', error));
+        res.json({
+            success: true,
+            outboundId: reservation.id,
+            replayed: reservation.replayed,
+            submissionKind: 'immediate',
+            deliveryStatus: 'pending',
+            statusUrl: `/api/messages/outbound/${reservation.id}`,
+            retryAfterMs: 2_000,
+            ...calendarInvitationActionResponse(context),
+        });
+    }
+    catch (error) {
+        if (connection) {
+            try {
+                await connection.rollback();
+            }
+            catch { }
+        }
+        sendCalendarInvitationError(res, error);
+    }
+    finally {
+        connection?.release?.();
+    }
+}
+exports.appsApiRouter.post('/calendar-invitations/retry', async (req, res) => {
+    const user = req.username;
+    let connection = null;
+    try {
+        const idempotencyKey = calendarInvitationIdempotencyKey(req);
+        const retryOf = calendarInvitationRetryKey(req);
+        if (!retryOf || retryOf === idempotencyKey) {
+            throw new calendar_invitations_1.CalendarInvitationActionError('INVALID_RETRY', 'A retry requires the original idempotency key and a new idempotency key', 409);
+        }
+        await (0, scheduled_send_1.ensureScheduledEmailsSchema)(db_1.pool);
+        connection = await db_1.pool.getConnection();
+        await connection.beginTransaction();
+        const existing = await (0, universal_outbox_1.findUniversalOutboundIdentityForUpdate)(connection, user, { idempotencyKey });
+        if (existing) {
+            const existingRecovery = storedCalendarInvitationRecovery(existing);
+            const existingContext = existingRecovery
+                ? calendarInvitationContextFromRecovery(existingRecovery)
+                : null;
+            if (!existingRecovery || !existingContext || existingRecovery.retryOf !== retryOf
+                || existingRecovery.semanticDigest !== calendarInvitationRetrySemanticDigest(existingRecovery.actionDigest, retryOf)) {
+                throw new scheduled_send_1.OutboundIdempotencyConflictError();
+            }
+            await connection.rollback();
+            connection.release();
+            connection = null;
+            sendCalendarInvitationSubmissionStatus(res, existing, existingContext, true);
+            return;
+        }
+        const retry = await reserveCalendarInvitationRetry(connection, user, idempotencyKey, retryOf, undefined, req.body?.verifiedAbsent === true);
+        await connection.commit();
+        connection.release();
+        connection = null;
+        if (retry.existing) {
+            sendCalendarInvitationSubmissionStatus(res, retry.existing, retry.context, true);
+            return;
+        }
+        const { context, reservation } = retry;
+        void (0, scheduled_send_1.runScheduledSender)().catch(error => console.error('Calendar invitation retry worker failed:', error));
+        res.json({
+            success: true,
+            outboundId: reservation.id,
+            replayed: reservation.replayed,
+            submissionKind: 'immediate',
+            deliveryStatus: 'pending',
+            statusUrl: `/api/messages/outbound/${reservation.id}`,
+            retryAfterMs: 2_000,
+            ...calendarInvitationActionResponse(context),
+        });
+    }
+    catch (error) {
+        if (connection) {
+            try {
+                await connection.rollback();
+            }
+            catch { }
+        }
+        sendCalendarInvitationError(res, error);
+    }
+    finally {
+        connection?.release?.();
+    }
+});
+exports.appsApiRouter.post('/events/:calendar_id/:uid/respond', async (req, res) => {
+    const response = req.body?.response;
+    if (!['accepted', 'tentative', 'declined'].includes(response)) {
+        res.status(400).json({ success: false, error: 'Response must be accepted, tentative, or declined' });
+        return;
+    }
+    await performCalendarInvitationAction(req, res, { action: 'respond', response }, (icalData, ownedAddresses) => {
+        const prepared = (0, calendar_invitations_1.prepareInvitationResponse)(icalData, ownedAddresses, response);
+        return {
+            delivery: prepared.delivery,
+            fingerprint: { action: 'respond', response, scope: 'series' },
+            updatedIcal: prepared.updatedIcal,
+            response: { response, scope: 'series' },
+            ...(prepared.alreadyResponded ? {
+                replayOnlyError: new calendar_invitations_1.CalendarInvitationActionError('ALREADY_RESPONDED', `This meeting response is already ${response}`, 409),
+            } : {}),
+        };
+    });
+});
+exports.appsApiRouter.post('/events/:calendar_id/:uid/cancel', async (req, res) => {
+    const scope = req.body?.scope === 'occurrence' ? 'occurrence' : req.body?.scope === 'series' ? 'series' : null;
+    const occurrenceId = scope === 'occurrence' && typeof req.body?.occurrenceId === 'string'
+        ? req.body.occurrenceId
+        : undefined;
+    if (!scope || (scope === 'occurrence' && !occurrenceId)) {
+        res.status(400).json({ success: false, error: 'Cancellation scope is invalid' });
+        return;
+    }
+    await performCalendarInvitationAction(req, res, {
+        action: 'cancel', scope, occurrenceId: occurrenceId || null,
+    }, (icalData, ownedAddresses) => {
+        const occurrenceAlreadyCancelled = scope === 'occurrence'
+            && recurringOccurrenceIsCancelled(icalData, occurrenceId);
+        if (scope === 'occurrence' && !recurringOccurrenceExists(icalData, occurrenceId)) {
+            throw new calendar_invitations_1.CalendarInvitationActionError('INVALID_OCCURRENCE', 'This occurrence is no longer part of the meeting series. Refresh and try again.', 409);
+        }
+        const prepared = (0, calendar_invitations_1.prepareInvitationCancellation)(icalData, ownedAddresses, scope === 'occurrence'
+            ? { occurrenceId, alreadyOccurrenceCancelled: occurrenceAlreadyCancelled }
+            : {});
+        return {
+            delivery: prepared.delivery,
+            fingerprint: { action: 'cancel', scope, occurrenceId: occurrenceId || null },
+            updatedIcal: scope === 'occurrence'
+                ? addRecurringOccurrenceExclusion(prepared.revisedIcal, occurrenceId)
+                : prepared.revisedIcal,
+            response: { scope },
+            ...(prepared.alreadyCancelled || occurrenceAlreadyCancelled ? {
+                replayOnlyError: new calendar_invitations_1.CalendarInvitationActionError('ALREADY_CANCELLED', scope === 'occurrence'
+                    ? 'This meeting occurrence is already canceled'
+                    : 'This meeting is already canceled', 409),
+            } : {}),
+        };
+    });
+});
+exports.appsApiRouter.post('/events/:calendar_id/:uid/propose-time', async (req, res) => {
+    const start = typeof req.body?.start === 'string' ? new Date(req.body.start) : new Date(Number.NaN);
+    const end = typeof req.body?.end === 'string' ? new Date(req.body.end) : new Date(Number.NaN);
+    const comment = typeof req.body?.comment === 'string' ? req.body.comment : undefined;
+    await performCalendarInvitationAction(req, res, {
+        action: 'propose-time',
+        start: Number.isFinite(start.getTime()) ? start.toISOString() : '',
+        end: Number.isFinite(end.getTime()) ? end.toISOString() : '',
+        comment: comment?.trim() || '',
+    }, (icalData, ownedAddresses) => {
+        const prepared = (0, calendar_invitations_1.prepareInvitationCounter)(icalData, ownedAddresses, { start, end, comment });
+        return {
+            delivery: prepared.delivery,
+            fingerprint: {
+                action: 'propose-time',
+                start: Number.isFinite(start.getTime()) ? start.toISOString() : '',
+                end: Number.isFinite(end.getTime()) ? end.toISOString() : '',
+                comment: comment?.trim() || '',
+            },
+            response: { proposed: true },
+        };
+    });
+});
 exports.appsApiRouter.delete('/events/:calendar_id/:uid', async (req, res) => {
     const user = req.username;
     const calendar_id = String(req.params.calendar_id);
@@ -2445,10 +3281,12 @@ exports.appsApiRouter.delete('/events/:calendar_id/:uid', async (req, res) => {
                 icalData = addRecurringOccurrenceExclusion(String(events[0].ical_data || ''), excludeDate);
             }
             catch (error) {
-                if (!(error instanceof calendar_ical_validation_1.ICalendarValidationError))
+                if (!(error instanceof calendar_ical_validation_1.ICalendarValidationError)
+                    && !(error instanceof calendar_invitations_1.CalendarInvitationActionError))
                     throw error;
                 await connection.rollback();
-                return res.status(400).json({ success: false, error: error.message });
+                const status = error instanceof calendar_invitations_1.CalendarInvitationActionError ? error.status : 400;
+                return res.status(status).json({ success: false, error: error.message });
             }
             const resourceName = String(events[0].resource_name || events[0].uid);
             const [tombstoneResult] = await connection.query(`DELETE FROM calendar_tombstones

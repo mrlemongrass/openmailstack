@@ -276,7 +276,18 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
 
   // Aliases
   const identities = mail.composeIdentities || [];
-  const fromOptions = identities.length > 0 ? identities : [{ address: mail.composeFrom, name: '' }];
+  const pendingRequestedFrom = Boolean(
+    mail.composeRequestedFrom
+    && !identities.some(identity => identity.address.toLowerCase() === mail.composeRequestedFrom.toLowerCase()),
+  );
+  const fromOptions: Array<MailIdentity & { unavailable?: boolean }> = [
+    ...(pendingRequestedFrom ? [{
+      address: mail.composeRequestedFrom,
+      name: mail.composeIdentityState === 'loading' ? 'Verifying' : 'Unavailable',
+      unavailable: true,
+    }] : []),
+    ...identities,
+  ];
 
   return (
     <div className="compose-modal-overlay"
@@ -313,18 +324,37 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         {/* Recipient fields — outside scroll area so autocomplete dropdowns aren't clipped */}
         <div className="compose-recipient-fields">
           {/* From selector (#12) */}
-          {fromOptions.length > 1 && (
+          {(fromOptions.length > 1 || pendingRequestedFrom) && (
             <select className="glass-select glass-input" value={mail.composeFrom}
               aria-label="From"
-              disabled={composeBusy}
+              disabled={composeBusy || !mail.userIdentitiesReady}
               onChange={(e) => mail.setComposeFrom(e.target.value)}
               style={{ fontSize: '0.85rem', padding: '8px 12px' }}>
-              {fromOptions.map((a: MailIdentity) => (
-                <option key={a.address} value={a.address}>
+              {fromOptions.map((a) => (
+                <option key={a.address} value={a.address} disabled={a.unavailable}>
                   {a.name ? `${a.name} <${a.address}>` : a.address}
                 </option>
               ))}
             </select>
+          )}
+          {!mail.composeIdentityReady && (
+            <div
+              className={`compose-identity-notice ${mail.composeIdentityState === 'loading' ? '' : 'warning'}`}
+              role={mail.composeIdentityState === 'loading' ? 'status' : 'alert'}
+              aria-live={mail.composeIdentityState === 'loading' ? 'polite' : 'assertive'}
+            >
+              <span>{mail.composeIdentityMessage}</span>
+              {mail.composeIdentityState !== 'loading' && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={composeBusy}
+                  onClick={() => { void mail.retryUserIdentities().catch(() => undefined); }}
+                >
+                  Retry identities
+                </button>
+              )}
+            </div>
           )}
           <div style={{ position: 'relative' }}>
             <input className="glass-input" placeholder="To" value={mail.composeTo}
@@ -628,12 +658,12 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           <div className="compose-footer-actions">
             {/* Schedule send (#3) */}
             <div style={{ position: 'relative' }}>
-              <button className="btn btn-ghost" disabled={composeBusy || immediateSendPhase !== 'idle'}
+              <button className="btn btn-ghost" disabled={composeBusy || immediateSendPhase !== 'idle' || !mail.composeIdentityReady}
                 onClick={() => { setScheduleError(''); setShowSchedule(!showSchedule); }}
                 style={{ fontSize: '0.8rem' }} title="Schedule send" aria-label="Schedule send">
                 <Clock size={16} />
               </button>
-              {showSchedule && !composeBusy && immediateSendPhase === 'idle' && (
+              {showSchedule && !composeBusy && immediateSendPhase === 'idle' && mail.composeIdentityReady && (
                 <div style={{ position: 'absolute', bottom: '100%', right: 0, zIndex: 50, marginBottom: 4, minWidth: 260 }}
                   onClick={(e) => e.stopPropagation()}>
                   <div className="glass-panel compose-popover" style={{ padding: 12 }}>
@@ -654,7 +684,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                       </div>
                     )}
                     <button className="btn btn-primary" style={{ width: '100%', fontSize: '0.85rem' }}
-                      disabled={!scheduleDate || !scheduleTime || composeBusy}
+                      disabled={!scheduleDate || !scheduleTime || composeBusy || !mail.composeIdentityReady}
                       onClick={() => {
                         const sendAt = scheduledDateFromLocalInputs(scheduleDate, scheduleTime);
                         if (!sendAt || sendAt.getTime() <= Date.now()) {
@@ -678,7 +708,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                 </div>
               )}
             </div>
-            <button className="btn btn-primary" disabled={composeBusy || sizeExceedsBlock || unchangedSendBlocked}
+            <button className="btn btn-primary" disabled={composeBusy || sizeExceedsBlock || unchangedSendBlocked || !mail.composeIdentityReady}
               onClick={() => {
                 setDidSend(true);
                 void mail.handleSend().then((sent) => { if (!sent) setDidSend(false); });

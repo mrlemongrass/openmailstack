@@ -492,6 +492,36 @@ export interface ContactsResponse {
 }
 
 // ---- Calendar types ----
+export type CalendarInvitationResponse = 'needs-action' | 'accepted' | 'tentative' | 'declined';
+
+export interface CalendarInvitationAttendee {
+  email: string;
+  name?: string;
+  response: CalendarInvitationResponse;
+  role: 'required' | 'optional' | 'non-participant';
+}
+
+export interface CalendarInvitation {
+  role: 'organizer' | 'attendee' | 'unowned';
+  organizerEmail: string;
+  organizerName?: string;
+  attendeeEmail?: string;
+  response?: CalendarInvitationResponse;
+  responseRequested: boolean;
+  attendees: CalendarInvitationAttendee[];
+  attendeeCount: number;
+  attendeesTruncated: boolean;
+  recurring: boolean;
+  canRespond: boolean;
+  canCancel: boolean;
+  canCancelOccurrence: boolean;
+  seriesResponse?: Exclude<CalendarInvitationResponse, 'needs-action'>;
+  actionUnavailableReason?: string;
+  canProposeNewTime: boolean;
+  canForward: boolean;
+  sequence: number;
+}
+
 export interface CalendarEvent {
   id: string;
   occurrenceId?: string;
@@ -525,6 +555,7 @@ export interface CalendarEvent {
   rawIcal?: string;
   guests?: string[];
   attachments?: { name: string; size: number }[];
+  invitation?: CalendarInvitation;
 }
 
 export interface Calendar {
@@ -557,6 +588,23 @@ export interface CalendarsResponse {
 
 export interface CalendarUpdateResponse {
   success: boolean;
+  error?: string;
+}
+
+export interface CalendarInvitationActionResponse {
+  success: boolean;
+  code?: string;
+  outboundId?: number;
+  replayed?: boolean;
+  submissionKind?: 'immediate';
+  deliveryStatus?: 'pending' | 'accepted' | 'partial' | 'failed' | 'uncertain';
+  statusUrl?: string;
+  retryAfterMs?: number;
+  rejectedRecipients?: string[];
+  sentCopyStatus?: 'saved' | 'pending' | 'unavailable';
+  response?: Exclude<CalendarInvitationResponse, 'needs-action'>;
+  scope?: 'occurrence' | 'series';
+  proposed?: boolean;
   error?: string;
 }
 

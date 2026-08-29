@@ -106,3 +106,58 @@ export function selectComposeFrom(
     || identities[0]?.address
     || '';
 }
+
+export interface ComposeIdentityResolution {
+  address: string;
+  requestedAddress: string;
+  ready: boolean;
+  state: 'ready' | 'loading' | 'unavailable' | 'unauthorized';
+  message: string;
+}
+
+export function resolveComposeIdentity(
+  requestedFrom: string,
+  identities: MailIdentity[],
+  defaultFrom: string,
+  identitiesReady: boolean,
+  identitiesError: string,
+): ComposeIdentityResolution {
+  const requestedAddress = requestedFrom.trim();
+  const requestedIdentity = requestedAddress
+    ? identities.find(identity => identity.address.toLowerCase() === requestedAddress.toLowerCase())
+    : undefined;
+  const selected = requestedIdentity?.address
+    || (requestedAddress ? requestedAddress : selectComposeFrom('', identities, defaultFrom));
+
+  if (!identitiesReady) {
+    return {
+      address: selected,
+      requestedAddress,
+      ready: false,
+      state: identitiesError ? 'unavailable' : 'loading',
+      message: identitiesError || (requestedAddress
+        ? `Verifying that ${requestedAddress} is an authorized sending identity…`
+        : 'Loading your authorized sending identities…'),
+    };
+  }
+  if (requestedAddress && !requestedIdentity) {
+    return {
+      address: requestedAddress,
+      requestedAddress,
+      ready: false,
+      state: 'unauthorized',
+      message: `${requestedAddress} is not currently authorized for sending. Choose another From address or retry identities.`,
+    };
+  }
+  const address = requestedIdentity?.address || selectComposeFrom('', identities, defaultFrom);
+  if (!address) {
+    return {
+      address: '',
+      requestedAddress,
+      ready: false,
+      state: 'unavailable',
+      message: identitiesError || 'No authorized sending identity is available.',
+    };
+  }
+  return { address, requestedAddress, ready: true, state: 'ready', message: '' };
+}

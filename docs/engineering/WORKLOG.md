@@ -11033,3 +11033,87 @@ recoverable, and route ordinary meeting correspondence through normal Mail Compo
   it does not claim that Outlook, macOS Calendar, or iOS physically consumed these
   new invitation messages. Server-enforced Show as/category/private, persistent
   calendar groups/order, and OMS Notes capture remain separate tranches.
+
+## 2026-09-09 — Wildcard Mail Filter Patterns
+
+### Selected task
+
+Add one discoverable mail-filter operator that can route subjects such as
+`Order #37013 confirmed` and `Order #36527 confirmed` with the single pattern
+`Order * confirmed`, without creating per-order or outlier rules.
+
+### Changes made
+
+- Added `matches pattern` to the filter editor and normal rule contract. Saved
+  criteria compile to Sieve `:matches`; Subject, Sender, Recipient, and Body use
+  the same operator, and the run-existing-mail preview reports the operator by
+  the same user-facing name.
+- Defined whole-field Sieve-compatible behavior: `*` matches any text, `?`
+  matches one UTF-8 byte, `\*` and `\?` match literal wildcard characters, and
+  case folding is ASCII-only. The editor explains those boundaries inline and
+  uses `Order * confirmed` as its example.
+- Added byte-based preview evaluation with a shared per-message work budget,
+  cached encoded fields, a linear single-star path, and fail-closed handling for
+  pathological multi-star patterns. A populated unsupported criterion prevents
+  the entire rule from executing instead of broadening it.
+- Preserved ordered Sieve behavior in preview and Apply. If a stopping rule
+  cannot be decided safely, accumulated and downstream actions become
+  non-actionable for that message; an explicit continue rule still permits a
+  later rule when its own uncertainty does not decide the outcome.
+- Extended exact-duplicate analysis to repeated wildcard criteria without
+  guessing that different patterns overlap. Generated backend JavaScript,
+  declarations, and source maps remain synchronized with TypeScript.
+
+### Candidate proof
+
+- Commit `5862dac64617cc3b50968ed4d7484324c8d4a5ca` passes 1,010 backend
+  tests: 1,003 passed, seven documented optional skips, and zero failures.
+  Frontend verification passes 254/254, ESLint, and the production build.
+- The exact candidate completed `tests/integration/run.sh` with final marker
+  `[ok] Integration checks completed.` Whitespace checks pass. The standalone
+  shell lint entry point still reports untouched baseline ShellCheck findings in
+  `install.sh`, `functions/07_security.sh`, and `tests/lint/run.sh`.
+- Direct Dovecot `sieve-test` sent both supplied order subjects to Receipts and
+  left `Order #37013 shipped` unmatched. Additional no-delivery checks proved
+  escaped literal `*`/`?`, UTF-8 byte-count behavior for `?`, and ASCII-only case
+  comparison against the installed Sieve runtime.
+- Fixture-backed Chromium verified the populated rule at desktop and 390 px:
+  `matches pattern`, `Order * confirmed`, and Receipts render together; the
+  longer byte-semantics hint wraps within the editor; document width remains
+  390 px; and the clean browser session reported zero errors and warnings. The
+  fixture touched no real mailbox or saved rule.
+- Independent Specification and Standards reviews returned no findings after
+  correcting fail-open unsupported criteria, unbounded preview work, Unicode
+  parity, and uncertainty ordering edge cases.
+
+### Release and live proof
+
+- Guarded bridge and active deployments both passed pre/post public IMAPS plus
+  ActiveSync Mail/Ping/Contacts/Calendar gates with exact canary cleanup.
+  Rollbacks are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260909T071439Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260909T072243Z`.
+- The deployed backend is attested in active mode. OpenMailStack, Scheduler
+  worker, Dovecot, Postfix, Nginx, MariaDB, and Rspamd are active/running; both
+  application services report `NRestarts=0`; application warning journals are
+  empty; and Nginx validates.
+- Complete staging smoke passed services, listeners, TLS/STARTTLS, configuration,
+  Rspamd, web/auth, Mozilla autoconfiguration, DKIM, and Scheduler-worker checks.
+  Local/public `/api/auth/me` return `401`, and the public app returns `200`.
+  Repository/live `rule-engine.js`, `sieve-compiler.js`, and `api.js` hashes are
+  exact, as is the complete frontend tree. Public Chromium rendered the branded
+  sign-in form with only the expected unauthenticated auth `401`.
+
+### Residual limits
+
+- Patterns match the whole selected field. Subjects with optional prefixes or
+  suffixes need outer `*` characters, and non-ASCII characters consume multiple
+  `?` wildcards because Sieve counts UTF-8 bytes.
+- A deliberately pathological multi-star preview can exhaust its bounded work
+  budget; that message is reported as undecidable and its uncertain actions are
+  skipped. Normal delivery still uses Dovecot's Sieve engine.
+- Guarded deployment retained existing npm audit advisories (frontend: one
+  moderate and one high; backend: four moderate and two high). Staging smoke also
+  retained the known Postfix TLS-parameter deprecation and Rspamd task-timeout
+  tuning advisories; none caused a failed build, service, TLS, scan, or protocol
+  gate, and none was changed in this bounded filter release.

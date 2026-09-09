@@ -11117,3 +11117,66 @@ Add one discoverable mail-filter operator that can route subjects such as
   retained the known Postfix TLS-parameter deprecation and Rspamd task-timeout
   tuning advisories; none caused a failed build, service, TLS, scan, or protocol
   gate, and none was changed in this bounded filter release.
+
+## 2026-09-09 — Additional Mail Domains and Melissa Scheduler Host Staging
+
+### Selected task
+
+Onboard `housevo.app` and `melissavo.com` as active mail domains, stage one
+owned send-from identity on each, and prepare the bounded public-host plan for
+Melissa's existing Scheduler profile without weakening the registrar or TLS
+boundary.
+
+### Live changes
+
+- Added active, unlimited-quota Admin domain rows for `housevo.app` and
+  `melissavo.com`.
+- Added one active owner-scoped alias on each new domain. The live outbound
+  identity and Scheduler identity implementations both return the new address
+  for the intended owner; mailbox-local details remain in the protected Admin
+  data and audit log rather than this tracked worklog.
+- Ran the installed DKIM sync service. It generated root-protected per-domain
+  private keys, public DNS material, and active Rspamd signing-map entries for
+  both domains; Rspamd reloaded cleanly and its configuration test passed.
+- Recorded all four Admin mutations in `webmail_admin_audit` with the explicit
+  `system:codex` maintenance actor rather than impersonating a mailbox admin.
+
+### Proof and rollback
+
+- Postfix's live virtual-domain map resolves both domains, and its virtual-alias
+  map resolves each new address to the intended primary mailbox.
+- The authenticated protocol release gate passed public IMAPS plus ActiveSync
+  Mail, Contacts, and Calendar, including full MIME retrieval and exact canary
+  cleanup.
+- The complete repository integration suite finished with `[ok] Integration
+  checks completed.` Frontend tests passed 254/254; the Admin RBAC, Scheduler,
+  delegated-auth, protocol, backup/restore, and local dry-run guards passed.
+- OpenMailStack, the Scheduler worker, Nginx, Postfix, Dovecot, MariaDB, and
+  Rspamd remained active/running with zero restart counters. Nginx syntax passed
+  and local backend readiness retained the expected unauthenticated `401`.
+- Melissa's published `/scheduler/melissa` profile returns successfully and a
+  390 px public Chromium pass rendered the expected empty state with no booking
+  types. Her Scheduler entitlement was already enabled and published; no profile,
+  availability, event, booking, calendar, or notification setting was changed.
+- The authenticated Admin Domains/Aliases pages and Compose selector were not
+  browser-verified because no reusable Admin session was available. Their exact
+  joined database view, Postfix maps, and deployed identity implementations were
+  verified instead; end-to-end send-from delivery remains gated on DNS.
+- Root-only rollback snapshot:
+  `/var/backups/openmailstack/domain-onboarding-20260909T0958Z-JIv1fw`.
+
+### External DNS and hostname gate
+
+- Public DNS was deliberately left unchanged because this host has no Cloudflare
+  API credential or connected Cloudflare capability, and the dashboard rejected
+  the isolated automation browser before authentication. `housevo.app` therefore
+  still uses its pre-existing Cloudflare Email Routing MX/SPF records; no existing
+  routing was silently replaced.
+- Do not advertise the new send-from identities until each domain publishes the
+  generated DKIM key and aligned SPF/DMARC policy. Direct inbound delivery also
+  requires the intended MX change.
+- The recommended public hostname is `booking.melissavo.com`, initially serving
+  `/scheduler/melissa`. Add its DNS record first, then extend
+  `OMS_SCHEDULER_HOST_ALIASES`, the Nginx server name, and the existing Let's
+  Encrypt certificate in one validated release. Keep
+  `https://webmail.housevo.us` as the canonical login/configuration surface.

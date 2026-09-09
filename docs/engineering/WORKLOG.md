@@ -11156,27 +11156,59 @@ boundary.
   and local backend readiness retained the expected unauthenticated `401`.
 - Melissa's published `/scheduler/melissa` profile returns successfully and a
   390 px public Chromium pass rendered the expected empty state with no booking
-  types. Her Scheduler entitlement was already enabled and published; no profile,
-  availability, event, booking, calendar, or notification setting was changed.
+  types. Her Scheduler entitlement was already enabled and published; the
+  notification sender now uses her active alias, while no availability, event,
+  booking, or calendar setting was invented on her behalf.
 - The authenticated Admin Domains/Aliases pages and Compose selector were not
   browser-verified because no reusable Admin session was available. Their exact
   joined database view, Postfix maps, and deployed identity implementations were
-  verified instead; end-to-end send-from delivery remains gated on DNS.
+  verified instead.
 - Root-only rollback snapshot:
   `/var/backups/openmailstack/domain-onboarding-20260909T0958Z-JIv1fw`.
 
-### External DNS and hostname gate
+### DNS, hostname, and release completion
 
-- Public DNS was deliberately left unchanged because this host has no Cloudflare
-  API credential or connected Cloudflare capability, and the dashboard rejected
-  the isolated automation browser before authentication. `housevo.app` therefore
-  still uses its pre-existing Cloudflare Email Routing MX/SPF records; no existing
-  routing was silently replaced.
-- Do not advertise the new send-from identities until each domain publishes the
-  generated DKIM key and aligned SPF/DMARC policy. Direct inbound delivery also
-  requires the intended MX change.
-- The recommended public hostname is `booking.melissavo.com`, initially serving
-  `/scheduler/melissa`. Add its DNS record first, then extend
-  `OMS_SCHEDULER_HOST_ALIASES`, the Nginx server name, and the existing Let's
-  Encrypt certificate in one validated release. Keep
-  `https://webmail.housevo.us` as the canonical login/configuration surface.
+- Connected the official Cloudflare Codex capability with account OAuth and
+  verified both active zones before mutation. Each domain now has one priority-5
+  MX to `mail.housevo.us`, an aligned OpenMailStack SPF record, and its generated
+  `mail` DKIM selector. The existing `housevo.app` DMARC record was retained;
+  `melissavo.com` starts with a monitoring-only DMARC policy.
+- Migrated `housevo.app` without an MX gap: unlocked Email Routing, published and
+  observed the replacement records alongside Cloudflare's records for one full
+  TTL, then disabled Email Routing and removed only its three MX records and
+  obsolete routing DKIM selector. Per owner direction, the former just-in-case
+  catch-all was retired rather than recreated on OpenMailStack.
+- Published a DNS-only `booking.melissavo.com` CNAME to the existing webmail host.
+  The bare HTTP and HTTPS hostname now converge on `/scheduler/melissa`; normal
+  `webmail.housevo.us` root behavior remains unchanged. Public Chromium rendered
+  Melissa's profile at the custom hostname, and the unauthenticated API boundary
+  retained its expected `401`.
+- Added the booking hostname to the Scheduler host allow-list and Nginx server
+  names while retaining `https://webmail.housevo.us` as the canonical login and
+  suite-wide Scheduler origin. Guarded bridge and active webmail deployments both
+  passed pre/post public IMAPS plus ActiveSync Mail/Ping/Contacts/Calendar gates
+  with exact cleanup. Rollbacks are
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260909T104858Z` and
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260909T105657Z`.
+- Expanded the existing Let's Encrypt lineage without dropping any prior SAN and
+  verified the new certificate on HTTPS, IMAPS, and SMTP submission. It expires
+  2026-12-08. A tested Certbot deploy hook now reloads Nginx, Postfix, and Dovecot
+  after future renewals.
+- Authoritative Cloudflare DNS and public `1.1.1.1` both return the final MX/SPF
+  and booking CNAME state. Postfix resolves both exact aliases, no catch-all row
+  exists for the migrated domain, Rspamd validates both signing entries, all
+  affected services remain active with zero restart counters, and Nginx syntax
+  passes. Visual proof is
+  `output/playwright/booking-melissavo-live-20260909.png`.
+
+### Residual limits
+
+- Melissa's public profile intentionally remains in its empty state until she
+  defines real services, durations, availability, location, and destination
+  calendar in webmail. Those business choices were not guessed during onboarding.
+- DMARC is monitoring-only (`p=none`) during initial delivery observation. No
+  third-party mailbox round trip was available in this maintenance session, so
+  external inbox placement is not claimed from DNS and local signing proof alone.
+- The guarded builds retained the known npm audit advisories (frontend: one
+  moderate and one high; backend: four moderate and two high); they did not block
+  compilation, service readiness, TLS, or either protocol gate.

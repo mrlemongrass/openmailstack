@@ -170,8 +170,11 @@ function evaluateRulesForMessage(rules, message) {
             : knownCriteria.includes(false) || !hasUnknown;
         if (!canDecide) {
             result.unevaluatedRuleIds.push(String(rule.id || rule.name || `rule-${index + 1}`));
-            if (rule.stopProcessing !== false)
+            if (rule.stopProcessing !== false) {
                 blockedByUndecidableStoppingRule = true;
+                result.moveFolders = [];
+                result.deliveryOnlyActions = [];
+            }
             return;
         }
         if (!matches)

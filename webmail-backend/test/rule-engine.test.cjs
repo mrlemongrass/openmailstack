@@ -329,6 +329,38 @@ test('an undecidable stopping rule blocks downstream actions', () => {
   assert.deepEqual(continued.moveFolders, ['Later']);
 });
 
+test('an undecidable stopping rule invalidates actions accumulated above it', () => {
+  const result = evaluateRulesForMessage([
+    {
+      id: 'matched-first',
+      stopProcessing: false,
+      criteria: [{ field: 'subject', operator: 'contains', value: 'receipt' }],
+      actions: [
+        { type: 'move', folder: 'Earlier' },
+        { type: 'discard' },
+      ],
+    },
+    {
+      id: 'undecidable-second',
+      criteria: [{
+        field: 'body',
+        operator: 'matches',
+        value: '*' + 'a'.repeat(1000) + 'b*',
+      }],
+      actions: [{ type: 'move', folder: 'Uncertain' }],
+    },
+  ], {
+    uid: 1,
+    subject: 'Receipt',
+    body: 'a'.repeat(20000),
+  });
+
+  assert.deepEqual(result.matchedRuleIds, ['matched-first']);
+  assert.deepEqual(result.unevaluatedRuleIds, ['undecidable-second']);
+  assert.deepEqual(result.moveFolders, []);
+  assert.deepEqual(result.deliveryOnlyActions, []);
+});
+
 test('a populated unsupported criterion makes its entire rule non-executable', () => {
   const result = evaluateRulesForMessage([{
     id: 'mixed-unknown',

@@ -235,7 +235,11 @@ export function evaluateRulesForMessage(rules: SieveRule[], message: RuleMessage
             : knownCriteria.includes(false) || !hasUnknown;
         if (!canDecide) {
             result.unevaluatedRuleIds.push(String(rule.id || rule.name || `rule-${index + 1}`));
-            if (rule.stopProcessing !== false) blockedByUndecidableStoppingRule = true;
+            if (rule.stopProcessing !== false) {
+                blockedByUndecidableStoppingRule = true;
+                result.moveFolders = [];
+                result.deliveryOnlyActions = [];
+            }
             return;
         }
         if (!matches) return;

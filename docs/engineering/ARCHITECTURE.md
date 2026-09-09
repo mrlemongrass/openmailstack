@@ -839,8 +839,8 @@ UTF-8-octet contract: `*` matches any text, `?` matches one octet, and `\*` or
 `\?` matches a literal wildcard. Preview shares one bounded wildcard-work
 budget per message and reports an exhausted rule as undecidable rather than
 applying its actions; an undecidable rule with normal stop-processing behavior
-also blocks every downstream action for that message. A populated unsupported
-criterion makes its entire rule non-executable. Exact duplicate analysis
+also makes accumulated and downstream actions non-actionable for that message.
+A populated unsupported criterion makes its entire rule non-executable. Exact duplicate analysis
 recognizes repeated wildcard patterns but does not guess whether two different
 patterns overlap.
 

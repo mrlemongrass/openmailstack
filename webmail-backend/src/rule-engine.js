@@ -148,8 +148,9 @@ function evaluateRulesForMessage(rules, message) {
         remainingSteps: MAX_WILDCARD_MATCH_STEPS_PER_MESSAGE,
         valueBytes: new Map(),
     };
+    let blockedByUndecidableStoppingRule = false;
     rules.forEach((rule, index) => {
-        if (result.stoppedByRuleId || rule.enabled === false)
+        if (result.stoppedByRuleId || blockedByUndecidableStoppingRule || rule.enabled === false)
             return;
         const executableCriterionSet = new Set((0, rule_semantics_1.executableRuleCriteria)(rule));
         const executableCriteria = (rule.criteria || []).flatMap((criterion, criterionIndex) => (executableCriterionSet.has(criterion)
@@ -169,6 +170,8 @@ function evaluateRulesForMessage(rules, message) {
             : knownCriteria.includes(false) || !hasUnknown;
         if (!canDecide) {
             result.unevaluatedRuleIds.push(String(rule.id || rule.name || `rule-${index + 1}`));
+            if (rule.stopProcessing !== false)
+                blockedByUndecidableStoppingRule = true;
             return;
         }
         if (!matches)

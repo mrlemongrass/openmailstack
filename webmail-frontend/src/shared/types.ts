@@ -128,7 +128,8 @@ export interface RuleRunPageResponse {
   copiedMessages: number;
   movedMessages: number;
   deliveryOnlyMatches: number;
-  bodySkippedMessages: number;
+  undecidableMessages?: number;
+  bodySkippedMessages?: number;
   invalidDestinations: string[];
   ruleMatches: RuleMatchCount[];
   destinations: RuleRunCount[];

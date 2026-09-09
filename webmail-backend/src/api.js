@@ -1878,7 +1878,7 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
         const previewActionableMessages = [];
         let matchedMessages = 0;
         let deliveryOnlyMatches = 0;
-        let bodySkippedMessages = 0;
+        let undecidableMessages = 0;
         const orderedMessages = [...page.messages].sort((left, right) => left.uid - right.uid);
         const processedMessages = [];
         for (const message of orderedMessages) {
@@ -1903,7 +1903,7 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
                 continue;
             }
             if (evaluation.unevaluatedRuleIds.length > 0)
-                bodySkippedMessages += 1;
+                undecidableMessages += 1;
             if (evaluation.matchedRuleIds.length > 0) {
                 matchedMessages += 1;
                 if (previewToken && !frozenPreview) {
@@ -2068,7 +2068,7 @@ exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
             copiedMessages: applyResult.copied,
             movedMessages: applyResult.moved,
             deliveryOnlyMatches,
-            bodySkippedMessages,
+            undecidableMessages,
             invalidDestinations: [...invalidDestinations],
             ruleMatches,
             destinations: [...destinationCounts].map(([destination, count]) => ({

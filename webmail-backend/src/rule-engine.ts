@@ -208,9 +208,10 @@ export function evaluateRulesForMessage(rules: SieveRule[], message: RuleMessage
         remainingSteps: MAX_WILDCARD_MATCH_STEPS_PER_MESSAGE,
         valueBytes: new Map(),
     };
+    let blockedByUndecidableStoppingRule = false;
 
     rules.forEach((rule, index) => {
-        if (result.stoppedByRuleId || rule.enabled === false) return;
+        if (result.stoppedByRuleId || blockedByUndecidableStoppingRule || rule.enabled === false) return;
 
         const executableCriterionSet = new Set(executableRuleCriteria(rule));
         const executableCriteria = (rule.criteria || []).flatMap((criterion, criterionIndex) => (
@@ -234,6 +235,7 @@ export function evaluateRulesForMessage(rules: SieveRule[], message: RuleMessage
             : knownCriteria.includes(false) || !hasUnknown;
         if (!canDecide) {
             result.unevaluatedRuleIds.push(String(rule.id || rule.name || `rule-${index + 1}`));
+            if (rule.stopProcessing !== false) blockedByUndecidableStoppingRule = true;
             return;
         }
         if (!matches) return;

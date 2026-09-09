@@ -1564,7 +1564,7 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
               />
               {criteria.operator === 'matches' && (
                 <small className="filter-pattern-hint" id={`filter-pattern-hint-${index}`}>
-                  Matches the whole field. Use <code>*</code> for any text, <code>?</code> for one character, and <code>\*</code> or <code>\?</code> for literal wildcards.
+                  Matches the whole field. Use <code>*</code> for any text and <code>?</code> for one byte; accented letters or emoji need multiple <code>?</code>. Use <code>\*</code> or <code>\?</code> for literal wildcards.
                 </small>
               )}
               {duplicateCriteria.has(index) && <small role="status">Already listed above</small>}

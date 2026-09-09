@@ -121,7 +121,7 @@ test('folder rule runs aggregate paged results against one stable snapshot', asy
   assert.equal(summary.processed, 380);
   assert.equal(summary.affectedMessages, 30);
   assert.equal(summary.deliveryOnlyMatches, 2);
-  assert.equal(summary.bodySkippedMessages, 1);
+  assert.equal(summary.undecidableMessages, 1);
   assert.deepEqual(summary.ruleMatches, [{ id: 'finance', name: 'Finance', count: 14 }]);
   assert.deepEqual(summary.destinations, [{ folder: 'Finance', count: 14 }]);
   assert.deepEqual(summary.invalidDestinations, ['Missing']);
@@ -719,10 +719,13 @@ test('filter editor exposes and explains wildcard-pattern matching', () => {
   assert.match(panelSource, /<option value="matches">matches pattern<\/option>/);
   assert.match(panelSource, /Matches the whole field/);
   assert.match(panelSource, /Use <code>\*<\/code> for any text/);
-  assert.match(panelSource, /<code>\?<\/code> for one character/);
+  assert.match(panelSource, /<code>\?<\/code> for one byte/);
+  assert.match(panelSource, /accented letters or emoji need multiple/);
   assert.match(panelSource, /<code>\\\*<\/code> or <code>\\\?<\/code> for literal wildcards/);
   assert.match(panelSource, /aria-describedby=\{criteria\.operator === 'matches'/);
   assert.match(dialogSource, /matches: 'matches pattern'/);
+  assert.match(dialogSource, /could not be evaluated safely/);
+  assert.doesNotMatch(dialogSource, /large message.*Body conditions/);
   assert.match(indexCss, /\.rule-duplicate-value \.filter-pattern-hint/);
 });
 

@@ -294,6 +294,41 @@ test('wildcard matching fails closed when its shared work budget is exhausted', 
   assert.deepEqual(result.unevaluatedRuleIds, ['bounded-wildcard']);
 });
 
+test('an undecidable stopping rule blocks downstream actions', () => {
+  const firstRule = {
+    id: 'undecidable-first',
+    criteria: [{
+      field: 'body',
+      operator: 'matches',
+      value: '*' + 'a'.repeat(1000) + 'b*',
+    }],
+    actions: [{ type: 'move', folder: 'First' }],
+  };
+  const laterRule = {
+    id: 'later',
+    criteria: [{ field: 'subject', operator: 'contains', value: 'receipt' }],
+    actions: [{ type: 'move', folder: 'Later' }],
+  };
+  const message = {
+    uid: 1,
+    subject: 'Receipt',
+    body: 'a'.repeat(20000),
+  };
+
+  const stopped = evaluateRulesForMessage([firstRule, laterRule], message);
+  assert.deepEqual(stopped.unevaluatedRuleIds, ['undecidable-first']);
+  assert.deepEqual(stopped.matchedRuleIds, []);
+  assert.deepEqual(stopped.moveFolders, []);
+
+  const continued = evaluateRulesForMessage([
+    { ...firstRule, stopProcessing: false },
+    laterRule,
+  ], message);
+  assert.deepEqual(continued.unevaluatedRuleIds, ['undecidable-first']);
+  assert.deepEqual(continued.matchedRuleIds, ['later']);
+  assert.deepEqual(continued.moveFolders, ['Later']);
+});
+
 test('a populated unsupported criterion makes its entire rule non-executable', () => {
   const result = evaluateRulesForMessage([{
     id: 'mixed-unknown',

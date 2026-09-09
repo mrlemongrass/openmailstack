@@ -439,7 +439,7 @@ test('rule-run preview respects order and reports delivery-only matches without 
     { id: 'header-or-body', name: 'Header fallback', count: 1 },
   ]);
   assert.equal(response.json.deliveryOnlyMatches, 1);
-  assert.equal(response.json.bodySkippedMessages, 1);
+  assert.equal(response.json.undecidableMessages, 1);
   assert.match(response.json.ruleRevision, /^[A-Za-z0-9_-]+$/);
   assert.deepEqual(appliedPlans, []);
 });
@@ -460,7 +460,7 @@ test('rule-run preview evaluates only the selected saved rules', async t => {
   assert.deepEqual(response.json.destinations, [{ folder: 'Ads', count: 1 }]);
   assert.deepEqual(response.json.ruleMatches, [{ id: 'ads', name: 'Ads', count: 1 }]);
   assert.equal(response.json.deliveryOnlyMatches, 0);
-  assert.equal(response.json.bodySkippedMessages, 0);
+  assert.equal(response.json.undecidableMessages, 0);
 });
 
 test('rule-run preview returns auditable matched-message details when requested', async t => {

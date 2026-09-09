@@ -838,9 +838,11 @@ body text, while Run rules applies the same whole-field, ASCII-case-folded
 UTF-8-octet contract: `*` matches any text, `?` matches one octet, and `\*` or
 `\?` matches a literal wildcard. Preview shares one bounded wildcard-work
 budget per message and reports an exhausted rule as undecidable rather than
-applying its actions. A populated unsupported criterion makes its entire rule
-non-executable. Exact duplicate analysis recognizes repeated wildcard patterns
-but does not guess whether two different patterns overlap.
+applying its actions; an undecidable rule with normal stop-processing behavior
+also blocks every downstream action for that message. A populated unsupported
+criterion makes its entire rule non-executable. Exact duplicate analysis
+recognizes repeated wildcard patterns but does not guess whether two different
+patterns overlap.
 
 `POST /api/rules/run` evaluates the active saved `webmail` script against any
 existing selectable IMAP folder, optionally including its selectable

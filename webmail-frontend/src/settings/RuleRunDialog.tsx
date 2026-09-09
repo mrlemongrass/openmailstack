@@ -799,9 +799,9 @@ export function RuleRunDialog({
                   {preview.deliveryOnlyMatches} message{preview.deliveryOnlyMatches === 1 ? '' : 's'} matched a delivery-only Reject or Discard action and will be left unchanged.
                 </p>
               )}
-              {preview.bodySkippedMessages > 0 && (
+              {preview.undecidableMessages > 0 && (
                 <p className="rule-run-footnote warning">
-                  {preview.bodySkippedMessages} large message{preview.bodySkippedMessages === 1 ? '' : 's'} could not be safely checked against Body conditions.
+                  {preview.undecidableMessages} message{preview.undecidableMessages === 1 ? '' : 's'} could not be evaluated safely, so uncertain rule actions were skipped.
                 </p>
               )}
               {preview.invalidDestinations.length > 0 && (

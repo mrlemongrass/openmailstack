@@ -147,7 +147,7 @@ export interface RuleRunSummary {
   copiedMessages: number;
   movedMessages: number;
   deliveryOnlyMatches: number;
-  bodySkippedMessages: number;
+  undecidableMessages: number;
   invalidDestinations: string[];
   ruleMatches: RuleMatchCount[];
   destinations: RuleRunCount[];
@@ -221,7 +221,7 @@ export async function runRulesThroughFolder({
     copiedMessages: 0,
     movedMessages: 0,
     deliveryOnlyMatches: 0,
-    bodySkippedMessages: 0,
+    undecidableMessages: 0,
     invalidDestinations: [],
     ruleMatches: [],
     destinations: [],
@@ -308,7 +308,7 @@ export async function runRulesThroughFolder({
     summary.copiedMessages += page.copiedMessages;
     summary.movedMessages += page.movedMessages;
     summary.deliveryOnlyMatches += page.deliveryOnlyMatches;
-    summary.bodySkippedMessages += page.bodySkippedMessages;
+    summary.undecidableMessages += page.undecidableMessages ?? page.bodySkippedMessages ?? 0;
     summary.maxUid = page.maxUid;
     summary.uidValidity = page.uidValidity;
     summary.ruleRevision = page.ruleRevision;

@@ -240,6 +240,92 @@ test('wildcard patterns match dynamic order subjects as a whole field', () => {
   );
 });
 
+test('wildcard matching follows Sieve byte and ASCII-case semantics', () => {
+  const singleByteRules = [{
+    id: 'single-byte',
+    criteria: [{ field: 'subject', operator: 'matches', value: 'Order ? confirmed' }],
+    actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+  }];
+  assert.deepEqual(
+    evaluateRulesForMessage(singleByteRules, { uid: 1, subject: 'Order é confirmed' }).matchedRuleIds,
+    [],
+  );
+
+  const twoByteRules = [{
+    id: 'two-byte',
+    criteria: [{ field: 'subject', operator: 'matches', value: 'Order ?? confirmed' }],
+    actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+  }];
+  assert.deepEqual(
+    evaluateRulesForMessage(twoByteRules, { uid: 1, subject: 'Order é confirmed' }).matchedRuleIds,
+    ['two-byte'],
+  );
+
+  const nonAsciiCaseRules = [{
+    id: 'non-ascii-case',
+    criteria: [{ field: 'subject', operator: 'matches', value: 'Ä*' }],
+    actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+  }];
+  assert.deepEqual(
+    evaluateRulesForMessage(nonAsciiCaseRules, { uid: 1, subject: 'äbc' }).matchedRuleIds,
+    [],
+  );
+  assert.deepEqual(
+    evaluateRulesForMessage(nonAsciiCaseRules, { uid: 1, subject: 'Äbc' }).matchedRuleIds,
+    ['non-ascii-case'],
+  );
+});
+
+test('wildcard matching fails closed when its shared work budget is exhausted', () => {
+  const result = evaluateRulesForMessage([{
+    id: 'bounded-wildcard',
+    criteria: [{
+      field: 'body',
+      operator: 'matches',
+      value: '*' + 'a'.repeat(1000) + 'b*',
+    }],
+    actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+  }], {
+    uid: 1,
+    body: 'a'.repeat(20000),
+  });
+
+  assert.deepEqual(result.matchedRuleIds, []);
+  assert.deepEqual(result.unevaluatedRuleIds, ['bounded-wildcard']);
+});
+
+test('a populated unsupported criterion makes its entire rule non-executable', () => {
+  const result = evaluateRulesForMessage([{
+    id: 'mixed-unknown',
+    condition: 'all',
+    criteria: [
+      { field: 'subject', operator: 'matches', value: 'Order * confirmed' },
+      { field: 'subject', operator: 'future_operator', value: 'future value' },
+    ],
+    actions: [{ type: 'discard' }],
+  }], {
+    uid: 1,
+    subject: 'Order #37013 confirmed',
+  });
+
+  assert.deepEqual(result.matchedRuleIds, []);
+  assert.deepEqual(result.deliveryOnlyActions, []);
+
+  const incompleteEditorResult = evaluateRulesForMessage([{
+    id: 'incomplete-editor-row',
+    condition: 'all',
+    criteria: [
+      { field: 'subject', operator: 'matches', value: 'Order * confirmed' },
+      { field: 'subject', operator: 'contains', value: '' },
+    ],
+    actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+  }], {
+    uid: 1,
+    subject: 'Order #37013 confirmed',
+  });
+  assert.deepEqual(incompleteEditorResult.matchedRuleIds, ['incomplete-editor-row']);
+});
+
 test('manual evaluation reports delivery-only actions without deleting existing mail', () => {
   const result = evaluateRulesForMessage([
     {

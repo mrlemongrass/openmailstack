@@ -560,6 +560,55 @@ test('rule-run preview evaluates saved wildcard-pattern criteria', async t => {
   }]);
 });
 
+test('rule-run preview fails closed for a populated unsupported criterion', async t => {
+  const priorScript = activeScript;
+  t.after(() => {
+    activeScript = priorScript;
+    ruleRunBatchOverride = null;
+  });
+  activeScript = compileSieve({
+    rules: [{
+      id: 'mixed-unknown',
+      name: 'Mixed unknown criteria',
+      enabled: true,
+      condition: 'all',
+      criteria: [
+        { field: 'subject', operator: 'matches', value: 'Order * confirmed' },
+        { field: 'subject', operator: 'future_operator', value: 'future value' },
+      ],
+      actions: [{ type: 'discard' }],
+    }],
+  });
+  ruleRunBatchOverride = () => ({
+    maxUid: 105,
+    uidValidity: '9001',
+    nextCursor: 105,
+    done: true,
+    messages: [{
+      uid: 1,
+      envelope: { subject: 'Order #37013 confirmed' },
+      size: 500,
+      sourceComplete: true,
+    }],
+  });
+
+  const port = await startServer(t);
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['mixed-unknown'],
+    includeMatchDetails: true,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.json.processed, 1);
+  assert.equal(response.json.matchedMessages, 0);
+  assert.equal(response.json.affectedMessages, 0);
+  assert.deepEqual(response.json.destinations, []);
+  assert.deepEqual(response.json.matchDetails, []);
+});
+
 test('rule-run match details report only the decisive ANY criteria', async t => {
   const port = await startServer(t);
   const response = await requestJson(port, {

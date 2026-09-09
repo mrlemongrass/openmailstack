@@ -7,7 +7,9 @@ const isExecutableRuleCriterion = (criterion) => (Boolean(criterion.value)
     && supportedFields.has(criterion.field)
     && supportedOperators.has(criterion.operator));
 exports.isExecutableRuleCriterion = isExecutableRuleCriterion;
-const executableRuleCriteria = (rule) => ((rule.criteria || []).filter(exports.isExecutableRuleCriterion));
+const executableRuleCriteria = (rule) => ((rule.criteria || []).some(criterion => (Boolean(criterion.value) && !(0, exports.isExecutableRuleCriterion)(criterion)))
+    ? []
+    : (rule.criteria || []).filter(exports.isExecutableRuleCriterion));
 exports.executableRuleCriteria = executableRuleCriteria;
 const executableRuleActions = (rule) => ((rule.actions || []).filter(action => (action.type === 'reject'
     || action.type === 'discard'

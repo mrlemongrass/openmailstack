@@ -1,6 +1,6 @@
 import {
     executableRuleActions,
-    isExecutableRuleCriterion,
+    executableRuleCriteria,
     type SieveCriterion,
     type SieveRule,
 } from './rule-semantics';
@@ -31,41 +31,123 @@ export interface RuleEvaluation {
 type CriterionResult = boolean | 'unknown';
 
 type WildcardToken =
-    | { kind: 'literal'; value: string }
+    | { kind: 'literal'; value: number }
     | { kind: 'single' }
     | { kind: 'many' };
 
-function wildcardTokens(pattern: string): WildcardToken[] {
-    const characters = Array.from(pattern);
+interface WildcardMatchContext {
+    remainingSteps: number;
+    valueBytes: Map<string, Buffer>;
+}
+
+const MAX_WILDCARD_MATCH_STEPS_PER_MESSAGE = 250000;
+const BYTE_A = 0x41;
+const BYTE_Z = 0x5a;
+const BYTE_CASE_OFFSET = 0x20;
+const BYTE_BACKSLASH = 0x5c;
+const BYTE_QUESTION = 0x3f;
+const BYTE_STAR = 0x2a;
+
+const asciiFoldByte = (value: number): number => (
+    value >= BYTE_A && value <= BYTE_Z ? value + BYTE_CASE_OFFSET : value
+);
+
+function wildcardTokens(
+    pattern: string,
+    context: WildcardMatchContext,
+): { tokens: WildcardToken[]; firstManyIndex: number; manyCount: number } | null {
+    const characters = Buffer.from(pattern, 'utf8');
+    if (characters.length > context.remainingSteps) {
+        context.remainingSteps = 0;
+        return null;
+    }
+    context.remainingSteps -= characters.length;
+
     const tokens: WildcardToken[] = [];
+    let firstManyIndex = -1;
+    let manyCount = 0;
     for (let index = 0; index < characters.length; index += 1) {
         const character = characters[index];
         const escaped = characters[index + 1];
-        if (character === '\\' && (escaped === '*' || escaped === '?' || escaped === '\\')) {
-            tokens.push({ kind: 'literal', value: escaped });
+        if (character === BYTE_BACKSLASH
+            && (escaped === BYTE_STAR || escaped === BYTE_QUESTION || escaped === BYTE_BACKSLASH)) {
+            tokens.push({ kind: 'literal', value: asciiFoldByte(escaped) });
             index += 1;
-        } else if (character === '*') {
-            tokens.push({ kind: 'many' });
-        } else if (character === '?') {
+        } else if (character === BYTE_STAR) {
+            if (tokens.at(-1)?.kind !== 'many') {
+                if (firstManyIndex < 0) firstManyIndex = tokens.length;
+                manyCount += 1;
+                tokens.push({ kind: 'many' });
+            }
+        } else if (character === BYTE_QUESTION) {
             tokens.push({ kind: 'single' });
         } else {
-            tokens.push({ kind: 'literal', value: character });
+            tokens.push({ kind: 'literal', value: asciiFoldByte(character) });
         }
     }
-    return tokens;
+    return { tokens, firstManyIndex, manyCount };
 }
 
-function matchesWildcardPattern(value: string, pattern: string): boolean {
-    const characters = Array.from(value);
-    const tokens = wildcardTokens(pattern);
+function fixedTokensMatchAt(
+    characters: Buffer,
+    tokens: WildcardToken[],
+    start: number,
+    context: WildcardMatchContext,
+): CriterionResult {
+    if (tokens.length > context.remainingSteps) {
+        context.remainingSteps = 0;
+        return 'unknown';
+    }
+    context.remainingSteps -= tokens.length;
+    for (let index = 0; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        if (token.kind === 'many') return false;
+        if (token.kind === 'literal'
+            && token.value !== asciiFoldByte(characters[start + index])) return false;
+    }
+    return true;
+}
+
+function matchesWildcardPattern(
+    characters: Buffer,
+    pattern: string,
+    context: WildcardMatchContext,
+): CriterionResult {
+    const parsed = wildcardTokens(pattern, context);
+    if (!parsed) return 'unknown';
+    const { tokens, firstManyIndex, manyCount } = parsed;
+
+    if (manyCount === 0) {
+        if (tokens.length !== characters.length) return false;
+        return fixedTokensMatchAt(characters, tokens, 0, context);
+    }
+
+    if (manyCount === 1) {
+        const prefix = tokens.slice(0, firstManyIndex);
+        const suffix = tokens.slice(firstManyIndex + 1);
+        if (prefix.length + suffix.length > characters.length) return false;
+        const prefixMatches = fixedTokensMatchAt(characters, prefix, 0, context);
+        if (prefixMatches !== true) return prefixMatches;
+        return fixedTokensMatchAt(
+            characters,
+            suffix,
+            characters.length - suffix.length,
+            context,
+        );
+    }
+
     let characterIndex = 0;
     let tokenIndex = 0;
     let manyTokenIndex = -1;
     let manyCharacterIndex = 0;
 
     while (characterIndex < characters.length) {
+        if (context.remainingSteps <= 0) return 'unknown';
+        context.remainingSteps -= 1;
         const token = tokens[tokenIndex];
-        if (token?.kind === 'single' || (token?.kind === 'literal' && token.value === characters[characterIndex])) {
+        if (token?.kind === 'single'
+            || (token?.kind === 'literal'
+                && token.value === asciiFoldByte(characters[characterIndex]))) {
             characterIndex += 1;
             tokenIndex += 1;
         } else if (token?.kind === 'many') {
@@ -81,20 +163,35 @@ function matchesWildcardPattern(value: string, pattern: string): boolean {
         }
     }
 
-    while (tokens[tokenIndex]?.kind === 'many') tokenIndex += 1;
+    while (tokens[tokenIndex]?.kind === 'many') {
+        if (context.remainingSteps <= 0) return 'unknown';
+        context.remainingSteps -= 1;
+        tokenIndex += 1;
+    }
     return tokenIndex === tokens.length;
 }
 
-function criterionMatches(criterion: SieveCriterion, message: RuleMessage): CriterionResult {
+function criterionMatches(
+    criterion: SieveCriterion,
+    message: RuleMessage,
+    wildcardContext: WildcardMatchContext,
+): CriterionResult {
     if (message.unavailableFields?.includes(criterion.field)) return 'unknown';
 
-    const actual = String(message[criterion.field as keyof RuleMessage] || '').toLowerCase();
-    const expected = String(criterion.value).toLowerCase();
-    const matches = criterion.operator === 'equals'
-        ? actual === expected
-        : criterion.operator === 'matches'
-            ? matchesWildcardPattern(actual, expected)
-            : actual.includes(expected);
+    const actualText = String(message[criterion.field as keyof RuleMessage] || '');
+    const expectedText = String(criterion.value);
+    if (criterion.operator === 'matches') {
+        let characters = wildcardContext.valueBytes.get(criterion.field);
+        if (!characters) {
+            characters = Buffer.from(actualText, 'utf8');
+            wildcardContext.valueBytes.set(criterion.field, characters);
+        }
+        return matchesWildcardPattern(characters, expectedText, wildcardContext);
+    }
+
+    const actual = actualText.toLowerCase();
+    const expected = expectedText.toLowerCase();
+    const matches = criterion.operator === 'equals' ? actual === expected : actual.includes(expected);
 
     return criterion.operator === 'not_contains' ? !matches : matches;
 }
@@ -107,14 +204,23 @@ export function evaluateRulesForMessage(rules: SieveRule[], message: RuleMessage
         deliveryOnlyActions: [],
         unevaluatedRuleIds: [],
     };
+    const wildcardContext: WildcardMatchContext = {
+        remainingSteps: MAX_WILDCARD_MATCH_STEPS_PER_MESSAGE,
+        valueBytes: new Map(),
+    };
 
     rules.forEach((rule, index) => {
         if (result.stoppedByRuleId || rule.enabled === false) return;
 
+        const executableCriterionSet = new Set(executableRuleCriteria(rule));
         const executableCriteria = (rule.criteria || []).flatMap((criterion, criterionIndex) => (
-            isExecutableRuleCriterion(criterion) ? [{ criterion, criterionIndex }] : []
+            executableCriterionSet.has(criterion)
+                ? [{ criterion, criterionIndex }]
+                : []
         ));
-        const criteria = executableCriteria.map(({ criterion }) => criterionMatches(criterion, message));
+        const criteria = executableCriteria.map(({ criterion }) => (
+            criterionMatches(criterion, message, wildcardContext)
+        ));
         const actions = executableRuleActions(rule);
         if (criteria.length === 0 || actions.length === 0) return;
 

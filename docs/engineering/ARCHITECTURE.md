@@ -834,10 +834,13 @@ cannot stop on a rule that delivery-time Sieve would omit.
 
 Verified 2026-09-08: executable Mail Filter criteria also support a
 `matches` operator. The compiler emits Sieve `:matches` tests for headers and
-body text, while Run rules applies the same whole-field wildcard contract:
-`*` matches any text, `?` matches one character, and `\*` or `\?` matches a
-literal wildcard. Exact duplicate analysis recognizes repeated wildcard
-patterns but does not guess whether two different patterns overlap.
+body text, while Run rules applies the same whole-field, ASCII-case-folded
+UTF-8-octet contract: `*` matches any text, `?` matches one octet, and `\*` or
+`\?` matches a literal wildcard. Preview shares one bounded wildcard-work
+budget per message and reports an exhausted rule as undecidable rather than
+applying its actions. A populated unsupported criterion makes its entire rule
+non-executable. Exact duplicate analysis recognizes repeated wildcard patterns
+but does not guess whether two different patterns overlap.
 
 `POST /api/rules/run` evaluates the active saved `webmail` script against any
 existing selectable IMAP folder, optionally including its selectable

@@ -43,7 +43,11 @@ export const isExecutableRuleCriterion = (criterion: SieveCriterion): boolean =>
 );
 
 export const executableRuleCriteria = (rule: SieveRule): SieveCriterion[] => (
-    (rule.criteria || []).filter(isExecutableRuleCriterion)
+    (rule.criteria || []).some(criterion => (
+        Boolean(criterion.value) && !isExecutableRuleCriterion(criterion)
+    ))
+        ? []
+        : (rule.criteria || []).filter(isExecutableRuleCriterion)
 );
 
 export const executableRuleActions = (rule: SieveRule): SieveAction[] => (

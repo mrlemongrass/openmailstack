@@ -48,6 +48,40 @@ test('compileSieve emits wildcard pattern matching for filter criteria', () => {
   assert.deepEqual(extractJsonFromSieve(script), document);
 });
 
+test('compileSieve omits a rule containing a populated unsupported criterion', () => {
+  const script = compileSieve({
+    rules: [{
+      name: 'Mixed unknown criteria',
+      condition: 'all',
+      criteria: [
+        { field: 'subject', operator: 'matches', value: 'Order * confirmed' },
+        { field: 'subject', operator: 'future_operator', value: 'future value' },
+      ],
+      actions: [{ type: 'discard' }],
+    }],
+  });
+
+  assert.doesNotMatch(script, /# Rule: Mixed unknown criteria/);
+  assert.doesNotMatch(script, /\bdiscard;/);
+});
+
+test('compileSieve keeps a rule with an incomplete empty editor criterion', () => {
+  const script = compileSieve({
+    rules: [{
+      name: 'Incomplete editor row',
+      condition: 'all',
+      criteria: [
+        { field: 'subject', operator: 'matches', value: 'Order * confirmed' },
+        { field: 'subject', operator: 'contains', value: '' },
+      ],
+      actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+    }],
+  });
+
+  assert.match(script, /# Rule: Incomplete editor row/);
+  assert.match(script, /header :matches "Subject" "Order \* confirmed"/);
+});
+
 test('compileSieve stores UI JSON as base64 and round-trips unsafe comment content', () => {
   const document = {
     rules: [

@@ -503,6 +503,63 @@ test('rule-run preview returns auditable matched-message details when requested'
   }]);
 });
 
+test('rule-run preview evaluates saved wildcard-pattern criteria', async t => {
+  const priorScript = activeScript;
+  t.after(() => {
+    activeScript = priorScript;
+    ruleRunBatchOverride = null;
+  });
+  activeScript = compileSieve({
+    rules: [{
+      id: 'order-confirmations',
+      name: 'Order confirmations',
+      enabled: true,
+      criteria: [{ field: 'subject', operator: 'matches', value: 'Order * confirmed' }],
+      actions: [{ type: 'move', folder: 'Finance' }],
+    }],
+  });
+  ruleRunBatchOverride = ({ cursor, maxUid }) => {
+    assert.equal(cursor, 0);
+    assert.equal(maxUid, 105);
+    return {
+      maxUid: 105,
+      uidValidity: '9001',
+      nextCursor: 105,
+      done: true,
+      messages: [
+        { uid: 1, envelope: { subject: 'Order #37013 confirmed' }, size: 500, sourceComplete: true },
+        { uid: 2, envelope: { subject: 'Order #36527 confirmed' }, size: 500, sourceComplete: true },
+        { uid: 3, envelope: { subject: 'Order #36527 shipped' }, size: 500, sourceComplete: true },
+      ],
+    };
+  };
+
+  const port = await startServer(t);
+  const response = await requestJson(port, {
+    folder: 'INBOX',
+    mode: 'preview',
+    cursor: 0,
+    ruleIds: ['order-confirmations'],
+    includeMatchDetails: true,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.json.processed, 3);
+  assert.equal(response.json.matchedMessages, 2);
+  assert.equal(response.json.affectedMessages, 2);
+  assert.deepEqual(response.json.destinations, [{ folder: 'Finance', count: 2 }]);
+  assert.deepEqual(
+    response.json.matchDetails.map(message => message.subject),
+    ['Order #37013 confirmed', 'Order #36527 confirmed'],
+  );
+  assert.deepEqual(response.json.matchRuleCatalog[0].criteria, [{
+    criterionIndex: 0,
+    field: 'subject',
+    operator: 'matches',
+    value: 'Order * confirmed',
+  }]);
+});
+
 test('rule-run match details report only the decisive ANY criteria', async t => {
   const port = await startServer(t);
   const response = await requestJson(port, {

@@ -1,7 +1,7 @@
 export interface SieveCriterion {
     id?: string;
     field: 'subject' | 'from' | 'to' | 'body' | string;
-    operator: 'contains' | 'not_contains' | 'equals' | string;
+    operator: 'contains' | 'not_contains' | 'equals' | 'matches' | string;
     value: string;
 }
 export interface SieveAction {

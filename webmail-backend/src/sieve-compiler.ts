@@ -70,7 +70,11 @@ export function quoteSieveString(value: unknown): string {
 function compileCriterion(criterion: SieveCriterion): string | null {
     if (!criterion.value) return null;
 
-    const matchType = criterion.operator === 'equals' ? ':is' : ':contains';
+    const matchType = criterion.operator === 'equals'
+        ? ':is'
+        : criterion.operator === 'matches'
+            ? ':matches'
+            : ':contains';
     const negate = criterion.operator === 'not_contains';
 
     let test = '';

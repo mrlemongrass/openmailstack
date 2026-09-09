@@ -57,7 +57,11 @@ function quoteSieveString(value) {
 function compileCriterion(criterion) {
     if (!criterion.value)
         return null;
-    const matchType = criterion.operator === 'equals' ? ':is' : ':contains';
+    const matchType = criterion.operator === 'equals'
+        ? ':is'
+        : criterion.operator === 'matches'
+            ? ':matches'
+            : ':contains';
     const negate = criterion.operator === 'not_contains';
     let test = '';
     if (criterion.field === 'subject' || criterion.field === 'from' || criterion.field === 'to') {

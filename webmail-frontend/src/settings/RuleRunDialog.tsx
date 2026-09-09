@@ -87,6 +87,7 @@ const CRITERION_OPERATOR_LABELS: Record<string, string> = {
   contains: 'contains',
   not_contains: 'does not contain',
   equals: 'equals',
+  matches: 'matches pattern',
 };
 
 export function RuleRunDialog({

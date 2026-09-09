@@ -33,6 +33,21 @@ test('compileSieve escapes user-controlled criteria and folder values', () => {
   assert.doesNotMatch(script, /fileinto "INBOX"\r?\nstop;/);
 });
 
+test('compileSieve emits wildcard pattern matching for filter criteria', () => {
+  const document = {
+    rules: [{
+      name: 'Order confirmations',
+      criteria: [{ field: 'subject', operator: 'matches', value: 'Order * confirmed' }],
+      actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+    }],
+  };
+
+  const script = compileSieve(document);
+
+  assert.ok(script.includes('header :matches "Subject" "Order * confirmed"'));
+  assert.deepEqual(extractJsonFromSieve(script), document);
+});
+
 test('compileSieve stores UI JSON as base64 and round-trips unsafe comment content', () => {
   const document = {
     rules: [

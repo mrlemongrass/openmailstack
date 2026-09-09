@@ -1,7 +1,7 @@
 import type { Rule, RuleAnalysisRemoval } from '../shared/types';
 
 const supportedFields = new Set(['subject', 'from', 'to', 'body']);
-const supportedOperators = new Set(['contains', 'not_contains', 'equals']);
+const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches']);
 
 const asciiFold = (value: string): string => value.replace(/[A-Z]/g, letter => letter.toLowerCase());
 

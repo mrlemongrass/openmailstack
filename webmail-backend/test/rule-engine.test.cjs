@@ -175,6 +175,71 @@ test('rule matching is case-insensitive and honors any, all, equals, and negatio
   assert.deepEqual(result.moveFolders, ['Exact', 'Body']);
 });
 
+test('wildcard patterns match dynamic order subjects as a whole field', () => {
+  const orderRules = [{
+    id: 'order-confirmations',
+    criteria: [{ field: 'subject', operator: 'matches', value: 'Order * confirmed' }],
+    actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+  }];
+
+  for (const subject of ['Order #37013 confirmed', 'Order #36527 confirmed', 'ORDER #37013 CONFIRMED']) {
+    assert.deepEqual(
+      evaluateRulesForMessage(orderRules, { uid: 1, subject }).matchedRuleIds,
+      ['order-confirmations'],
+    );
+  }
+  assert.deepEqual(
+    evaluateRulesForMessage(orderRules, { uid: 1, subject: 'Order #37013 shipped' }).matchedRuleIds,
+    [],
+  );
+  assert.deepEqual(
+    evaluateRulesForMessage(orderRules, { uid: 1, subject: 'Re: Order #37013 confirmed' }).matchedRuleIds,
+    [],
+  );
+
+  const fiveDigitRules = [{
+    id: 'five-digit-order',
+    criteria: [{ field: 'subject', operator: 'matches', value: 'Order #????? confirmed' }],
+    actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+  }];
+  assert.deepEqual(
+    evaluateRulesForMessage(fiveDigitRules, { uid: 1, subject: 'Order #37013 confirmed' }).matchedRuleIds,
+    ['five-digit-order'],
+  );
+  assert.deepEqual(
+    evaluateRulesForMessage(fiveDigitRules, { uid: 1, subject: 'Order #3701 confirmed' }).matchedRuleIds,
+    [],
+  );
+
+  const literalWildcardRules = [{
+    id: 'literal-wildcard',
+    criteria: [{ field: 'subject', operator: 'matches', value: 'Order \\* confirmed' }],
+    actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+  }];
+  assert.deepEqual(
+    evaluateRulesForMessage(literalWildcardRules, { uid: 1, subject: 'Order * confirmed' }).matchedRuleIds,
+    ['literal-wildcard'],
+  );
+  assert.deepEqual(
+    evaluateRulesForMessage(literalWildcardRules, { uid: 1, subject: 'Order #37013 confirmed' }).matchedRuleIds,
+    [],
+  );
+
+  const literalQuestionRules = [{
+    id: 'literal-question',
+    criteria: [{ field: 'subject', operator: 'matches', value: 'Order \\? confirmed' }],
+    actions: [{ type: 'move', folder: 'INBOX.Receipts' }],
+  }];
+  assert.deepEqual(
+    evaluateRulesForMessage(literalQuestionRules, { uid: 1, subject: 'Order ? confirmed' }).matchedRuleIds,
+    ['literal-question'],
+  );
+  assert.deepEqual(
+    evaluateRulesForMessage(literalQuestionRules, { uid: 1, subject: 'Order 7 confirmed' }).matchedRuleIds,
+    [],
+  );
+});
+
 test('manual evaluation reports delivery-only actions without deleting existing mail', () => {
   const result = evaluateRulesForMessage([
     {

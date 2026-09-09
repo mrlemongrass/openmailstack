@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.executableRuleActions = exports.executableRuleCriteria = exports.isExecutableRuleCriterion = void 0;
 const supportedFields = new Set(['subject', 'from', 'to', 'body']);
-const supportedOperators = new Set(['contains', 'not_contains', 'equals']);
+const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches']);
 const isExecutableRuleCriterion = (criterion) => (Boolean(criterion.value)
     && supportedFields.has(criterion.field)
     && supportedOperators.has(criterion.operator));

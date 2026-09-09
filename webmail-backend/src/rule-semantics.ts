@@ -1,7 +1,7 @@
 export interface SieveCriterion {
     id?: string;
     field: 'subject' | 'from' | 'to' | 'body' | string;
-    operator: 'contains' | 'not_contains' | 'equals' | string;
+    operator: 'contains' | 'not_contains' | 'equals' | 'matches' | string;
     value: string;
 }
 
@@ -34,7 +34,7 @@ export interface SieveRulesDocument {
 }
 
 const supportedFields = new Set(['subject', 'from', 'to', 'body']);
-const supportedOperators = new Set(['contains', 'not_contains', 'equals']);
+const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches']);
 
 export const isExecutableRuleCriterion = (criterion: SieveCriterion): boolean => (
     Boolean(criterion.value)

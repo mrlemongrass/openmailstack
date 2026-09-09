@@ -1550,11 +1550,23 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
             </select>
             <select className="glass-input glass-select" value={criteria.operator} onChange={event => updateCriteria(criteria.id, 'operator', event.target.value)}>
               <option value="contains">contains</option>
+              <option value="matches">matches pattern</option>
               <option value="not_contains">does not contain</option>
               <option value="equals">equals</option>
             </select>
             <div className="rule-duplicate-value">
-              <input className="glass-input" value={criteria.value} onChange={event => updateCriteria(criteria.id, 'value', event.target.value)} placeholder="newsletter" />
+              <input
+                className="glass-input"
+                value={criteria.value}
+                onChange={event => updateCriteria(criteria.id, 'value', event.target.value)}
+                placeholder={criteria.operator === 'matches' ? 'Order * confirmed' : 'newsletter'}
+                aria-describedby={criteria.operator === 'matches' ? `filter-pattern-hint-${index}` : undefined}
+              />
+              {criteria.operator === 'matches' && (
+                <small className="filter-pattern-hint" id={`filter-pattern-hint-${index}`}>
+                  Matches the whole field. Use <code>*</code> for any text, <code>?</code> for one character, and <code>\*</code> or <code>\?</code> for literal wildcards.
+                </small>
+              )}
               {duplicateCriteria.has(index) && <small role="status">Already listed above</small>}
             </div>
             <button className="btn btn-ghost" type="button" onClick={() => removeCriteria(criteria.id)} title="Remove condition" aria-label="Remove condition">

@@ -51,7 +51,7 @@ export interface RuleAnalysis {
 }
 
 const supportedFields = new Set(['subject', 'from', 'to', 'body']);
-const supportedOperators = new Set(['contains', 'not_contains', 'equals']);
+const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches']);
 const MAX_FINDINGS = 500;
 const MAX_FINDING_OCCURRENCES = 12;
 const MAX_OVERLAP_COMPARISONS = 100000;
@@ -260,6 +260,7 @@ const operatorLabel = (operator: string): string => ({
     contains: 'contains',
     not_contains: 'does not contain',
     equals: 'equals',
+    matches: 'matches pattern',
 }[operator] || operator);
 
 const criterionLabel = (criterion: SieveCriterion): string => (

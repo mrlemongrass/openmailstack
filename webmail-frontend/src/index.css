@@ -2828,6 +2828,15 @@ body {
   line-height: 1.3;
 }
 
+.rule-duplicate-value .filter-pattern-hint {
+  color: var(--text-secondary);
+}
+
+.filter-pattern-hint code {
+  color: inherit;
+  font-size: inherit;
+}
+
 .rule-duplicate-inline {
   margin-left: auto;
   white-space: nowrap;

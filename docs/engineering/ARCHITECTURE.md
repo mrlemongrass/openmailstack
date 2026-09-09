@@ -832,6 +832,13 @@ legacy rules without the field retain stop behavior. The Sieve compiler and
 manual evaluator share one executable criterion/action contract so Preview
 cannot stop on a rule that delivery-time Sieve would omit.
 
+Verified 2026-09-08: executable Mail Filter criteria also support a
+`matches` operator. The compiler emits Sieve `:matches` tests for headers and
+body text, while Run rules applies the same whole-field wildcard contract:
+`*` matches any text, `?` matches one character, and `\*` or `\?` matches a
+literal wildcard. Exact duplicate analysis recognizes repeated wildcard
+patterns but does not guess whether two different patterns overlap.
+
 `POST /api/rules/run` evaluates the active saved `webmail` script against any
 existing selectable IMAP folder, optionally including its selectable
 descendants. The server resolves the hierarchy with the advertised delimiter,

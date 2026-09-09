@@ -84,6 +84,26 @@ test('rule analysis follows Sieve ASCII case folding without changing whitespace
   assert.deepEqual(analysis.findings, []);
 });
 
+test('rule analysis recognizes exact wildcard-pattern duplicates without guessing overlaps', () => {
+  const analysis = analyzeRuleDocument({
+    rules: [{
+      name: 'Receipts',
+      criteria: [
+        { field: 'subject', operator: 'matches', value: 'Order * confirmed' },
+        { field: 'subject', operator: 'matches', value: 'ORDER * CONFIRMED' },
+      ],
+      actions: [],
+    }],
+  });
+
+  assert.equal(analysis.summary.exactCriterionDuplicates, 1);
+  assert.equal(analysis.summary.possibleOverlaps, 0);
+  assert.deepEqual(analysis.removals, [
+    { ruleIndex: 0, itemType: 'criterion', itemIndex: 1 },
+  ]);
+  assert.match(analysis.findings[0].label, /matches pattern/);
+});
+
 test('rule analysis reports nested contains patterns across rules as review only', () => {
   const analysis = analyzeRuleDocument({
     rules: [

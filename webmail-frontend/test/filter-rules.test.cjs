@@ -655,6 +655,22 @@ test('duplicate cleanup removes only later exact copies and preserves the origin
   assert.equal(rules[0].actions.length, 2);
 });
 
+test('duplicate cleanup recognizes repeated wildcard-pattern conditions', () => {
+  const { getExactRuleDuplicateIndexes } = loadTypeScriptModule('../src/settings/rule-duplicates.ts');
+  const rule = {
+    criteria: [
+      { field: 'subject', operator: 'matches', value: 'Order * confirmed' },
+      { field: 'subject', operator: 'matches', value: 'ORDER * CONFIRMED' },
+    ],
+    actions: [],
+  };
+
+  assert.deepEqual(getExactRuleDuplicateIndexes(rule), {
+    criteria: [1],
+    actions: [],
+  });
+});
+
 test('duplicate cleanup stays deterministic across many rules and conditions', () => {
   const { applyRuleDuplicateCleanup } = loadTypeScriptModule('../src/settings/rule-duplicates.ts');
   const rules = Array.from({ length: 500 }, (_value, ruleIndex) => ({
@@ -684,6 +700,30 @@ test('duplicate cleanup stays deterministic across many rules and conditions', (
   assert.ok(result.rules.every(rule => rule.criteria.length === 2 && rule.actions.length === 1));
   assert.equal(rules[499].criteria.length, 3);
   assert.equal(rules[499].actions.length, 2);
+});
+
+test('filter editor exposes and explains wildcard-pattern matching', () => {
+  const panelSource = fs.readFileSync(
+    path.join(__dirname, '../src/settings/SettingsPanel.tsx'),
+    'utf8',
+  );
+  const dialogSource = fs.readFileSync(
+    path.join(__dirname, '../src/settings/RuleRunDialog.tsx'),
+    'utf8',
+  );
+  const indexCss = fs.readFileSync(
+    path.join(__dirname, '../src/index.css'),
+    'utf8',
+  );
+
+  assert.match(panelSource, /<option value="matches">matches pattern<\/option>/);
+  assert.match(panelSource, /Matches the whole field/);
+  assert.match(panelSource, /Use <code>\*<\/code> for any text/);
+  assert.match(panelSource, /<code>\?<\/code> for one character/);
+  assert.match(panelSource, /<code>\\\*<\/code> or <code>\\\?<\/code> for literal wildcards/);
+  assert.match(panelSource, /aria-describedby=\{criteria\.operator === 'matches'/);
+  assert.match(dialogSource, /matches: 'matches pattern'/);
+  assert.match(indexCss, /\.rule-duplicate-value \.filter-pattern-hint/);
 });
 
 test('filters expose ordered priority, stop processing, and preview-first folder runs', () => {

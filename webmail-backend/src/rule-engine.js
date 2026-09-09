@@ -2,6 +2,59 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.evaluateRulesForMessage = evaluateRulesForMessage;
 const rule_semantics_1 = require("./rule-semantics");
+function wildcardTokens(pattern) {
+    const characters = Array.from(pattern);
+    const tokens = [];
+    for (let index = 0; index < characters.length; index += 1) {
+        const character = characters[index];
+        const escaped = characters[index + 1];
+        if (character === '\\' && (escaped === '*' || escaped === '?' || escaped === '\\')) {
+            tokens.push({ kind: 'literal', value: escaped });
+            index += 1;
+        }
+        else if (character === '*') {
+            tokens.push({ kind: 'many' });
+        }
+        else if (character === '?') {
+            tokens.push({ kind: 'single' });
+        }
+        else {
+            tokens.push({ kind: 'literal', value: character });
+        }
+    }
+    return tokens;
+}
+function matchesWildcardPattern(value, pattern) {
+    const characters = Array.from(value);
+    const tokens = wildcardTokens(pattern);
+    let characterIndex = 0;
+    let tokenIndex = 0;
+    let manyTokenIndex = -1;
+    let manyCharacterIndex = 0;
+    while (characterIndex < characters.length) {
+        const token = tokens[tokenIndex];
+        if (token?.kind === 'single' || (token?.kind === 'literal' && token.value === characters[characterIndex])) {
+            characterIndex += 1;
+            tokenIndex += 1;
+        }
+        else if (token?.kind === 'many') {
+            manyTokenIndex = tokenIndex;
+            manyCharacterIndex = characterIndex;
+            tokenIndex += 1;
+        }
+        else if (manyTokenIndex >= 0) {
+            manyCharacterIndex += 1;
+            characterIndex = manyCharacterIndex;
+            tokenIndex = manyTokenIndex + 1;
+        }
+        else {
+            return false;
+        }
+    }
+    while (tokens[tokenIndex]?.kind === 'many')
+        tokenIndex += 1;
+    return tokenIndex === tokens.length;
+}
 function criterionMatches(criterion, message) {
     if (message.unavailableFields?.includes(criterion.field))
         return 'unknown';
@@ -9,7 +62,9 @@ function criterionMatches(criterion, message) {
     const expected = String(criterion.value).toLowerCase();
     const matches = criterion.operator === 'equals'
         ? actual === expected
-        : actual.includes(expected);
+        : criterion.operator === 'matches'
+            ? matchesWildcardPattern(actual, expected)
+            : actual.includes(expected);
     return criterion.operator === 'not_contains' ? !matches : matches;
 }
 function evaluateRulesForMessage(rules, message) {

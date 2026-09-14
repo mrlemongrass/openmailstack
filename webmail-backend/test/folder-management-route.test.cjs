@@ -638,7 +638,7 @@ test('message action failures do not expose upstream IMAP details', async t => {
   const response = await postJson(port, '/api/messages/action', {
     folder: 'INBOX',
     uids: [41],
-    action: 'archive',
+    action: 'spam',
   });
 
   assert.equal(response.status, 500);

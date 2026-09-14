@@ -39,7 +39,7 @@ mock('managesieve', { ManageSieveClient: class {
 } });
 const auth = require('../src/auth.js');
 mock('auth', { ...auth, requireSession(req, _res, next) { req.user = { username: authUser, password: 'fixture-only' }; next(); } });
-mock('imap-pool', { withDedicatedImapConnection: async (user, _pass, operation) => operation({ client: {
+mock('imap-pool', { getImapConnection: async () => ({ async messageAction(folder, uids, action) { movements.push({ folder, uids, action, target: 'Junk' }); return { targetFolder: 'Junk' }; } }), withDedicatedImapConnection: async (user, _pass, operation) => operation({ client: {
   list: async () => [{ path: 'Junk', specialUse: '\\Junk' }],
   getMailboxLock: async path => ({ release() {} }),
   async *fetch(sequence, query, options) { assert.equal(options.uid, true); for (const uid of sequence.split(',').map(Number)) yield { uid, envelope: { from: addresses || [{ address: sender }] } }; },
@@ -62,8 +62,8 @@ async function request(path, body, method = 'POST') {
   return { status: res.status, body: await res.json() };
 }
 const spam = scope => request('/messages/action', { action: 'spam', folder: 'INBOX', uids: [4], junkScope: scope });
-test('sender vs domain choice is required and sender is read from IMAP, not request text', async () => {
-  assert.equal((await spam()).status, 400);
+test('explicit choices are validated and sender is read from IMAP, not request text', async () => {
+  assert.equal((await spam('invalid')).status, 400);
   assert.equal(movements.length, 0);
   assert.equal((await spam('sender')).status, 200);
   assert.deepEqual(junkEntries(documents[authUser]), [{ kind: 'sender', value: 'alex@example.test' }]);
@@ -111,4 +111,11 @@ test('simultaneous choices append without losing entries; explicit removal is sc
   assert.equal((await request('/rules/junk-list', entry, 'DELETE')).status, 200);
   assert.equal((await request('/rules/junk-list', entry, 'DELETE')).status, 200);
   assert.deepEqual(junkEntries(documents[authUser]), [{ kind: 'sender', value: 'alex@example.test' }]);
+});
+
+test('legacy spam callers retain move-only behavior without creating a sender or domain block', async () => {
+  assert.equal((await spam()).status, 200);
+  assert.equal(movements[0].action, 'spam');
+  assert.equal(movements[0].target, 'Junk');
+  assert.equal(documents[authUser], undefined);
 });

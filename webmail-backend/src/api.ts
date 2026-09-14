@@ -4016,7 +4016,7 @@ apiRouter.post('/messages/action', requireAuth, async (req: any, res) => {
         || !uids.every(uid => Number.isInteger(uid) && uid > 0 && uid <= MAX_IMAP_UID)
         || (['spam', 'notspam'].includes(action) && uids.length > 1000)
         || !allowedActions.includes(action)
-        || (action === 'spam' && !['sender', 'domain'].includes(req.body.junkScope))
+        || (action === 'spam' && req.body.junkScope !== undefined && !['sender', 'domain'].includes(req.body.junkScope))
         || (action === 'move' && (
             !destinationFolder
             || /[\u0000-\u001f\u007f]/u.test(destinationFolder)
@@ -4028,7 +4028,8 @@ apiRouter.post('/messages/action', requireAuth, async (req: any, res) => {
     let junkRuleUpdated = false;
     try {
         let actionResult: any;
-        if (action === 'spam' || action === 'notspam') {
+        // Older callers only requested a move. Never infer a lasting block from an absent choice.
+        if ((action === 'spam' && req.body.junkScope !== undefined) || action === 'notspam') {
             actionResult = await withDedicatedImap(user, pass, async imap => {
                 const folders = await imap.client.list();
                 const junk = folders.find((item: any) => item.specialUse?.toLowerCase() === '\\junk' || item.flags?.has('\\Junk'));

@@ -11415,3 +11415,30 @@ Release preparation: full integration runner exited 0; final affected backend
 checks 59/59 passed after folder-confirmation identity tightening; final frontend
 lint and production build pass without warnings. Code self-review completed;
 remaining product gaps are recorded rather than claimed complete.
+
+Implementation committed/pushed as `1e807a80`. Additional Chromium checks passed:
+Not junk submitted the reverse action and returned to the list; a simulated body
+503 displayed Retry message, and retry loaded the recovered body. Scheduler
+with a synthetic existing event type, Contacts with 30 entries, Notes with 12
+entries and Calendar with a populated event were inspected; screenshots retained
+under `output/playwright/qol-*.png`. No live application data was used.
+
+### First live attempt and compatibility correction
+
+The first bridge pre-gate passed, but its post-gate caught HTTP 400 from a
+legacy spam-action caller that sends no `junkScope`. The guarded deployment
+automatically restored `/var/backups/openmailstack/protocol-guarded-webmail-20260914T192945Z`.
+Exact canary mailbox/Postfix/database/EAS/PIM/session cleanup passed. Recovery
+protocol validation was then run by the guard.
+
+Corrected the API compatibility boundary: absent `junkScope` retains the legacy
+move-only action and creates no block. The new UI always asks and sends an
+explicit sender/domain choice. Invalid explicit choices still fail. Added a
+legacy caller regression alongside the choice/concurrency tests; repeated backend
+validation and a fresh guarded deployment follow. This avoids silently turning
+older clients' spam actions into lasting blocks.
+
+Compatibility validation: full backend suite 1,014 passed, seven skipped, zero
+failures. First guard exited 20 after restoring the prior runtime and passing
+legacy-compatible public recovery validation. A fresh bridge/active sequence uses
+new canary device IDs and retains the same deployment protections.

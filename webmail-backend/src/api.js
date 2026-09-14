@@ -3550,7 +3550,7 @@ exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
         || !uids.every(uid => Number.isInteger(uid) && uid > 0 && uid <= MAX_IMAP_UID)
         || (['spam', 'notspam'].includes(action) && uids.length > 1000)
         || !allowedActions.includes(action)
-        || (action === 'spam' && !['sender', 'domain'].includes(req.body.junkScope))
+        || (action === 'spam' && req.body.junkScope !== undefined && !['sender', 'domain'].includes(req.body.junkScope))
         || (action === 'move' && (!destinationFolder
             || /[\u0000-\u001f\u007f]/u.test(destinationFolder)))) {
         return res.status(400).json({ success: false, error: 'Missing required parameters' });
@@ -3558,7 +3558,8 @@ exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
     let junkRuleUpdated = false;
     try {
         let actionResult;
-        if (action === 'spam' || action === 'notspam') {
+        // Older callers only requested a move. Never infer a lasting block from an absent choice.
+        if ((action === 'spam' && req.body.junkScope !== undefined) || action === 'notspam') {
             actionResult = await withDedicatedImap(user, pass, async (imap) => {
                 const folders = await imap.client.list();
                 const junk = folders.find((item) => item.specialUse?.toLowerCase() === '\\junk' || item.flags?.has('\\Junk'));

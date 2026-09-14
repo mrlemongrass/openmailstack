@@ -33,7 +33,7 @@ export interface SieveRulesDocument {
     vacation?: SieveVacation;
 }
 
-const supportedFields = new Set(['subject', 'from', 'to', 'body']);
+const supportedFields = new Set(['subject', 'from', 'to', 'body', 'from_address', 'from_domain']);
 const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches']);
 
 export const isExecutableRuleCriterion = (criterion: SieveCriterion): boolean => (

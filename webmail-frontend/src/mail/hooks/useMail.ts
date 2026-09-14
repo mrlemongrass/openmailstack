@@ -1,3 +1,4 @@
+import type { MessageRemoval } from '../mail-message-identity';
 import { plainToHtml } from '../compose-content';
 import { useState, useCallback, useEffect, useMemo, useRef, type SetStateAction } from 'react';
 import type {
@@ -226,7 +227,7 @@ function applyFolderScopedAction(
 ) {
   const targets = new Set(uids);
   const matches = (message: Message) => (message.folder || folder) === folder && targets.has(message.uid);
-  if (['archive', 'delete', 'spam', 'move', 'snooze'].includes(action)) {
+  if (['archive', 'delete', 'spam', 'notspam', 'move', 'snooze'].includes(action)) {
     return messages.filter((message) => !matches(message));
   }
   return messages.map((message) => {
@@ -329,6 +330,15 @@ export function useMail(_opts: UseMailOptions) {
       return next;
     });
   }, []);
+  const [junkPrompt, setJunkPrompt] = useState<{ action: string; count: number; sender: string } | null>(null);
+  const junkResolver = useRef<((choice: 'sender' | 'domain' | 'remove' | null) => void) | null>(null);
+  const resolveJunkPrompt = useCallback((choice: 'sender' | 'domain' | 'remove' | null) => {
+    junkResolver.current?.(choice);
+    junkResolver.current = null;
+    setJunkPrompt(null);
+  }, []);
+  useEffect(() => () => { junkResolver.current?.(null); junkResolver.current = null; }, []);
+  const [messageRemoval, setMessageRemoval] = useState<MessageRemoval | null>(null);
   const [selectedMessages, setSelectedMessages] = useState<number[]>([]);
   const [viewingThread, setViewingThread] = useState<Message[] | null>(null);
   const [mailLowestUid, setMailLowestUid] = useState<number | null>(null);
@@ -407,7 +417,7 @@ export function useMail(_opts: UseMailOptions) {
   const [composeSignature, setComposeSignature] = useState('none');
   const [composeAttachments, setComposeAttachments] = useState<File[]>([]);
   const [composeAttachmentRevision, setComposeAttachmentRevision] = useState(0);
-  const [composeMode, setComposeMode] = useState<'rich' | 'plain'>('plain');
+  const [composeMode, setComposeMode] = useState<'rich' | 'plain' | 'html'>('plain');
   const [draftUid, setDraftUid] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftSaveStatus, setDraftSaveStatus] = useState<'saving' | 'saved' | 'error' | null>(null);
@@ -568,6 +578,7 @@ export function useMail(_opts: UseMailOptions) {
     inReplyTo?: string;
     references?: string;
     attachments?: File[];
+    reply?: boolean;
   } = {}, preparationRequestId?: number) => {
     const requestId = preparationRequestId ?? composePreparationCoordinatorRef.current.begin();
     if (!claimComposeIntent(requestId)) return false;
@@ -591,17 +602,18 @@ export function useMail(_opts: UseMailOptions) {
     setComposeInReplyTo(initial.inReplyTo || '');
     setComposeReferences(initial.references || '');
     setComposeSubject(initial.subject || '');
-    setComposeBody(_opts.mailSettings.compose.defaultMode === 'rich' ? (initial.body ? plainToHtml(initial.body) : '') : initial.body || '');
+    const mode = (initial.reply || initial.inReplyTo) ? (_opts.mailSettings.compose.replyMode || _opts.mailSettings.compose.defaultMode) : _opts.mailSettings.compose.defaultMode;
+    setComposeBody(mode !== 'plain' ? (initial.body ? plainToHtml(initial.body) : '') : initial.body || '');
     setComposeAttachments(initial.attachments || []);
     setComposeFrom(initial.from || '');
     setComposeSignature('none');
-    setComposeMode(_opts.mailSettings.compose.defaultMode);
+    setComposeMode(mode);
     setShowCc(Boolean(initial.cc));
     setShowBcc(Boolean(initial.bcc));
     setComposeDocked(false);
     setIsComposing(true);
     return true;
-  }, [claimComposeIntent, _opts.mailSettings.compose.defaultMode]);
+  }, [claimComposeIntent, _opts.mailSettings.compose.defaultMode, _opts.mailSettings.compose.replyMode]);
 
   // ---- Data fetching (must be before handleSend) ----
   const fetchFolders = useCallback(async () => {
@@ -1056,7 +1068,7 @@ export function useMail(_opts: UseMailOptions) {
         formData.append('to', composeTo);
         if (composeCc) formData.append('cc', composeCc);
         formData.append('subject', composeSubject || '(no subject)');
-        const composeBodyField = composeMode === 'rich' ? 'html' : 'text';
+        const composeBodyField = composeMode !== 'plain' ? 'html' : 'text';
         formData.append(composeBodyField, composeBody);
         if (composeInReplyTo) formData.append('inReplyTo', composeInReplyTo);
         if (composeReferences) formData.append('references', composeReferences);
@@ -1133,13 +1145,14 @@ export function useMail(_opts: UseMailOptions) {
     setComposeBody(state.body);
     setComposeAttachments(state.attachments);
     setComposeSignature('none');
-    setComposeMode(state.mode);
+    const preferredMode = state.inReplyTo ? _opts.mailSettings.compose.replyMode : _opts.mailSettings.compose.defaultMode;
+    setComposeMode(state.mode === 'rich' && preferredMode === 'html' ? 'html' : state.mode);
     setShowCc(Boolean(state.cc));
     setShowBcc(Boolean(state.bcc));
     setComposeDocked(false);
     setIsComposing(true);
     return { senderChanged, opened: true };
-  }, [claimComposeIntent, identities, _opts.mailSettings.identity.defaultFrom]);
+  }, [claimComposeIntent, identities, _opts.mailSettings.identity.defaultFrom, _opts.mailSettings.compose.defaultMode, _opts.mailSettings.compose.replyMode]);
 
   const cancelScheduledDelivery = useCallback(async (scheduledId: number) => {
     const undo = await api.undoAction({ scheduledId });
@@ -1285,7 +1298,7 @@ export function useMail(_opts: UseMailOptions) {
       formData.append('to', composeTo);
       if (composeCc) formData.append('cc', composeCc);
       formData.append('subject', composeSubject || '(no subject)');
-      const composeBodyField = composeMode === 'rich' ? 'html' : 'text';
+      const composeBodyField = composeMode !== 'plain' ? 'html' : 'text';
       formData.append(composeBodyField, composeBody);
       if (composeInReplyTo) formData.append('inReplyTo', composeInReplyTo);
       if (composeReferences) formData.append('references', composeReferences);
@@ -1680,7 +1693,7 @@ export function useMail(_opts: UseMailOptions) {
       loadForwardContent: (summaryMessage, sourceFolder) => (
         hydrateForwardContent(summaryMessage, sourceFolder, fetch, preparationSignal)
       ),
-      openCompose: initial => startCompose(initial, requestId),
+      openCompose: initial => startCompose({ ...initial, reply: action === 'reply' || action === 'reply-all' }, requestId),
     });
     return composePreparationErrorToast(
       status,
@@ -1776,9 +1789,25 @@ export function useMail(_opts: UseMailOptions) {
     const targetUids = uids || selectedMessages;
     if (!targetUids.length) return false;
     const folder = folderOverride || activeFolder;
+    const before = messagesRef.current;
+    let junkScope: 'sender' | 'domain' | undefined;
+    if (action === 'spam' || action === 'notspam') {
+      if (junkResolver.current) return false;
+      const choice = await new Promise<'sender' | 'domain' | 'remove' | null>(resolve => {
+        junkResolver.current = resolve;
+        const sender = before.find(item => item.uid === targetUids[0] && mailboxPathsEqual(item.folder || activeFolder, folder))?.from || 'the selected sender';
+        setJunkPrompt({ action, count: targetUids.length, sender });
+      });
+      if (!choice) return false;
+      if (choice !== 'remove') junkScope = choice;
+    }
     try {
-      const result = await api.messageAction(action, folder, targetUids, targetFolder);
-      if (result.undoUids && result.undoUids.length > 0) {
+      const result = await api.messageAction(action, folder, targetUids, targetFolder, junkScope);
+      if (['delete', 'hardDelete', 'archive', 'spam', 'notspam', 'move'].includes(action) && (action !== 'move' || result.targetFolder)) {
+        setMessageRemoval({ folder, uids: targetUids, before });
+      }
+      if (action === 'spam' || action === 'notspam') setMailUndo(null);
+      if (action !== 'spam' && action !== 'notspam' && result.undoUids && result.undoUids.length > 0) {
         setMailUndo({
           message: getUndoMessage(action),
           uids: result.undoUids,
@@ -1807,10 +1836,26 @@ export function useMail(_opts: UseMailOptions) {
       await fetchFolders();
       return true;
     } catch (e) {
+      setMailError(errorMessage(e, 'The message action failed.'));
       console.error('Action failed', e);
       return false;
     }
   }, [activeFolder, selectedMessages, fetchMessages, fetchFolders, isSearchActive, setMessages]);
+
+  const emptyFolder = useCallback(async (snapshot: api.EmptyFolderSnapshot) => {
+    try {
+      const result = await api.emptyFolder(snapshot.path, snapshot);
+      const before = messagesRef.current;
+      const uids = before.filter(item => mailboxPathsEqual(item.folder || activeFolder, snapshot.path) && item.uid <= snapshot.maxUid).map(item => item.uid);
+      setMessageRemoval({ folder: snapshot.path, uids, before });
+      setMessages(current => current.filter(item => !mailboxPathsEqual(item.folder || activeFolder, snapshot.path) || item.uid > snapshot.maxUid));
+      setSelectedMessages([]);
+      if (result.searchIndexReset === false) setMailError('Folder emptied, but search cleanup needs a refresh.');
+    } finally {
+      await fetchMessages();
+      await fetchFolders();
+    }
+  }, [activeFolder, fetchMessages, fetchFolders, setMessages]);
 
   const undoAction = useCallback(async () => {
     if (!mailUndo) return;
@@ -2019,7 +2064,7 @@ export function useMail(_opts: UseMailOptions) {
     removeUnavailableFavorite,
     dismissUnavailableFavorite,
     markingReadFolder,
-    messages, setMessages, selectedMessages, setSelectedMessages,
+    junkPrompt, resolveJunkPrompt, messages, setMessages, messageRemoval, selectedMessages, setSelectedMessages,
     viewingThread, setViewingThread,
     mailLowestUid, mailMoreAvailable,
     mailLoading, isRefreshing, loadingOlderMessages, mailPaginationError,
@@ -2062,7 +2107,7 @@ export function useMail(_opts: UseMailOptions) {
     fetchFolders, createFolder, moveFolder, renameFolder, deleteFolder, retryFolderSearchCleanup,
     toggleFavoriteFolder, markFolderRead,
     fetchMessages, fetchMessageBody, prefetchBodies, loadOlderMessages, refreshMessages,
-    messageAction, undoAction, doSearch, snoozeMessages, cancelScheduledSend, removeScheduledMessage,
+    messageAction, emptyFolder, undoAction, doSearch, snoozeMessages, cancelScheduledSend, removeScheduledMessage,
     mailSettings: _opts.mailSettings,
   };
 }

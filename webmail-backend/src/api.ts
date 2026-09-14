@@ -1,3 +1,5 @@
+import { USER_JUNK_RULE_ID, junkEntries, updateJunkRule, withUserRuleLock } from './junk-rules';
+import { senderAddress } from './rule-address';
 import { Router } from 'express';
 import crypto from 'crypto';
 import { exec } from 'child_process';
@@ -1548,16 +1550,13 @@ apiRouter.post('/rules', requireAuth, async (req: any, res) => {
                 error: 'The rule document is malformed.',
             });
         }
-        const scriptContent = compileSieve(normalizedDocument);
+        await withUserRuleLock(user, async () => {
+            const latest = await getActiveRulesDocument(user, pass);
+            const managed = (latest.rules || []).filter(rule => rule.id === USER_JUNK_RULE_ID);
+            await saveActiveRulesDocument(user, pass, { ...normalizedDocument,
+                rules: [...managed, ...(normalizedDocument.rules || []).filter(rule => rule.id !== USER_JUNK_RULE_ID)] });
+        });
 
-        const client = new ManageSieveClient(sieveConfig.host, sieveConfig.port, sieveConfig.masterUser, sieveConfig.masterPass);
-        await client.connect();
-        await client.login(user, pass);
-        
-        await client.putScript('webmail', scriptContent);
-        await client.setActive('webmail');
-        await client.logout();
-        
         res.json({ success: true, message: 'Rules updated and activated' });
     } catch (err: any) {
         console.error('Failed to save rules:', err);
@@ -1670,6 +1669,42 @@ async function getActiveRulesDocument(user: string, pass: string): Promise<Sieve
         try { await client.logout(); } catch {}
     }
 }
+
+async function saveActiveRulesDocument(user: string, pass: string, document: SieveRulesDocument) {
+    const script = compileSieve(validateSavedRuleDocument(document));
+    const client = new ManageSieveClient(sieveConfig.host, sieveConfig.port, sieveConfig.masterUser, sieveConfig.masterPass);
+    await client.connect();
+    try {
+        await client.login(user, pass);
+        await client.putScript('webmail', script);
+        await client.setActive('webmail');
+    } finally { try { await client.logout(); } catch {} }
+}
+
+apiRouter.get('/rules/junk-list', requireAuth, async (req: any, res) => {
+    try {
+        const document = await getActiveRulesDocument(req.user.username, req.user.password);
+        res.json({ success: true, entries: junkEntries(document) });
+    } catch { res.status(503).json({ success: false, error: 'The Junk list could not be loaded.' }); }
+});
+
+apiRouter.delete('/rules/junk-list', requireAuth, async (req: any, res) => {
+    try {
+        if (!['sender', 'domain'].includes(req.body?.kind) || typeof req.body?.value !== 'string') {
+            return res.status(400).json({ success: false, error: 'Choose a Junk list entry.' });
+        }
+        await withUserRuleLock(req.user.username, async () => {
+            const document = await getActiveRulesDocument(req.user.username, req.user.password);
+            const rule = document.rules?.find(rule => rule.id === USER_JUNK_RULE_ID);
+            if (rule) {
+                const field = req.body.kind === 'sender' ? 'from_address' : 'from_domain';
+                rule.criteria = (rule.criteria || []).filter(item => item.field !== field || item.value !== req.body.value);
+                await saveActiveRulesDocument(req.user.username, req.user.password, document);
+            }
+        });
+        res.json({ success: true });
+    } catch { res.status(503).json({ success: false, error: 'The Junk list could not be updated. Retry.' }); }
+});
 
 apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {
     const user = req.user.username;
@@ -2517,7 +2552,7 @@ apiRouter.get('/quota', requireAuth, async (req: any, res) => {
     }
 });
 
-function respondToFolderMutationFailure(res: any, err: unknown, action: 'created' | 'moved' | 'renamed' | 'deleted') {
+function respondToFolderMutationFailure(res: any, err: unknown, action: 'created' | 'moved' | 'renamed' | 'deleted' | 'emptied' | 'prepared for cleanup') {
     if (err instanceof MailboxMutationError) {
         return res.status(err.statusCode).json({
             success: false,
@@ -2692,6 +2727,32 @@ apiRouter.delete('/folders', requireAuth, async (req: any, res) => {
         res.json({ success: true, ...folderMutationResponse(result, searchIndexReset) });
     } catch (err: unknown) {
         return respondToFolderMutationFailure(res, err, 'deleted');
+    }
+});
+
+apiRouter.post('/folders/empty-preview', requireAuth, async (req: any, res) => {
+    try {
+        const snapshot = await withDedicatedImap<{ path: string; uidValidity: string; maxUid: number; count: number; permanent: boolean }>(req.user.username, req.user.password, imap => imap.emptySpecialFolder(req.body?.path));
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ success: true, ...snapshot });
+    } catch (err) {
+        return respondToFolderMutationFailure(res, err, 'prepared for cleanup');
+    }
+});
+
+apiRouter.post('/folders/empty', requireAuth, async (req: any, res) => {
+    try {
+        if (!req.body?.snapshot || req.body.confirm !== true || req.body.snapshot.path !== req.body.path) {
+            throw new MailboxMutationError('CONFIRMATION_REQUIRED', 400, 'Confirm this folder cleanup first.');
+        }
+        const result = await withDedicatedImap<{ path: string; uidValidity: string; maxUid: number; count: number; permanent: boolean }>(req.user.username, req.user.password, imap => imap.emptySpecialFolder(req.body.path, req.body.snapshot));
+        const searchIndexReset = await resetSearchIndexAfterFolderMutation(req.user.username);
+        res.json({ success: true, ...result, searchIndexReset });
+    } catch (err) {
+        // An interrupted batch can have changed some messages; never report it as all-or-nothing.
+        await resetSearchIndexAfterFolderMutation(req.user.username);
+        if (err instanceof MailboxMutationError) return respondToFolderMutationFailure(res, err, 'emptied');
+        res.status(500).json({ success: false, error: 'Folder cleanup was interrupted. Some messages may already have been processed. Retry to finish the same confirmed selection.' });
     }
 });
 
@@ -3943,7 +4004,7 @@ apiRouter.post('/messages/action', requireAuth, async (req: any, res) => {
     const user = req.user.username;
     const pass = req.user.password;
     const { folder, uids, action, targetFolder } = req.body;
-    const allowedActions = ['delete', 'archive', 'spam', 'move', 'read', 'unread', 'star', 'unstar'];
+    const allowedActions = ['delete', 'archive', 'spam', 'notspam', 'move', 'read', 'unread', 'star', 'unstar'];
     const sourceFolder = typeof folder === 'string' ? folder.trim() : '';
     const destinationFolder = typeof targetFolder === 'string' ? targetFolder.trim() : '';
 
@@ -3953,7 +4014,9 @@ apiRouter.post('/messages/action', requireAuth, async (req: any, res) => {
         || !Array.isArray(uids)
         || uids.length === 0
         || !uids.every(uid => Number.isInteger(uid) && uid > 0 && uid <= MAX_IMAP_UID)
+        || (['spam', 'notspam'].includes(action) && uids.length > 1000)
         || !allowedActions.includes(action)
+        || (action === 'spam' && !['sender', 'domain'].includes(req.body.junkScope))
         || (action === 'move' && (
             !destinationFolder
             || /[\u0000-\u001f\u007f]/u.test(destinationFolder)
@@ -3962,14 +4025,42 @@ apiRouter.post('/messages/action', requireAuth, async (req: any, res) => {
         return res.status(400).json({ success: false, error: 'Missing required parameters' });
     }
 
+    let junkRuleUpdated = false;
     try {
-        const imap = await getPooledImap(user, pass);
-        const actionResult = await imap.messageAction(
-            sourceFolder,
-            uids,
-            action,
-            action === 'move' ? destinationFolder : undefined,
-        );
+        let actionResult: any;
+        if (action === 'spam' || action === 'notspam') {
+            actionResult = await withDedicatedImap(user, pass, async imap => {
+                const folders = await imap.client.list();
+                const junk = folders.find((item: any) => item.specialUse?.toLowerCase() === '\\junk' || item.flags?.has('\\Junk'));
+                if (!junk) throw new Error('Junk is unavailable.');
+                if (action === 'notspam' && sourceFolder !== junk.path) throw new Error('Not junk is available only in Junk.');
+                const lock = await imap.client.getMailboxLock(sourceFolder);
+                const addresses: string[] = [];
+                try {
+                    for await (const item of imap.client.fetch([...new Set(uids)].join(','), { envelope: true, uid: true }, { uid: true })) {
+                        const from = item.envelope?.from;
+                        const address = Array.isArray(from) && from.length === 1 ? senderAddress(from[0].address || '') : null;
+                        if (!address) throw new Error('A valid single sender is required.');
+                        addresses.push(address);
+                    }
+                    if (addresses.length !== new Set(uids).size) throw new Error('A selected message no longer exists.');
+                    await withUserRuleLock(user, async () => {
+                        const document = await getActiveRulesDocument(user, pass);
+                        const updated = updateJunkRule(document, addresses, action === 'notspam' ? 'remove' : req.body.junkScope, junk.path);
+                        await saveActiveRulesDocument(user, pass, updated);
+                        junkRuleUpdated = true;
+                    });
+                    const targetFolder = action === 'notspam' ? 'INBOX' : junk.path;
+                    if (targetFolder === sourceFolder) return { targetFolder };
+                    const moved = await imap.client.messageMove([...new Set(uids)].join(','), targetFolder, { uid: true });
+                    if (!moved) throw new Error('The move was not acknowledged.');
+                    return { targetFolder, uidMap: moved.uidMap ? Object.fromEntries(moved.uidMap) : null };
+                } finally { lock.release(); }
+            });
+        } else {
+            const imap = await getPooledImap(user, pass);
+            actionResult = await imap.messageAction(sourceFolder, uids, action, action === 'move' ? destinationFolder : undefined);
+        }
 
         try {
             if (action === 'read') {
@@ -4002,7 +4093,7 @@ apiRouter.post('/messages/action', requireAuth, async (req: any, res) => {
         console.error('Failed to perform action:', err);
         res.status(500).json({
             success: false,
-            error: 'The message action could not be completed. Please try again.',
+            error: junkRuleUpdated ? 'The Junk list was updated, but moving the message could not be confirmed. Refresh the folder before retrying.' : 'The message action could not be completed. Please try again.',
         });
     }
 });

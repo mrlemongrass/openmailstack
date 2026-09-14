@@ -38,7 +38,7 @@ export function applyLoadedMessageAction(
   targetUids: number[],
 ): Message[] {
   const targets = new Set(targetUids);
-  if (['archive', 'delete', 'move', 'snooze', 'spam'].includes(action)) {
+  if (['archive', 'delete', 'move', 'snooze', 'spam', 'notspam'].includes(action)) {
     return current.filter((message) => !targets.has(message.uid));
   }
 

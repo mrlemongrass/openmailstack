@@ -81,6 +81,8 @@ function compileCriterion(criterion: SieveCriterion): string | null {
     if (criterion.field === 'subject' || criterion.field === 'from' || criterion.field === 'to') {
         const headerName = criterion.field === 'subject' ? 'Subject' : criterion.field === 'from' ? 'From' : 'To';
         test = `header ${matchType} ${quoteSieveString(headerName)} ${quoteSieveString(criterion.value)}`;
+    } else if (criterion.field === 'from_address' || criterion.field === 'from_domain') {
+        test = `address ${criterion.field === 'from_domain' ? ':domain' : ':all'} ${matchType} \"From\" ${quoteSieveString(criterion.value)}`;
     } else if (criterion.field === 'body') {
         test = `body :text ${matchType} ${quoteSieveString(criterion.value)}`;
     }

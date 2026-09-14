@@ -100,6 +100,10 @@ require.cache[imapPoolPath] = {
     async withDedicatedImapConnection(user, pass, operation) {
       dedicatedImapCalls.push({ user, pass });
       return operation({
+        async emptySpecialFolder(path, snapshot) {
+          folderCalls.push({ action: 'empty', path, snapshot });
+          return { path, uidValidity: '9', maxUid: 1201, count: 1201, permanent: path === 'Trash' };
+        },
         async markFolderRead(path) {
           markFolderReadCalls.push(path);
           return runMarkFolderRead(path);
@@ -634,7 +638,7 @@ test('message action failures do not expose upstream IMAP details', async t => {
   const response = await postJson(port, '/api/messages/action', {
     folder: 'INBOX',
     uids: [41],
-    action: 'spam',
+    action: 'archive',
   });
 
   assert.equal(response.status, 500);
@@ -1448,4 +1452,19 @@ test('IMAP permanent folder deletion fails closed without server acknowledgement
     () => service.deleteFolder('Trash/Old', true),
     error => error instanceof MailboxMutationError && error.code === 'FOLDER_DELETE_NOT_CONFIRMED',
   );
+});
+
+test('empty-folder routes require confirmation, preserve the snapshot, and use a dedicated connection', async t => {
+  const port = await withServer(t);
+  folderCalls.length = 0;
+  const preview = await postJson(port, '/api/folders/empty-preview', { path: 'Junk' });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.json.count, 1201);
+  const rejected = await postJson(port, '/api/folders/empty', { path: 'Junk', snapshot: preview.json });
+  assert.equal(rejected.status, 400);
+  assert.equal(folderCalls.length, 1);
+  const result = await postJson(port, '/api/folders/empty', { path: 'Junk', snapshot: preview.json, confirm: true });
+  assert.equal(result.status, 200);
+  assert.deepEqual(folderCalls[1].snapshot, preview.json);
+  assert.equal(dedicatedImapCalls.at(-1).user, username);
 });

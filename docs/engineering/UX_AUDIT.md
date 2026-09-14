@@ -1,5 +1,9 @@
 # OpenMailStack UX Audit
 
+## 2026-09-14 — Power-user workflows and Junk policy
+
+See [the current power-user review](WEBAPP_POWER_USER_REVIEW_2026-09-14.md) for the implemented Junk/Trash cleanup, format defaults, after-action navigation and sender/domain Junk policy, plus a prioritized cross-suite backlog. Highest remaining issues: Reading settings wiring, unsaved logout, active sender-policy consolidation, and independent Settings loading.
+
 ## 2026-09-14 — Editor and suite interaction review
 
 See [the current editor review](WEBAPP_EDITOR_UX_REVIEW_2026-09-14.md) for

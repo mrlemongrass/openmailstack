@@ -321,14 +321,14 @@ test('Drafts viewer opens the real composer without reply controls and sends sta
   assert.match(hook, /formData\.append\('draftUid',\s*currentDraft\.draftUid\)/);
   assert.match(hook, /formData\.append\('inReplyTo',\s*composeInReplyTo\)/);
   assert.match(hook, /formData\.append\('references',\s*composeReferences\)/);
-  assert.match(hook, /const composeBodyField = composeMode === 'rich' \? 'html' : 'text'/);
+  assert.match(hook, /const composeBodyField = composeMode !== 'plain' \? 'html' : 'text'/);
   assert.match(hook, /formData\.append\(composeBodyField,\s*composeBody\)/);
-  assert.match(hook, /setComposeMode\(state\.mode\)/);
+  assert.match(hook, /setComposeMode\(state\.mode === 'rich' && preferredMode === 'html' \? 'html' : state\.mode\)/);
   assert.match(hook, /composePreparationCoordinatorRef/);
   assert.match(hook, /const requestId = composePreparationCoordinatorRef\.current\.begin\(\)[\s\S]*loadDraftForEditing[\s\S]*claimComposeIntent\(requestId\)/);
   assert.match(hook, /formData\.append\('subject',\s*subject\)/);
   assert.match(viewer, /Edit draft/);
-  assert.match(viewer, /!isScheduled && !isDraft && <InlineReply/);
+  assert.match(viewer, /!isScheduled && !isDraft && [^\n]+<InlineReply/);
   assert.match(viewer, /const sendInlineReply = async \(\) => \{[\s\S]*buildMessageComposeDraft\([\s\S]*'reply',[\s\S]*mail\.sendReply\(/);
   assert.match(viewer, /onOpenFullCompose=\{async \(\) => \{[\s\S]*startMessageCompose\('reply', mail\.replyText \|\| ''\)/);
   assert.doesNotMatch(viewer, /onOpenFullCompose=\{async \(\) => \{[\s\S]{0,250}mail\.startCompose/);

@@ -17,12 +17,14 @@ export interface MailSettings {
         alwaysBccSelf: boolean;
     };
     compose: {
-        defaultMode: 'rich' | 'plain';
+        defaultMode: 'rich' | 'plain' | 'html';
+        replyMode: 'rich' | 'plain' | 'html';
         defaultFont: 'system' | 'serif' | 'mono';
         attachmentReminder: boolean;
         undoSendSeconds: 0 | 5 | 10 | 20 | 30;
     };
     reading: {
+        afterAction: 'list' | 'previous' | 'next';
         threaded: boolean;
         density: 'comfortable' | 'cozy' | 'compact';
         previewPane: 'right' | 'bottom' | 'off';
@@ -91,11 +93,13 @@ export const settingsDefaults = {
         },
         compose: {
             defaultMode: 'plain',
+            replyMode: 'plain',
             defaultFont: 'system',
             attachmentReminder: true,
             undoSendSeconds: 10,
         },
         reading: {
+            afterAction: 'list',
             threaded: false,
             density: 'cozy',
             previewPane: 'right',
@@ -321,12 +325,14 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
                 alwaysBccSelf: booleanValue(identity.alwaysBccSelf, settingsDefaults.mail.identity.alwaysBccSelf),
             },
             compose: {
-                defaultMode: 'plain',
+                defaultMode: stringOption(compose.defaultMode, ['plain', 'rich', 'html'], settingsDefaults.mail.compose.defaultMode),
+                replyMode: stringOption(compose.replyMode, ['plain', 'rich', 'html'], stringOption(compose.defaultMode, ['plain', 'rich', 'html'], 'plain')),
                 defaultFont: stringOption(compose.defaultFont, ['system', 'serif', 'mono'], settingsDefaults.mail.compose.defaultFont),
                 attachmentReminder: booleanValue(compose.attachmentReminder, settingsDefaults.mail.compose.attachmentReminder),
                 undoSendSeconds: numberOption(compose.undoSendSeconds, [0, 5, 10, 20, 30], settingsDefaults.mail.compose.undoSendSeconds),
             },
             reading: {
+                afterAction: stringOption(reading.afterAction, ['list', 'previous', 'next'], 'list'),
                 threaded: booleanValue(reading.threaded, settingsDefaults.mail.reading.threaded),
                 density: stringOption(reading.density, ['comfortable', 'cozy', 'compact'], settingsDefaults.mail.reading.density),
                 previewPane: stringOption(reading.previewPane, ['right', 'bottom', 'off'], settingsDefaults.mail.reading.previewPane),

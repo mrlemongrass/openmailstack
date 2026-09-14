@@ -210,18 +210,14 @@ export function MessageList({ mail, density }: MessageListProps) {
   };
   const runMessageAction = (action: string, message: Message) => {
     const folderPath = messageFolder(message, decodedFolder);
+    if (action === 'notspam') { void mail.messageAction(action, [message.uid], folderPath); return; }
     void mail.messageAction(action, [message.uid], folderPath).then(success => {
       if (!success) showToast({ type: 'error', message: `The message could not be ${action === 'delete' ? 'deleted' : 'updated'}.` });
     });
   };
   const markMessageAsSpam = (message: Message) => {
     const folderPath = messageFolder(message, decodedFolder);
-    void mail.messageAction('spam', [message.uid], folderPath).then(success => {
-      showToast({
-        type: success ? 'success' : 'error',
-        message: success ? 'Message marked as spam' : 'The message could not be marked as spam.',
-      });
-    });
+    void mail.messageAction('spam', [message.uid], folderPath);
   };
   const moveSelectedMessage = async (targetFolder: string | null) => {
     if (!movingMessage || !targetFolder) return;
@@ -313,7 +309,7 @@ export function MessageList({ mail, density }: MessageListProps) {
           label: 'Mark as spam',
           icon: ShieldAlert,
           onSelect: () => markMessageAsSpam(message),
-        }] : []),
+        }] : [{ id: 'notspam', label: 'Not junk…', icon: ShieldAlert, onSelect: () => runMessageAction('notspam', message) }]),
         {
           id: 'snooze',
           label: 'Snooze until tomorrow',

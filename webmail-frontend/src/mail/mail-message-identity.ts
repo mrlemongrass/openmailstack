@@ -43,3 +43,32 @@ export function groupMessagesByFolder(
   }
   return grouped;
 }
+
+export interface MessageRemoval {
+  folder: string;
+  uids: number[];
+  before: Message[];
+}
+
+// Work from the list before mutation, preserving its visible order and folder identity.
+export function routeAfterMessageRemoval(
+  removal: MessageRemoval,
+  routeFolder: string,
+  uid: number,
+  preference: 'list' | 'previous' | 'next' = 'list',
+  listFolder = routeFolder,
+): string | null {
+  if (!mailboxPathsMatch(removal.folder, routeFolder) || !removal.uids.includes(uid)) return null;
+  const listRoute = `/mail/${encodeURIComponent(listFolder)}`;
+  if (preference === 'list') return listRoute;
+  const index = removal.before.findIndex(item => item.uid === uid && mailboxPathsMatch(messageFolder(item, routeFolder), routeFolder));
+  if (index < 0) return listRoute;
+  const step = preference === 'previous' ? -1 : 1;
+  for (let i = index + step; i >= 0 && i < removal.before.length; i += step) {
+    const item = removal.before[i];
+    const folder = messageFolder(item, listFolder);
+    if (mailboxPathsMatch(folder, removal.folder) && removal.uids.includes(item.uid)) continue;
+    return `/mail/${encodeURIComponent(folder)}/${item.uid}`;
+  }
+  return listRoute;
+}

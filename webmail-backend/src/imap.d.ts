@@ -100,6 +100,16 @@ export declare class ImapService {
             unseen: number;
         };
     }>;
+    emptySpecialFolder(requestedPath: unknown, snapshot?: {
+        uidValidity: unknown;
+        maxUid: unknown;
+    }): Promise<{
+        path: string;
+        uidValidity: string;
+        maxUid: number;
+        count: number;
+        permanent: boolean;
+    }>;
     markFolderRead(requestedPath: string): Promise<{
         path: string;
         marked: number;

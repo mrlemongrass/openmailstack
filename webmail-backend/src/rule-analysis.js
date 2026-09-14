@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.exceedsRuleAnalysisLimits = exports.normalizeRuleDocument = exports.RULE_ANALYSIS_LIMITS = void 0;
 exports.analyzeRuleDocument = analyzeRuleDocument;
-const supportedFields = new Set(['subject', 'from', 'to', 'body']);
+const supportedFields = new Set(['subject', 'from', 'to', 'body', 'from_address', 'from_domain']);
 const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches']);
 const MAX_FINDINGS = 500;
 const MAX_FINDING_OCCURRENCES = 12;

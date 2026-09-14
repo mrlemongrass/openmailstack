@@ -11365,3 +11365,53 @@ is deployed and pushed to `origin/main`.
 
 Release logs: `/tmp/oms-editor-live-bridge.log`,
 `/tmp/oms-editor-live-active.log`, `/tmp/oms-editor-live-health.log`.
+
+
+## 2026-09-14 — Mail cleanup, formats, reading flow and user-marked Junk
+
+### Request and acceptance
+
+Implement whole-folder Junk/Trash cleanup, persist new/reply format preferences
+including HTML source, recover the reading view after delete/spam, and review
+the suite's power-user gaps. The user refined spam handling to an explicit
+sender-versus-domain choice; Not junk removes relevant blocks and moves to Inbox.
+Acceptance: no mutation on cancellation; owner-scoped delivery rule; preserved
+existing filters; count all folder pages while retaining later arrivals and
+subfolders; never leave a removed message loading indefinitely; formats survive
+save/reload and produce the correct MIME body.
+
+### Changes
+
+- Frontend Mail/Settings/API: empty-folder confirmation with server snapshot,
+  after-action route selection, missing/failed-message recovery, plain/rich/HTML
+  source and independent reply default, explicit spam scope and Not junk.
+- Backend API/IMAP: dedicated bounded folder cleanup; managed User-marked Junk
+  rule, sender values read from IMAP, owner-specific database rule-write lock,
+  exact address/domain Sieve predicates and matching rule evaluation; format
+  normalization now retains supported values. Generated runtime artifacts built.
+- Tests cover cleanup/identity/concurrency/failures, format round trips and route
+  identity. New comprehensive review and UX audit link record evidence and backlog.
+
+### Proof
+
+Full frontend 276/276; backend 1,013 passed, seven skipped, zero failed. Browser
+checks used synthetic APIs only: 1,201-message confirmation, sender cancellation
+and scope, previous/list navigation, HTML outgoing body after saved preference,
+retained content after send rejection, rich reply and 390px Trash dialog.
+Dovecot Sieve evaluator with synthetic messages routed the exact blocked domain
+to Junk and kept an unrelated sender whose display name resembled it. Full
+integration and guarded live release results follow when complete.
+
+### Risks and recommended next task
+
+User-marked Junk is an active list separate from legacy unenforced sender
+preferences. Not junk removes blocks, not a security-filter bypass; no global
+ban or automatic retention is added. Interrupted folder batches can partially
+complete and retry the same cutoff. Physical clients are not verified by these
+UI fixtures. Next: wire every offered Reading preference and guard logout before
+invalidating the session; see WEBAPP_POWER_USER_REVIEW_2026-09-14.md.
+
+Release preparation: full integration runner exited 0; final affected backend
+checks 59/59 passed after folder-confirmation identity tightening; final frontend
+lint and production build pass without warnings. Code self-review completed;
+remaining product gaps are recorded rather than claimed complete.

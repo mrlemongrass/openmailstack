@@ -19,12 +19,14 @@ export interface MailUserSettings {
     alwaysBccSelf: boolean;
   };
   compose: {
-    defaultMode: 'rich' | 'plain';
+    defaultMode: 'rich' | 'plain' | 'html';
+    replyMode: 'rich' | 'plain' | 'html';
     defaultFont: 'system' | 'serif' | 'mono';
     attachmentReminder: boolean;
     undoSendSeconds: 0 | 5 | 10 | 20 | 30;
   };
   reading: {
+    afterAction: 'list' | 'previous' | 'next';
     threaded: boolean;
     density: 'comfortable' | 'cozy' | 'compact';
     previewPane: 'right' | 'bottom' | 'off';
@@ -83,11 +85,13 @@ export const defaultMailSettings: MailUserSettings = {
   },
   compose: {
     defaultMode: 'plain',
+    replyMode: 'plain',
     defaultFont: 'system',
     attachmentReminder: true,
     undoSendSeconds: 10,
   },
   reading: {
+    afterAction: 'list',
     threaded: false,
     density: 'cozy',
     previewPane: 'right',

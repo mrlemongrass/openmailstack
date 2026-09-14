@@ -309,7 +309,7 @@ test('scheduled delivery states are discoverable, honest, and not wired to IMAP 
   assert.match(viewer, /Do not resend until you verify whether the recipient received it/);
   assert.match(viewer, /partial_delivery:\s*\{ label: 'Partially delivered',[\s\S]*Some recipients accepted this message, but others rejected it/);
   assert.match(viewer, /mail\.cancelScheduledSend\(scheduledId\)/);
-  assert.match(viewer, /!isScheduled && !isDraft && <InlineReply/);
+  assert.match(viewer, /!isScheduled && !isDraft && [^\n]+<InlineReply/);
   assert.match(list, /if \(!scheduledFolder \|\| isSearchActive\) return/);
   assert.match(list, /window\.setInterval\([\s\S]*fetchMessages\(\)[\s\S]*fetchFolders\(\)/);
   assert.match(viewer, /scheduledMessageWasVisibleRef[\s\S]*has left Scheduled/);

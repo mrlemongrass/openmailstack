@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from 'react';
+import { emptyFolder, type EmptyFolderSnapshot } from '../../shared/api';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FolderInput, FolderPlus, Pencil, Search } from 'lucide-react';
 import type { MailFolder } from '../../shared/types';
@@ -313,4 +314,56 @@ export function FolderDestinationDialog({
     </div>,
     document.body,
   );
+}
+
+export function EmptyFolderDialog({ path, onEmptied, onClose }: {
+  path: string;
+  onEmptied: (snapshot: EmptyFolderSnapshot) => Promise<void>;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [snapshot, setSnapshot] = useState<EmptyFolderSnapshot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const close = useCallback(() => { if (!pending.current) onClose(); }, [onClose]);
+  useModalFocus({ dialogRef, open: true, onClose: close });
+  useEffect(() => {
+    let cancelled = false;
+    void emptyFolder(path).then(value => { if (!cancelled) setSnapshot(value); }).catch(error => {
+      if (!cancelled) setError(error instanceof Error ? error.message : 'Could not count messages.');
+    });
+    return () => { cancelled = true; };
+  }, [path, attempt]);
+  const submit = async () => {
+    if (!snapshot || pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await onEmptied(snapshot);
+      onClose();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Cleanup failed. Retry to finish.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  };
+  return createPortal(<div className="mail-dialog-overlay" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
+    <div ref={dialogRef} className="glass-panel mail-folder-dialog" role="dialog" aria-modal="true" aria-labelledby="empty-folder-title" aria-busy={busy} tabIndex={-1}>
+      <h2 id="empty-folder-title">Empty {path}?</h2>
+      {snapshot ? <p>{snapshot.permanent
+        ? `Permanently delete ${snapshot.count.toLocaleString()} messages? This cannot be undone.`
+        : `Move ${snapshot.count.toLocaleString()} messages to Trash? You can recover them from Trash.`}</p> : !error && <p role="status">Counting messages…</p>}
+      <p>Subfolders and messages arriving after this confirmation are kept.</p>
+      {error && <p role="alert" className="mail-folder-dialog-error">{error}</p>}
+      <div className="mail-folder-dialog-actions">
+        <button className="btn btn-ghost" disabled={busy} onClick={close}>Cancel</button>
+        {!snapshot && error ? <button className="btn btn-primary" onClick={() => { setError(''); setAttempt(value => value + 1); }}>Retry</button>
+          : <button className={snapshot?.permanent ? 'btn btn-danger' : 'btn btn-primary'} disabled={busy || !snapshot || snapshot.count === 0} onClick={() => void submit()}>{busy ? 'Emptying…' : snapshot?.permanent ? 'Delete permanently' : 'Move all to Trash'}</button>}
+      </div>
+    </div>
+  </div>, document.body);
 }

@@ -112,6 +112,7 @@ test('mobile folder drawer yields to Compose and nested folder dialogs without c
 
   let composeCalls = 0;
   const mail = {
+    mailSettings: { reading: { afterAction: 'list' } },
     outboundRecoveryNotice: null,
     setOutboundRecoveryNotice: () => undefined,
     folders: [

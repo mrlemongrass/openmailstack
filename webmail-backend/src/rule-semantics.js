@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.executableRuleActions = exports.executableRuleCriteria = exports.isExecutableRuleCriterion = void 0;
-const supportedFields = new Set(['subject', 'from', 'to', 'body']);
+const supportedFields = new Set(['subject', 'from', 'to', 'body', 'from_address', 'from_domain']);
 const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches']);
 const isExecutableRuleCriterion = (criterion) => (Boolean(criterion.value)
     && supportedFields.has(criterion.field)

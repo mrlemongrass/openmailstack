@@ -1,3 +1,4 @@
+import { JunkList } from './JunkList';
 import React, { useState, lazy, Suspense, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Check, Copy, Filter, ListChecks, PenTool, Play, Plus, Trash2 } from 'lucide-react';
 
@@ -390,11 +391,21 @@ function MailIdentityPane({ mailSettings, availableSenders, setupMailboxAddress,
           <h3>Compose</h3>
           <label className="settings-field">
             <span>Default message format</span>
-            <select className="glass-input glass-select" value={mailSettings.compose.defaultMode} onChange={event => updateCompose({ defaultMode: event.target.value as 'rich' | 'plain' })}>
+            <select className="glass-input glass-select" value={mailSettings.compose.defaultMode} onChange={event => updateCompose({ defaultMode: event.target.value as MailUserSettings['compose']['defaultMode'] })}>
               <option value="plain">Plain text</option>
               <option value="rich">Rich text</option>
+              <option value="html">HTML source</option>
             </select>
           </label>
+          <label className="settings-field">
+            <span>Default reply format</span>
+            <select className="glass-input glass-select" value={mailSettings.compose.replyMode || mailSettings.compose.defaultMode} onChange={event => updateCompose({ replyMode: event.target.value as MailUserSettings['compose']['replyMode'] })}>
+              <option value="plain">Plain text</option>
+              <option value="rich">Rich text</option>
+              <option value="html">HTML source</option>
+            </select>
+          </label>
+          <p className="settings-description">Rich text provides formatting tools. HTML source lets you edit the markup directly. Replies use this choice in the full editor.</p>
           <label className="settings-field">
             <span>Undo Send</span>
             <select className="glass-input glass-select" value={mailSettings.compose.undoSendSeconds} onChange={event => updateCompose({ undoSendSeconds: Number(event.target.value) as MailUserSettings['compose']['undoSendSeconds'] })}>
@@ -573,6 +584,16 @@ function MailReadingPane({ mailSettings, onMailSettingsChange }: SettingsContent
 
         <section className="settings-section">
           <h3>Layout</h3>
+          <label className="settings-field">
+            <span>After deleting, moving or marking a message as spam</span>
+            <select className="glass-input glass-select" value={mailSettings.reading.afterAction || 'list'} onChange={event => updateReading({ afterAction: event.target.value as MailUserSettings['reading']['afterAction'] })}>
+              <option value="list">Return to message list</option>
+              <option value="previous">Open previous message</option>
+              <option value="next">Open next message</option>
+            </select>
+          </label>
+          <p className="settings-description">Previous and next follow the visible list order. If there is no message in that direction, return to the list.</p>
+
           <SegmentedControl
             options={densityOptions}
             value={mailSettings.reading.density}
@@ -738,7 +759,7 @@ function FiltersPane({
                   <button
                     type="button"
                     aria-label={`Move ${rule.name || 'Untitled Rule'} up`}
-                    disabled={index === 0}
+                    disabled={index === 0 || rule.id === 'oms-user-marked-junk' || rules[index - 1]?.id === 'oms-user-marked-junk'}
                     onClick={() => handleMoveRule(rule.id, 'up')}
                   >
                     <ArrowUp size={13} />
@@ -747,7 +768,7 @@ function FiltersPane({
                   <button
                     type="button"
                     aria-label={`Move ${rule.name || 'Untitled Rule'} down`}
-                    disabled={index === rules.length - 1}
+                    disabled={index === rules.length - 1 || rule.id === 'oms-user-marked-junk'}
                     onClick={() => handleMoveRule(rule.id, 'down')}
                   >
                     <ArrowDown size={13} />
@@ -783,7 +804,7 @@ function FiltersPane({
             })}
           </div>
           <div className="settings-detail-pane" style={{ paddingBottom: 0 }}>
-            {activeRule && (
+            {activeRule?.id === 'oms-user-marked-junk' ? <JunkList /> : activeRule && (
               <>
               <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
                 <RuleEditor
@@ -888,6 +909,7 @@ function MailSpamPane({ mailSettings, onMailSettingsChange }: SettingsContentPro
   return (
     <div className="settings-page">
       <SettingsHeader title="Spam & Senders" eyebrow="Mail" />
+      <JunkList />
       
       <div className="settings-grid">
         <section className="settings-section">

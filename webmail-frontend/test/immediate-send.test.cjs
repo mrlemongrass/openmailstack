@@ -39,7 +39,7 @@ function loadMailLayoutModule() {
   const container = ({ children }) => React.createElement('div', null, children);
   loaded.require = id => {
     if (id === 'react-router') {
-      return { Outlet: () => React.createElement('main'), useParams: () => ({}) };
+      return { Outlet: () => React.createElement('main'), useParams: () => ({}), useNavigate: () => () => {} };
     }
     if (id === 'react-resizable-panels') {
       return {
@@ -51,6 +51,8 @@ function loadMailLayoutModule() {
     }
     if (id === '../shared/hooks/useMediaQuery') return { useMediaQuery: () => false };
     if (id === '../shared/hooks/useModalFocus') return { useModalFocus: () => undefined };
+    if (id === '../shared/components/ConfirmDialog') return { ConfirmDialog: () => null };
+    if (id === './mail-message-identity') return { routeAfterMessageRemoval: () => null };
     if (id === './FolderSidebar') return { FolderSidebar: () => React.createElement('nav') };
     if (id === './MessageViewer') return { MessageViewer: () => React.createElement('article') };
     if (id === './components/UndoBar') return { UndoBar: () => null };
@@ -1367,6 +1369,7 @@ test('mail layout renders the recovered-send notice as a calm dismissible status
   const { MailLayout } = loadMailLayoutModule();
   const markup = renderToStaticMarkup(React.createElement(MailLayout, {
     mail: {
+      mailSettings: { reading: { afterAction: 'list' } },
       outboundRecoveryNotice: {
         tone: 'info',
         message: 'OpenMailStack is still confirming one earlier send.',

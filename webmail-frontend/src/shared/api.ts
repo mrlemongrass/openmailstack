@@ -255,14 +255,15 @@ export async function saveDraft(formData: FormData): Promise<SaveDraftResponse> 
   return data;
 }
 
-export async function messageAction(action: string, folder: string, uids: number[], targetFolder?: string): Promise<MessageActionResponse> {
+export async function messageAction(action: string, folder: string, uids: number[], targetFolder?: string, junkScope?: 'sender' | 'domain'): Promise<MessageActionResponse> {
   const res = await fetch('/api/messages/action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, folder, uids, ...(targetFolder ? { targetFolder } : {}) }),
+    body: JSON.stringify({ action, folder, uids, ...(targetFolder ? { targetFolder } : {}), ...(junkScope ? { junkScope } : {}) }),
   });
-  if (!res.ok) throw new Error('Action failed');
-  return res.json();
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Action failed');
+  return data;
 }
 
 export async function undoAction(undo: {
@@ -861,4 +862,23 @@ export async function saveUserSettings<T extends SettingsNamespace>(namespace: T
     body: JSON.stringify({ settings }),
   });
   if (!res.ok) throw new Error(`Failed to save settings for ${namespace}`);
+}
+
+export interface EmptyFolderSnapshot {
+  path: string;
+  uidValidity: string;
+  maxUid: number;
+  count: number;
+  permanent: boolean;
+}
+
+export async function emptyFolder(path: string, snapshot?: EmptyFolderSnapshot): Promise<EmptyFolderSnapshot & { searchIndexReset?: boolean }> {
+  const res = await fetch(`/api/folders/${snapshot ? 'empty' : 'empty-preview'}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, ...(snapshot ? { snapshot, confirm: true } : {}) }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Folder cleanup could not be completed.');
+  return data;
 }

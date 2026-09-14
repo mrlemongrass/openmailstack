@@ -48,8 +48,8 @@ test('normalizeSettings returns safe mail settings', () => {
       { id: 'personal', name: '', content: 123, isDefault: true }
     ],
     identity: { defaultFrom: ' sender@example.com ', replyTo: ' reply@example.com ', alwaysBccSelf: true },
-    compose: { defaultMode: 'plain', defaultFont: 'mono', attachmentReminder: false, undoSendSeconds: 30 },
-    reading: { threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 },
+    compose: { defaultMode: 'plain', replyMode: 'plain', defaultFont: 'mono', attachmentReminder: false, undoSendSeconds: 30 },
+    reading: { afterAction: 'list', threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 },
     folders: {
       favorites: [
         'INBOX',
@@ -75,8 +75,8 @@ test('normalizeSettings returns safe mail settings', () => {
       { id: 'personal', name: 'Signature', content: '', isDefault: false, defaultForNew: false, defaultForReply: false }
     ],
     identity: { defaultFrom: 'sender@example.com', replyTo: 'reply@example.com', alwaysBccSelf: true },
-    compose: { defaultMode: 'plain', defaultFont: 'mono', attachmentReminder: false, undoSendSeconds: 30 },
-    reading: { threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 },
+    compose: { defaultMode: 'plain', replyMode: 'plain', defaultFont: 'mono', attachmentReminder: false, undoSendSeconds: 30 },
+    reading: { afterAction: 'list', threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 },
     spam: { blockedSenders: [], safeSenders: [] },
     folders: {
       favorites: ['INBOX', 'Projects/Travel', 'Archive'],
@@ -85,11 +85,20 @@ test('normalizeSettings returns safe mail settings', () => {
   });
 });
 
-test('mail settings expose only the currently implemented plain-text compose mode', () => {
-  assert.equal(settingsDefaults.mail.compose.defaultMode, 'plain');
-  assert.equal(normalizeSettings('mail', {
-    compose: { defaultMode: 'rich' },
-  }).compose.defaultMode, 'plain');
+test('mail settings retain compose and reply formats and reading preferences after save normalization', () => {
+  for (const defaultMode of ['plain', 'rich', 'html']) {
+    for (const replyMode of ['plain', 'rich', 'html']) {
+      const first = normalizeSettings('mail', { compose: { defaultMode, replyMode }, reading: { afterAction: 'previous' } });
+      const reloaded = normalizeSettings('mail', JSON.parse(JSON.stringify(first)));
+      assert.equal(reloaded.compose.defaultMode, defaultMode);
+      assert.equal(reloaded.compose.replyMode, replyMode);
+      assert.equal(reloaded.reading.afterAction, 'previous');
+    }
+  }
+  assert.equal(normalizeSettings('mail', { compose: { defaultMode: 'rich' } }).compose.replyMode, 'rich');
+  const invalid = normalizeSettings('mail', { compose: { defaultMode: 'script' }, reading: { afterAction: 'bad' } });
+  assert.equal(invalid.compose.defaultMode, 'plain');
+  assert.equal(invalid.reading.afterAction, 'list');
 });
 
 test('normalizeSettings bounds calendar settings', () => {

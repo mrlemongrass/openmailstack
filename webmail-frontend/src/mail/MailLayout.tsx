@@ -1,6 +1,8 @@
-import { useCallback, useRef, useState } from 'react';
+import { ConfirmDialog } from '../shared/components/ConfirmDialog';
+import { routeAfterMessageRemoval } from './mail-message-identity';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Outlet, useParams } from 'react-router';
+import { Outlet, useParams, useNavigate } from 'react-router';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultLayout } from 'react-resizable-panels';
 import { Folders, X } from 'lucide-react';
 import { useMediaQuery } from '../shared/hooks/useMediaQuery';
@@ -24,9 +26,16 @@ function ResizeHandle() {
 }
 
 function OutboundRecoveryNotice({ mail }: MailLayoutProps) {
-  if (!mail.outboundRecoveryNotice) return null;
-  return (
-    <div
+  return (<>
+    <ConfirmDialog open={Boolean(mail.junkPrompt)} title={mail.junkPrompt?.action === 'notspam' ? 'Mark as not junk?' : 'Mark as spam and block…'}
+      message={mail.junkPrompt?.action === 'notspam'
+        ? 'Move to Inbox and remove this sender and any domain block covering it from User-marked Junk. Removing a domain block also unblocks other senders at that domain. Other mail rules and spam checks still apply.'
+        : `${mail.junkPrompt?.count === 1 ? mail.junkPrompt.sender : `${mail.junkPrompt?.count} selected messages`}. Block the sender (recommended), or block every sender at the same domain. Future matching mail will go to Junk.`}
+      confirmLabel={mail.junkPrompt?.action === 'notspam' ? 'Not junk · unblock' : 'Block sender'}
+      onConfirm={() => mail.resolveJunkPrompt(mail.junkPrompt?.action === 'notspam' ? 'remove' : 'sender')}
+      extraAction={mail.junkPrompt?.action === 'spam' ? { label: 'Block domain', onClick: () => mail.resolveJunkPrompt('domain'), danger: true } : undefined}
+      onCancel={() => mail.resolveJunkPrompt(null)} />
+    {mail.outboundRecoveryNotice && <div
       className={`mail-send-recovery-notice ${mail.outboundRecoveryNotice.tone}`}
       role="status"
       aria-live="polite"
@@ -40,8 +49,8 @@ function OutboundRecoveryNotice({ mail }: MailLayoutProps) {
       >
         ×
       </button>
-    </div>
-  );
+    </div>}
+  </>);
 }
 
 function FolderNavigation({
@@ -85,6 +94,7 @@ function FolderNavigation({
       onMoveFolder={mail.moveFolder}
       onRenameFolder={mail.renameFolder}
       onDeleteFolder={mail.deleteFolder}
+      onEmptyFolder={mail.emptyFolder}
       onRetrySearchCleanup={mail.retryFolderSearchCleanup}
       quota={mail.userQuota}
     />
@@ -147,7 +157,16 @@ function MobileFolderDrawer({
 
 export function MailLayout({ mail }: MailLayoutProps) {
   const isMobile = useMediaQuery('(max-width: 767px)');
-  const { uid } = useParams<{ uid: string }>();
+  const { uid, folder } = useParams<{ uid: string; folder: string }>();
+  const navigate = useNavigate();
+  const handledRemoval = useRef(mail.messageRemoval);
+  useLayoutEffect(() => {
+    if (!mail.messageRemoval || handledRemoval.current === mail.messageRemoval) return;
+    handledRemoval.current = mail.messageRemoval;
+    if (!folder || !uid) return;
+    const route = routeAfterMessageRemoval(mail.messageRemoval, folder, Number(uid), mail.mailSettings.reading.afterAction, mail.activeFolder);
+    if (route) navigate(route, { replace: true });
+  }, [mail.messageRemoval, mail.mailSettings.reading.afterAction, mail.activeFolder, folder, uid, navigate]);
   const showViewer = !!uid;
   const [mobileFoldersOpen, setMobileFoldersOpen] = useState(false);
   const closeMobileFolders = useCallback(() => setMobileFoldersOpen(false), []);

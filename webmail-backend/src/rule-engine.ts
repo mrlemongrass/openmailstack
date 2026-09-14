@@ -1,3 +1,4 @@
+import { senderAddress } from './rule-address';
 import {
     executableRuleActions,
     executableRuleCriteria,
@@ -178,7 +179,11 @@ function criterionMatches(
 ): CriterionResult {
     if (message.unavailableFields?.includes(criterion.field)) return 'unknown';
 
-    const actualText = String(message[criterion.field as keyof RuleMessage] || '');
+    const addressField = ['from_address', 'from_domain'].includes(criterion.field);
+    if (addressField && message.unavailableFields?.includes('from')) return 'unknown';
+    const address = addressField ? senderAddress(message.from || '') : null;
+    if (addressField && !address) return 'unknown';
+    const actualText = addressField ? (criterion.field === 'from_domain' ? address!.split('@').at(-1)! : address!) : String(message[criterion.field as keyof RuleMessage] || '');
     const expectedText = String(criterion.value);
     if (criterion.operator === 'matches') {
         let characters = wildcardContext.valueBytes.get(criterion.field);

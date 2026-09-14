@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { Reply, ReplyAll, Forward, Flag, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, ImageOff, ChevronLeft } from 'lucide-react';
+import { Reply, ReplyAll, Forward, Flag, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, ImageOff, ChevronLeft, ShieldAlert } from 'lucide-react';
 import { format } from 'date-fns';
 import DOMPurify from 'dompurify';
 import { AttachmentCard } from './components/AttachmentCard';
@@ -34,6 +34,8 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const { showToast } = useToast();
   const { folder, uid } = useParams<{ folder: string; uid: string }>();
   const navigate = useNavigate();
+  const [bodyError, setBodyError] = useState<string | null>(null);
+  const [bodyRetry, setBodyRetry] = useState(0);
   const [showRaw, setShowRaw] = useState(false);
   const [showSnooze, setShowSnooze] = useState(false);
   const [showMoveTo, setShowMoveTo] = useState(false);
@@ -130,8 +132,12 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   // Fetch the full message body when a message is selected.
   useEffect(() => {
     if (!hasMessage || !uid || !folder || hasLoadedMessageBody) return;
-    void fetchMessageBody(messageUid, decodedRouteFolder);
-  }, [hasMessage, hasLoadedMessageBody, uid, folder, messageUid, decodedRouteFolder, fetchMessageBody]);
+    let cancelled = false;
+    void fetchMessageBody(messageUid, decodedRouteFolder).then(detail => {
+      if (!cancelled && !detail) setBodyError(`${decodedRouteFolder}\u0000${messageUid}`);
+    });
+    return () => { cancelled = true; };
+  }, [hasMessage, hasLoadedMessageBody, uid, folder, messageUid, decodedRouteFolder, fetchMessageBody, bodyRetry]);
 
   useEffect(() => {
     if (isComposing || !editingDraftFolderRef.current) return;
@@ -171,7 +177,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
-      if (!message) return;
+      if (!message || document.querySelector('[role="dialog"]')) return;
 
       const key = e.key.toLowerCase();
       if ((message.is_scheduled || messageIsDraft) && key !== 'escape' && key !== '?') return;
@@ -189,10 +195,10 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         void toggleMessageFlag();
       } else if (key === 'e' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        mail.messageAction('archive', [message.uid]);
+        mail.messageAction('archive', [message.uid], sourceFolder);
       } else if ((key === 'delete' || key === 'backspace' || key === '#') && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        mail.messageAction('delete', [message.uid]);
+        mail.messageAction('delete', [message.uid], sourceFolder);
       } else if (key === 'escape') {
         e.preventDefault();
         navigate(`/mail/${encodeURIComponent(folder || 'INBOX')}`);
@@ -203,7 +209,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [message, messageIsDraft, mail, folder, navigate, startMessageCompose, toggleMessageFlag]);
+  }, [message, messageIsDraft, mail, folder, sourceFolder, navigate, startMessageCompose, toggleMessageFlag]);
 
   if (!uid) {
     return (
@@ -214,6 +220,12 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     );
   }
 
+  if (!message && !mail.mailLoading && !mail.searchLoading) {
+    return <div style={{ padding: 24 }} role="status">
+      <p>This message is no longer in the current list.</p>
+      <button className="btn btn-primary" onClick={() => navigate(`/mail/${encodeURIComponent(mail.activeFolder)}`, { replace: true })}>Back to message list</button>
+    </div>;
+  }
   if (!message) {
     return (
       <div style={{ padding: 20 }}>
@@ -511,10 +523,14 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           <Flag size={16} fill={message.isStarred ? 'currentColor' : 'none'}
             color={message.isStarred ? 'var(--danger)' : undefined} />
         </button>
+        <button className="btn btn-ghost" aria-label={mail.folders.some(item => item.path === sourceFolder && item.specialUse?.toLowerCase() === '\\junk') ? 'Not junk' : 'Mark as spam'} title="Junk options" onClick={() => {
+          const action = mail.folders.some(item => item.path === sourceFolder && item.specialUse?.toLowerCase() === '\\junk') ? 'notspam' : 'spam';
+          void mail.messageAction(action, [message.uid], sourceFolder);
+        }}><ShieldAlert size={16} /></button>
         <button className="btn btn-ghost" aria-label="Mark unread" onClick={() => { mail.messageAction('unread', [message.uid]); navigate(`/mail/${encodeURIComponent(folder || 'INBOX')}`); }} title="Mark unread">
           <MailOpen size={16} />
         </button>
-        <button className="btn btn-ghost" aria-label="Archive message" onClick={() => { mail.messageAction('archive', [message.uid]); showToast({ type: 'info', message: 'Archived' }); }}>
+        <button className="btn btn-ghost" aria-label="Archive message" onClick={() => { void mail.messageAction('archive', [message.uid], sourceFolder).then(ok => showToast({ type: ok ? 'info' : 'error', message: ok ? 'Archived' : 'Could not archive message' })); }}>
           <Archive size={16} />
         </button>
         <div style={{ position: 'relative' }}>
@@ -531,7 +547,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
               });
             }} onClose={closeMoveTo} />}
         </div>
-        <button className="btn btn-danger" aria-label="Delete message" onClick={() => { mail.messageAction('delete', [message.uid]); showToast({ type: 'info', message: 'Deleted' }); }}>
+        <button className="btn btn-danger" aria-label="Delete message" onClick={() => { void mail.messageAction('delete', [message.uid], sourceFolder).then(ok => showToast({ type: ok ? 'info' : 'error', message: ok ? 'Deleted' : 'Could not delete message' })); }}>
           <Trash2 size={16} />
         </button>
           </>
@@ -600,7 +616,11 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
               </button>
             </div>
           )}
-          {bodyLoading ? (
+          {bodyLoading && bodyError === `${decodedRouteFolder}\u0000${messageUid}` ? <div role="alert">
+            <p>The message could not be loaded. It may have moved or the connection may have failed.</p>
+            <button className="btn btn-primary" onClick={() => { setBodyError(null); setBodyRetry(value => value + 1); }}>Retry message</button>
+            <button className="btn btn-ghost" onClick={() => navigate(`/mail/${encodeURIComponent(mail.activeFolder)}`)}>Back to message list</button>
+          </div> : bodyLoading ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-secondary)', padding: '20px 0' }}>
               <Spinner size={16} /> Loading message...
             </div>
@@ -624,7 +644,10 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           </div>
         )}
       </div>
-      {!isScheduled && !isDraft && <InlineReply
+      {!isScheduled && !isDraft && (mail.mailSettings.compose.replyMode || mail.mailSettings.compose.defaultMode) !== 'plain' && <div style={{ padding: 16 }}>
+        <button className="btn btn-primary" onClick={() => void startMessageCompose('reply', mail.replyText || '')} disabled={Boolean(preparingComposeAction)}>Reply</button>
+      </div>}
+      {!isScheduled && !isDraft && (mail.mailSettings.compose.replyMode || mail.mailSettings.compose.defaultMode) === 'plain' && <InlineReply
         attachmentReminder={mail.mailSettings.compose.attachmentReminder}
         replyTo={(message.replyTo || message.from)?.replace(/<.+?>/, '').trim()
           || message.replyTo || message.from || ''}

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.evaluateRulesForMessage = evaluateRulesForMessage;
+const rule_address_1 = require("./rule-address");
 const rule_semantics_1 = require("./rule-semantics");
 const MAX_WILDCARD_MATCH_STEPS_PER_MESSAGE = 250000;
 const BYTE_A = 0x41;
@@ -121,7 +122,13 @@ function matchesWildcardPattern(characters, pattern, context) {
 function criterionMatches(criterion, message, wildcardContext) {
     if (message.unavailableFields?.includes(criterion.field))
         return 'unknown';
-    const actualText = String(message[criterion.field] || '');
+    const addressField = ['from_address', 'from_domain'].includes(criterion.field);
+    if (addressField && message.unavailableFields?.includes('from'))
+        return 'unknown';
+    const address = addressField ? (0, rule_address_1.senderAddress)(message.from || '') : null;
+    if (addressField && !address)
+        return 'unknown';
+    const actualText = addressField ? (criterion.field === 'from_domain' ? address.split('@').at(-1) : address) : String(message[criterion.field] || '');
     const expectedText = String(criterion.value);
     if (criterion.operator === 'matches') {
         let characters = wildcardContext.valueBytes.get(criterion.field);

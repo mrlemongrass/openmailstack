@@ -1,3 +1,4 @@
+import type { EmptyFolderSnapshot } from '../shared/api';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
@@ -27,7 +28,7 @@ import { ContextMenu, type ContextMenuItem } from '../shared/components/ContextM
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
 import type { ContextMenuPoint } from '../shared/context-menu-navigation';
-import { FolderDestinationDialog, NewFolderDialog, RenameFolderDialog } from './components/FolderDialogs';
+import { EmptyFolderDialog, FolderDestinationDialog, NewFolderDialog, RenameFolderDialog } from './components/FolderDialogs';
 import { buildFolderTree, type FolderTreeNode } from './mail-folder-tree';
 import {
   remapFolderSubtreePath,
@@ -64,6 +65,7 @@ interface FolderSidebarProps {
   onCreateFolder: (parent: string | null, name: string) => Promise<string>;
   onMoveFolder: (path: string, parent: string | null) => Promise<FolderPathMutationResult>;
   onRenameFolder: (path: string, name: string) => Promise<FolderPathMutationResult>;
+  onEmptyFolder: (snapshot: EmptyFolderSnapshot) => Promise<void>;
   onDeleteFolder: (path: string, permanent: boolean) => Promise<FolderDeleteResult>;
   onRetrySearchCleanup?: () => Promise<void>;
   quota: { usage: number; limit: number } | null;
@@ -176,11 +178,13 @@ export function FolderSidebar({
   onMoveFolder,
   onRenameFolder,
   onDeleteFolder,
+  onEmptyFolder,
   onRetrySearchCleanup,
   quota,
 }: FolderSidebarProps) {
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const [emptyFolderPath, setEmptyFolderPath] = useState<string | null>(null);
   const [folderMenu, setFolderMenu] = useState<FolderMenuState | null>(null);
   const [newFolderParent, setNewFolderParent] = useState<string | null | undefined>(undefined);
   const [movingFolder, setMovingFolder] = useState<FolderTreeNode | null>(null);
@@ -307,6 +311,13 @@ export function FolderSidebar({
         onFolderDialogChange?.(true);
         setNewFolderParent(folderMenu.node.fullPath);
       },
+    });
+  }
+  if (folderMenu && !folderMenu.node.disabled && ['\\junk', '\\trash'].includes(folderMenu.node.specialUse?.toLowerCase() || '')) {
+    const node = folderMenu.node;
+    folderMenuItems.push({
+      id: 'empty-folder', label: `Empty ${node.name}…`, icon: Trash2,
+      onSelect: () => { setEmptyFolderPath(node.fullPath); onFolderDialogChange?.(true); },
     });
   }
   if (folderMenu && !isProtectedFolder(folderMenu.node)) {
@@ -705,6 +716,7 @@ export function FolderSidebar({
           </div>
         </div>
       )}
+      {emptyFolderPath && <EmptyFolderDialog path={emptyFolderPath} onEmptied={onEmptyFolder} onClose={() => { setEmptyFolderPath(null); onFolderDialogChange?.(false); }} />}
       {folderMenu && (
         <ContextMenu
           label={`Actions for ${folderMenu.node.name}`}

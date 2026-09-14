@@ -52,8 +52,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [plainConfirm, setPlainConfirm] = useState(false);
   const [simplifyConfirm, setSimplifyConfirm] = useState(false);
   const [attachmentConfirm, setAttachmentConfirm] = useState<{ sendAt?: Date } | null>(null);
-  const rich = mail.composeMode === 'rich';
-  const complexLayout = rich && /<(?:img|table|video|audio|iframe|object|svg)\b/i.test(mail.composeBody);
+  const rich = mail.composeMode !== 'plain';
+  const sourceMode = mail.composeMode === 'html';
+  const complexLayout = rich && !sourceMode && /<(?:img|table|video|audio|iframe|object|svg)\b/i.test(mail.composeBody);
 
   const resizeComposer = (width: number, height: number) => {
     setEditorSize({
@@ -586,25 +587,33 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         {/* Scrollable body area — textarea + attachments + previews */}
         <div className="compose-body">
           <label className="compose-format-select">Message format
-            <select aria-label="Message format" className="glass-input glass-select" value={rich ? 'rich' : 'plain'} disabled={composeBusy}
+            <select aria-label="Message format" className="glass-input glass-select" value={mail.composeMode} disabled={composeBusy}
               onChange={event => {
                 if (event.target.value === 'plain') setPlainConfirm(true);
-                else { mail.setComposeBody(plainToHtml(mail.composeBody)); mail.setComposeMode('rich'); insertedSignature.current = insertedSignature.current ? plainToHtml(insertedSignature.current) : ''; }
+                else {
+                  if (!rich) {
+                    mail.setComposeBody(plainToHtml(mail.composeBody));
+                    insertedSignature.current = insertedSignature.current ? plainToHtml(insertedSignature.current) : '';
+                  }
+                  mail.setComposeMode(event.target.value as 'rich' | 'html');
+                }
               }}>
-              <option value="plain">Plain text</option><option value="rich">Rich text</option>
+              <option value="plain">Plain text</option><option value="rich">Rich text</option><option value="html">HTML source</option>
             </select>
           </label>
+          {sourceMode && <p className="settings-description">Edit HTML markup below. Switch to Rich text to use formatting tools; complex layouts require simplification.</p>}
           {complexLayout ? <div className="compose-layout-notice">
             <p>This draft contains images or a layout that this text editor cannot preserve. Its original content is kept until you choose to simplify it.</p>
             <button className="btn btn-ghost" disabled={composeBusy} onClick={() => setSimplifyConfirm(true)}>Simplify and edit</button>
             <div className="compose-layout-preview" dangerouslySetInnerHTML={{ __html: safeComposeHtml(mail.composeBody) }} />
-          </div> : rich ? <Suspense fallback={<div role="status">Loading message editor…</div>}>
+          </div> : rich && !sourceMode ? <Suspense fallback={<div role="status">Loading message editor…</div>}>
             <RichComposeEditor value={mail.composeBody} onChange={mail.setComposeBody} disabled={composeBusy}
               onNormalize={(html, normalizeFragment) => {
                 if (insertedSignature.current) insertedSignature.current = normalizeFragment(insertedSignature.current);
                 mail.setComposeBody(html);
               }} />
-          </Suspense> : <textarea className="glass-input" placeholder="Write your message..." aria-label="Message body"
+          </Suspense> : <textarea className="glass-input" placeholder="Write your message..." aria-label={sourceMode ? "HTML source" : "Message body"}
+            spellCheck={!sourceMode}
             disabled={composeBusy}
             value={mail.composeBody} onChange={(e) => mail.setComposeBody(e.target.value)}
             style={{ flex: 1, minHeight: 180, resize: 'vertical' }} />}

@@ -18,11 +18,13 @@ exports.settingsDefaults = {
         },
         compose: {
             defaultMode: 'plain',
+            replyMode: 'plain',
             defaultFont: 'system',
             attachmentReminder: true,
             undoSendSeconds: 10,
         },
         reading: {
+            afterAction: 'list',
             threaded: false,
             density: 'cozy',
             previewPane: 'right',
@@ -230,12 +232,14 @@ function normalizeSettings(namespace, value) {
                 alwaysBccSelf: booleanValue(identity.alwaysBccSelf, exports.settingsDefaults.mail.identity.alwaysBccSelf),
             },
             compose: {
-                defaultMode: 'plain',
+                defaultMode: stringOption(compose.defaultMode, ['plain', 'rich', 'html'], exports.settingsDefaults.mail.compose.defaultMode),
+                replyMode: stringOption(compose.replyMode, ['plain', 'rich', 'html'], stringOption(compose.defaultMode, ['plain', 'rich', 'html'], 'plain')),
                 defaultFont: stringOption(compose.defaultFont, ['system', 'serif', 'mono'], exports.settingsDefaults.mail.compose.defaultFont),
                 attachmentReminder: booleanValue(compose.attachmentReminder, exports.settingsDefaults.mail.compose.attachmentReminder),
                 undoSendSeconds: numberOption(compose.undoSendSeconds, [0, 5, 10, 20, 30], exports.settingsDefaults.mail.compose.undoSendSeconds),
             },
             reading: {
+                afterAction: stringOption(reading.afterAction, ['list', 'previous', 'next'], 'list'),
                 threaded: booleanValue(reading.threaded, exports.settingsDefaults.mail.reading.threaded),
                 density: stringOption(reading.density, ['comfortable', 'cozy', 'compact'], exports.settingsDefaults.mail.reading.density),
                 previewPane: stringOption(reading.previewPane, ['right', 'bottom', 'off'], exports.settingsDefaults.mail.reading.previewPane),

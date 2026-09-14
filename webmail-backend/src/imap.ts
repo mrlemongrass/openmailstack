@@ -865,6 +865,61 @@ export class ImapService {
         };
     }
 
+    // Snapshot and apply share identity checks. No wildcard expunge or recursive folder deletion.
+    async emptySpecialFolder(requestedPath: unknown, snapshot?: { uidValidity: unknown; maxUid: unknown }) {
+        const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+        if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {
+            throw new MailboxMutationError('INVALID_FOLDER', 400, 'Choose Junk or Trash.');
+        }
+        const folders = await this.client.list();
+        const source = folders.find(folder => folder.path === path);
+        const specialUse = source && mailboxSpecialUse(source)?.toLowerCase();
+        if (!source || source.flags?.has('\\Noselect') || !['\\junk', '\\trash'].includes(specialUse || '')) {
+            throw new MailboxMutationError('PROTECTED_FOLDER', 409, 'Only Junk and Trash can be emptied.');
+        }
+        const permanent = specialUse === '\\trash';
+        const trash = folders.find(folder => mailboxSpecialUse(folder)?.toLowerCase() === '\\trash' && !folder.flags?.has('\\Noselect'));
+        if (!permanent && (!trash || trash.path === source.path)) {
+            throw new MailboxMutationError('TRASH_FOLDER_UNAVAILABLE', 409, 'Trash is unavailable. No messages were moved.');
+        }
+        if (snapshot && !this.client.capabilities.has('UIDPLUS')) {
+            throw new MailboxMutationError('UIDPLUS_REQUIRED', 409, 'This server cannot safely empty a bounded set of messages.');
+        }
+        const lock = await this.client.getMailboxLock(source.path);
+        try {
+            const mailbox = this.client.mailbox;
+            if (!mailbox) throw new Error('The folder could not be selected.');
+            const uidValidity = String(mailbox.uidValidity);
+            if (!/^[1-9][0-9]*$/.test(uidValidity) || !Number.isInteger(mailbox.uidNext) || Number(mailbox.uidNext) < 1) {
+                throw new MailboxMutationError('FOLDER_IDENTITY_UNAVAILABLE', 409, 'Folder identity is unavailable. Refresh Mail and try again.');
+            }
+            let maxUid = Number(mailbox.uidNext) - 1;
+            if (snapshot) {
+                if (normalizedExpectedUidValidity(snapshot.uidValidity) !== uidValidity) {
+                    throw new MailboxMutationError('FOLDER_IDENTITY_CHANGED', 409, 'This folder changed. Cancel and prepare a new confirmation.');
+                }
+                if (!Number.isInteger(snapshot.maxUid) || Number(snapshot.maxUid) < 0 || Number(snapshot.maxUid) > maxUid) {
+                    throw new MailboxMutationError('INVALID_SNAPSHOT', 400, 'Prepare a new folder confirmation.');
+                }
+                maxUid = Number(snapshot.maxUid);
+            }
+            const found = maxUid > 0 ? await this.client.search({ uid: `1:${maxUid}` }, { uid: true }) : [];
+            const uids = [...new Set((Array.isArray(found) ? found : []).filter(uid => Number.isInteger(uid) && uid > 0 && uid <= maxUid))];
+            if (snapshot) {
+                for (let offset = 0; offset < uids.length; offset += 500) {
+                    const batch = uids.slice(offset, offset + 500).join(',');
+                    const result = permanent
+                        ? await this.client.messageDelete(batch, { uid: true })
+                        : await this.client.messageMove(batch, trash!.path, { uid: true });
+                    if (!result) throw new Error('The mailbox did not acknowledge the operation.');
+                }
+            }
+            return { path: source.path, uidValidity, maxUid, count: uids.length, permanent };
+        } finally {
+            lock.release();
+        }
+    }
+
     async markFolderRead(requestedPath: string) {
         const path = typeof requestedPath === 'string' ? requestedPath.trim() : '';
         if (!path || /[\u0000-\u001f\u007f]/u.test(path)) {

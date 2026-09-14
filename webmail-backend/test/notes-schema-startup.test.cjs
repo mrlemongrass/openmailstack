@@ -5,7 +5,7 @@ process.env.OMS_DB_PASSWORD ||= 'notes-schema-startup-test';
 
 const revisionDefaults = {
   is_pinned: '0', is_locked: '0', folder: 'notes', sync_token: '1',
-  imap_sync_token: '0', is_deleted: '0',
+  imap_sync_token: '0', is_deleted: '0', is_purged: '0',
 };
 
 function schemaColumn(Field, Type, overrides = {}) {
@@ -26,6 +26,7 @@ test('Notes schema initialization propagates a required column migration failure
 
   db.pool.query = async (sql) => {
     const compact = String(sql).replace(/\s+/g, ' ').trim();
+    if (compact === 'UPDATE notes SET is_purged = 1 WHERE is_deleted = 1') return [[], []];
     if (compact.startsWith('CREATE TABLE IF NOT EXISTS notes')) return [[], []];
     if (compact === 'SHOW COLUMNS FROM notes') {
       return [[
@@ -61,6 +62,7 @@ test('Notes schema initialization introspects, migrates, verifies, and single-fl
   db.pool.query = async (sql) => {
     queryCount += 1;
     const compact = String(sql).replace(/\s+/g, ' ').trim();
+    if (compact === 'UPDATE notes SET is_purged = 1 WHERE is_deleted = 1') return [[], []];
     if (compact.startsWith('CREATE TABLE IF NOT EXISTS notes')) return [[], []];
     if (compact === 'SHOW COLUMNS FROM notes') {
       return [[...columns].map(([Field, Type]) => schemaColumn(Field, Type)), []];
@@ -84,7 +86,7 @@ test('Notes schema initialization introspects, migrates, verifies, and single-fl
   await Promise.all([ensureNotesSchema(), ensureNotesSchema()]);
   assert.deepEqual(alterations.sort(), [
     'folder', 'imap_msgid', 'imap_sync_token', 'imap_uid', 'is_deleted',
-    'is_locked', 'is_pinned', 'labels_json', 'sync_token',
+    'is_locked', 'is_pinned', 'is_purged', 'labels_json', 'sync_token',
   ]);
   assert.equal(columns.get('content'), 'mediumtext');
   const completedQueryCount = queryCount;
@@ -101,11 +103,12 @@ test('Notes schema initialization retains an existing LONGTEXT content column', 
     color: 'varchar(50)', is_pinned: 'tinyint(1)', is_locked: 'tinyint(1)',
     folder: 'varchar(100)', labels_json: 'text', sync_token: 'bigint(20)',
     imap_sync_token: 'bigint(20)', imap_uid: 'int(11)', imap_msgid: 'varchar(255)',
-    is_deleted: 'tinyint(1)', created_at: 'timestamp', updated_at: 'timestamp',
+    is_deleted: 'tinyint(1)', is_purged: 'tinyint(1)', created_at: 'timestamp', updated_at: 'timestamp',
   };
   const statements = [];
   db.pool.query = async (sql) => {
     const compact = String(sql).replace(/\s+/g, ' ').trim();
+    if (compact === 'UPDATE notes SET is_purged = 1 WHERE is_deleted = 1') return [[], []];
     statements.push(compact);
     if (compact.startsWith('CREATE TABLE IF NOT EXISTS notes')) return [[], []];
     if (compact === 'SHOW COLUMNS FROM notes') {
@@ -136,11 +139,12 @@ test('Notes schema initialization fails if a required column is still absent aft
   ];
   db.pool.query = async (sql) => {
     const compact = String(sql).replace(/\s+/g, ' ').trim();
+    if (compact === 'UPDATE notes SET is_purged = 1 WHERE is_deleted = 1') return [[], []];
     if (compact.startsWith('CREATE TABLE IF NOT EXISTS notes')) return [[], []];
     if (compact === 'SHOW COLUMNS FROM notes') {
       return [coreColumns.map(Field => schemaColumn(Field, Field === 'content' ? 'mediumtext' : 'text')), []];
     }
-    if (compact.includes('ADD COLUMN is_deleted')) return [[], []];
+    if (compact.includes('ADD COLUMN is_deleted') || compact.includes('ADD COLUMN is_purged')) return [[], []];
     throw new Error(`Unexpected Notes schema query: ${compact}`);
   };
 
@@ -159,10 +163,11 @@ test('Notes schema initialization fails closed on incompatible identity or revis
     color: 'varchar(50)', is_pinned: 'tinyint(1)', is_locked: 'tinyint(1)',
     folder: 'varchar(100)', labels_json: 'text', sync_token: 'varchar(32)',
     imap_sync_token: 'bigint(20)', imap_uid: 'int(11)', imap_msgid: 'varchar(255)',
-    is_deleted: 'tinyint(1)', created_at: 'timestamp', updated_at: 'timestamp',
+    is_deleted: 'tinyint(1)', is_purged: 'tinyint(1)', created_at: 'timestamp', updated_at: 'timestamp',
   };
   db.pool.query = async (sql) => {
     const compact = String(sql).replace(/\s+/g, ' ').trim();
+    if (compact === 'UPDATE notes SET is_purged = 1 WHERE is_deleted = 1') return [[], []];
     if (compact.startsWith('CREATE TABLE IF NOT EXISTS notes')) return [[], []];
     if (compact === 'SHOW COLUMNS FROM notes') {
       return [Object.entries(expectedTypes).map(([Field, Type]) => schemaColumn(Field, Type)), []];
@@ -185,12 +190,13 @@ test('Notes schema initialization repairs and verifies nullable revision columns
     color: 'varchar(50)', is_pinned: 'tinyint(1)', is_locked: 'tinyint(1)',
     folder: 'varchar(100)', labels_json: 'text', sync_token: 'bigint(20)',
     imap_sync_token: 'bigint(20)', imap_uid: 'int(11)', imap_msgid: 'varchar(255)',
-    is_deleted: 'tinyint(1)', created_at: 'timestamp', updated_at: 'timestamp',
+    is_deleted: 'tinyint(1)', is_purged: 'tinyint(1)', created_at: 'timestamp', updated_at: 'timestamp',
   };
   let nullableSyncToken = true;
   const statements = [];
   db.pool.query = async (sql) => {
     const compact = String(sql).replace(/\s+/g, ' ').trim();
+    if (compact === 'UPDATE notes SET is_purged = 1 WHERE is_deleted = 1') return [[], []];
     statements.push(compact);
     if (compact.startsWith('CREATE TABLE IF NOT EXISTS notes')) return [[], []];
     if (compact === 'SHOW COLUMNS FROM notes') {

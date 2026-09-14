@@ -37,6 +37,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.writeAttachmentResponseChunk = exports.validateAttachmentBundleLimits = exports.ATTACHMENT_DOWNLOAD_MAX_BYTES = exports.ATTACHMENT_SOURCE_MAX_BYTES = exports.ATTACHMENT_BUNDLE_MAX_DECODED_BYTES = exports.ATTACHMENT_BUNDLE_MAX_COUNT = exports.apiRouter = void 0;
+const mail_import_1 = require("./mail-import");
+const mail_selection_1 = require("./mail-selection");
 const sender_policy_1 = require("./sender-policy");
 const junk_rules_1 = require("./junk-rules");
 const rule_address_1 = require("./rule-address");
@@ -3080,7 +3082,7 @@ exports.apiRouter.get('/messages/search', requireAuth, async (req, res) => {
     }
 });
 const multer = require('multer');
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config_1.serverConfig.uploadLimitBytes } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config_1.serverConfig.uploadLimitBytes, fieldSize: 8 * MEBIBYTE, fields: 24, files: 100 } });
 const MAX_SCHEDULE_DELAY_SECONDS = 5 * 366 * 24 * 60 * 60;
 const MAX_IMAP_UID = 4_294_967_295;
 const strictInteger = (value, minimum, maximum) => {
@@ -3639,7 +3641,137 @@ exports.apiRouter.post('/messages/draft', requireAuth, upload.array('attachments
         res.status(500).json({ success: false, error: err.message });
     }
 });
-exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
+exports.apiRouter.get('/drafts/resolve/:id', requireAuth, async (req, res) => {
+    const id = String(req.params.id);
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id))
+        return res.status(400).json({ success: false, error: 'Invalid draft identity.' });
+    try {
+        const draft = await withDedicatedImap(req.user.username, req.user.password, async (imap) => {
+            const folders = await imap.client.list();
+            const folder = folders.find(f => f.specialUse?.toLowerCase() === '\\drafts')?.path || 'Drafts';
+            const lock = await imap.client.getMailboxLock(folder);
+            try {
+                const uids = await imap.client.search({ header: { 'x-draft-id': id } }, { uid: true });
+                if (!uids || !uids.length)
+                    return null;
+                return { folder, uid: Math.max(...uids) };
+            }
+            finally {
+                lock.release();
+            }
+        });
+        if (!draft)
+            return res.status(404).json({ success: false, error: 'This draft was sent, discarded, or moved. Open Drafts to check.' });
+        res.json({ success: true, ...draft });
+    }
+    catch {
+        res.status(503).json({ success: false, error: 'The draft could not be located. Retry.' });
+    }
+});
+exports.apiRouter.use('/mail-import', requireAuth, (0, mail_import_1.createMailImportRouter)(withDedicatedImap));
+exports.apiRouter.post('/messages/selection', requireAuth, async (req, res) => {
+    const { query = '', field = 'all', scope = 'folder', folder = 'INBOX', messages } = req.body || {};
+    if (typeof query !== 'string' || query.length > 128 || !allowedSearchFields.includes(field)
+        || !['folder', 'all'].includes(scope) || typeof folder !== 'string'
+        || (messages !== undefined && (!Array.isArray(messages) || !messages.length || messages.length > 10000
+            || messages.some((m) => !m || typeof m.folder !== 'string' || !Number.isInteger(m.uid) || m.uid < 1 || m.uid > MAX_IMAP_UID)))) {
+        return res.status(400).json({ success: false, error: 'Invalid selection scope.' });
+    }
+    const deadline = Date.now() + 30_000;
+    let cancelled = false;
+    res.on('close', () => { cancelled = true; });
+    const check = () => { if (cancelled || Date.now() > deadline)
+        throw new Error('Selection timed out or was cancelled. Narrow the search and retry.'); };
+    try {
+        const groups = await withDedicatedImap(req.user.username, req.user.password, async (imap) => {
+            const folders = (await imap.client.list()).filter((f) => !f.flags?.has('\\Noselect'));
+            const paths = messages ? [...new Set(messages.map((m) => m.folder))] : scope === 'all' ? folders.map((f) => f.path) : [folder];
+            if (paths.length > 200 || paths.some(path => !folders.some((f) => f.path === path)))
+                throw new Error('The selection includes unavailable folders or exceeds 200 folders.');
+            const groups = [];
+            let count = 0;
+            let bytes = 0;
+            for (const path of paths) {
+                check();
+                const lock = await imap.client.getMailboxLock(path);
+                try {
+                    const uidValidity = String(imap.client.mailbox && imap.client.mailbox.uidValidity || '');
+                    if (!uidValidity)
+                        throw new Error('Mailbox identity is unavailable.');
+                    const criteria = messages ? { uid: [...new Set(messages.filter((m) => m.folder === path).map((m) => m.uid))].join(',') }
+                        : query || field !== 'all' ? imap.buildSearchQuery(query, field) : { all: true };
+                    let uids = (await imap.client.search(criteria, { uid: true })) || [];
+                    if (uids.length + count > 10000)
+                        throw new Error('Narrow the selection to at most 10,000 messages.');
+                    if (!messages && (field === 'attachments' || /(?:^|\s)has:attachment(?:\s|$)/i.test(query))) {
+                        const verified = [];
+                        for (const uid of uids) {
+                            check();
+                            const meta = await imap.client.fetchOne(String(uid), { size: true }, { uid: true });
+                            if (!meta || !meta.size || meta.size > 5 * MEBIBYTE || bytes + meta.size > 50 * MEBIBYTE)
+                                throw new Error('Attachment verification exceeds this selection limit. Narrow the search.');
+                            const raw = await imap.client.fetchOne(String(uid), { source: true }, { uid: true });
+                            if (!raw || !raw.source || raw.source.length !== meta.size)
+                                throw new Error('A message changed during selection. Refresh and retry.');
+                            bytes += meta.size;
+                            const attachments = getVisibleAttachments(await require('mailparser').simpleParser(raw.source));
+                            if (field === 'attachments' ? attachments.some((a) => String(a.filename || '').toLowerCase().includes(query.toLowerCase())) : attachments.length)
+                                verified.push(uid);
+                        }
+                        uids = verified;
+                    }
+                    if (uids.length) {
+                        const entry = folders.find((f) => f.path === path);
+                        groups.push({ folder: path, uidValidity, uids, junk: entry.specialUse?.toLowerCase() === '\\junk' || entry.flags?.has('\\Junk'), trash: entry.specialUse?.toLowerCase() === '\\trash' || path.toLowerCase() === 'trash' });
+                        count += uids.length;
+                    }
+                }
+                finally {
+                    lock.release();
+                }
+            }
+            check();
+            return groups;
+        });
+        res.json({ success: true, ...mail_selection_1.mailSelections.create(req.user.username, groups) });
+    }
+    catch (err) {
+        if (!cancelled)
+            res.status(409).json({ success: false, error: err instanceof Error ? err.message : 'Selection unavailable.' });
+    }
+});
+exports.apiRouter.post('/messages/selection/:token/apply', requireAuth, async (req, res) => {
+    const { action, targetFolder, junkScope, cursor } = req.body || {};
+    if (!['read', 'unread', 'star', 'unstar', 'delete', 'archive', 'move', 'spam', 'notspam'].includes(action)
+        || (action === 'move' && (typeof targetFolder !== 'string' || !targetFolder.trim() || /[\u0000-\u001f\u007f]/u.test(targetFolder)))
+        || (action === 'spam' && !['sender', 'domain'].includes(junkScope)))
+        return res.status(400).json({ success: false, error: 'Review the action and sender policy choice.' });
+    try {
+        const result = await mail_selection_1.mailSelections.apply(req.user.username, req.params.token, cursor, JSON.stringify([action, targetFolder, junkScope]), async (group) => {
+            if (action === 'notspam' && !group.junk)
+                throw new Error('Not junk requires a Junk-only selection.');
+            let status = 200;
+            let response;
+            const output = { status(code) { status = code; return output; }, json(data) { response = data; return output; } };
+            await performMessageAction({ user: req.user, body: { action, targetFolder, junkScope, folder: group.folder, uids: group.uids, expectedUidValidity: group.uidValidity } }, output);
+            if (status !== 200 || !response?.success)
+                throw new Error('Batch not confirmed.');
+        });
+        res.json({ success: true, ...result });
+    }
+    catch (err) {
+        res.status(409).json({ success: false, error: err instanceof Error ? err.message : 'Selection unavailable.' });
+    }
+});
+exports.apiRouter.delete('/messages/selection/:token', requireAuth, (req, res) => {
+    try {
+        res.json({ success: true, ...mail_selection_1.mailSelections.cancel(req.user.username, req.params.token) });
+    }
+    catch (err) {
+        res.status(409).json({ success: false, error: err instanceof Error ? err.message : 'Selection unavailable.' });
+    }
+});
+async function performMessageAction(req, res) {
     const user = req.user.username;
     const pass = req.user.password;
     const { folder, uids, action, targetFolder } = req.body;
@@ -3673,6 +3805,8 @@ exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
                 const lock = await imap.client.getMailboxLock(sourceFolder);
                 const addresses = [];
                 try {
+                    if (req.body.expectedUidValidity && String(imap.client.mailbox && imap.client.mailbox.uidValidity) !== req.body.expectedUidValidity)
+                        throw new Error('Mailbox identity changed.');
                     for await (const item of imap.client.fetch([...new Set(uids)].join(','), { envelope: true, uid: true }, { uid: true })) {
                         const from = item.envelope?.from;
                         const address = Array.isArray(from) && from.length === 1 ? (0, rule_address_1.senderAddress)(from[0].address || '') : null;
@@ -3702,8 +3836,10 @@ exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
             });
         }
         else {
-            const imap = await getPooledImap(user, pass);
-            actionResult = await imap.messageAction(sourceFolder, uids, action, action === 'move' ? destinationFolder : undefined);
+            const execute = (imap) => imap.messageAction(sourceFolder, uids, action, action === 'move' ? destinationFolder : undefined, req.body.expectedUidValidity);
+            actionResult = req.body.expectedUidValidity
+                ? await withDedicatedImap(user, pass, execute)
+                : await execute(await getPooledImap(user, pass));
         }
         try {
             if (action === 'read') {
@@ -3743,7 +3879,8 @@ exports.apiRouter.post('/messages/action', requireAuth, async (req, res) => {
             error: junkRuleUpdated ? 'The Junk list was updated, but moving the message could not be confirmed. Refresh the folder before retrying.' : 'The message action could not be completed. Please try again.',
         });
     }
-});
+}
+exports.apiRouter.post('/messages/action', requireAuth, performMessageAction);
 exports.apiRouter.get('/folders/*folder/messages/:uid/attachments', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -5021,7 +5158,7 @@ const attachmentsUpload = multer({
 exports.apiRouter.get('/notes', requireAuth, async (req, res) => {
     try {
         await (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password);
-        const notes = await (0, notes_utils_1.listNotesWithReminders)(req.user.username);
+        const notes = await (0, notes_utils_1.listNotesWithReminders)(req.user.username, req.query.view === 'trash');
         console.log(`[NOTES GET] User: ${req.user.username}, count: ${notes.length}`);
         res.json({ success: true, notes });
     }
@@ -5099,6 +5236,28 @@ exports.apiRouter.put('/notes/:id', requireAuth, async (req, res) => {
             return;
         }
         res.status(500).json({ success: false, error: err.message });
+    }
+});
+exports.apiRouter.post('/notes/:id/restore', requireAuth, async (req, res) => {
+    try {
+        await (0, notes_utils_1.restoreNote)(req.params.id, req.user.username);
+        (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(409).json({ success: false, error: err instanceof Error ? err.message : 'Restore failed.' });
+    }
+});
+exports.apiRouter.delete('/notes/:id/permanent', requireAuth, async (req, res) => {
+    if (req.body?.confirm !== true)
+        return res.status(400).json({ success: false, error: 'Confirm permanent deletion.' });
+    try {
+        await (0, notes_utils_1.purgeNote)(req.params.id, req.user.username);
+        (0, notes_imap_sync_1.syncNotesWithImap)(req.user.username, req.user.password).catch(e => console.error(e));
+        res.json({ success: true });
+    }
+    catch (err) {
+        res.status(409).json({ success: false, error: err instanceof Error ? err.message : 'Permanent deletion failed.' });
     }
 });
 exports.apiRouter.delete('/notes/:id', requireAuth, async (req, res) => {

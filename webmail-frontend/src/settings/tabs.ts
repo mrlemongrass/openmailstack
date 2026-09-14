@@ -5,6 +5,7 @@ export type SettingsTab =
   | 'mail_reading'
   | 'mail_filters'
   | 'mail_spam'
+  | 'mail_import'
   | 'calendar_defaults'
   | 'contacts_display'
   | 'sync_devices'
@@ -18,6 +19,7 @@ const SETTINGS_TABS: SettingsTab[] = [
   'mail_reading',
   'mail_filters',
   'mail_spam',
+  'mail_import',
   'calendar_defaults',
   'contacts_display',
   'sync_devices',

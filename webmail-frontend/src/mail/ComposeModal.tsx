@@ -12,7 +12,7 @@ import { uniqueContactSuggestions, type ContactSuggestion } from '../shared/cont
 import { useModalFocus } from '../shared/hooks/useModalFocus';
 import { outboundSendFeedback, scheduledDateFromLocalInputs } from './outbound-send-feedback';
 
-import { htmlToPlainText as stripHtml, plainToHtml, safeComposeHtml, mentionsAttachment } from './compose-content';
+import { htmlToPlainText as stripHtml, plainToHtml, safeComposeHtml, unsupportedComposeLayout, simplifyComposeHtml, mentionsAttachment } from './compose-content';
 const RichComposeEditor = lazy(() => import('./RichComposeEditor'));
 
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB warning
@@ -34,7 +34,7 @@ function getFragmentInfo(value: string): { prefix: string; fragment: string } {
   };
 }
 
-export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
+export function ComposeModal({ mail, detached = false }: { mail: ReturnType<typeof useMail>; detached?: boolean }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
@@ -52,11 +52,12 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const attachmentInput = useRef<HTMLInputElement>(null);
   const [routeBlocked, setRouteBlocked] = useState(false);
   const [plainConfirm, setPlainConfirm] = useState(false);
+  const [richProcessing, setRichProcessing] = useState(false);
   const [simplifyConfirm, setSimplifyConfirm] = useState(false);
   const [attachmentConfirm, setAttachmentConfirm] = useState<{ sendAt?: Date } | null>(null);
   const rich = mail.composeMode !== 'plain';
   const sourceMode = mail.composeMode === 'html';
-  const complexLayout = rich && !sourceMode && /<(?:img|table|video|audio|iframe|object|svg)\b/i.test(mail.composeBody);
+  const complexLayout = rich && !sourceMode && unsupportedComposeLayout(mail.composeBody);
 
   const resizeComposer = (width: number, height: number) => {
     setEditorSize({
@@ -189,7 +190,14 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     undoSendId,
     undoSendMode,
   } = mail;
-  const composeBusy = Boolean(sending || closingComposer || checkingEarlierComposeSend);
+  const transferLock = useRef(false);
+  const [transferring, setTransferring] = useState(false);
+  const transferComposer = async (action: () => Promise<unknown>) => {
+    if (transferLock.current) return;
+    transferLock.current = true; setTransferring(true);
+    try { await action(); } finally { transferLock.current = false; setTransferring(false); }
+  };
+  const composeBusy = transferring || richProcessing || Boolean(sending || closingComposer || checkingEarlierComposeSend);
   const unchangedSendBlocked = immediateSendPhase === 'uncertain' || immediateSendPhase === 'blocked';
   useEffect(() => {
     if (didSend && !sending && !composeError && !isComposing) {
@@ -343,7 +351,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     onClose: handleClose,
   });
 
-  const navigationGuard = <UnsavedChangesGuard dirty={mail.isComposing || Boolean(mail.replyText || mail.replySending)} locked={composeBusy || mail.replySending} onBlockedChange={setRouteBlocked} onSave={mail.isComposing ? mail.closeComposer : undefined} onDiscard={() => mail.setReplyText('')} />;
+  const setBulkRouteBlocked = mail.setBulkRouteBlocked;
+  useEffect(() => { setBulkRouteBlocked?.(routeBlocked); }, [setBulkRouteBlocked, routeBlocked]);
+  const navigationGuard = <UnsavedChangesGuard dirty={mail.isComposing || Boolean(mail.replyText || mail.replySending) || mail.bulkBusy} locked={composeBusy || mail.replySending || mail.bulkBusy} onBlockedChange={setRouteBlocked} onSave={mail.isComposing ? mail.closeComposer : undefined} onDiscard={() => mail.setReplyText('')} />;
   if (!mail.isComposing) return <>{navigationGuard}</>;
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -383,7 +393,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
       <div
         ref={dialogRef}
         className="glass-panel compose-dialog"
-        data-expanded={expanded}
+        data-expanded={expanded || detached}
         style={editorSize ? { width: editorSize.width, height: editorSize.height } : undefined}
         role="dialog"
         aria-modal="true"
@@ -411,6 +421,10 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             <Grip size={14} />
           </button>
         )}
+        {!detached && <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '8px 16px 0' }}>
+          <button className="btn btn-ghost" disabled={composeBusy} onClick={() => void transferComposer(mail.minimizeComposer)}>Minimize</button>
+          <button className="btn btn-ghost" disabled={composeBusy} onClick={() => void transferComposer(mail.popOutComposer)}>Open in separate window</button>
+        </div>}
         {/* Drop overlay */}
         {isDragOver && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 10,
@@ -606,13 +620,13 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
               <option value="plain">Plain text</option><option value="rich">Rich text</option><option value="html">HTML source</option>
             </select>
           </label>
-          {sourceMode && <p className="settings-description">Edit HTML markup below. Switch to Rich text to use formatting tools; complex layouts require simplification.</p>}
+          {sourceMode && <p className="settings-description">Edit HTML markup below. Switch to Rich text to use formatting tools; merged cells and nested tables require simplification.</p>}
           {complexLayout ? <div className="compose-layout-notice">
-            <p>This draft contains images or a layout that this text editor cannot preserve. Its original content is kept until you choose to simplify it.</p>
+            <p>This draft contains merged cells, nested tables, or embedded content this editor cannot preserve. Its original content is kept until you choose to simplify it.</p>
             <button className="btn btn-ghost" disabled={composeBusy} onClick={() => setSimplifyConfirm(true)}>Simplify and edit</button>
             <div className="compose-layout-preview" dangerouslySetInnerHTML={{ __html: safeComposeHtml(mail.composeBody) }} />
           </div> : rich && !sourceMode ? <Suspense fallback={<div role="status">Loading message editor…</div>}>
-            <RichComposeEditor value={mail.composeBody} onChange={mail.setComposeBody} disabled={composeBusy}
+            <RichComposeEditor onBusy={setRichProcessing} value={mail.composeBody} onChange={mail.setComposeBody} disabled={composeBusy}
               onNormalize={(html, normalizeFragment) => {
                 if (insertedSignature.current) insertedSignature.current = normalizeFragment(insertedSignature.current);
                 mail.setComposeBody(html);
@@ -866,7 +880,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         </div>
       </div>
       <ConfirmDialog open={plainConfirm} title="Switch to plain text?" message="Text will be kept. Formatting and links will be removed." confirmLabel="Use plain text" cancelLabel="Keep formatting" onConfirm={switchToPlain} onCancel={() => setPlainConfirm(false)} />
-      <ConfirmDialog open={simplifyConfirm} title="Simplify this draft?" message="Text and supported formatting will be kept. Images and complex layout will be removed." confirmLabel="Simplify and edit" cancelLabel="Keep original" onConfirm={() => { mail.setComposeBody(safeComposeHtml(mail.composeBody)); setSimplifyConfirm(false); }} onCancel={() => setSimplifyConfirm(false)} />
+      <ConfirmDialog open={simplifyConfirm} title="Simplify this draft?" message="Text will be kept. Images and layout will be removed." confirmLabel="Simplify and edit" cancelLabel="Keep original" onConfirm={() => { mail.setComposeBody(simplifyComposeHtml(mail.composeBody)); setSimplifyConfirm(false); }} onCancel={() => setSimplifyConfirm(false)} />
       <ConfirmDialog open={!!attachmentConfirm} title="Send without an attachment?" message="Your message mentions an attachment, but no files are attached."
         confirmLabel={attachmentConfirm?.sendAt ? 'Schedule anyway' : 'Send anyway'} cancelLabel="Keep editing"
         extraAction={{ label: 'Add attachment', onClick: () => { setAttachmentConfirm(null); attachmentInput.current?.click(); } }}

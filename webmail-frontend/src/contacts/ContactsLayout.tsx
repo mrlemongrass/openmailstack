@@ -1,3 +1,4 @@
+import { useActionConfirmation } from '../shared/components/ActionConfirmation';
 import { useState } from 'react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle, useDefaultLayout } from 'react-resizable-panels';
 import type { Contact } from '../shared/types';
@@ -23,6 +24,7 @@ function ResizeHandle() {
 
 export function ContactsLayout() {
     const contacts = useContacts();
+    const confirmation = useActionConfirmation();
     const isMobile = useMediaQuery('(max-width: 767px)');
     const { appearance } = useAppearance();
     const density = (appearance.density as 'compact' | 'cozy' | 'comfortable') || 'cozy';
@@ -31,14 +33,13 @@ export function ContactsLayout() {
 
     const handleNewContact = () => setEditingContact({} as Contact);
 
-    const handleDeleteContact = async (contact: Contact) => {
-        if (!contact.id || !confirm('Move this contact to trash?')) return;
-        try {
-            await api.deleteContact(contact.id);
-            contacts.refreshContacts();
-            contacts.refreshTrash();
+    const handleDeleteContact = (contact: Contact) => {
+        if (!contact.id) return;
+        confirmation.ask({ title: `Move “${contact.name || contact.email || 'contact'}” to Trash?`, message: 'You can restore this contact from Trash.', label: 'Move to Trash', run: async () => {
+            await api.deleteContact(contact.id!);
+            await Promise.all([contacts.refreshContacts(), contacts.refreshTrash()]);
             contacts.setSelectedContact(null);
-        } catch (e) { console.error('Delete failed', e); }
+        } });
     };
 
     const contactEditor = editingContact && (
@@ -75,7 +76,7 @@ export function ContactsLayout() {
                             onClose={() => setShowShare(false)}
                         />
                     )}
-                    {contactEditor}
+                    {contactEditor}{confirmation.dialog}
                 </div>
             );
         }
@@ -94,7 +95,7 @@ export function ContactsLayout() {
         return (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                 <ContactGrid contacts={contacts} density={density} isMobile onNewContact={handleNewContact} />
-                {contactEditor}
+                {contactEditor}{confirmation.dialog}
             </div>
         );
     }
@@ -151,7 +152,7 @@ export function ContactsLayout() {
                     onClose={() => setShowShare(false)}
                 />
             )}
-            {contactEditor}
+            {contactEditor}{confirmation.dialog}
         </div>
     );
 }

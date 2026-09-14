@@ -23,7 +23,8 @@ import {
   type CrossSuiteComposeDraft,
 } from '../shared/crossSuiteCompose';
 
-export function MailRoutes() {
+export function MailRoutes({ detached = false }: { detached?: boolean }) {
+  const [minimizedError, setMinimizedError] = useState('');
   const [mailSettings, setMailSettings] = useState<MailUserSettings>(defaultMailSettings);
   const [mailSettingsReady, setMailSettingsReady] = useState(false);
   const [mailSettingsError, setMailSettingsError] = useState('');
@@ -113,15 +114,36 @@ export function MailRoutes() {
     return () => window.removeEventListener('oms:compose', handler);
   }, [startCompose]);
 
+  const openedDetached = useRef(false);
+  const openSavedDraft = mail.openSavedDraft;
+  const attemptedDetached = useRef(false);
+  const [detachedError, setDetachedError] = useState('');
+  useEffect(() => {
+    if (!detached || !mailSettingsReady || !userIdentitiesReady || attemptedDetached.current) return;
+    attemptedDetached.current = true;
+    const id = new URLSearchParams(window.location.search).get('draft');
+    if (!id) { queueMicrotask(() => setDetachedError('Choose a saved draft to open this composer.')); return; }
+    void openSavedDraft(id).then(opened => { if (!opened) setDetachedError('This draft could not be opened.'); }).catch(err => setDetachedError(err.message));
+  }, [detached, mailSettingsReady, userIdentitiesReady, openSavedDraft]);
+  useEffect(() => {
+    if (!detached) return;
+    if (mail.isComposing) openedDetached.current = true;
+    else if (openedDetached.current) window.close();
+  }, [detached, mail.isComposing]);
+
   return (
     <>
-      <Routes>
+      {detached ? <main style={{ padding: 24 }}><p role="status">{detachedError || 'Opening your saved draft…'}</p>{detachedError && <button className="btn btn-primary" onClick={() => window.location.reload()}>Retry</button>}<a href="/mail/Drafts">Open Drafts</a></main> : <Routes>
         <Route element={<MailLayout mail={mail} />}>
           <Route path=":folder" element={<MessageList mail={mail} density={mailSettings.reading.density} />} />
           <Route path=":folder/:uid" element={<MessageList mail={mail} density={mailSettings.reading.density} />} />
         </Route>
-      </Routes>
-      <ComposeModal mail={mail} />
+      </Routes>}
+      {!detached && mail.minimizedDrafts.length > 0 && <div aria-label="Minimized drafts" style={{ position: 'fixed', bottom: 12, right: 12, zIndex: 900, display: 'flex', flexWrap: 'wrap', gap: 8, maxWidth: '90vw' }}>
+        {minimizedError && <p role="alert">{minimizedError}</p>}
+        {mail.minimizedDrafts.map(draft => <div key={draft.id} className="glass-panel" style={{ display: 'flex', maxWidth: 240 }}><button className="btn btn-secondary" disabled={mail.isComposing} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => void mail.openSavedDraft(draft.id).then(opened => setMinimizedError(opened ? '' : 'This draft is open in another window or cannot be opened.')).catch(err => setMinimizedError(err.message))}>{draft.subject}</button><button className="btn btn-ghost" aria-label={`Dismiss minimized ${draft.subject}; keep in Drafts`} onClick={() => mail.dismissMinimizedDraft(draft.id)}>×</button></div>)}
+      </div>}
+      <ComposeModal mail={mail} detached={detached} />
     </>
   );
 }

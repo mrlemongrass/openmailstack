@@ -6,7 +6,7 @@ const path = require('node:path');
 const { startApplicationAfterRequiredMigrations } = require('../src/application-startup.js');
 
 const prerequisiteNames = [
-  'mail-search', 'session', 'user-settings', 'admin-settings', 'branding',
+  'mail-search', 'mail-import', 'session', 'user-settings', 'admin-settings', 'branding',
   'account-security', 'calendar', 'subscriptions', 'scheduled-send', 'notes',
   'reminders', 'attachments', 'contacts', 'eas-mail', 'eas-pim', 'birthdays',
 ];
@@ -29,6 +29,7 @@ function startupDependencies(failingPrerequisite = null) {
   return {
     dependencies: {
       ensureMailSearchSchema: prerequisite('mail-search'),
+      ensureMailImportSchema: prerequisite('mail-import'),
       initializeSessionStore: prerequisite('session'),
       ensureUserSettingsSchema: prerequisite('user-settings'),
       ensureAdminSettingsSchema: prerequisite('admin-settings'),

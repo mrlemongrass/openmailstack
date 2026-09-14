@@ -8,6 +8,7 @@ exports.startApplicationAfterRequiredMigrations = startApplicationAfterRequiredM
  */
 async function startApplicationAfterRequiredMigrations(dependencies) {
     await dependencies.ensureMailSearchSchema();
+    await dependencies.ensureMailImportSchema();
     await dependencies.initializeSessionStore();
     await dependencies.ensureUserSettingsSchema();
     await dependencies.ensureAdminSettingsSchema();

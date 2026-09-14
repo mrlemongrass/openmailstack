@@ -1,4 +1,5 @@
 export interface ApplicationStartupDependencies {
+    ensureMailImportSchema: () => Promise<unknown>;
     ensureMailSearchSchema: () => Promise<unknown>;
     initializeSessionStore: () => Promise<unknown>;
     ensureUserSettingsSchema: () => Promise<unknown>;

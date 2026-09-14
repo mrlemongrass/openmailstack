@@ -34,6 +34,7 @@ export interface NoteRow {
     sync_token: number;
     imap_sync_token: number;
     is_deleted: number;
+    is_purged?: number;
     created_at: string;
     updated_at: string;
 }
@@ -52,6 +53,8 @@ export declare function saveNote(note: Partial<NoteRow> & {
 export declare function deleteNote(id: string, owner: string): Promise<void>;
 export declare function deleteNoteIfRevisionMatches(id: string, owner: string, expectedSyncToken: number, expectedImapUid: number): Promise<boolean>;
 export declare function hardDeleteNote(id: string, owner: string): Promise<void>;
+export declare function restoreNote(id: string, owner: string): Promise<void>;
+export declare function purgeNote(id: string, owner: string): Promise<void>;
 export interface NoteReminder {
     note_id: string;
     remind_at: string;
@@ -75,7 +78,7 @@ export declare function ensureAttachmentsSchema(): Promise<void>;
 export declare function listNoteAttachments(noteId: string, owner: string): Promise<NoteAttachmentRow[]>;
 export declare function saveNoteAttachment(attachment: NoteAttachmentRow, owner: string): Promise<void>;
 export declare function deleteNoteAttachment(attachmentId: string, owner: string): Promise<NoteAttachmentRow | null>;
-export declare function listNotesWithReminders(owner: string): Promise<(NoteRow & {
+export declare function listNotesWithReminders(owner: string, trash?: boolean): Promise<(NoteRow & {
     remind_at: string | null;
 })[]>;
 export declare function getNotesSyncToken(owner: string): Promise<number>;

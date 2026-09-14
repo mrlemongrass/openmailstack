@@ -256,6 +256,7 @@ export default function App() {
       <Route path="scheduler/poll/:token" element={<Suspense fallback={<Skeleton />}><PublicSchedulerPollPage /></Suspense>} />
       <Route path="scheduler/:handle/:slug?" element={<Suspense fallback={<Skeleton />}><PublicSchedulerPage /></Suspense>} />
       <Route element={<AuthGate />}>
+        <Route path="compose-window" element={<Suspense fallback={<Skeleton />}><MailRoutes detached /></Suspense>} />
         <Route element={<ErrorBoundary><AppShell /></ErrorBoundary>}>
           <Route path="mail/*" element={<Suspense fallback={<Skeleton />}><MailRoutes /></Suspense>} />
           <Route path="calendar/*" element={<Suspense fallback={<Skeleton />}><CalendarRoutes /></Suspense>} />

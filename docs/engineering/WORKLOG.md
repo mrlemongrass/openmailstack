@@ -11565,3 +11565,44 @@ remain outside this change. Browser recovery flows used synthetic API state;
 database persistence used a disposable schema, while live protocols used the
 isolated canary with enforced cleanup. Physical-client confirmation and the
 remaining P2/P3 backlog are not claimed completed.
+
+
+## 2026-09-14 — P2 power-user workflows
+
+Operator confirmed P1 behavior and authorized all remaining P2 tasks, retaining
+commit/push and guarded deployment authorization. Work proceeds in bounded
+implementation and verification steps against the dated power-user review.
+
+Acceptance criteria before editing:
+- Whole-result selection uses a bounded server snapshot with folder+UID identity,
+  excludes later arrivals, checks mailbox identity, supports cancellation and
+  explicit partial/uncertain recovery; loaded-only selection is clearly labeled.
+- Junk-only bulk selections offer Not junk and one explicit policy confirmation.
+- Mail sort/filter controls reuse search semantics and preserve valid selection;
+  keyboard list/range/search/compose/folder navigation has visible help and opt-out
+  and never fires while editing or behind dialogs.
+- Notes filters/labels are native keyboard controls; Trash preserves note content,
+  attachments and reminders for restoration, with explicit permanent deletion.
+- Composer supports independent-window ownership with popup fallback and safe
+  save/discard/attachment handling, plus multiple minimized drafts. Rich authoring
+  preserves inline images/tables with safe paste and explicit format conversion.
+- Calendar/Contacts destructive confirmations use shared accessible dialogs,
+  request locks and visible recoverable errors without changing deletion scope.
+- Settings task search and contextual links make common choices discoverable.
+- Migration onboarding inventories existing import capabilities and provides a
+  bounded resumable/deduplicated mailbox import with honest transfer boundaries.
+- Each area receives regression checks and browser verification, followed by full
+  suites, build/lint, review, guarded live deployment, health/artifact proof.
+
+Implementation and pre-release verification are recorded in
+`WEBAPP_P2_RELEASE_2026-09-14.md`. Independent review fixes preserve Notes IMAP
+linkage on restore, keep bulk progress mounted through empty results, release
+abandoned selection tokens, and retain accessible import cleanup/history.
+
+Final pre-release checks: frontend 288 passed; backend 1,026 passed / 9 skipped;
+both builds, frontend lint, shell syntax and diff whitespace checks passed.
+Disposable MariaDB workflow suite: two passed, with schema/user/test-file cleanup.
+Browser fixtures confirmed image/table/alt/size preservation through minimized and
+independent composers, competing-window exclusion, blocked-popup fallback,
+203-message snapshot progress after loaded rows empty, Junk bulk parity,
+Notes Trash/restore and import review/completion including 390px mobile layout.

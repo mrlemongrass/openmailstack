@@ -228,7 +228,7 @@ test('a stale IMAP deletion cannot delete a newer note revision or its dependent
   assert.equal(state.sync_token, 4);
   assert.equal(state.imap_sync_token, 4);
   assert.equal(state.imap_uid, null);
-  assert.ok(cleanupQueries.some((query) => query.startsWith('DELETE FROM note_reminders')));
+  assert.equal(cleanupQueries.length, 0, 'Trash retains reminders and attachments');
 });
 
 test('capabilities are opaque, owner- and session-bound, tamper-evident, and expiring', () => {

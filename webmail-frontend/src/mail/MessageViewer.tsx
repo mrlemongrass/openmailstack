@@ -1,3 +1,4 @@
+import { ignoreMailShortcut } from './mail-list-controls';
 import { useSafeImageSenders } from './useSafeImageSenders';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
@@ -180,8 +181,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   // Keyboard shortcuts — must be before early returns for stable hook count
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
+      if (mail.mailSettings.reading.shortcuts === 'off' || ignoreMailShortcut(e)) return;
       if (!message || document.querySelector('[role="dialog"]')) return;
 
       const key = e.key.toLowerCase();

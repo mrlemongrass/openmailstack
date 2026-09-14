@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import {
   CalendarPlus,
   Check,
@@ -65,6 +65,8 @@ export function CalendarSidebar({ cal, onNestedDialogChange, onRequestClose }: C
   const [menu, setMenu] = useState<SidebarMenuState | null>(null);
   const [editorCalendar, setEditorCalendar] = useState<Calendar | null | undefined>(undefined);
   const [sharingCalendar, setSharingCalendar] = useState<Calendar | null>(null);
+  const deleteLock = useRef(false);
+  const [deleting, setDeleting] = useState(false);
   const [deleteCalendar, setDeleteCalendar] = useState<Calendar | null>(null);
   const [refreshingSubscriptionId, setRefreshingSubscriptionId] = useState<number | null>(null);
   const [calendarsExpanded, setCalendarsExpanded] = useState(true);
@@ -410,7 +412,7 @@ export function CalendarSidebar({ cal, onNestedDialogChange, onRequestClose }: C
       )}
       {sharingCalendar && <CalendarSharingDialog calendar={sharingCalendar} onClose={() => setSharingCalendar(null)} />}
       <ConfirmDialog
-        open={Boolean(deleteCalendar)}
+        open={Boolean(deleteCalendar)} busy={deleting}
         title={deleteCalendar && calendarRemovalKind(deleteCalendar, cal.calendars) === 'remove'
           ? 'Remove calendar?' : 'Delete calendar?'}
         message={deleteCalendar && calendarRemovalKind(deleteCalendar, cal.calendars) === 'remove'
@@ -424,16 +426,13 @@ export function CalendarSidebar({ cal, onNestedDialogChange, onRequestClose }: C
         onCancel={() => setDeleteCalendar(null)}
         onConfirm={() => {
           const target = deleteCalendar;
-          setDeleteCalendar(null);
-          if (!target) return;
-          void cal.removeCalendar(target.id).then(
-            () => showToast({
-              type: 'success',
-              message: calendarRemovalKind(target, cal.calendars) === 'remove'
-                ? `${target.name} removed` : `${target.name} deleted`,
-            }),
-            error => showToast({ type: 'error', message: error instanceof Error ? error.message : 'The calendar could not be removed.' }),
-          );
+          if (!target || deleteLock.current) return;
+          deleteLock.current = true; setDeleting(true);
+          void cal.removeCalendar(target.id).then(() => {
+            setDeleteCalendar(null);
+            showToast({ type: 'success', message: calendarRemovalKind(target, cal.calendars) === 'remove' ? `${target.name} removed` : `${target.name} deleted` });
+          }).catch(error => showToast({ type: 'error', message: error instanceof Error ? error.message : 'The calendar could not be removed.' }))
+            .finally(() => { deleteLock.current = false; setDeleting(false); });
         }}
       />
     </div>

@@ -1,3 +1,4 @@
+import { MailImportPane } from './MailImportPane';
 import { JunkList } from './JunkList';
 import React, { useState, lazy, Suspense, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Check, Copy, Filter, ListChecks, PenTool, Play, Plus, Trash2 } from 'lucide-react';
@@ -206,6 +207,7 @@ export function SettingsContent(props: SettingsContentProps) {
   else if (activeTab === 'mail_signatures') content = <SignaturesPane {...props} />;
   else if (activeTab === 'mail_reading') content = <MailReadingPane {...props} />;
   else if (activeTab === 'mail_filters') content = <FiltersPane {...props} />;
+  else if (activeTab === 'mail_import') content = <MailImportPane folders={props.folders} />;
   else if (activeTab === 'mail_spam') content = <MailSpamPane />;
   else if (activeTab === 'calendar_defaults') content = <CalendarPane {...props} />;
   else if (activeTab === 'contacts_display') content = <ContactsPane {...props} />;
@@ -576,6 +578,8 @@ function MailReadingPane({ mailSettings, onMailSettingsChange }: SettingsContent
       <div className="settings-grid">
         <section className="settings-section">
           <h3>Message List</h3>
+          <label className="settings-field"><span>Keyboard shortcuts</span><select className="glass-input glass-select" value={mailSettings.reading.shortcuts || 'vim'} onChange={e => updateReading({ shortcuts: e.target.value as MailUserSettings['reading']['shortcuts'] })}><option value="vim">Arrow keys and J / K</option><option value="standard">Arrow keys</option><option value="off">Off</option></select></label>
+          <p className="settings-description">Use ? in Mail for help. Shortcuts pause while editing or using a dialog.</p>
           <label className="settings-toggle-row">
             <span>Show message snippets</span>
             <input type="checkbox" checked={mailSettings.reading.snippets} onChange={event => updateReading({ snippets: event.target.checked })} />

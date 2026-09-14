@@ -1479,7 +1479,7 @@ export class ImapService {
         return uids.map(uid => messages.get(uid)).filter((message): message is ActiveSyncMailMessage => Boolean(message));
     }
 
-    private buildSearchQuery(query: string, field: MailSearchField): SearchObject {
+    buildSearchQuery(query: string, field: MailSearchField): SearchObject {
         if (field === 'from') return { from: query };
         if (field === 'to') return { to: query };
         if (field === 'subject') return { subject: query };
@@ -1822,31 +1822,40 @@ export class ImapService {
         await this.client.mailboxClose();
     }
 
-    async messageAction(folderPath: string, uids: number[], action: 'delete' | 'hardDelete' | 'archive' | 'spam' | 'move' | 'read' | 'unread' | 'star' | 'unstar', targetFolder?: string) {
+    async messageAction(folderPath: string, uids: number[], action: 'delete' | 'hardDelete' | 'archive' | 'spam' | 'move' | 'read' | 'unread' | 'star' | 'unstar', targetFolder?: string, expectedUidValidity?: string) {
         if (uids.length === 0) return null;
         
-        await this.client.mailboxOpen(folderPath);
+        const mailbox = await this.client.mailboxOpen(folderPath);
+        if (expectedUidValidity && String(mailbox.uidValidity) !== expectedUidValidity) {
+            await this.client.mailboxClose();
+            throw new Error('Mailbox identity changed. Review the selection again.');
+        }
         const sequence = uids.join(',');
+        const acknowledged = <T>(result: T): T => {
+            if (expectedUidValidity && result === false) throw new Error('The mail server did not acknowledge this action. Check the folder before retrying.');
+            return result;
+        };
         
         try {
             if (action === 'hardDelete') {
-                await this.client.messageDelete(sequence, { uid: true });
+                acknowledged(await this.client.messageDelete(sequence, { uid: true }));
                 return null;
             } else if (action === 'delete') {
                 // Try to move to Trash first
                 let trashFolder = 'Trash';
                 const folders = await this.client.list();
-                const existingTrash = folders.find(f => f.path.toLowerCase() === 'trash');
+                const existingTrash = folders.find(f => f.specialUse?.toLowerCase() === '\\trash' || mailboxSpecialUse(f)?.toLowerCase() === '\\trash') || folders.find(f => f.path.toLowerCase() === 'trash');
                 if (!existingTrash) {
                     try { await this.client.mailboxCreate('Trash'); } catch(e) {}
                 } else {
                     trashFolder = existingTrash.path;
                 }
                 if (folderPath.toLowerCase() === trashFolder.toLowerCase()) {
-                    await this.client.messageDelete(sequence, { uid: true });
+                    acknowledged(await this.client.messageDelete(sequence, { uid: true }));
                     return null;
                 }
                 const moveResult = await this.client.messageMove(sequence, trashFolder, { uid: true });
+                acknowledged(moveResult);
                 return { targetFolder: trashFolder, uidMap: moveResult && moveResult.uidMap ? Object.fromEntries(moveResult.uidMap) : null };
             } else if (action === 'archive') {
                 let archFolder = 'Archive';
@@ -1858,6 +1867,7 @@ export class ImapService {
                     archFolder = existing.path;
                 }
                 const moveResult = await this.client.messageMove(sequence, archFolder, { uid: true });
+                acknowledged(moveResult);
                 return { targetFolder: archFolder, uidMap: moveResult && moveResult.uidMap ? Object.fromEntries(moveResult.uidMap) : null };
             } else if (action === 'spam') {
                 let junkFolder = 'Junk';
@@ -1872,18 +1882,20 @@ export class ImapService {
                     junkFolder = existing.path;
                 }
                 const moveResult = await this.client.messageMove(sequence, junkFolder, { uid: true });
+                acknowledged(moveResult);
                 return { targetFolder: junkFolder, uidMap: moveResult && moveResult.uidMap ? Object.fromEntries(moveResult.uidMap) : null };
             } else if (action === 'move' && targetFolder) {
                 const moveResult = await this.client.messageMove(sequence, targetFolder, { uid: true });
+                acknowledged(moveResult);
                 return { targetFolder, uidMap: moveResult && moveResult.uidMap ? Object.fromEntries(moveResult.uidMap) : null };
             } else if (action === 'read') {
-                await this.client.messageFlagsAdd(sequence, ['\\Seen'], { uid: true });
+                acknowledged(await this.client.messageFlagsAdd(sequence, ['\\Seen'], { uid: true }));
             } else if (action === 'unread') {
-                await this.client.messageFlagsRemove(sequence, ['\\Seen'], { uid: true });
+                acknowledged(await this.client.messageFlagsRemove(sequence, ['\\Seen'], { uid: true }));
             } else if (action === 'star') {
-                await this.client.messageFlagsAdd(sequence, ['\\Flagged'], { uid: true });
+                acknowledged(await this.client.messageFlagsAdd(sequence, ['\\Flagged'], { uid: true }));
             } else if (action === 'unstar') {
-                await this.client.messageFlagsRemove(sequence, ['\\Flagged'], { uid: true });
+                acknowledged(await this.client.messageFlagsRemove(sequence, ['\\Flagged'], { uid: true }));
             }
             return null;
         } finally {

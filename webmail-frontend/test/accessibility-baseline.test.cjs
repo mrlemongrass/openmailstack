@@ -25,7 +25,7 @@ test('contact and note cards expose keyboard-operable open actions', () => {
 
   assert.match(contacts, /role="button"[\s\S]*tabIndex=\{0\}[\s\S]*aria-label=\{`Open contact/);
   assert.match(contacts, /event\.key === 'Enter' \|\| event\.key === ' '/);
-  assert.match(notes, /role="button"[\s\S]*tabIndex=\{0\}[\s\S]*aria-label=\{`Open note/);
+  assert.match(notes, /role="button"[\s\S]*tabIndex=\{0\}[\s\S]*aria-label=\{`\$\{inTrash \? 'Trashed note' : 'Open note'/);
   assert.match(notes, /event\.key === 'Enter' \|\| event\.key === ' '/);
 });
 

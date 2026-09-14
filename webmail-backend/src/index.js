@@ -37,6 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.io = void 0;
+const mail_import_1 = require("./mail-import");
 const http_1 = __importDefault(require("http"));
 const node_perf_hooks_1 = require("node:perf_hooks");
 const socket_io_1 = require("socket.io");
@@ -2386,6 +2387,7 @@ async function startServer() {
     try {
         await (0, application_startup_1.startApplicationAfterRequiredMigrations)({
             ensureMailSearchSchema: search_index_1.ensureMailSearchSchema,
+            ensureMailImportSchema: mail_import_1.ensureMailImportSchema,
             initializeSessionStore: auth_1.initializeSessionStore,
             ensureUserSettingsSchema: user_settings_1.ensureUserSettingsSchema,
             ensureAdminSettingsSchema: admin_settings_1.ensureAdminSettingsSchema,

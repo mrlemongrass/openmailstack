@@ -24,6 +24,7 @@ export interface MailSettings {
         undoSendSeconds: 0 | 5 | 10 | 20 | 30;
     };
     reading: {
+        shortcuts: 'standard' | 'vim' | 'off';
         afterAction: 'list' | 'previous' | 'next';
         threaded: boolean;
         density: 'comfortable' | 'cozy' | 'compact';
@@ -99,6 +100,7 @@ export const settingsDefaults = {
             undoSendSeconds: 10,
         },
         reading: {
+            shortcuts: 'vim',
             afterAction: 'list',
             threaded: false,
             density: 'cozy',
@@ -332,6 +334,7 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
                 undoSendSeconds: numberOption(compose.undoSendSeconds, [0, 5, 10, 20, 30], settingsDefaults.mail.compose.undoSendSeconds),
             },
             reading: {
+                shortcuts: stringOption(reading.shortcuts, ['standard', 'vim', 'off'], 'vim'),
                 afterAction: stringOption(reading.afterAction, ['list', 'previous', 'next'], 'list'),
                 threaded: booleanValue(reading.threaded, settingsDefaults.mail.reading.threaded),
                 density: stringOption(reading.density, ['comfortable', 'cozy', 'compact'], settingsDefaults.mail.reading.density),

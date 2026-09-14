@@ -125,6 +125,7 @@ export interface NoteRow {
     sync_token: number;
     imap_sync_token: number;
     is_deleted: number;
+    is_purged?: number;
     created_at: string;
     updated_at: string;
 }
@@ -172,6 +173,7 @@ const compatibleNoteColumnTypes: Record<string, RegExp> = {
     imap_sync_token: /^bigint(?:\(\d+\))?(?: unsigned)?$/,
     imap_uid: /^int(?:\(\d+\))?(?: unsigned)?$/,
     imap_msgid: /^varchar\(255\)$/,
+    is_purged: /^tinyint(?:\(\d+\))?(?: unsigned)?$/,
     is_deleted: /^tinyint(?:\(\d+\))?(?: unsigned)?$/,
     created_at: /^timestamp(?:\(\d+\))?$/,
     updated_at: /^timestamp(?:\(\d+\))?$/,
@@ -214,10 +216,12 @@ export async function ensureNotesSchema(): Promise<void> {
                 ['imap_uid', 'INT DEFAULT NULL'],
                 ['imap_msgid', 'VARCHAR(255) DEFAULT NULL'],
                 ['is_deleted', 'TINYINT(1) NOT NULL DEFAULT 0'],
+                ['is_purged', 'TINYINT(1) NOT NULL DEFAULT 0'],
             ];
             for (const [name, definition] of extensionColumns) {
                 if (!columnNames.has(name)) {
                     await pool.query(`ALTER TABLE notes ADD COLUMN ${name} ${definition}`);
+                    if (name === 'is_purged') await pool.query('UPDATE notes SET is_purged = 1 WHERE is_deleted = 1');
                 }
             }
 
@@ -231,7 +235,7 @@ export async function ensureNotesSchema(): Promise<void> {
             const requiredColumns = [
                 'id', 'owner', 'title', 'content', 'color', 'is_pinned', 'is_locked', 'folder',
                 'labels_json', 'sync_token', 'imap_sync_token', 'imap_uid', 'imap_msgid',
-                'is_deleted', 'created_at', 'updated_at',
+                'is_deleted', 'is_purged', 'created_at', 'updated_at',
             ];
             const missingColumns = requiredColumns.filter(column => !verifiedNames.has(column));
             if (missingColumns.length > 0) {
@@ -247,6 +251,7 @@ export async function ensureNotesSchema(): Promise<void> {
                 { name: 'folder', definition: "VARCHAR(100) NOT NULL DEFAULT 'notes'", fallback: "'notes'", expectedDefault: 'notes' },
                 { name: 'sync_token', definition: 'BIGINT NOT NULL DEFAULT 1', fallback: '1', expectedDefault: '1' },
                 { name: 'imap_sync_token', definition: 'BIGINT NOT NULL DEFAULT 0', fallback: '0', expectedDefault: '0' },
+                { name: 'is_purged', definition: 'TINYINT(1) NOT NULL DEFAULT 0', fallback: '0', expectedDefault: '0' },
                 { name: 'is_deleted', definition: 'TINYINT(1) NOT NULL DEFAULT 0', fallback: '0', expectedDefault: '0' },
             ];
             let invariantsMigrated = false;
@@ -397,14 +402,16 @@ async function cleanupDeletedNoteDependents(id: string, owner: string): Promise<
             const fs = require('fs');
             for (const att of attachments) {
                 try {
-                    const filePath = path.join(__dirname, '..', 'uploads', att.storage_path);
+                    const root = path.resolve(__dirname, '..', 'uploads');
+                    const filePath = path.resolve(root, att.storage_path);
+                    if (!filePath.startsWith(root + path.sep)) throw new Error('Invalid attachment path.');
                     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                } catch {}
+                } catch (error: any) { if (error.code !== 'ENOENT') throw error; }
             }
         }
         await pool.query('DELETE a FROM note_attachments a JOIN notes n ON n.id = a.note_id WHERE a.note_id = ? AND n.owner = ?', [id, owner]);
     } catch (e) {
-        console.error('deleteNote: failed to clean up reminders/attachments', e);
+        throw new Error('Some note attachments could not be removed. Retry permanent deletion.');
     }
 }
 
@@ -421,7 +428,7 @@ export async function deleteNote(id: string, owner: string): Promise<void> {
         [id, owner],
     );
     if (result.affectedRows === 0) return;
-    await cleanupDeletedNoteDependents(id, owner);
+    // Keep dependent files and reminders until explicit permanent deletion.
     emitNoteDeleted(id, owner);
 }
 
@@ -451,13 +458,51 @@ export async function deleteNoteIfRevisionMatches(
     );
     if (result.affectedRows === 0) return false;
 
-    await cleanupDeletedNoteDependents(id, owner);
+    // Keep dependent files and reminders until explicit permanent deletion.
     emitNoteDeleted(id, owner);
     return true;
 }
 
 export async function hardDeleteNote(id: string, owner: string): Promise<void> {
     await pool.query('DELETE FROM notes WHERE id = ? AND owner = ?', [id, owner]);
+}
+
+// Serialize restoration/purge with the existing per-owner IMAP synchronization lock.
+async function withNotesTrashLock<T>(owner: string, work: () => Promise<T>): Promise<T> {
+    const connection = await pool.getConnection();
+    const name = `oms-notes-${require('crypto').createHash('sha256').update(owner.trim().toLowerCase()).digest('hex').slice(0, 48)}`;
+    let acquired = false;
+    try {
+        const [rows]: any = await connection.query('SELECT GET_LOCK(?, 30) AS acquired', [name]);
+        acquired = Number(rows[0]?.acquired) === 1;
+        if (!acquired) throw new Error('Notes are synchronizing. Retry shortly.');
+        return await work();
+    } finally {
+        let reusable = true;
+        try { if (acquired) await connection.query('SELECT RELEASE_LOCK(?)', [name]); }
+        catch (error) { reusable = false; connection.destroy(); throw error; }
+        finally { if (reusable) connection.release(); }
+    }
+}
+export async function restoreNote(id: string, owner: string): Promise<void> {
+    await withNotesTrashLock(owner, async () => {
+        const note = await getNote(id, owner, true);
+        if (!note || note.is_purged) throw new Error('This note is unavailable.');
+        if (!note.is_deleted) return;
+        await pool.query('UPDATE notes SET is_deleted = 0, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner = ? AND is_deleted = 1 AND is_purged = 0', [id, owner]);
+        // Keep future reminders; an expired reminder must not fire immediately on restore.
+        await pool.query('UPDATE note_reminders SET notified = 1 WHERE note_id = ? AND remind_at < CURRENT_TIMESTAMP', [id]);
+    });
+}
+export async function purgeNote(id: string, owner: string): Promise<void> {
+    await withNotesTrashLock(owner, async () => {
+        const note = await getNote(id, owner, true);
+        if (!note || note.is_purged) return;
+        if (!note.is_deleted) throw new Error('Move the note to Trash before deleting it permanently.');
+        await cleanupDeletedNoteDependents(id, owner);
+        // Keep only a synchronization tombstone until every client has seen the deletion.
+        await pool.query("UPDATE notes SET is_purged = 1, title = '', content = '', labels_json = '[]', sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner = ? AND is_deleted = 1", [id, owner]);
+    });
 }
 
 // ---- Reminders ----
@@ -579,12 +624,12 @@ async function ensureAllNotesSchemas(): Promise<void> {
 
 // ---- Extended listNotes with reminders ----
 
-export async function listNotesWithReminders(owner: string): Promise<(NoteRow & { remind_at: string | null })[]> {
+export async function listNotesWithReminders(owner: string, trash = false): Promise<(NoteRow & { remind_at: string | null })[]> {
     const [results]: any = await pool.query(
         `SELECT n.*, r.remind_at
          FROM notes n
          LEFT JOIN note_reminders r ON n.id = r.note_id
-         WHERE n.owner = ? AND n.is_deleted = 0
+         WHERE n.owner = ? AND n.is_deleted = ${trash ? '1 AND n.is_purged = 0' : '0'}
          ORDER BY n.updated_at DESC`,
         [owner]
     );

@@ -43,6 +43,8 @@ exports.saveNote = saveNote;
 exports.deleteNote = deleteNote;
 exports.deleteNoteIfRevisionMatches = deleteNoteIfRevisionMatches;
 exports.hardDeleteNote = hardDeleteNote;
+exports.restoreNote = restoreNote;
+exports.purgeNote = purgeNote;
 exports.ensureRemindersSchema = ensureRemindersSchema;
 exports.getNoteReminder = getNoteReminder;
 exports.saveNoteReminder = saveNoteReminder;
@@ -160,6 +162,7 @@ const compatibleNoteColumnTypes = {
     imap_sync_token: /^bigint(?:\(\d+\))?(?: unsigned)?$/,
     imap_uid: /^int(?:\(\d+\))?(?: unsigned)?$/,
     imap_msgid: /^varchar\(255\)$/,
+    is_purged: /^tinyint(?:\(\d+\))?(?: unsigned)?$/,
     is_deleted: /^tinyint(?:\(\d+\))?(?: unsigned)?$/,
     created_at: /^timestamp(?:\(\d+\))?$/,
     updated_at: /^timestamp(?:\(\d+\))?$/,
@@ -200,10 +203,13 @@ async function ensureNotesSchema() {
                 ['imap_uid', 'INT DEFAULT NULL'],
                 ['imap_msgid', 'VARCHAR(255) DEFAULT NULL'],
                 ['is_deleted', 'TINYINT(1) NOT NULL DEFAULT 0'],
+                ['is_purged', 'TINYINT(1) NOT NULL DEFAULT 0'],
             ];
             for (const [name, definition] of extensionColumns) {
                 if (!columnNames.has(name)) {
                     await db_1.pool.query(`ALTER TABLE notes ADD COLUMN ${name} ${definition}`);
+                    if (name === 'is_purged')
+                        await db_1.pool.query('UPDATE notes SET is_purged = 1 WHERE is_deleted = 1');
                 }
             }
             const contentColumn = columns.find(column => String(column.Field) === 'content');
@@ -215,7 +221,7 @@ async function ensureNotesSchema() {
             const requiredColumns = [
                 'id', 'owner', 'title', 'content', 'color', 'is_pinned', 'is_locked', 'folder',
                 'labels_json', 'sync_token', 'imap_sync_token', 'imap_uid', 'imap_msgid',
-                'is_deleted', 'created_at', 'updated_at',
+                'is_deleted', 'is_purged', 'created_at', 'updated_at',
             ];
             const missingColumns = requiredColumns.filter(column => !verifiedNames.has(column));
             if (missingColumns.length > 0) {
@@ -228,6 +234,7 @@ async function ensureNotesSchema() {
                 { name: 'folder', definition: "VARCHAR(100) NOT NULL DEFAULT 'notes'", fallback: "'notes'", expectedDefault: 'notes' },
                 { name: 'sync_token', definition: 'BIGINT NOT NULL DEFAULT 1', fallback: '1', expectedDefault: '1' },
                 { name: 'imap_sync_token', definition: 'BIGINT NOT NULL DEFAULT 0', fallback: '0', expectedDefault: '0' },
+                { name: 'is_purged', definition: 'TINYINT(1) NOT NULL DEFAULT 0', fallback: '0', expectedDefault: '0' },
                 { name: 'is_deleted', definition: 'TINYINT(1) NOT NULL DEFAULT 0', fallback: '0', expectedDefault: '0' },
             ];
             let invariantsMigrated = false;
@@ -356,17 +363,23 @@ async function cleanupDeletedNoteDependents(id, owner) {
             const fs = require('fs');
             for (const att of attachments) {
                 try {
-                    const filePath = path.join(__dirname, '..', 'uploads', att.storage_path);
+                    const root = path.resolve(__dirname, '..', 'uploads');
+                    const filePath = path.resolve(root, att.storage_path);
+                    if (!filePath.startsWith(root + path.sep))
+                        throw new Error('Invalid attachment path.');
                     if (fs.existsSync(filePath))
                         fs.unlinkSync(filePath);
                 }
-                catch { }
+                catch (error) {
+                    if (error.code !== 'ENOENT')
+                        throw error;
+                }
             }
         }
         await db_1.pool.query('DELETE a FROM note_attachments a JOIN notes n ON n.id = a.note_id WHERE a.note_id = ? AND n.owner = ?', [id, owner]);
     }
     catch (e) {
-        console.error('deleteNote: failed to clean up reminders/attachments', e);
+        throw new Error('Some note attachments could not be removed. Retry permanent deletion.');
     }
 }
 function emitNoteDeleted(id, owner) {
@@ -380,7 +393,7 @@ async function deleteNote(id, owner) {
     const [result] = await db_1.pool.query('UPDATE notes SET is_deleted = 1, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner = ? AND is_deleted = 0', [id, owner]);
     if (result.affectedRows === 0)
         return;
-    await cleanupDeletedNoteDependents(id, owner);
+    // Keep dependent files and reminders until explicit permanent deletion.
     emitNoteDeleted(id, owner);
 }
 async function deleteNoteIfRevisionMatches(id, owner, expectedSyncToken, expectedImapUid) {
@@ -400,12 +413,65 @@ async function deleteNoteIfRevisionMatches(id, owner, expectedSyncToken, expecte
            AND imap_uid = ? AND is_deleted = 0`, [id, owner, syncToken, syncToken, imapUid]);
     if (result.affectedRows === 0)
         return false;
-    await cleanupDeletedNoteDependents(id, owner);
+    // Keep dependent files and reminders until explicit permanent deletion.
     emitNoteDeleted(id, owner);
     return true;
 }
 async function hardDeleteNote(id, owner) {
     await db_1.pool.query('DELETE FROM notes WHERE id = ? AND owner = ?', [id, owner]);
+}
+// Serialize restoration/purge with the existing per-owner IMAP synchronization lock.
+async function withNotesTrashLock(owner, work) {
+    const connection = await db_1.pool.getConnection();
+    const name = `oms-notes-${require('crypto').createHash('sha256').update(owner.trim().toLowerCase()).digest('hex').slice(0, 48)}`;
+    let acquired = false;
+    try {
+        const [rows] = await connection.query('SELECT GET_LOCK(?, 30) AS acquired', [name]);
+        acquired = Number(rows[0]?.acquired) === 1;
+        if (!acquired)
+            throw new Error('Notes are synchronizing. Retry shortly.');
+        return await work();
+    }
+    finally {
+        let reusable = true;
+        try {
+            if (acquired)
+                await connection.query('SELECT RELEASE_LOCK(?)', [name]);
+        }
+        catch (error) {
+            reusable = false;
+            connection.destroy();
+            throw error;
+        }
+        finally {
+            if (reusable)
+                connection.release();
+        }
+    }
+}
+async function restoreNote(id, owner) {
+    await withNotesTrashLock(owner, async () => {
+        const note = await getNote(id, owner, true);
+        if (!note || note.is_purged)
+            throw new Error('This note is unavailable.');
+        if (!note.is_deleted)
+            return;
+        await db_1.pool.query('UPDATE notes SET is_deleted = 0, sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner = ? AND is_deleted = 1 AND is_purged = 0', [id, owner]);
+        // Keep future reminders; an expired reminder must not fire immediately on restore.
+        await db_1.pool.query('UPDATE note_reminders SET notified = 1 WHERE note_id = ? AND remind_at < CURRENT_TIMESTAMP', [id]);
+    });
+}
+async function purgeNote(id, owner) {
+    await withNotesTrashLock(owner, async () => {
+        const note = await getNote(id, owner, true);
+        if (!note || note.is_purged)
+            return;
+        if (!note.is_deleted)
+            throw new Error('Move the note to Trash before deleting it permanently.');
+        await cleanupDeletedNoteDependents(id, owner);
+        // Keep only a synchronization tombstone until every client has seen the deletion.
+        await db_1.pool.query("UPDATE notes SET is_purged = 1, title = '', content = '', labels_json = '[]', sync_token = sync_token + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner = ? AND is_deleted = 1", [id, owner]);
+    });
 }
 async function ensureRemindersSchema() {
     await db_1.pool.query(`
@@ -479,11 +545,11 @@ async function ensureAllNotesSchemas() {
     await ensureAttachmentsSchema();
 }
 // ---- Extended listNotes with reminders ----
-async function listNotesWithReminders(owner) {
+async function listNotesWithReminders(owner, trash = false) {
     const [results] = await db_1.pool.query(`SELECT n.*, r.remind_at
          FROM notes n
          LEFT JOIN note_reminders r ON n.id = r.note_id
-         WHERE n.owner = ? AND n.is_deleted = 0
+         WHERE n.owner = ? AND n.is_deleted = ${trash ? '1 AND n.is_purged = 0' : '0'}
          ORDER BY n.updated_at DESC`, [owner]);
     return results;
 }

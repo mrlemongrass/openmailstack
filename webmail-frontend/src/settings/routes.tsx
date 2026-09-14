@@ -1,3 +1,4 @@
+import { SettingsSearch } from './SettingsSearch';
 import { PolicyDraftContext } from './policy-draft-context';
 import { createSettingsSaveQueue } from './settings-save-queue';
 import { UnsavedChangesGuard } from '../shared/components/UnsavedChangesGuard';
@@ -146,7 +147,7 @@ function SettingsLoader() {
 
   const dependencies: Record<SettingsTab, Resource[]> = {
     appearance: ['appearance'], mail_identity: ['mail', 'identities'], mail_signatures: ['mail'],
-    mail_reading: ['mail'], mail_filters: ['rules', 'folders'], mail_spam: ['mail'],
+    mail_reading: ['mail'], mail_filters: ['rules', 'folders'], mail_spam: ['mail'], mail_import: ['folders'],
     calendar_defaults: ['calendar', 'calendars'], contacts_display: ['contacts'],
     sync_devices: ['identities'], account_password: [], advanced: [],
   };
@@ -385,6 +386,7 @@ function SettingsLayout() {
         </select>
       </label>
       <div className="settings-layout-content">
+        <SettingsSearch onChoose={handleTabChange} />
         <SettingsLoader />
       </div>
     </div>

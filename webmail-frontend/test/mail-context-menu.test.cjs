@@ -374,7 +374,7 @@ test('message rows expose a context menu without replacing their normal open beh
   assert.match(list, /messageAction\('spam'/);
   assert.match(list, /Snooze until tomorrow/);
   assert.match(list, /Delete/);
-  assert.match(list, /flaggedMessageUids\.has\(uid\)/);
+  assert.match(list, /selectedRows\.every\(m => m\.isStarred\)/);
 });
 
 test('rendered message rows expose sibling controls instead of nesting them in the open control', () => {

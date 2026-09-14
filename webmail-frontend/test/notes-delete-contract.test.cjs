@@ -7,14 +7,13 @@ const notesGrid = fs.readFileSync(path.join(__dirname, '../src/notes/NotesGrid.t
 const notesSidebar = fs.readFileSync(path.join(__dirname, '../src/notes/NotesSidebar.tsx'), 'utf8');
 const styles = fs.readFileSync(path.join(__dirname, '../src/index.css'), 'utf8');
 
-test('Notes exposes permanent deletion honestly and requires confirmation', () => {
-  assert.doesNotMatch(notesSidebar, /label:\s*['"]Trash['"]/);
+test('Notes exposes recoverable Trash and explicit permanent deletion', () => {
+  assert.match(notesSidebar, /label:\s*['"]Trash['"]/);
   assert.doesNotMatch(notesSidebar, /label:\s*['"]Locked['"]/);
-  assert.doesNotMatch(notesGrid, /moved to trash/i);
   assert.doesNotMatch(notesGrid, />\s*Locked Note\s*</);
   assert.match(notesGrid, />\s*Preview hidden\s*</);
-  assert.match(notesGrid, /title="Delete note permanently\?"/);
+  assert.match(notesGrid, /permanently\?/);
   assert.match(notesGrid, /attachments, and its reminder/);
-  assert.match(notesGrid, /confirmLabel="Delete permanently"/);
+  assert.match(notesGrid, /confirmLabel=\{inTrash \? "Delete permanently" : "Move to Trash"\}/);
   assert.match(styles, /\.contact-card:focus-within\s+\.note-card-actions/);
 });

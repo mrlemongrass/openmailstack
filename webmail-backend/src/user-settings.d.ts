@@ -21,6 +21,7 @@ export interface MailSettings {
         undoSendSeconds: 0 | 5 | 10 | 20 | 30;
     };
     reading: {
+        shortcuts: 'standard' | 'vim' | 'off';
         afterAction: 'list' | 'previous' | 'next';
         threaded: boolean;
         density: 'comfortable' | 'cozy' | 'compact';
@@ -90,6 +91,7 @@ export declare const settingsDefaults: {
             undoSendSeconds: 10;
         };
         reading: {
+            shortcuts: "vim";
             afterAction: "list";
             threaded: false;
             density: "cozy";

@@ -175,3 +175,30 @@ test('SMTP recipient outcomes expose partial rejection without retrying accepted
     partial: false,
   });
 });
+
+
+test('inline images and tables survive two MIME draft round trips without duplicate attachments', async () => {
+  const { simpleParser } = require('mailparser');
+  const { compileOutboundMessage, extractInlineImages } = require('../src/outbound-mail.js');
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9L8AAAAASUVORK5CYII=';
+  const html = `<p>Hello</p><img src="data:image/png;base64,${png}" alt="Tiny image" width="120"><table border="1"><tr><td>One</td><td>Two</td></tr></table>`;
+  const base = { sender: { address: 'owner@example.test' }, to: 'recipient@example.test', subject: 'Rich draft', text: 'Hello' };
+  const first = await compileOutboundMessage({ ...base, html });
+  const rawParsed = await simpleParser(first.raw, { skipImageLinks: true });
+  assert.match(rawParsed.html, /src="cid:/);
+  assert.equal(rawParsed.attachments.length, 1);
+  assert.equal(rawParsed.attachments[0].contentDisposition, 'inline');
+  assert.ok(!rawParsed.attachments[0].filename);
+  assert.deepEqual(rawParsed.attachments[0].content, Buffer.from(png, 'base64'));
+  const resumed = await simpleParser(first.raw);
+  assert.match(resumed.html, /data:image\/png;base64,/);
+  const second = await compileOutboundMessage({ ...base, html: resumed.html });
+  const again = await simpleParser(second.raw);
+  assert.equal(again.attachments.length, 1);
+  assert.match(again.html, /<td>Two<\/td>/);
+  assert.match(again.html, /alt="Tiny image" width="120"/);
+  assert.match(first.metadata.html, /data:image\/png;base64,/);
+  assert.throws(() => extractInlineImages('<img src="data:image/svg+xml;base64,PHN2Zz4=">'), /PNG/);
+  assert.throws(() => extractInlineImages('<img src="data:image/png;base64,YmFk">'), /valid raster/);
+  assert.throws(() => extractInlineImages(Array(21).fill(`<img src="data:image/png;base64,${png}">`).join('')), /20 images/);
+});

@@ -49,7 +49,7 @@ test('normalizeSettings returns safe mail settings', () => {
     ],
     identity: { defaultFrom: ' sender@example.com ', replyTo: ' reply@example.com ', alwaysBccSelf: true },
     compose: { defaultMode: 'plain', replyMode: 'plain', defaultFont: 'mono', attachmentReminder: false, undoSendSeconds: 30 },
-    reading: { afterAction: 'list', threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 },
+    reading: { shortcuts: 'vim', afterAction: 'list', threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 },
     folders: {
       favorites: [
         'INBOX',
@@ -76,7 +76,7 @@ test('normalizeSettings returns safe mail settings', () => {
     ],
     identity: { defaultFrom: 'sender@example.com', replyTo: 'reply@example.com', alwaysBccSelf: true },
     compose: { defaultMode: 'plain', replyMode: 'plain', defaultFont: 'mono', attachmentReminder: false, undoSendSeconds: 30 },
-    reading: { afterAction: 'list', threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 },
+    reading: { shortcuts: 'vim', afterAction: 'list', threaded: true, density: 'compact', previewPane: 'bottom', snippets: false, externalImages: 'trusted', markReadDelaySeconds: 3 },
     spam: { blockedSenders: [], safeSenders: [] },
     folders: {
       favorites: ['INBOX', 'Projects/Travel', 'Archive'],

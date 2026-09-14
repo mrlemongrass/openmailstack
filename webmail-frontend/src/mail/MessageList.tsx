@@ -1,4 +1,8 @@
-import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
+import { ignoreMailShortcut, type MailSort } from './mail-list-controls';
+import { KeyboardHelp } from '../shared/components/KeyboardHelp';
+import { MailSelectionDialog } from './MailSelectionDialog';
+import { selectionRequest, type MailSelection } from './mail-selection-api';
+import { useEffect, useRef, useCallback, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate, useParams } from 'react-router';
 import { addDays, startOfDay, setHours } from 'date-fns';
@@ -57,6 +61,10 @@ export function MessageList({ mail, density }: MessageListProps) {
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const flaggingRef = useRef<Set<string>>(new Set());
   const composeStatusRequestRef = useRef(0);
+  const [keyboardHelp, setKeyboardHelp] = useState(false);
+  const [folderPicker, setFolderPicker] = useState(false);
+  const [focusedKey, setFocusedKey] = useState('');
+  const pendingFocus = useRef(false);
   const [messageMenu, setMessageMenu] = useState<{
     message: Message;
     point: ContextMenuPoint;
@@ -79,14 +87,39 @@ export function MessageList({ mail, density }: MessageListProps) {
     setActiveFolder,
     setSelectedMessages,
   } = mail;
-  const crossFolderSearch = isSearchActive && mail.searchScope === 'all';
+
   const scheduledFolder = decodedFolder.toUpperCase() === 'SCHEDULED';
   const draftFolder = isDraftFolder(decodedFolder);
-  const selectionDisabled = crossFolderSearch || scheduledFolder;
+  const selectionDisabled = scheduledFolder;
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [snapshot, setSnapshot] = useState<MailSelection | null>(null);
+  const [selectionLoading, setSelectionLoading] = useState(false);
+  const selectionRequestRef = useRef<AbortController | null>(null);
+  const [bulkDialog, setBulkDialog] = useState<{ selection: MailSelection; action: string; targetFolder?: string } | null>(null);
+  const ownedSelectionToken = bulkDialog?.selection.token || snapshot?.token;
+  useEffect(() => () => { if (ownedSelectionToken) void selectionRequest(`/${ownedSelectionToken}`, 'DELETE').catch(() => undefined); }, [ownedSelectionToken]);
+  const selectedRows = mail.messages.filter(m => selectedKeys.includes(messageIdentityKey(m, decodedFolder)));
+  const allSelectedJunk = snapshot?.allJunk ?? (selectedRows.length > 0 && selectedRows.every(m => mail.folders.some(f => f.path === messageFolder(m, decodedFolder) && f.specialUse?.toLowerCase() === '\\junk')));
+  const selectionScope = `${decodedFolder}\u0000${mail.searchQuery}\u0000${mail.searchField}\u0000${mail.searchScope}`;
+  useEffect(() => {
+    setSelectedKeys([]); setSnapshot(null); setSelectionLoading(false);
+    selectionRequestRef.current?.abort();
+    return () => selectionRequestRef.current?.abort();
+  }, [selectionScope]);
+  const prepareSelection = async (all: boolean, action?: string, targetFolder?: string) => {
+    if (selectionRequestRef.current) return;
+    const controller = new AbortController(); selectionRequestRef.current = controller; setSelectionLoading(true);
+    try {
+      const selection = snapshot || await selectionRequest('', 'POST', all
+        ? { query: isSearchActive ? mail.searchQuery : '', field: isSearchActive ? mail.searchField : 'all', scope: isSearchActive ? mail.searchScope : 'folder', folder: decodedFolder }
+        : { messages: selectedRows.map(m => ({ folder: messageFolder(m, decodedFolder), uid: m.uid })) }, controller.signal);
+      if (controller.signal.aborted) { void selectionRequest(`/${selection.token}`, 'DELETE').catch(() => undefined); return; }
+      if (action) setBulkDialog({ selection, action, targetFolder }); else setSnapshot(selection);
+    } catch (err) { if (!controller.signal.aborted) showToast({ type: 'error', message: (err as Error).message }); }
+    finally { if (selectionRequestRef.current === controller) { selectionRequestRef.current = null; setSelectionLoading(false); } }
+  };
   const activeFolderDetails = mail.folders.find(candidate => candidate.path === decodedFolder);
-  const flaggedMessageUids = useMemo(() => new Set(
-    mail.messages.filter(message => message.isStarred).map(message => message.uid),
-  ), [mail.messages]);
+
 
   useEffect(() => {
     if (decodedFolder !== activeFolder) {
@@ -158,19 +191,42 @@ export function MessageList({ mail, density }: MessageListProps) {
     messages.length,
   ]);
 
-  const handleSelect = (uid: number, shift: boolean) => {
-    if (shift) {
-      const idx = mail.messages.findIndex((m) => m.uid === uid);
-      const lastIdx = mail.selectedMessages.length > 0
-        ? mail.messages.findIndex((m) => m.uid === mail.selectedMessages[mail.selectedMessages.length - 1])
-        : idx;
-      const range = mail.messages.slice(Math.min(idx, lastIdx), Math.max(idx, lastIdx) + 1).map((m) => m.uid);
-      mail.setSelectedMessages((prev) => [...new Set([...prev, ...range])]);
+  const selectionAnchor = useRef<string | null>(null);
+  const handleSelect = (message: Message, shift: boolean) => {
+    setSnapshot(null);
+    const key = messageIdentityKey(message, decodedFolder);
+    const keys = mail.messages.map(m => messageIdentityKey(m, decodedFolder));
+    if (shift && selectionAnchor.current && keys.includes(selectionAnchor.current)) {
+      const from = keys.indexOf(selectionAnchor.current), to = keys.indexOf(key);
+      setSelectedKeys(prev => [...new Set([...prev, ...keys.slice(Math.min(from, to), Math.max(from, to) + 1)])]);
     } else {
-      mail.setSelectedMessages((prev) =>
-        prev.includes(uid) ? prev.filter((id) => id !== uid) : [...prev, uid]);
+      selectionAnchor.current = key;
+      setSelectedKeys(prev => prev.includes(key) ? prev.filter(item => item !== key) : [...prev, key]);
     }
   };
+
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (mail.mailSettings.reading.shortcuts === 'off' || ignoreMailShortcut(event)) return;
+      const key = event.key.toLowerCase();
+      if (key === '/') { event.preventDefault(); document.querySelector<HTMLInputElement>('[placeholder="Search messages..."]')?.focus(); return; }
+      if (key === 'c') { event.preventDefault(); void mail.startCompose(); return; }
+      if (key === 'g') { event.preventDefault(); setFolderPicker(true); return; }
+      if (key === '?' && !window.location.pathname.match(/\/\d+$/)) { event.preventDefault(); setKeyboardHelp(true); return; }
+      const index = mail.messages.findIndex(m => messageIdentityKey(m, decodedFolder) === focusedKey);
+      const direction = key === 'arrowdown' || (key === 'j' && mail.mailSettings.reading.shortcuts !== 'standard') ? 1
+        : key === 'arrowup' || (key === 'k' && mail.mailSettings.reading.shortcuts !== 'standard') ? -1 : 0;
+      if (direction && mail.messages.length) {
+        event.preventDefault();
+        const next = Math.max(0, Math.min(mail.messages.length - 1, index < 0 ? 0 : index + direction));
+        const message = mail.messages[next];
+        if (event.shiftKey && !selectionDisabled) { if (!selectionAnchor.current && index >= 0) selectionAnchor.current = focusedKey; handleSelect(message, true); }
+        pendingFocus.current = true; setFocusedKey(messageIdentityKey(message, decodedFolder)); rowVirtualizer.scrollToIndex(next);
+      } else if (key === 'x' && index >= 0 && !selectionDisabled) { event.preventDefault(); handleSelect(mail.messages[index], event.shiftKey); }
+    };
+    window.addEventListener('keydown', keydown);
+    return () => window.removeEventListener('keydown', keydown);
+  });
 
   const handleFlag = async (msg: Message) => {
     const folderPath = messageFolder(msg, decodedFolder);
@@ -347,45 +403,18 @@ export function MessageList({ mail, density }: MessageListProps) {
     }
   }
 
-  if (mail.mailLoading && mail.messages.length === 0) {
-    return <MessageListSkeleton density={density} />;
-  }
-
-  if (mail.searchError && !mail.mailError) {
-    return <ErrorBanner error={mail.searchError} onRetry={() => mail.doSearch(mail.searchQuery, mail.searchScope)} />;
-  }
-
-  if (mail.mailError) {
-    return <ErrorBanner error={mail.mailError} onRetry={() => {
-      mail.setMailError('');
-      void fetchFolders();
-      if (isSearchActive) {
-        void mail.doSearch(mail.searchQuery, mail.searchScope, mail.searchField);
-      } else {
-        void fetchMessages();
-      }
-    }} />;
-  }
-
-  if (!mail.mailLoading && mail.messages.length === 0) {
-    if (mail.isSearchActive) {
-      return (
-        <EmptyState
-          icon={SearchX}
-          title={mail.searchInfo ? 'Search incomplete' : 'No results found'}
-          description={mail.searchInfo || `Your search for "${mail.searchQuery}" returned no matches.`}
-          action={{ label: 'Clear search', onClick: mail.clearSearch }}
-        />
-      );
-    }
+  let listStatus: ReactNode = null;
+  if (mail.mailLoading && mail.messages.length === 0) listStatus = <MessageListSkeleton density={density} />;
+  else if (mail.searchError || mail.mailError) listStatus = <ErrorBanner error={mail.searchError || mail.mailError} onRetry={() => {
+    mail.setMailError(''); void fetchFolders();
+    if (isSearchActive) void mail.doSearch(mail.searchQuery, mail.searchScope, mail.searchField);
+    else void fetchMessages();
+  }} />;
+  else if (!mail.mailLoading && mail.messages.length === 0) {
     const isInbox = decodedFolder.toUpperCase() === 'INBOX';
-    return (
-      <EmptyState
-        icon={Inbox}
-        title={isInbox ? 'Inbox is empty' : 'Folder is empty'}
-        description={isInbox ? 'Messages you receive will appear here.' : `No messages in ${decodedFolder}.`}
-      />
-    );
+    listStatus = isSearchActive
+      ? <EmptyState icon={SearchX} title={mail.searchInfo ? 'Search incomplete' : 'No results found'} description={mail.searchInfo || `Your search for "${mail.searchQuery}" returned no matches.`} action={{ label: 'Clear search', onClick: mail.clearSearch }} />
+      : <EmptyState icon={Inbox} title={isInbox ? 'Inbox is empty' : 'Folder is empty'} description={isInbox ? 'Messages you receive will appear here.' : `No messages in ${decodedFolder}.`} />;
   }
 
   return (
@@ -431,10 +460,10 @@ export function MessageList({ mail, density }: MessageListProps) {
           <span>{mail.messages.length} {mail.messages.length === 1 ? 'message' : 'messages'}</span>
         </div>
       ) : <MailToolbar
-        selectedCount={mail.selectedMessages.length}
-        allSelectedFlagged={mail.selectedMessages.length > 0
-          && mail.selectedMessages.every(uid => flaggedMessageUids.has(uid))}
-        totalCount={mail.messages.length}
+        selectedCount={snapshot?.count ?? selectedRows.length}
+        allSelectedFlagged={selectedRows.length > 0 && selectedRows.every(m => m.isStarred)}
+        junkMode={allSelectedJunk} busy={selectionLoading || mail.bulkBusy}
+        totalCount={snapshot?.count ?? mail.messages.length}
         activeFolder={mail.activeFolder}
         searchQuery={mail.searchQuery}
         searchField={mail.searchField}
@@ -450,29 +479,11 @@ export function MessageList({ mail, density }: MessageListProps) {
         onClearSearch={mail.clearSearch}
         onSelectAll={() => {
           if (selectionDisabled) return;
-          if (mail.selectedMessages.length === mail.messages.length) {
-            mail.setSelectedMessages([]);
-          } else {
-            mail.setSelectedMessages(mail.messages.map((m) => m.uid));
-          }
+          setSnapshot(null);
+          setSelectedKeys(selectedRows.length === mail.messages.length ? [] : mail.messages.map(m => messageIdentityKey(m, decodedFolder)));
         }}
-        onBulkAction={(action) => {
-          if (selectionDisabled) return;
-          void mail.messageAction(action).then(success => {
-            if (!success) {
-              showToast({ type: 'error', message: 'The selected messages could not be updated.' });
-            }
-          });
-        }}
-        onMoveSelected={(targetFolder) => {
-          if (!selectionDisabled) {
-            void mail.messageAction('move', undefined, undefined, targetFolder).then((moved) => {
-              if (!moved) {
-                showToast({ type: 'error', message: 'Could not move the selected messages. Try again.' });
-              }
-            });
-          }
-        }}
+        onBulkAction={action => { void prepareSelection(false, action); }}
+        onMoveSelected={targetFolder => { void prepareSelection(false, 'move', targetFolder); }}
         onMarkAllRead={selectionDisabled || draftFolder || mail.isSearchActive
           || !activeFolderDetails || activeFolderDetails.unseen === 0
           ? undefined
@@ -492,19 +503,36 @@ export function MessageList({ mail, density }: MessageListProps) {
         markAllReadPending={mail.markingReadFolder === decodedFolder}
         markAllReadDisabled={Boolean(mail.markingReadFolder)}
       />}
+      {!scheduledFolder && <div style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderBottom: '1px solid var(--border-glass)' }}>
+        <label>Sort loaded messages <select className="glass-input glass-select" value={mail.mailSort} onChange={e => mail.setMailSort(e.target.value as MailSort)}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="sender-asc">Sender A–Z</option><option value="sender-desc">Sender Z–A</option><option value="subject-asc">Subject A–Z</option><option value="subject-desc">Subject Z–A</option></select></label>
+        <button className="btn btn-ghost" onClick={() => mail.changeSearchField('unread')}>Unread</button>
+        <button className="btn btn-ghost" onClick={() => mail.changeSearchField('starred')}>Flagged</button>
+        <button className="btn btn-ghost" onClick={() => { mail.changeSearchField('all'); mail.updateSearchQuery('has:attachment'); }}>Attachments</button>
+        {isSearchActive && <button className="btn btn-ghost" onClick={mail.clearSearch}>Clear filters</button>}
+        <button className="btn btn-ghost" onClick={() => setKeyboardHelp(true)}>Keyboard help</button>
+        <button className="btn btn-ghost" onClick={() => navigate('/settings/mail_reading')}>Reading settings</button>
+      </div>}
+      {!scheduledFolder && (selectedRows.length > 0 || snapshot || selectionLoading) && <div role="status" style={{ padding: '8px 12px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span>{snapshot ? `${snapshot.count.toLocaleString()} matching messages selected` : `${selectedRows.length} of ${mail.messages.length} loaded messages selected`}</span>
+        {!snapshot && !selectionLoading && <button className="btn btn-ghost" onClick={() => void prepareSelection(true)}>Select all matching messages…</button>}
+        {selectionLoading && <button className="btn btn-ghost" onClick={() => selectionRequestRef.current?.abort()}>Cancel selection</button>}
+        <button className="btn btn-ghost" onClick={() => { if (snapshot) void selectionRequest(`/${snapshot.token}`, 'DELETE').catch(() => undefined); setSnapshot(null); setSelectedKeys([]); }}>Clear selection</button>
+      </div>}
       <div ref={parentRef} style={{ flex: 1, overflow: 'auto' }}>
+        {listStatus}
         <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const msg = mail.messages[virtualRow.index];
             return (
               <MessageRow key={messageIdentityKey(msg, decodedFolder)} message={msg}
-                isSelected={!selectionDisabled && mail.selectedMessages.includes(msg.uid)}
+                isSelected={!selectionDisabled && (Boolean(snapshot) || selectedKeys.includes(messageIdentityKey(msg, decodedFolder)))}
                 isThreaded={mail.mailSettings.reading.threaded} showSnippets={mail.mailSettings.reading.snippets} density={density}
                 isDraft={isDraftFolder(messageFolder(msg, decodedFolder))}
                 selectionDisabled={selectionDisabled}
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
-                onSelect={handleSelect}
-                onClick={() => navigate(`/mail/${encodeURIComponent(messageFolder(msg, decodedFolder))}/${msg.uid}`)}
+                forwardedRef={node => { if (node && pendingFocus.current && focusedKey === messageIdentityKey(msg, decodedFolder)) { pendingFocus.current = false; node.querySelector<HTMLButtonElement>('.message-row-open')?.focus(); } }}
+                onSelect={(_uid, shift) => handleSelect(msg, shift)}
+                onClick={() => { setFocusedKey(messageIdentityKey(msg, decodedFolder)); navigate(`/mail/${encodeURIComponent(messageFolder(msg, decodedFolder))}/${msg.uid}`); }}
                 onStar={() => { void handleFlag(msg); }}
                 onArchive={() => mail.messageAction('archive', [msg.uid], messageFolder(msg, decodedFolder))}
                 onDelete={() => mail.messageAction('delete', [msg.uid], messageFolder(msg, decodedFolder))}
@@ -534,6 +562,14 @@ export function MessageList({ mail, density }: MessageListProps) {
         )}
       </div>
       <ScrollToTop scrollRef={parentRef} />
+      <KeyboardHelp open={keyboardHelp} onClose={() => setKeyboardHelp(false)} />
+      {folderPicker && <FolderDestinationDialog title="Go to folder" description="Choose a folder to open." folders={mail.folders.filter(f => !f.disabled)} onSelect={async path => { if (path) navigate(`/mail/${encodeURIComponent(path)}`); }} onClose={() => setFolderPicker(false)} />}
+      {bulkDialog && <MailSelectionDialog initial={bulkDialog.selection} action={bulkDialog.action} targetFolder={bulkDialog.targetFolder} folders={mail.folders}
+        onBusy={mail.setBulkBusy} navigationBlocked={mail.bulkRouteBlocked}
+        onBatch={batch => mail.applyConfirmedBatch(bulkDialog.action, batch)}
+        onChanged={() => { if (isSearchActive) void mail.doSearch(mail.searchQuery, mail.searchScope, mail.searchField); else void mail.fetchMessages(); void mail.fetchFolders(); window.dispatchEvent(new Event('oms:sender-policy')); }}
+        onClose={() => { void selectionRequest(`/${bulkDialog.selection.token}`, 'DELETE').catch(() => undefined); setBulkDialog(null); setSnapshot(null); setSelectedKeys([]); }} />}
+
       {messageMenu && (
         <ContextMenu
           label={`Actions for ${messageMenu.message.subject || 'message'}`}

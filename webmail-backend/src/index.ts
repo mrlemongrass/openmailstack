@@ -1,3 +1,4 @@
+import { ensureMailImportSchema } from './mail-import';
 import http from 'http';
 import { performance } from 'node:perf_hooks';
 import { Server as SocketIOServer } from 'socket.io';
@@ -2614,6 +2615,7 @@ async function startServer(): Promise<void> {
     try {
         await startApplicationAfterRequiredMigrations({
             ensureMailSearchSchema,
+            ensureMailImportSchema,
             initializeSessionStore,
             ensureUserSettingsSchema,
             ensureAdminSettingsSchema,

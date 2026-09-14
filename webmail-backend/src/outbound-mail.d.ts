@@ -87,5 +87,15 @@ export interface SmtpRecipientOutcome {
 }
 export declare const classifySmtpRecipientOutcome: (info: any, requestedRecipients: string[]) => SmtpRecipientOutcome;
 export declare const mailboxAddressFromHeader: (value: unknown) => string | null;
+export declare function extractInlineImages(source: string): {
+    html: string;
+    attachments: {
+        filename: false;
+        content: Buffer;
+        contentType: string;
+        cid: string;
+        contentDisposition: string;
+    }[];
+};
 export declare const compileOutboundMessage: (input: OutboundMessageInput) => Promise<CompiledOutboundMessage>;
 //# sourceMappingURL=outbound-mail.d.ts.map

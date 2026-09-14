@@ -281,6 +281,28 @@ const normalizeReferences = (value: string | string[] | undefined): string[] => 
 
 const messageIdDomain = (address: string): string => address.slice(address.lastIndexOf('@') + 1) || 'openmailstack.local';
 
+export function extractInlineImages(source: string) {
+    if (Buffer.byteLength(source) > 8 * 1024 * 1024) throw new OutboundMessageValidationError('Message HTML exceeds the 8 MiB limit.');
+    const attachments: Array<{ filename: false; content: Buffer; contentType: string; cid: string; contentDisposition: string }> = [];
+    let bytes = 0;
+    const html = source.replace(/(<img\b[^>]*?\bsrc\s*=\s*)(["'])(data:[^"']*)\2/gi, (_match, prefix, quote, url) => {
+        const match = /^data:image\/(png|jpeg|gif|webp);base64,([a-z0-9+/]*={0,2})$/i.exec(url);
+        if (!match || !match[2]) throw new OutboundMessageValidationError('Inline images must be PNG, JPEG, GIF or WebP.');
+        const content = Buffer.from(match[2], 'base64');
+        const kind = match[1].toLowerCase();
+        const signature = kind === 'png' ? content.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+            : kind === 'jpeg' ? content[0] === 255 && content[1] === 216 && content[2] === 255
+            : kind === 'gif' ? /^GIF8[79]a$/.test(content.subarray(0, 6).toString())
+            : content.subarray(0, 4).toString() === 'RIFF' && content.subarray(8, 12).toString() === 'WEBP';
+        bytes += content.length;
+        if (!signature || content.length > 1024 * 1024 || bytes > 4 * 1024 * 1024 || attachments.length >= 20) throw new OutboundMessageValidationError('Inline images must be valid raster images, at most 1 MiB each and 4 MiB total (20 images).');
+        const cid = `inline-${crypto.randomUUID()}@openmailstack`;
+        attachments.push({ filename: false, content, contentType: `image/${kind}`, cid, contentDisposition: 'inline' });
+        return `${prefix}${quote}cid:${cid}${quote}`;
+    });
+    return { html, attachments };
+}
+
 export const compileOutboundMessage = async (input: OutboundMessageInput): Promise<CompiledOutboundMessage> => {
     const from = normalizeMailboxAddress(input.sender.address);
     if (!from) throw new OutboundMessageValidationError('From contains an invalid address');
@@ -307,7 +329,8 @@ export const compileOutboundMessage = async (input: OutboundMessageInput): Promi
         : `<${crypto.randomUUID()}@${messageIdDomain(from)}>`;
     const date = input.date || new Date();
     const text = input.text ?? input.body ?? '';
-    const html = input.html ?? '';
+    const embedded = extractInlineImages(input.html ?? '');
+    const html = embedded.html;
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(input.headers || {})) {
         const cleanKey = boundedHeader(key, 'Header name', 100);
@@ -325,7 +348,7 @@ export const compileOutboundMessage = async (input: OutboundMessageInput): Promi
         html: html || undefined,
         inReplyTo: inReplyTo || undefined,
         references: references.length > 0 ? references.join(' ') : undefined,
-        attachments: input.attachments || [],
+        attachments: [...(input.attachments || []), ...embedded.attachments],
         icalEvent: input.icalEvent ? {
             method: input.icalEvent.method,
             content: input.icalEvent.content,
@@ -361,7 +384,7 @@ export const compileOutboundMessage = async (input: OutboundMessageInput): Promi
             replyTo: addressInputText(input.replyTo),
             subject,
             text,
-            html,
+            html: input.html ?? '',
             inReplyTo,
             references,
         },

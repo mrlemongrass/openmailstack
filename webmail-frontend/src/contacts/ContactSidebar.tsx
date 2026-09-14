@@ -1,3 +1,4 @@
+import { useActionConfirmation } from '../shared/components/ActionConfirmation';
 import { useState } from 'react';
 import { Users, Building2, Plus, ScanLine, Trash2, Check, X } from 'lucide-react';
 import * as api from '../shared/api';
@@ -8,6 +9,7 @@ const GROUP_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#e
 
 export function ContactSidebar({ contacts: c, onNewContact }: { contacts: ReturnType<typeof useContacts>; onNewContact: () => void }) {
   const { showToast } = useToast();
+  const confirmation = useActionConfirmation();
   const [showNewLabel, setShowNewLabel] = useState(false);
   const [newLabelName, setNewLabelName] = useState('');
   const [showNewGroup, setShowNewGroup] = useState(false);
@@ -39,20 +41,17 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
     const ids = group.map((contact) => contact.id).filter((id): id is number => typeof id === 'number');
     if (ids.length < 2) return;
     const primary = group[0]?.name || group[0]?.email || 'this contact';
-    if (!confirm(`Merge ${ids.length - 1} duplicate contact(s) into ${primary}?`)) return;
-    try {
+    confirmation.ask({ title: `Merge duplicates into “${primary}”?`, message: `${ids.length - 1} duplicate contacts will be merged into the selected primary contact.`, label: 'Merge contacts', run: async () => {
       await api.mergeContacts(ids[0], ids.slice(1));
-      showToast({ type: 'success', message: 'Duplicate contacts merged' });
       c.setSelectedContactIds(new Set());
-      c.refreshContacts();
-      c.refreshDuplicates();
-    } catch {
-      showToast({ type: 'error', message: 'Failed to merge duplicate contacts' });
-    }
+      await Promise.all([c.refreshContacts(), c.refreshDuplicates()]);
+      showToast({ type: 'success', message: 'Duplicate contacts merged' });
+    } });
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 12 }}>
+      {confirmation.dialog}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <button className="btn btn-primary" style={{ flex: 1 }}
           onClick={onNewContact}>

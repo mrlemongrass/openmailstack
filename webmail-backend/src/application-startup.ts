@@ -1,4 +1,5 @@
 export interface ApplicationStartupDependencies {
+    ensureMailImportSchema: () => Promise<unknown>;
     ensureMailSearchSchema: () => Promise<unknown>;
     initializeSessionStore: () => Promise<unknown>;
     ensureUserSettingsSchema: () => Promise<unknown>;
@@ -30,6 +31,7 @@ export async function startApplicationAfterRequiredMigrations(
     dependencies: ApplicationStartupDependencies,
 ): Promise<void> {
     await dependencies.ensureMailSearchSchema();
+    await dependencies.ensureMailImportSchema();
     await dependencies.initializeSessionStore();
     await dependencies.ensureUserSettingsSchema();
     await dependencies.ensureAdminSettingsSchema();

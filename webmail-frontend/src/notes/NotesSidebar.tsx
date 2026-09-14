@@ -1,10 +1,11 @@
-import { StickyNote, Star, Archive } from 'lucide-react';
+import { StickyNote, Star, Archive, Trash2 } from 'lucide-react';
 import type { useNotes } from './hooks/useNotes';
 
 export function NotesSidebar({ notesCtx: n }: { notesCtx: ReturnType<typeof useNotes> }) {
   const filters = [
     { id: 'notes', label: 'All Notes', icon: StickyNote },
     { id: 'pinned', label: 'Pinned', icon: Star },
+    { id: 'trash', label: 'Trash', icon: Trash2 },
     { id: 'archive', label: 'Archive', icon: Archive },
   ];
 
@@ -17,7 +18,7 @@ export function NotesSidebar({ notesCtx: n }: { notesCtx: ReturnType<typeof useN
 
       <div style={{ marginBottom: 16 }}>
         {filters.map((f) => (
-          <div key={f.id} className="nav-item" style={{ display: 'flex', alignItems: 'center', gap: 8,
+          <button type="button" key={f.id} aria-pressed={n.notesView === f.id} className="nav-item" style={{ width: '100%', border: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8,
             padding: '6px 10px', borderRadius: 'var(--radius-md)', cursor: 'pointer',
             background: n.notesView === f.id ? 'rgba(59,130,246,0.15)' : 'transparent',
             fontWeight: n.notesView === f.id ? 600 : 400,
@@ -25,7 +26,7 @@ export function NotesSidebar({ notesCtx: n }: { notesCtx: ReturnType<typeof useN
             onClick={() => n.setNotesView(f.id)}>
             <f.icon size={16} />
             <span>{f.label}</span>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -40,7 +41,7 @@ export function NotesSidebar({ notesCtx: n }: { notesCtx: ReturnType<typeof useN
         </button>
       )}
       {n.notesLabels.map((label) => (
-        <div key={label} className="nav-item" style={{ display: 'flex', alignItems: 'center', gap: 8,
+        <button type="button" key={label} aria-pressed={n.notesView === label} className="nav-item" style={{ width: '100%', border: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8,
           padding: '4px 10px', borderRadius: 'var(--radius-md)', cursor: 'pointer',
           background: n.notesView === label ? 'rgba(59,130,246,0.15)' : 'transparent',
           fontSize: '0.85rem' }}
@@ -48,7 +49,7 @@ export function NotesSidebar({ notesCtx: n }: { notesCtx: ReturnType<typeof useN
           <span style={{ width: 8, height: 8, borderRadius: '50%',
             background: 'var(--accent-primary)', flexShrink: 0 }} />
           <span>{label}</span>
-        </div>
+        </button>
       ))}
     </div>
   );

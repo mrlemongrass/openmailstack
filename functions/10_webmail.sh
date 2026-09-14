@@ -350,6 +350,7 @@ deploy_backend() {
     find "${BACKEND_DIR}" -path "${BACKEND_DIR}/uploads" -prune -o \
         -type f -exec chmod a+rX,u+w,go-w {} + || return 1
     install -d -o "${WEBMAIL_USER}" -g "${WEBMAIL_GROUP}" -m 0750 "${BACKEND_DIR}/uploads"
+    install -d -o "${WEBMAIL_USER}" -g "${WEBMAIL_GROUP}" -m 0700 /var/lib/openmailstack/mail-import
     chown -R "${WEBMAIL_USER}:${WEBMAIL_GROUP}" "${BACKEND_DIR}/uploads"
     chown root:root "${BACKEND_DIR}/OUTBOUND_RELEASE_COMPATIBILITY" || return 1
     chmod 0444 "${BACKEND_DIR}/OUTBOUND_RELEASE_COMPATIBILITY" || return 1

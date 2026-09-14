@@ -123,14 +123,14 @@ test('Notes schema conditionally widens legacy content TEXT to MEDIUMTEXT', asyn
   const requiredColumns = [
     'id', 'owner', 'title', 'content', 'color', 'is_pinned', 'is_locked', 'folder',
     'labels_json', 'sync_token', 'imap_sync_token', 'imap_uid', 'imap_msgid',
-    'is_deleted', 'created_at', 'updated_at',
+    'is_deleted', 'is_purged', 'created_at', 'updated_at',
   ];
   const columnTypes = {
     id: 'varchar(255)', owner: 'varchar(255)', title: 'text', content: 'mediumtext',
     color: 'varchar(50)', is_pinned: 'tinyint(1)', is_locked: 'tinyint(1)',
     folder: 'varchar(100)', labels_json: 'text', sync_token: 'bigint(20)',
     imap_sync_token: 'bigint(20)', imap_uid: 'int(11)', imap_msgid: 'varchar(255)',
-    is_deleted: 'tinyint(1)', created_at: 'timestamp', updated_at: 'timestamp',
+    is_purged: 'tinyint(1)', is_deleted: 'tinyint(1)', created_at: 'timestamp', updated_at: 'timestamp',
   };
   let contentType = 'text';
   pool.query = async (sql) => {
@@ -140,8 +140,8 @@ test('Notes schema conditionally widens legacy content TEXT to MEDIUMTEXT', asyn
       return [requiredColumns.map(Field => ({
         Field,
         Type: Field === 'content' ? contentType : columnTypes[Field],
-        Null: ['is_pinned', 'is_locked', 'folder', 'sync_token', 'imap_sync_token', 'is_deleted'].includes(Field) ? 'NO' : 'YES',
-        Default: ({ is_pinned: '0', is_locked: '0', folder: 'notes', sync_token: '1', imap_sync_token: '0', is_deleted: '0' })[Field] ?? null,
+        Null: ['is_pinned', 'is_locked', 'folder', 'sync_token', 'imap_sync_token', 'is_deleted', 'is_purged'].includes(Field) ? 'NO' : 'YES',
+        Default: ({ is_pinned: '0', is_locked: '0', folder: 'notes', sync_token: '1', imap_sync_token: '0', is_purged: '0', is_deleted: '0' })[Field] ?? null,
       })), []];
     }
     if (compact.startsWith('ALTER TABLE notes MODIFY COLUMN content MEDIUMTEXT')) {

@@ -45,6 +45,7 @@ export function NotesGrid({ notesCtx: n, isMobile = false }: {
     n.setIsNoteModalOpen(true);
   };
   const filtered = n.notes.filter((note) => {
+    if (n.notesView === 'trash') return true;
     if (n.notesView === 'pinned') {
       return note.is_pinned;
     } else if (n.notesView === 'archive') {
@@ -83,7 +84,7 @@ export function NotesGrid({ notesCtx: n, isMobile = false }: {
     );
   }
 
-  if (!n.isLoading && n.notes.length === 0) {
+  if (!n.isLoading && n.notes.length === 0 && n.notesView !== 'trash') {
     return (
       <EmptyState
         icon={PenLine}
@@ -118,7 +119,7 @@ export function NotesGrid({ notesCtx: n, isMobile = false }: {
             color: 'var(--text-secondary)' }}>
             <StickyNote size={48} style={{ marginBottom: 16, opacity: 0.4 }} />
             <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>No notes found</div>
-            <div style={{ marginTop: 4 }}>Create a new note to get started</div>
+            <div style={{ marginTop: 4 }}>{n.notesView === 'trash' ? 'Trash is empty. Deleted notes can be restored here.' : 'Create a new note to get started'}</div>
           </div>
         )}
       </div>
@@ -156,11 +157,12 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
     }
   };
 
+  const inTrash = n.notesView === 'trash';
   const deleteCard = async () => {
     try {
-      await n.deleteNote(note.id);
+      await (inTrash ? n.purgeNote(note.id) : n.deleteNote(note.id));
       setConfirmDelete(false);
-      showToast({ type: 'info', message: 'Note deleted permanently' });
+      showToast({ type: 'info', message: inTrash ? 'Note deleted permanently' : 'Note moved to Trash' });
     } catch {
       showToast({ type: 'error', message: 'The note could not be deleted. Try again.' });
     }
@@ -176,10 +178,10 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
       <div
         role="button"
         tabIndex={0}
-        aria-label={`Open note ${note.title || 'Untitled'}`}
-        onClick={() => { n.setEditingNote(note); n.setIsNoteModalOpen(true); }}
+        aria-label={`${inTrash ? 'Trashed note' : 'Open note'} ${note.title || 'Untitled'}`}
+        onClick={() => { if (!inTrash) { n.setEditingNote(note); n.setIsNoteModalOpen(true); } }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
+          if (!inTrash && (event.key === 'Enter' || event.key === ' ')) {
             event.preventDefault();
             n.setEditingNote(note);
             n.setIsNoteModalOpen(true);
@@ -229,9 +231,9 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
       </div>
       {/* Hover actions */}
       <div className="note-card-actions" style={{
-        display: 'flex', gap: 4, padding: '0 16px 10px', opacity: 0, transition: 'opacity 0.15s',
+        display: 'flex', gap: 4, padding: '0 16px 10px', opacity: 1, transition: 'opacity 0.15s',
       }} onClick={(e) => e.stopPropagation()}>
-        {note.folder === 'archive' ? (
+        {inTrash ? <button className="btn btn-ghost btn-xs" disabled={n.mutationBusy} onClick={() => void n.restoreNote(note.id).then(() => showToast({ type: 'success', message: 'Note restored' })).catch(e => showToast({ type: 'error', message: e.message }))}>Restore</button> : note.folder === 'archive' ? (
           <button className="btn btn-ghost btn-xs"
             style={{ fontSize: '0.7rem' }}
             onClick={(e) => {
@@ -256,7 +258,7 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
             e.stopPropagation();
             setConfirmDelete(true);
           }}>
-          Delete
+          {inTrash ? 'Delete permanently' : 'Move to Trash'}
         </button>
         <button className="btn btn-ghost btn-xs"
           style={{ fontSize: '0.7rem', color: isPinned ? '#f59e0b' : undefined }}
@@ -279,9 +281,10 @@ function NoteCard({ note, n }: { note: Note; n: ReturnType<typeof useNotes> }) {
       </div>
       <ConfirmDialog
         open={confirmDelete}
-        title="Delete note permanently?"
-        message="This permanently deletes the note, its attachments, and its reminder. This action cannot be undone."
-        confirmLabel="Delete permanently"
+        title={inTrash ? `Delete “${note.title || 'Untitled'}” permanently?` : `Move “${note.title || 'Untitled'}” to Trash?`}
+        message={inTrash ? "This permanently deletes the note, its attachments, and its reminder. This action cannot be undone." : "You can restore this note and its attachments from Trash. Its reminder is paused while trashed."}
+        confirmLabel={inTrash ? "Delete permanently" : "Move to Trash"}
+        busy={n.mutationBusy}
         danger
         onConfirm={() => { void deleteCard(); }}
         onCancel={() => setConfirmDelete(false)}

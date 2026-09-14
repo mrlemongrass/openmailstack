@@ -14,6 +14,8 @@ interface MailToolbarProps {
   isSearchActive: boolean;
   selectionDisabled: boolean;
   draftMode?: boolean;
+  junkMode?: boolean;
+  busy?: boolean;
   activeFolder?: string;
   folders: MailFolder[];
   onSearchChange: (q: string) => void;
@@ -40,7 +42,7 @@ const SEARCH_HINTS = [
   { syntax: 'after:2026-01-01', desc: 'Messages after date' },
 ];
 
-export function MailToolbar({ selectedCount, allSelectedFlagged, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, draftMode = false, activeFolder, folders, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMoveSelected, onMarkAllRead, markAllReadPending = false, markAllReadDisabled = false }: MailToolbarProps) {
+export function MailToolbar({ selectedCount, allSelectedFlagged, totalCount, searchQuery, searchField, searchScope, isSearchActive, selectionDisabled, draftMode = false, junkMode = false, busy = false, activeFolder, folders, onSearchChange, onSearchSubmit, onSearchFieldChange, onSearchScopeChange, onClearSearch, onSelectAll, onBulkAction, onMoveSelected, onMarkAllRead, markAllReadPending = false, markAllReadDisabled = false }: MailToolbarProps) {
   const allSelected = selectedCount > 0 && selectedCount === totalCount;
   const [showHints, setShowHints] = useState(false);
   const [showMoveTo, setShowMoveTo] = useState(false);
@@ -52,11 +54,11 @@ export function MailToolbar({ selectedCount, allSelectedFlagged, totalCount, sea
   };
 
   return (
-    <div style={{ borderBottom: '1px solid var(--border-glass)' }}>
+    <fieldset disabled={busy} style={{ border: 0, margin: 0, padding: 0, minWidth: 0, borderBottom: '1px solid var(--border-glass)' }}>
       {/* Search row — always visible */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
         background: 'rgba(0,0,0,0.1)', position: 'relative', flexWrap: 'wrap' }}>
-        <input type="checkbox" checked={allSelected} onChange={onSelectAll} title={selectionDisabled ? 'Bulk selection is unavailable across folders' : 'Select all'} disabled={selectionDisabled} />
+        <input type="checkbox" checked={allSelected} onChange={onSelectAll} aria-label="Select loaded messages" title="Select loaded messages" disabled={selectionDisabled} />
         <input type="text" className="glass-input" placeholder="Search messages..."
           value={searchQuery} onChange={(e) => onSearchChange(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSearchSubmit(); } }}
@@ -162,12 +164,12 @@ export function MailToolbar({ selectedCount, allSelectedFlagged, totalCount, sea
                 aria-label={allSelectedFlagged ? 'Unflag selected messages' : 'Flag selected messages'}>
                 <Flag size={16} fill={allSelectedFlagged ? 'currentColor' : 'none'} />
               </button>
-              <button className="btn btn-ghost" onClick={() => onBulkAction('spam')} title="Mark as spam"><ShieldAlert size={16} /></button>
+              <button className="btn btn-ghost" onClick={() => onBulkAction(junkMode ? 'notspam' : 'spam')} title={junkMode ? 'Not junk' : 'Mark as spam'} aria-label={junkMode ? 'Not junk' : 'Mark as spam'}><ShieldAlert size={16} /></button>
               <button className="btn btn-danger" onClick={() => onBulkAction('delete')} title="Delete"><Trash2 size={16} /></button>
             </>
           )}
         </div>
       )}
-    </div>
+    </fieldset>
   );
 }

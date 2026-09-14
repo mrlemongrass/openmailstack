@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   CalendarClock,
   CalendarPlus,
@@ -109,6 +109,8 @@ async function copyMeetingLink(url: string) {
 
 export function CalendarContextMenus({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   const { showToast } = useToast();
+  const deleteLock = useRef(false);
+  const [deleting, setDeleting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<EventDeleteTarget | null>(null);
   const [responseTarget, setResponseTarget] = useState<InvitationResponseTarget | null>(null);
   const [cancellationTarget, setCancellationTarget] = useState<InvitationCancellationTarget | null>(null);
@@ -362,7 +364,7 @@ export function CalendarContextMenus({ cal }: { cal: ReturnType<typeof useCalend
         />
       )}
       <ConfirmDialog
-        open={Boolean(deleteTarget)}
+        open={Boolean(deleteTarget)} busy={deleting}
         title={deleteTarget?.scope === 'occurrence'
           ? 'Delete this occurrence?'
           : deleteTarget?.scope === 'series' ? 'Delete entire series?' : 'Delete event?'}
@@ -376,18 +378,18 @@ export function CalendarContextMenus({ cal }: { cal: ReturnType<typeof useCalend
         onCancel={() => setDeleteTarget(null)}
         onConfirm={() => {
           const target = deleteTarget;
-          setDeleteTarget(null);
-          if (!target) return;
+          if (!target || deleteLock.current) return;
+          deleteLock.current = true; setDeleting(true);
           const exclusion = target.scope === 'occurrence' ? target.event.occurrenceId : undefined;
-          void cal.deleteEvent(target.event.id, target.event.calendarId, exclusion).then((deleted) => {
-            showToast(deleted
-              ? { type: 'success', message: target.scope === 'occurrence' ? 'Occurrence deleted' : target.scope === 'series' ? 'Series deleted' : 'Event deleted' }
-              : { type: 'error', message: 'The event could not be deleted.' });
-          });
+          void cal.deleteEvent(target.event.id, target.event.calendarId, exclusion).then(deleted => {
+            if (!deleted) throw new Error('The event could not be deleted.');
+            setDeleteTarget(null);
+            showToast({ type: 'success', message: target.scope === 'occurrence' ? 'Occurrence deleted' : target.scope === 'series' ? 'Series deleted' : 'Event deleted' });
+          }).catch(error => showToast({ type: 'error', message: error.message })).finally(() => { deleteLock.current = false; setDeleting(false); });
         }}
       />
       <ConfirmDialog
-        open={Boolean(responseTarget)}
+        open={Boolean(responseTarget)} busy={Boolean(cal.invitationActionPending)}
         title={`${MEETING_RESPONSES.find(option => option.response === responseTarget?.response)?.label || 'Respond to'} entire series?`}
         message={`Your response will apply to every occurrence of “${responseTarget?.event.title || 'Untitled meeting'}”, and a reply will be sent to the organizer.`}
         confirmLabel={`${MEETING_RESPONSES.find(option => option.response === responseTarget?.response)?.label || 'Respond to'} series`}
@@ -400,7 +402,7 @@ export function CalendarContextMenus({ cal }: { cal: ReturnType<typeof useCalend
         }}
       />
       <ConfirmDialog
-        open={Boolean(cancellationTarget)}
+        open={Boolean(cancellationTarget)} busy={Boolean(cal.invitationActionPending)}
         title={cancellationTarget?.scope === 'occurrence' ? 'Cancel this occurrence?' : 'Cancel meeting?'}
         message={cancellationTarget?.scope === 'occurrence'
           ? `This occurrence of “${cancellationTarget.event.title || 'Untitled meeting'}” will be removed and a cancellation will be sent to attendees.`

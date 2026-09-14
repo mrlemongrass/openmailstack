@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { RotateCcw, Trash2 } from 'lucide-react';
 import type { Contact } from '../shared/types';
 import * as api from '../shared/api';
@@ -14,22 +14,20 @@ export function ContactTrash({ contacts: c }: {
     };
 }) {
     const { showToast } = useToast();
+    const lock = useRef(false);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
     const [deleteConfirmId, setDeleteConfirmId] = useState<number | string | null>(null);
 
-    const handleRestore = async (id: number | string) => {
-        await api.restoreContact(id);
-        c.refreshTrash();
-        c.refreshContacts();
-        showToast({ type: 'success', message: 'Contact restored' });
+    const mutate = async (operation: () => Promise<unknown>, message: string) => {
+        if (lock.current) return;
+        lock.current = true; setBusy(true); setError('');
+        try { await operation(); setDeleteConfirmId(null); await Promise.all([c.refreshTrash(), c.refreshContacts()]); showToast({ type: 'success', message }); }
+        catch (err) { setError(err instanceof Error ? err.message : 'The change could not be confirmed. Refresh and check before retrying.'); }
+        finally { lock.current = false; setBusy(false); }
     };
-
-    const handlePermanentDelete = async () => {
-        if (deleteConfirmId === null) return;
-        await api.permanentDeleteContact(deleteConfirmId);
-        setDeleteConfirmId(null);
-        c.refreshTrash();
-        showToast({ type: 'success', message: 'Contact permanently deleted' });
-    };
+    const handleRestore = (id: number | string) => mutate(() => api.restoreContact(id), 'Contact restored');
+    const handlePermanentDelete = () => deleteConfirmId === null ? undefined : mutate(() => api.permanentDeleteContact(deleteConfirmId), 'Contact permanently deleted');
 
     if (c.isTrashLoading) {
         return <div style={{ padding: 24, color: 'var(--text-secondary)', textAlign: 'center' }}>Loading trash...</div>;
@@ -46,6 +44,7 @@ export function ContactTrash({ contacts: c }: {
 
     return (
         <>
+        {error && <p role="alert">{error}</p>}
         <div style={{ padding: 16, overflow: 'auto', flex: 1 }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
                 Contacts in trash are automatically deleted after 30 days.
@@ -67,11 +66,11 @@ export function ContactTrash({ contacts: c }: {
                         )}
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
-                        <button className="btn btn-ghost" onClick={() => handleRestore(contact.id!)}
+                        <button disabled={busy} className="btn btn-ghost" onClick={() => handleRestore(contact.id!)}
                             style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
                             <RotateCcw size={14} /> Restore
                         </button>
-                        <button className="btn btn-danger" onClick={() => setDeleteConfirmId(contact.id!)}
+                        <button disabled={busy} className="btn btn-danger" onClick={() => setDeleteConfirmId(contact.id!)}
                             style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
                             <Trash2 size={14} /> Delete Forever
                         </button>
@@ -81,10 +80,10 @@ export function ContactTrash({ contacts: c }: {
         </div>
         <ConfirmDialog
           open={deleteConfirmId !== null}
-          title="Delete permanently?"
+          title={`Delete “${c.trashContacts.find(item => item.id === deleteConfirmId)?.name || 'contact'}” permanently?`}
           message="This contact will be permanently deleted and cannot be recovered."
           confirmLabel="Delete Forever"
-          danger
+          danger busy={busy}
           onConfirm={handlePermanentDelete}
           onCancel={() => setDeleteConfirmId(null)}
         />

@@ -1,4 +1,4 @@
-import { ImapFlow } from 'imapflow';
+import { ImapFlow, type SearchObject } from 'imapflow';
 import type { RuleCopyLedger, RuleCopyLedgerAction } from './rule-run-ledger';
 export type MailSearchField = 'all' | 'from' | 'to' | 'subject' | 'body' | 'unread' | 'starred' | 'attachments';
 export interface ActiveSyncMailSnapshot {
@@ -151,7 +151,7 @@ export declare class ImapService {
     }>;
     getActiveSyncMailSnapshot(folderPath: string, cutoff: Date | null, sinceModseq: string, knownUids: number[], forceFullSnapshot?: boolean): Promise<ActiveSyncMailSnapshot>;
     getActiveSyncMessages(folderPath: string, uids: number[], maxSourceBytes: number): Promise<ActiveSyncMailMessage[]>;
-    private buildSearchQuery;
+    buildSearchQuery(query: string, field: MailSearchField): SearchObject;
     searchMessages(folderPaths: string[], query: string, field?: MailSearchField, limit?: number, shouldStop?: () => boolean): Promise<{
         messages: any[];
         failedFolders: string[];
@@ -183,7 +183,7 @@ export declare class ImapService {
     getAttachmentByUid(folderPath: string, uid: number, attachmentId: number, maxDecodedBytes: number): Promise<MessageAttachmentDownloadResult>;
     appendMessage(folderPath: string, content: string | Buffer, flags?: string[]): Promise<void>;
     moveMessage(sourceFolder: string, targetFolder: string, uid: number): Promise<void>;
-    messageAction(folderPath: string, uids: number[], action: 'delete' | 'hardDelete' | 'archive' | 'spam' | 'move' | 'read' | 'unread' | 'star' | 'unstar', targetFolder?: string): Promise<{
+    messageAction(folderPath: string, uids: number[], action: 'delete' | 'hardDelete' | 'archive' | 'spam' | 'move' | 'read' | 'unread' | 'star' | 'unstar', targetFolder?: string, expectedUidValidity?: string): Promise<{
         targetFolder: string;
         uidMap: {
             [k: string]: number;

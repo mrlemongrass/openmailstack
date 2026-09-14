@@ -1,3 +1,4 @@
+import { useActionConfirmation } from '../shared/components/ActionConfirmation';
 import { useRef, useCallback, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Check, Plus, Trash2, Users, X } from 'lucide-react';
@@ -16,6 +17,7 @@ export function ContactGrid({ contacts: c, density, isMobile = false, onNewConta
   onNewContact?: () => void;
 }) {
   const { showToast } = useToast();
+  const confirmation = useActionConfirmation();
   const parentRef = useRef<HTMLDivElement>(null);
   const cols = isMobile ? 1 : 3;
   const isListMode = c.contactViewMode === 'list';
@@ -167,12 +169,15 @@ export function ContactGrid({ contacts: c, density, isMobile = false, onNewConta
                     </button>
                     <div style={{ height: 1, background: 'var(--border-glass)', margin: '2px 8px' }} />
                     <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.85rem', color: 'var(--danger)' }}
-                      onClick={async () => {
-                        if (!confirm(`Delete ${c.selectedContactIds.size} selected contact(s)?`)) return;
-                        await bulkDeleteContacts(Array.from(c.selectedContactIds));
-                        showToast({ type: 'success', message: `${c.selectedContactIds.size} contact(s) deleted` });
-                        c.setSelectedContactIds(new Set());
-                        c.refreshContacts();
+                      onClick={() => {
+                        const ids = Array.from(c.selectedContactIds);
+                        setShowExportMenu(false);
+                        confirmation.ask({ title: `Move ${ids.length} contacts to Trash?`, message: 'Only these selected contacts will change. You can restore them from Trash.', label: 'Move to Trash', run: async () => {
+                          await bulkDeleteContacts(ids);
+                          c.setSelectedContactIds(new Set());
+                          await Promise.all([c.refreshContacts(), c.refreshTrash()]);
+                          showToast({ type: 'success', message: `${ids.length} contacts moved to Trash` });
+                        } });
                       }}>
                       <Trash2 size={14} /> Delete Selected ({c.selectedContactIds.size})
                     </button>
@@ -227,7 +232,7 @@ export function ContactGrid({ contacts: c, density, isMobile = false, onNewConta
           </button>
         </div>
       )}
-      <ScrollToTop scrollRef={parentRef} />
+      <ScrollToTop scrollRef={parentRef} />{confirmation.dialog}
     </div>
   );
 }

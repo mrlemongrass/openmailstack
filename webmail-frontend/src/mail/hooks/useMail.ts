@@ -1,3 +1,5 @@
+import { createDraftOwnership } from '../draft-ownership';
+import { sortMailMessages, type MailSort } from '../mail-list-controls';
 import { groupRelatedMessages } from '../message-grouping';
 import type { MessageRemoval } from '../mail-message-identity';
 import { plainToHtml } from '../compose-content';
@@ -323,7 +325,8 @@ export function useMail(_opts: UseMailOptions) {
 
   // Message state
   const [messages, setMessagesState] = useState<Message[]>([]);
-  const visibleMessages = useMemo(() => groupRelatedMessages(messages, activeFolder, _opts.isThreaded), [messages, activeFolder, _opts.isThreaded]);
+  const [mailSort, setMailSort] = useState<MailSort>('newest');
+  const visibleMessages = useMemo(() => groupRelatedMessages(sortMailMessages(messages, mailSort), activeFolder, _opts.isThreaded), [messages, activeFolder, _opts.isThreaded, mailSort]);
   const messagesRef = useRef<Message[]>([]);
   const setMessages = useCallback((update: SetStateAction<Message[]>) => {
     setMessagesState((current) => {
@@ -341,6 +344,8 @@ export function useMail(_opts: UseMailOptions) {
   }, []);
   useEffect(() => () => { junkResolver.current?.(null); junkResolver.current = null; }, []);
   const [messageRemoval, setMessageRemoval] = useState<MessageRemoval | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkRouteBlocked, setBulkRouteBlocked] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState<number[]>([]);
   const [viewingThread, setViewingThread] = useState<Message[] | null>(null);
   const [mailLowestUid, setMailLowestUid] = useState<number | null>(null);
@@ -390,6 +395,11 @@ export function useMail(_opts: UseMailOptions) {
   const identities = useMemo(() => mailIdentities(_opts.userIdentities), [_opts.userIdentities]);
 
   // Compose state
+  const draftOwnership = useRef(createDraftOwnership(typeof navigator === 'undefined' ? undefined : navigator.locks));
+  useEffect(() => () => draftOwnership.current.release(), []);
+  const [minimizedDrafts, setMinimizedDrafts] = useState<Array<{ id: string; subject: string }>>([]);
+  const minimizedStorageKey = `oms-minimized:${_opts.userIdentities.address}`;
+  useEffect(() => { if (!_opts.userIdentities.address) return; let active = true; queueMicrotask(() => { if (!active) return; try { const saved = JSON.parse(sessionStorage.getItem(minimizedStorageKey) || '[]'); setMinimizedDrafts(Array.isArray(saved) ? saved.filter(d => typeof d?.id === 'string' && typeof d?.subject === 'string').slice(0, 10) : []); } catch { setMinimizedDrafts([]); } }); return () => { active = false; }; }, [minimizedStorageKey, _opts.userIdentities.address]);
   const [isComposing, setIsComposing] = useState(false);
   const isComposingRef = useRef(isComposing);
   useEffect(() => { isComposingRef.current = isComposing; }, [isComposing]);
@@ -588,9 +598,10 @@ export function useMail(_opts: UseMailOptions) {
       clearTimeout(draftTimerRef.current);
       draftTimerRef.current = null;
     }
-    draftSaveCoordinatorRef.current.reset();
+    const newDraftId = crypto.randomUUID();
+    draftSaveCoordinatorRef.current.reset({ draftId: newDraftId, draftUid: null });
     setDraftUid(null);
-    setDraftId(null);
+    setDraftId(newDraftId);
     setDraftSaveStatus(null);
     setComposeError(null);
     setLastSendResult(null);
@@ -1049,13 +1060,15 @@ export function useMail(_opts: UseMailOptions) {
     );
     if (!hasDraftContent) {
       const existingDraft = await draftSaveCoordinatorRef.current.flush();
-      if (!existingDraft.draftId && !existingDraft.draftUid) return true;
+      if (!existingDraft.draftUid) return true;
     }
 
     const saveRevision = ++draftSaveRevisionRef.current;
     setDraftSaveStatus('saving');
     try {
       const result = await draftSaveCoordinatorRef.current.enqueue(async currentDraft => {
+        const id = currentDraft.draftId || `${_opts.userIdentities.address}:${currentDraft.draftFolder}:${currentDraft.draftUid}`;
+        if (!await draftOwnership.current.acquire(id)) throw new Error('This draft is open in another window. Close that editor first.');
         const formData = new FormData();
         const identityFields = outboundIdentityFields({
           from: composeFrom,
@@ -1079,13 +1092,14 @@ export function useMail(_opts: UseMailOptions) {
         composeAttachments.forEach(file => formData.append('attachments', file));
         return api.saveDraft(formData);
       });
+      if (result.draftId && !await draftOwnership.current.acquire(result.draftId)) throw new Error('This draft is open in another window.');
       if (result.draftId) setDraftId(result.draftId);
       if (result.draftUid) setDraftUid(result.draftUid);
       if (saveRevision === draftSaveRevisionRef.current) setDraftSaveStatus('saved');
       return true;
     } catch (error) {
       console.error('Draft save failed', error);
-      if (saveRevision === draftSaveRevisionRef.current) setDraftSaveStatus('error');
+      if (saveRevision === draftSaveRevisionRef.current) { setDraftSaveStatus('error'); setComposeError(errorMessage(error, 'Draft save failed.')); }
       return false;
     }
   }, [composeAttachments, composeBcc, composeBody, composeCc, composeFrom, composeInReplyTo, composeMode,
@@ -1119,7 +1133,9 @@ export function useMail(_opts: UseMailOptions) {
       && state.from
       && restoredFrom.toLowerCase() !== state.from.toLowerCase(),
     );
-    if (!claimComposeIntent(requestId)) return { senderChanged: false, opened: false };
+    if (isComposingRef.current || !composePreparationCoordinatorRef.current.isCurrent(requestId)) return { senderChanged: false, opened: false };
+    if (!await draftOwnership.current.acquire(state.draftId || `${_opts.userIdentities.address}:${folder}:${state.draftUid}`)) throw new Error('This draft is already open in another window. Close that editor first.');
+    if (!claimComposeIntent(requestId)) { if (!isComposingRef.current) draftOwnership.current.release(); return { senderChanged: false, opened: false }; }
 
     draftSaveCoordinatorRef.current.reset({
       draftId: state.draftId,
@@ -1154,7 +1170,7 @@ export function useMail(_opts: UseMailOptions) {
     setComposeDocked(false);
     setIsComposing(true);
     return { senderChanged, opened: true };
-  }, [claimComposeIntent, identities, _opts.mailSettings.identity.defaultFrom, _opts.mailSettings.compose.defaultMode, _opts.mailSettings.compose.replyMode]);
+  }, [claimComposeIntent, identities, _opts.userIdentities.address, _opts.mailSettings.identity.defaultFrom, _opts.mailSettings.compose.defaultMode, _opts.mailSettings.compose.replyMode]);
 
   const cancelScheduledDelivery = useCallback(async (scheduledId: number) => {
     const undo = await api.undoAction({ scheduledId });
@@ -1208,11 +1224,46 @@ export function useMail(_opts: UseMailOptions) {
     }
     const saved = await saveCurrentDraft();
     if (saved) {
+      draftOwnership.current.release();
       isComposingRef.current = false;
       setIsComposing(false);
     }
     return saved;
   }, [saveCurrentDraft]);
+
+  const minimizeComposer = useCallback(async () => {
+    if (minimizedDrafts.length >= 10) { setComposeError('Up to 10 minimized drafts can be shown. Open or dismiss one first.'); return false; }
+    if (!await closeComposer()) return false;
+    const identity = await draftSaveCoordinatorRef.current.flush();
+    if (identity.draftId && identity.draftUid) {
+      const next = [...minimizedDrafts.filter(d => d.id !== identity.draftId), { id: identity.draftId, subject: composeSubject || '(no subject)' }];
+      setMinimizedDrafts(next); try { sessionStorage.setItem(minimizedStorageKey, JSON.stringify(next)); } catch { /* The draft itself is saved on the server. */ }
+    }
+    return true;
+  }, [closeComposer, minimizedDrafts, minimizedStorageKey, composeSubject]);
+  const dismissMinimizedDraft = useCallback((id: string) => {
+    setMinimizedDrafts(current => { const next = current.filter(d => d.id !== id); try { sessionStorage.setItem(minimizedStorageKey, JSON.stringify(next)); } catch { /* Saved in Drafts. */ } return next; });
+  }, [minimizedStorageKey]);
+  const openSavedDraft = useCallback(async (id: string) => {
+    const response = await fetch(`/api/drafts/resolve/${encodeURIComponent(id)}`);
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Draft unavailable. Open Drafts to check its current location.');
+    const result = await resumeDraft({ uid: data.uid } as Message, data.folder);
+    if (result.opened) dismissMinimizedDraft(id);
+    return result.opened;
+  }, [resumeDraft, dismissMinimizedDraft]);
+  const popOutComposer = useCallback(async () => {
+    if (!navigator.locks) { setComposeError('Separate windows require browser draft-lock support. You can expand this editor instead.'); return; }
+    const popup = window.open('about:blank', '_blank', 'popup=yes,width=1000,height=800,resizable=yes,scrollbars=yes');
+    if (!popup) { setComposeError('The popup was blocked. Allow popups for webmail, or expand this editor.'); return; }
+    popup.document.title = 'Opening composer'; popup.document.body.textContent = 'Saving draft before opening…';
+    try {
+      if (!await closeComposer()) throw new Error('Draft could not be saved. The editor remains here.');
+      const identity = await draftSaveCoordinatorRef.current.flush();
+      if (!identity.draftId || !identity.draftUid || popup.closed) throw new Error('The separate window could not be opened. Your saved draft remains here.');
+      popup.location.replace(`/compose-window?draft=${encodeURIComponent(identity.draftId)}`);
+    } catch (err) { popup.close(); isComposingRef.current = true; setIsComposing(true); setComposeError(errorMessage(err, 'Could not open a separate window.')); }
+  }, [closeComposer]);
 
   const finishComposeAfterConfirmedSend = useCallback(() => {
     setComposeTo(''); setComposeCc(''); setComposeBcc('');
@@ -1226,6 +1277,7 @@ export function useMail(_opts: UseMailOptions) {
     draftSaveCoordinatorRef.current.reset();
     setDraftSaveStatus(null);
     setShowCc(false); setShowBcc(false);
+    draftOwnership.current.release();
     isComposingRef.current = false;
     setIsComposing(false);
     void Promise.all([fetchFolders(), fetchMessages()]);
@@ -1253,6 +1305,7 @@ export function useMail(_opts: UseMailOptions) {
       setComposeSignature('none');
       setDraftUid(null); setDraftId(null); setDraftSaveStatus(null);
       setComposeError(null);
+      draftOwnership.current.release();
       isComposingRef.current = false;
       setIsComposing(false);
       void Promise.all([fetchFolders(), fetchMessages()]);
@@ -1780,6 +1833,22 @@ export function useMail(_opts: UseMailOptions) {
     }
   }, [activeFolder, isSearchActive, mailLowestUid, mailMoreAvailable, setMessages]);
 
+  const bulkRemoval = useRef<{ before: Message[]; groups: Array<{ folder: string; uids: number[] }> } | null>(null);
+  useEffect(() => {
+    if (bulkBusy || !bulkRemoval.current) return;
+    const pending = bulkRemoval.current; bulkRemoval.current = null;
+    const uids = pending.groups.filter(group => mailboxPathsEqual(group.folder, activeFolder)).flatMap(group => group.uids);
+    if (uids.length) setMessageRemoval({ folder: activeFolder, uids, before: pending.before });
+  }, [bulkBusy, activeFolder]);
+  const applyConfirmedBatch = useCallback((action: string, batch: { folder: string; uids: number[] }) => {
+    const before = groupRelatedMessages(sortMailMessages(messagesRef.current, mailSort), activeFolder, _opts.isThreaded);
+    if (['delete', 'archive', 'spam', 'notspam', 'move'].includes(action)) {
+      bulkRemoval.current ||= { before, groups: [] };
+      bulkRemoval.current.groups.push(batch);
+    }
+    setMessages(current => applyFolderScopedAction(current, action, batch.folder, batch.uids));
+  }, [activeFolder, mailSort, _opts.isThreaded, setMessages]);
+
   const refreshMessages = useCallback(async () => {
     setIsRefreshing(true);
     await fetchMessages();
@@ -1791,7 +1860,7 @@ export function useMail(_opts: UseMailOptions) {
     const targetUids = uids || selectedMessages;
     if (!targetUids.length) return false;
     const folder = folderOverride || activeFolder;
-    const before = groupRelatedMessages(messagesRef.current, activeFolder, _opts.isThreaded);
+    const before = groupRelatedMessages(sortMailMessages(messagesRef.current, mailSort), activeFolder, _opts.isThreaded);
     let junkScope: 'sender' | 'domain' | undefined;
     if (action === 'spam' || action === 'notspam') {
       if (junkResolver.current) return false;
@@ -1842,12 +1911,12 @@ export function useMail(_opts: UseMailOptions) {
       console.error('Action failed', e);
       return false;
     }
-  }, [activeFolder, selectedMessages, fetchMessages, fetchFolders, isSearchActive, setMessages, _opts.isThreaded]);
+  }, [activeFolder, selectedMessages, fetchMessages, fetchFolders, isSearchActive, setMessages, _opts.isThreaded, mailSort]);
 
   const emptyFolder = useCallback(async (snapshot: api.EmptyFolderSnapshot) => {
     try {
       const result = await api.emptyFolder(snapshot.path, snapshot);
-      const before = groupRelatedMessages(messagesRef.current, activeFolder, _opts.isThreaded);
+      const before = groupRelatedMessages(sortMailMessages(messagesRef.current, mailSort), activeFolder, _opts.isThreaded);
       const uids = before.filter(item => mailboxPathsEqual(item.folder || activeFolder, snapshot.path) && item.uid <= snapshot.maxUid).map(item => item.uid);
       setMessageRemoval({ folder: snapshot.path, uids, before });
       setMessages(current => current.filter(item => !mailboxPathsEqual(item.folder || activeFolder, snapshot.path) || item.uid > snapshot.maxUid));
@@ -1857,7 +1926,7 @@ export function useMail(_opts: UseMailOptions) {
       await fetchMessages();
       await fetchFolders();
     }
-  }, [activeFolder, fetchMessages, fetchFolders, setMessages, _opts.isThreaded]);
+  }, [activeFolder, fetchMessages, fetchFolders, setMessages, _opts.isThreaded, mailSort]);
 
   const undoAction = useCallback(async () => {
     if (!mailUndo) return;
@@ -2066,7 +2135,7 @@ export function useMail(_opts: UseMailOptions) {
     removeUnavailableFavorite,
     dismissUnavailableFavorite,
     markingReadFolder,
-    junkPrompt, resolveJunkPrompt, messages: visibleMessages, setMessages, messageRemoval, selectedMessages, setSelectedMessages,
+    applyConfirmedBatch, mailSort, setMailSort, bulkBusy, setBulkBusy, bulkRouteBlocked, setBulkRouteBlocked, junkPrompt, resolveJunkPrompt, messages: visibleMessages, setMessages, messageRemoval, selectedMessages, setSelectedMessages,
     viewingThread, setViewingThread,
     mailLowestUid, mailMoreAvailable,
     mailLoading, isRefreshing, loadingOlderMessages, mailPaginationError,
@@ -2078,7 +2147,7 @@ export function useMail(_opts: UseMailOptions) {
     searchIndexStatus, searchWorkerStatus,
     savedSearches,
     showSearchHints, setShowSearchHints,
-    isComposing, setIsComposing, startCompose, prepareMessageCompose, resumeDraft, composeDocked, setComposeDocked,
+    minimizedDrafts, minimizeComposer, dismissMinimizedDraft, openSavedDraft, popOutComposer, isComposing, setIsComposing, startCompose, prepareMessageCompose, resumeDraft, composeDocked, setComposeDocked,
     userIdentitiesReady: _opts.userIdentitiesReady,
     userIdentitiesError: _opts.userIdentitiesError,
     retryUserIdentities: _opts.onRetryUserIdentities,

@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.compileOutboundMessage = exports.mailboxAddressFromHeader = exports.classifySmtpRecipientOutcome = exports.SmtpRecipientsRejectedError = exports.OutboundMessageValidationError = exports.authorizeOutboundSender = exports.listOwnedSenderIdentities = exports.normalizeMailboxAddress = exports.SenderAuthorizationError = void 0;
+exports.extractInlineImages = extractInlineImages;
 const crypto_1 = __importDefault(require("crypto"));
 const MailComposer = require('nodemailer/lib/mail-composer');
 const addressparser = require('nodemailer/lib/addressparser');
@@ -201,6 +202,30 @@ const normalizeReferences = (value) => {
     return result;
 };
 const messageIdDomain = (address) => address.slice(address.lastIndexOf('@') + 1) || 'openmailstack.local';
+function extractInlineImages(source) {
+    if (Buffer.byteLength(source) > 8 * 1024 * 1024)
+        throw new OutboundMessageValidationError('Message HTML exceeds the 8 MiB limit.');
+    const attachments = [];
+    let bytes = 0;
+    const html = source.replace(/(<img\b[^>]*?\bsrc\s*=\s*)(["'])(data:[^"']*)\2/gi, (_match, prefix, quote, url) => {
+        const match = /^data:image\/(png|jpeg|gif|webp);base64,([a-z0-9+/]*={0,2})$/i.exec(url);
+        if (!match || !match[2])
+            throw new OutboundMessageValidationError('Inline images must be PNG, JPEG, GIF or WebP.');
+        const content = Buffer.from(match[2], 'base64');
+        const kind = match[1].toLowerCase();
+        const signature = kind === 'png' ? content.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+            : kind === 'jpeg' ? content[0] === 255 && content[1] === 216 && content[2] === 255
+                : kind === 'gif' ? /^GIF8[79]a$/.test(content.subarray(0, 6).toString())
+                    : content.subarray(0, 4).toString() === 'RIFF' && content.subarray(8, 12).toString() === 'WEBP';
+        bytes += content.length;
+        if (!signature || content.length > 1024 * 1024 || bytes > 4 * 1024 * 1024 || attachments.length >= 20)
+            throw new OutboundMessageValidationError('Inline images must be valid raster images, at most 1 MiB each and 4 MiB total (20 images).');
+        const cid = `inline-${crypto_1.default.randomUUID()}@openmailstack`;
+        attachments.push({ filename: false, content, contentType: `image/${kind}`, cid, contentDisposition: 'inline' });
+        return `${prefix}${quote}cid:${cid}${quote}`;
+    });
+    return { html, attachments };
+}
 const compileOutboundMessage = async (input) => {
     const from = (0, exports.normalizeMailboxAddress)(input.sender.address);
     if (!from)
@@ -229,7 +254,8 @@ const compileOutboundMessage = async (input) => {
         : `<${crypto_1.default.randomUUID()}@${messageIdDomain(from)}>`;
     const date = input.date || new Date();
     const text = input.text ?? input.body ?? '';
-    const html = input.html ?? '';
+    const embedded = extractInlineImages(input.html ?? '');
+    const html = embedded.html;
     const headers = {};
     for (const [key, value] of Object.entries(input.headers || {})) {
         const cleanKey = boundedHeader(key, 'Header name', 100);
@@ -248,7 +274,7 @@ const compileOutboundMessage = async (input) => {
         html: html || undefined,
         inReplyTo: inReplyTo || undefined,
         references: references.length > 0 ? references.join(' ') : undefined,
-        attachments: input.attachments || [],
+        attachments: [...(input.attachments || []), ...embedded.attachments],
         icalEvent: input.icalEvent ? {
             method: input.icalEvent.method,
             content: input.icalEvent.content,
@@ -284,7 +310,7 @@ const compileOutboundMessage = async (input) => {
             replyTo: addressInputText(input.replyTo),
             subject,
             text,
-            html,
+            html: input.html ?? '',
             inReplyTo,
             references,
         },

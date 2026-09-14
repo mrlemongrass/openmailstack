@@ -83,3 +83,35 @@ test('an existing IMAP draft seeds the first replacement and send identity', asy
   assert.deepEqual(receivedIdentity, { draftId: 'existing-draft', draftUid: '901' });
   assert.deepEqual(await coordinator.flush(), { draftId: 'existing-draft', draftUid: '902' });
 });
+
+
+test('discard waits for an in-flight replacement and deletes its exact folder and latest UID', async () => {
+  const coordinator = createDraftSaveCoordinator();
+  let finishSave;
+  const pending = coordinator.enqueue(() => new Promise(resolve => { finishSave = resolve; }));
+  await Promise.resolve();
+  const deleted = [];
+  const discard = coordinator.discard(async identity => { deleted.push(identity); });
+  await Promise.resolve();
+  assert.deepEqual(deleted, []);
+  await assert.rejects(coordinator.enqueue(async () => ({ draftUid: '999' })), /discard/i);
+  finishSave({ draftId: 'stable', draftUid: '42', draftFolder: 'Team/Drafts' });
+  await pending;
+  await discard;
+  assert.deepEqual(deleted, [{ draftId: 'stable', draftUid: '42', draftFolder: 'Team/Drafts' }]);
+  assert.deepEqual(await coordinator.flush(), { draftId: null, draftUid: null });
+});
+
+test('failed discard retains draft identity and allows retry without a new save', async () => {
+  const coordinator = createDraftSaveCoordinator();
+  coordinator.reset({ draftId: 'stable', draftUid: '42', draftFolder: 'Drafts' });
+  await assert.rejects(coordinator.discard(async () => { throw new Error('Offline'); }), /Offline/);
+  assert.equal((await coordinator.flush()).draftUid, '42');
+  await coordinator.discard(async identity => { assert.equal(identity.draftUid, '42'); });
+});
+
+test('an uncertain failed save blocks discard instead of guessing which draft was saved', async () => {
+  const coordinator = createDraftSaveCoordinator();
+  await assert.rejects(coordinator.enqueue(async () => { throw new Error('Lost response'); }));
+  await assert.rejects(coordinator.discard(async () => assert.fail('must not delete')), /save/i);
+});

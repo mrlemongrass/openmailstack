@@ -3450,7 +3450,7 @@ exports.apiRouter.post('/messages/draft', requireAuth, upload.array('attachments
                 console.error('Failed to delete replaced drafts:', error);
             }
         }
-        res.json({ success: true, draftId, draftUid: appendRes?.uid, messageId: compiled.messageId });
+        res.json({ success: true, draftId, draftUid: appendRes?.uid, draftFolder: draftsFolder, messageId: compiled.messageId });
     }
     catch (err) {
         if (err instanceof outbound_mail_1.SenderAuthorizationError) {

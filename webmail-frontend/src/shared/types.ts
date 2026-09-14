@@ -344,6 +344,7 @@ export interface SaveDraftResponse {
   draftId?: string;
   draftUid?: string;
   error?: string;
+  draftFolder?: string;
 }
 
 export interface MessageListResponse {

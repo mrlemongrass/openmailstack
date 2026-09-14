@@ -380,6 +380,8 @@ export function useMail(_opts: UseMailOptions) {
   const [isComposing, setIsComposing] = useState(false);
   const isComposingRef = useRef(isComposing);
   useEffect(() => { isComposingRef.current = isComposing; }, [isComposing]);
+  const [discardingDraft, setDiscardingDraft] = useState(false);
+  const discardInProgressRef = useRef(false);
   const [composeDocked, setComposeDocked] = useState(false);
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
@@ -1026,6 +1028,7 @@ export function useMail(_opts: UseMailOptions) {
   }, [fetchFolders, setMessages]);
 
   const saveCurrentDraft = useCallback(async (): Promise<boolean> => {
+    if (discardInProgressRef.current) return false;
     const hasDraftContent = Boolean(
       composeTo || composeCc || composeBcc || composeSubject || composeBody || composeAttachments.length,
     );
@@ -1107,6 +1110,7 @@ export function useMail(_opts: UseMailOptions) {
     draftSaveCoordinatorRef.current.reset({
       draftId: state.draftId,
       draftUid: state.draftUid,
+      draftFolder: folder,
     });
     setDraftUid(state.draftUid);
     setDraftId(state.draftId);
@@ -1211,6 +1215,38 @@ export function useMail(_opts: UseMailOptions) {
     setIsComposing(false);
     void Promise.all([fetchFolders(), fetchMessages()]);
   }, [fetchFolders, fetchMessages]);
+
+  const discardComposer = useCallback(async (): Promise<boolean> => {
+    if (discardInProgressRef.current || sending) return false;
+    discardInProgressRef.current = true;
+    setDiscardingDraft(true);
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+      draftTimerRef.current = null;
+    }
+    try {
+      await draftSaveCoordinatorRef.current.discard(async identity => {
+        if (!identity.draftUid && !identity.draftId) return;
+        if (!identity.draftFolder || !identity.draftUid) {
+          throw new Error('The saved draft location is unavailable. Save & Close, then reopen the draft to discard it.');
+        }
+        const result = await api.messageAction('delete', identity.draftFolder, [Number(identity.draftUid)]);
+        if (!result.success) throw new Error('Draft could not be discarded. Try again.');
+      });
+      setComposeTo(''); setComposeCc(''); setComposeBcc('');
+      setComposeSubject(''); setComposeBody(''); setComposeAttachments([]);
+      setComposeSignature('none');
+      setDraftUid(null); setDraftId(null); setDraftSaveStatus(null);
+      setComposeError(null);
+      isComposingRef.current = false;
+      setIsComposing(false);
+      void Promise.all([fetchFolders(), fetchMessages()]);
+      return true;
+    } finally {
+      discardInProgressRef.current = false;
+      setDiscardingDraft(false);
+    }
+  }, [fetchFolders, fetchMessages, sending]);
 
   // Compose send
   const handleSend = useCallback(async (sendAt?: Date | null) => {
@@ -1945,7 +1981,7 @@ export function useMail(_opts: UseMailOptions) {
 
   // ---- Draft auto-save ----
   useEffect(() => {
-    if (!isComposing || sending) return;
+    if (!isComposing || sending || discardingDraft) return;
 
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current);
@@ -1962,7 +1998,7 @@ export function useMail(_opts: UseMailOptions) {
         draftTimerRef.current = null;
       }
     };
-  }, [isComposing, saveCurrentDraft, sending]);
+  }, [isComposing, saveCurrentDraft, sending, discardingDraft]);
 
   return {
     folders, activeFolder, setActiveFolder, expandedFolders, setExpandedFolders: setExpandedPersisted,
@@ -2014,7 +2050,7 @@ export function useMail(_opts: UseMailOptions) {
     composeMode, setComposeMode,
     draftUid, setDraftUid, draftId, setDraftId,
     draftSaveStatus, setDraftSaveStatus, composeError, setComposeError,
-    sending, handleSend, lastSendResult, immediateSendPhase, immediateSendNotice, closeComposer,
+    sending, handleSend, lastSendResult, immediateSendPhase, immediateSendNotice, closeComposer, discardComposer,
     allowRetryAfterVerifiedNonDelivery, checkEarlierComposeSend, checkingEarlierComposeSend,
     outboundRecoveryNotice, setOutboundRecoveryNotice,
     replyText, setReplyText, replySending, sendReply,

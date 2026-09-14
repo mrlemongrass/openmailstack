@@ -3926,7 +3926,7 @@ apiRouter.post('/messages/draft', requireAuth, upload.array('attachments'), asyn
             catch (error) { console.error('Failed to delete replaced drafts:', error); }
         }
 
-        res.json({ success: true, draftId, draftUid: appendRes?.uid, messageId: compiled.messageId });
+        res.json({ success: true, draftId, draftUid: appendRes?.uid, draftFolder: draftsFolder, messageId: compiled.messageId });
     } catch (err: any) {
         if (err instanceof SenderAuthorizationError) {
             return res.status(403).json({ success: false, error: err.message, code: err.code });

@@ -287,7 +287,7 @@ test('undo send uses the supported POST contract and draft saves carry stable id
   assert.match(hook, /formData\.append\('draftId',\s*currentDraft\.draftId\)/);
   assert.match(hook, /draftSaveCoordinatorRef\.current\.enqueue/);
   assert.match(hook, /const closeComposer = useCallback\([\s\S]*await saveCurrentDraft\(\)[\s\S]*setIsComposing\(false\)/);
-  assert.match(hook, /if \(!isComposing \|\| sending\) return/);
+  assert.match(hook, /if \(!isComposing \|\| sending \|\| discardingDraft\) return/);
   assert.match(toast, /actionLabel/);
   assert.match(toast, /onAction/);
   assert.match(toast, /duration:\s*number/);

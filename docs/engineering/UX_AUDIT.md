@@ -1,5 +1,14 @@
 # OpenMailStack UX Audit
 
+## 2026-09-14 — Editor and suite interaction review
+
+See [the current editor review](WEBAPP_EDITOR_UX_REVIEW_2026-09-14.md) for verified
+signature, sizing, discard, and Settings-toolbar fixes; desktop/mobile screenshots;
+and a prioritized remaining backlog. Settings navigation can still drop pending
+edits, and rich Compose, dirty-form protection, attachment reminders, and keyboard
+interaction need further work. Local candidate only; not deployed.
+
+
 > Last updated: 2026-07-29
 > Method: Playwright desktop/mobile review plus source tracing. Public/login routes used the live site; the initial authenticated audit used deterministic API fixtures, followed by read-only validation with the established `localtest@housevo.us` admin test account.
 

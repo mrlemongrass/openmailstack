@@ -499,7 +499,7 @@ function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: Sett
           }}>
             {/* Name + options bar */}
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+              display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '10px 14px',
               borderBottom: '1px solid var(--border-glass)',
               background: 'rgba(255,255,255,0.02)',
             }}>
@@ -510,8 +510,9 @@ function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: Sett
                   onUpdateSignatures(updated);
                 }}
                 placeholder="Signature name"
+                aria-label="Signature name"
                 style={{
-                  flex: 1, background: 'transparent', border: 'none', color: 'var(--text-primary)',
+                  flex: '1 1 140px', minWidth: 0, background: 'transparent', border: 'none', color: 'var(--text-primary)',
                   fontSize: '0.9rem', fontWeight: 500, fontFamily: 'inherit', outline: 'none',
                 }}
               />

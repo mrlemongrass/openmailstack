@@ -10,6 +10,7 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  extraAction?: { label: string; onClick: () => void; danger?: boolean };
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -21,6 +22,7 @@ export function ConfirmDialog({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   danger = false,
+  extraAction,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -71,10 +73,16 @@ export function ConfirmDialog({
             </p>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', marginTop: 20 }}>
           <button className="btn btn-ghost" onClick={onCancel} style={{ fontSize: '0.85rem' }}>
             {cancelLabel}
           </button>
+          {extraAction && (
+            <button className={extraAction.danger ? 'btn btn-danger' : 'btn btn-ghost'}
+              onClick={extraAction.onClick} style={{ fontSize: '0.85rem' }}>
+              {extraAction.label}
+            </button>
+          )}
           <button
             className={danger ? 'btn btn-danger' : 'btn btn-primary'}
             onClick={onConfirm}

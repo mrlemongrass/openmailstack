@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { X, Send, Paperclip, Clock, Image, FileText } from 'lucide-react';
+import { X, Send, Paperclip, Clock, Image, FileText, Maximize2, Minimize2, Grip } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
@@ -17,7 +17,16 @@ const BLOCK_SIZE = 50 * 1024 * 1024; // 50MB block
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
 
 function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
+  // Signature settings store HTML; plain Compose must retain its line boundaries.
+  const fragment = document.createElement('template');
+  fragment.innerHTML = html;
+  fragment.content.querySelectorAll('script, style, template').forEach(node => node.remove());
+  fragment.content.querySelectorAll('br').forEach(node => node.replaceWith(document.createTextNode('\n')));
+  Array.from(fragment.content.querySelectorAll('p, div, li, tr, h1, h2, h3, h4, h5, h6, blockquote'))
+    .reverse().forEach(node => {
+      if (!node.textContent?.endsWith('\n')) node.append(document.createTextNode('\n'));
+    });
+  return (fragment.content.textContent || '').replace(/\u00a0/g, ' ').trim();
 }
 
 function totalSize(files: File[]): number {
@@ -41,8 +50,21 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const [scheduleTime, setScheduleTime] = useState('');
   const [scheduleError, setScheduleError] = useState('');
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
-  const [closingComposer, setClosingComposer] = useState(false);
+  const [closingComposer, setClosingComposer] = useState<'saving' | 'discarding' | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [editorSize, setEditorSize] = useState<{ width: number; height: number } | null>(null);
+  const resizeStart = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const signatureInitialized = useRef(false);
+  const insertedSignature = useRef('');
+  const closeActionRef = useRef(false);
+
+  const resizeComposer = (width: number, height: number) => {
+    setEditorSize({
+      width: Math.max(420, Math.min(window.innerWidth - 40, width)),
+      height: Math.max(420, Math.min(window.innerHeight - 40, height)),
+    });
+  };
 
   // Image previews
   const imagePreviews = useMemo(() => (
@@ -164,7 +186,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     undoSendId,
     undoSendMode,
   } = mail;
-  const composeBusy = sending || closingComposer || checkingEarlierComposeSend;
+  const composeBusy = Boolean(sending || closingComposer || checkingEarlierComposeSend);
   const unchangedSendBlocked = immediateSendPhase === 'uncertain' || immediateSendPhase === 'blocked';
   useEffect(() => {
     if (didSend && !sending && !composeError && !isComposing) {
@@ -206,30 +228,53 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   }, [cancelSendUndo, composeError, didSend, isComposing, sending, showToast,
     lastSendResult, undoSendDelaySeconds, undoSendId, undoSendMode]);
 
-  // Auto-select default signature when compose opens
+  // Apply a default once per new composer, never to a reopened draft or after
+  // an explicit No signature choice. Only remove text we actually inserted.
   useEffect(() => {
-    if (isComposing && signatures && signatures.length > 0) {
-      const timer = window.setTimeout(() => {
-        const def = signatures.find((s: Signature) => s.isDefault) || signatures[0];
-        if (composeSignature === 'none' || !signatures.find((s: Signature) => s.id === composeSignature)) {
-          setComposeSignature(def.id);
-          if (def.content && !composeBody) {
-            setComposeBody(stripHtml(def.content) + '\n\n');
-          }
-        }
-      }, 0);
-      return () => window.clearTimeout(timer);
+    if (!isComposing) {
+      signatureInitialized.current = false;
+      insertedSignature.current = '';
+      return;
     }
-  }, [isComposing, signatures, composeSignature, composeBody, setComposeSignature, setComposeBody]);
+    if (signatureInitialized.current || !signatures?.length) return;
+    const timer = window.setTimeout(() => {
+      signatureInitialized.current = true;
+      if (mail.draftUid || composeSignature !== 'none') return;
+      const def = signatures.find((s: Signature) => s.isDefault);
+      if (!def || !def.content || composeBody || mail.composeMode === 'rich') return;
+      const text = stripHtml(def.content);
+      insertedSignature.current = text;
+      setComposeSignature(def.id);
+      setComposeBody(text + '\n\n');
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [isComposing, signatures, composeSignature, composeBody, mail.draftUid, mail.composeMode,
+    setComposeSignature, setComposeBody]);
+
+  const changeSignature = (id: string) => {
+    signatureInitialized.current = true;
+    const previous = insertedSignature.current;
+    const signature = signatures.find((item: Signature) => item.id === id);
+    const next = signature?.content ? stripHtml(signature.content) : '';
+    setComposeSignature(id);
+    setComposeBody(body => {
+      const remainder = previous && body.startsWith(previous + '\n\n')
+        ? body.slice(previous.length + 2) : body;
+      return next ? next + '\n\n' + remainder : remainder;
+    });
+    insertedSignature.current = next;
+  };
 
   const size = totalSize(mail.composeAttachments);
   const sizeExceedsWarning = size > MAX_SIZE;
   const sizeExceedsBlock = size > BLOCK_SIZE;
 
-  const hasContent = mail.composeTo || mail.composeCc || mail.composeBcc || mail.composeSubject || mail.composeBody || mail.composeAttachments.length > 0;
+  const hasContent = mail.draftUid || mail.draftId || mail.composeTo || mail.composeCc || mail.composeBcc || mail.composeSubject || mail.composeBody || mail.composeAttachments.length > 0;
 
   const saveAndClose = () => {
-    setClosingComposer(true);
+    if (closeActionRef.current) return;
+    closeActionRef.current = true;
+    setClosingComposer('saving');
     void closeComposer().then((closed) => {
       if (!closed) {
         showToast({ type: 'error', message: 'Draft could not be saved. The composer is still open.' });
@@ -241,7 +286,19 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           ? `Draft could not be saved: ${error.message}`
           : 'Draft could not be saved. The composer is still open.',
       });
-    }).finally(() => setClosingComposer(false));
+    }).finally(() => { closeActionRef.current = false; setClosingComposer(null); });
+  };
+
+  const discardAndClose = () => {
+    if (closeActionRef.current) return;
+    closeActionRef.current = true;
+    setClosingComposer('discarding');
+    setShowCloseConfirm(false);
+    void mail.discardComposer().then(discarded => {
+      if (discarded) showToast({ type: 'info', message: 'Draft discarded' });
+    }).catch((error: unknown) => {
+      showToast({ type: 'error', message: error instanceof Error ? `Draft could not be discarded: ${error.message}` : 'Draft could not be discarded. Try again.' });
+    }).finally(() => { closeActionRef.current = false; setClosingComposer(null); });
   };
 
   const handleClose = () => {
@@ -296,10 +353,34 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
       <div
         ref={dialogRef}
         className="glass-panel compose-dialog"
+        data-expanded={expanded}
+        style={editorSize ? { width: editorSize.width, height: editorSize.height } : undefined}
         role="dialog"
         aria-modal="true"
         aria-labelledby="compose-dialog-title"
       >
+        {!expanded && (
+          <button type="button" className="compose-resize-handle" aria-label="Resize composer"
+            title="Drag to resize, or use arrow keys" onKeyDown={event => {
+              if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+              event.preventDefault();
+              const bounds = dialogRef.current!.getBoundingClientRect();
+              resizeComposer(bounds.width + (event.key === 'ArrowLeft' ? 32 : event.key === 'ArrowRight' ? -32 : 0),
+                bounds.height + (event.key === 'ArrowUp' ? 32 : event.key === 'ArrowDown' ? -32 : 0));
+            }} onPointerDown={event => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+              const bounds = dialogRef.current!.getBoundingClientRect();
+              resizeStart.current = { x: event.clientX, y: event.clientY, width: bounds.width, height: bounds.height };
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }} onPointerMove={event => {
+              const start = resizeStart.current;
+              if (start) resizeComposer(start.width + start.x - event.clientX, start.height + start.y - event.clientY);
+            }} onPointerUp={() => { resizeStart.current = null; }}
+            onPointerCancel={() => { resizeStart.current = null; }}>
+            <Grip size={14} />
+          </button>
+        )}
         {/* Drop overlay */}
         {isDragOver && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 10,
@@ -316,10 +397,18 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           <span id="compose-dialog-title" style={{ fontWeight: 600 }}>
             {mail.draftUid ? 'Edit Draft' : 'New Message'}
           </span>
+          <div className="compose-window-actions">
+          <button type="button" className="btn btn-ghost compose-expand"
+            aria-label={expanded ? 'Restore composer size' : 'Expand composer'}
+            title={expanded ? 'Restore composer size' : 'Expand composer'}
+            onClick={() => setExpanded(value => !value)}>
+            {expanded ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+          </button>
           <button className="btn btn-ghost" aria-label="Close message composer" disabled={composeBusy}
             onClick={handleClose} style={{ padding: 4 }}>
             <X size={18} />
           </button>
+          </div>
         </div>
         {/* Recipient fields — outside scroll area so autocomplete dropdowns aren't clipped */}
         <div className="compose-recipient-fields">
@@ -357,7 +446,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             </div>
           )}
           <div style={{ position: 'relative' }}>
-            <input className="glass-input" placeholder="To" value={mail.composeTo}
+            <input className="glass-input" placeholder="To" aria-label="To" value={mail.composeTo}
               autoFocus
               disabled={composeBusy}
               onChange={(e) => handleFieldChange(e.target.value, 'to')}
@@ -386,7 +475,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           </div>
           {mail.showCc && (
             <div style={{ position: 'relative' }}>
-              <input className="glass-input" placeholder="Cc" value={mail.composeCc}
+              <input className="glass-input" placeholder="Cc" aria-label="Cc" value={mail.composeCc}
                 disabled={composeBusy}
                 onChange={(e) => handleFieldChange(e.target.value, 'cc')}
                 onKeyDown={(e) => handleFieldKeyDown(e, 'cc')}
@@ -415,7 +504,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           )}
           {mail.showBcc && (
             <div style={{ position: 'relative' }}>
-              <input className="glass-input" placeholder="Bcc" value={mail.composeBcc}
+              <input className="glass-input" placeholder="Bcc" aria-label="Bcc" value={mail.composeBcc}
                 disabled={composeBusy}
                 onChange={(e) => handleFieldChange(e.target.value, 'bcc')}
                 onKeyDown={(e) => handleFieldKeyDown(e, 'bcc')}
@@ -448,18 +537,14 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             {!mail.showBcc && <button className="btn btn-ghost" disabled={composeBusy}
               onClick={() => mail.setShowBcc(true)} style={{ fontSize: '0.8rem' }}>Bcc</button>}
           </div>
-          <input className="glass-input" placeholder="Subject" value={mail.composeSubject}
+          <input className="glass-input" placeholder="Subject" aria-label="Subject" value={mail.composeSubject}
             disabled={composeBusy}
             onChange={(e) => mail.setComposeSubject(e.target.value)} />
           {mail.signatures && mail.signatures.length > 0 && (
             <select className="glass-select glass-input" value={mail.composeSignature}
               aria-label="Signature"
               disabled={composeBusy}
-              onChange={(e) => {
-                const sig = mail.signatures.find((s: Signature) => s.id === e.target.value);
-                mail.setComposeSignature(e.target.value);
-                if (sig?.content) mail.setComposeBody((prev: string) => stripHtml(sig.content) + '\n\n' + prev);
-              }}
+              onChange={(e) => changeSignature(e.target.value)}
               style={{ fontSize: '0.8rem', padding: '6px 10px' }}>
               <option value="none">No signature</option>
               {mail.signatures.map((s: Signature) => (
@@ -470,7 +555,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         </div>
         {/* Scrollable body area — textarea + attachments + previews */}
         <div className="compose-body">
-          <textarea className="glass-input" placeholder="Write your message..."
+          <textarea className="glass-input" placeholder="Write your message..." aria-label="Message body"
             disabled={composeBusy}
             value={mail.composeBody} onChange={(e) => mail.setComposeBody(e.target.value)}
             style={{ flex: 1, minHeight: 180, resize: 'vertical' }} />
@@ -648,10 +733,10 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                 {mail.composeAttachments.length} file{mail.composeAttachments.length !== 1 ? 's' : ''}
               </span>
             )}
-            {mail.draftSaveStatus && (
+            {(mail.draftSaveStatus || closingComposer) && (
               <span style={{ color: mail.draftSaveStatus === 'error'
                 ? 'var(--danger)' : 'var(--text-secondary)' }}>
-                {mail.draftSaveStatus === 'saving' ? 'Saving...' : mail.draftSaveStatus === 'saved' ? 'Saved' : 'Error'}
+                {closingComposer === 'discarding' ? 'Discarding...' : closingComposer === 'saving' || mail.draftSaveStatus === 'saving' ? 'Saving...' : mail.draftSaveStatus === 'saved' ? 'Saved' : 'Error'}
               </span>
             )}
           </div>
@@ -725,8 +810,10 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
       {showCloseConfirm && (
         <ConfirmDialog
           open={showCloseConfirm}
-          title="Save draft and close?"
-          message="Your latest changes will be saved to Drafts before this window closes."
+          title="Close this draft?"
+          message="Save your latest changes, discard this draft, or keep editing. Saved drafts you discard move to Trash."
+          cancelLabel="Keep editing"
+          extraAction={{ label: 'Discard draft', onClick: discardAndClose, danger: true }}
           confirmLabel="Save & Close"
           onConfirm={() => {
             setShowCloseConfirm(false);

@@ -11212,3 +11212,66 @@ boundary.
 - The guarded builds retained the known npm audit advisories (frontend: one
   moderate and one high; backend: four moderate and two high); they did not block
   compilation, service readiness, TLS, or either protocol gate.
+
+
+## 2026-09-14 — Compose, signature fidelity, and safe draft discard
+
+### Selected task and acceptance
+
+Repair the reported one-line signature, provide usable composer expansion/resizing,
+and add Discard draft beside Keep editing and Save & Close. Preserve editable
+content across resizing and failed discard; wait for in-flight autosave before
+moving the exact saved draft to Trash. Survey the wider suite and record concrete
+UI/UX gaps without changing unrelated workflows or production user data.
+
+### Changes
+
+- `ComposeModal.tsx`: preserve HTML signature line/paragraph boundaries and
+  entities in plain text, initialize defaults once, respect None, replace only
+  the session's unmodified signature, and leave reopened drafts untouched.
+  Add expand/restore, pointer/keyboard resize, labelled inputs, a three-choice
+  close dialog, single-flight close actions, and visible Saving/Discarding state.
+- `draft-save-coordinator.ts` and `useMail.ts`: stop autosave while discarding,
+  wait for pending saves, retain exact folder/UID, move saved drafts through the
+  existing Trash action, and keep the editor on failure. An unconfirmed save
+  blocks discard until a successful save establishes its identity.
+- `ConfirmDialog.tsx`: optional third action and wrapping action layout.
+  `types.ts` and backend `api.ts` plus generated JS/map: return the saved folder
+  in the normal save response. No new mutation endpoint or data migration.
+- `index.css` and `SettingsPanel.tsx`: bounded desktop dimensions, full-screen
+  mobile sizing, missing Quill Snow stylesheet, and wrapping signature controls.
+- Added component interaction and draft-queue regressions, extended the existing
+  outbound route contract test, and updated the autosave source guard.
+- [Detailed review](WEBAPP_EDITOR_UX_REVIEW_2026-09-14.md) and `UX_AUDIT.md` record
+  coverage, screenshots, implementation limits, and the remaining backlog.
+
+### Proof
+
+- The original component test failed with a four-line signature collapsed into
+  one line, then passed after conversion was fixed. Expanded coverage includes
+  explicit None, replacement, old drafts, blank lines/entities, a cleared saved
+  draft, double discard, failure retention, and busy-state feedback.
+- Chromium on the real local frontend with synthetic API responses verified
+  1440 px and 390 px layouts, expansion/restore, pointer resizing, unchanged body,
+  Send visibility at 390×500 with Cc/Bcc, and three close options.
+- A held autosave returned UID 77 in `Team/Drafts`; Discard waited, targeted that
+  exact identity once, closed, and produced no later autosave. A forced 503 kept
+  the original body open; retry succeeded without recreating the draft.
+- Direct Signatures navigation now shows a 42 px formatting toolbar and the full
+  default option on mobile. Screenshots: `output/playwright/editor-audit-20260914/`.
+- Backend build and focused outbound route checks pass (30/30). Final frontend
+  suite passes 265/265; ESLint, production build, and whitespace checks pass.
+
+### Risks and next task
+
+Local candidate only: no production deployment, authenticated protocol gates,
+real-message send, or physical-client proof. Existing flattened draft bodies
+cannot be reconstructed automatically. Separate-window pop-out and full rich-text
+Compose remain open. Deploy backend before frontend through the guarded workflow.
+
+The next bounded task is Settings navigation safety: a browser reproduction
+confirmed that leaving within the 800 ms debounce drops a signature edit before
+any request is made. Dirty-form protection in Calendar/Contacts, rich draft
+editing, disconnected attachment reminders, and keyboard/error handling for
+Templates remain in the review backlog. Suite screenshots cover initial/empty
+states, not every workflow or long-content case.

@@ -1031,6 +1031,7 @@ test('draft replacement appends first and deletes only older copies', async t =>
   assert.equal(response.status, 200);
   assert.equal(response.json.draftId, 'draft-client-123');
   assert.equal(response.json.draftUid, 20);
+  assert.equal(response.json.draftFolder, 'Drafts', 'return the exact saved folder for later discard');
   const appendIndex = draftEvents.findIndex(event => event[0] === 'append');
   const deleteIndex = draftEvents.findIndex(event => event[0] === 'delete');
   assert.ok(appendIndex >= 0 && deleteIndex > appendIndex, 'replacement must exist before old drafts are deleted');

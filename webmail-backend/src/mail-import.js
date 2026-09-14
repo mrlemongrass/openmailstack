@@ -133,6 +133,9 @@ function createMailImportRouter(withImap, root = exports.importRoot) {
         try {
             if (!req.file || typeof req.body.folder !== 'string' || !req.body.folder || /[\u0000-\u001f\u007f]/.test(req.body.folder))
                 throw new Error('Choose a file and destination folder.');
+            // INBOX is the one case-insensitive IMAP mailbox name. Other paths remain exact.
+            if (req.body.folder.toUpperCase() === 'INBOX')
+                req.body.folder = 'INBOX';
             const messages = await parseMailImport(req.file.buffer, req.file.originalname);
             const job = await withImportLock(owner, async () => {
                 const identity = await withImap(owner, req.user.password, async (imap) => {
@@ -147,7 +150,7 @@ function createMailImportRouter(withImap, root = exports.importRoot) {
                 if (!identity)
                     throw new Error('Destination mailbox identity is unavailable.');
                 const sourceHash = hash(req.file.buffer);
-                const [existing] = await db_1.pool.query("SELECT * FROM mail_import_jobs WHERE owner = ? AND source_sha256 = ? AND folder = ? AND uid_validity = ? AND state <> 'cancelled' ORDER BY created_at DESC LIMIT 1", [owner, sourceHash, req.body.folder, identity]);
+                const [existing] = await db_1.pool.query("SELECT * FROM mail_import_jobs WHERE owner = ? AND source_sha256 = ? AND BINARY folder = ? AND uid_validity = ? AND state <> 'cancelled' ORDER BY created_at DESC LIMIT 1", [owner, sourceHash, req.body.folder, identity]);
                 if (existing.length)
                     return existing[0];
                 const [quota] = await db_1.pool.query('SELECT COUNT(*) AS count, COALESCE(SUM(source_bytes), 0) AS bytes FROM mail_import_jobs WHERE owner = ? AND staged = 1', [owner]);

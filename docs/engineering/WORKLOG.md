@@ -11606,3 +11606,13 @@ Browser fixtures confirmed image/table/alt/size preservation through minimized a
 independent composers, competing-window exclusion, blocked-popup fallback,
 203-message snapshot progress after loaded rows empty, Junk bulk parity,
 Notes Trash/restore and import review/completion including 390px mobile layout.
+
+The initial bridge/active deployment passed all protocol gates. Final review then
+reproduced a destination-identity bug with `Case` and `case` folders in MariaDB.
+A focused correction makes the import lookup binary/case-sensitive, with an
+actual database regression for distinct folders and same-folder retry. A fresh
+guarded bridge/active sequence will release the corrected revision.
+
+The folder-identity regression failed against the initial compiled runtime and
+passed after the correction. The rebuilt backend and both disposable database
+workflows passed; uppercase/lowercase INBOX remains one canonical destination.

@@ -15,7 +15,9 @@ test('P2 import resumes after lost acknowledgements, deduplicates and isolates o
  const url=`http://127.0.0.1:${server.address().port}/import`;
  const call=async(suffix='',body,method='POST')=>{const response=await fetch(url+suffix,{method,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,...await response.json()};};
  const eml=n=>`From: sender@example.test\r\nSubject: Message ${n}\r\nMessage-ID: <${n}@example.test>\r\n\r\nBody ${n}\r\n`;
- const prepare=async(n,name='mail.eml')=>{const form=new FormData();form.append('folder','Imported');form.append('file',new Blob([n]),name);const response=await fetch(url,{method:'POST',body:form});assert.equal(response.status,200);return (await response.json()).job;};
+ const prepare=async(n,name='mail.eml',destination='Imported')=>{const form=new FormData();form.append('folder',destination);form.append('file',new Blob([n]),name);const response=await fetch(url,{method:'POST',body:form});assert.equal(response.status,200);return (await response.json()).job;};
+ const upper=await prepare(eml(40),'mail.eml','Case');const lower=await prepare(eml(40),'mail.eml','case');assert.notEqual(upper.id,lower.id,'IMAP folder names retain case identity');assert.equal((await prepare(eml(40),'mail.eml','Case')).id,upper.id);await call(`/${upper.id}`,{confirm:true},'DELETE');await call(`/${lower.id}`,{confirm:true},'DELETE');
+ const inbox=await prepare(eml(41),'mail.eml','INBOX');assert.equal((await prepare(eml(41),'mail.eml','inbox')).id,inbox.id);await call(`/${inbox.id}`,{confirm:true},'DELETE');
  const job=await prepare(eml(1)); assert.equal(appended.length,0,'review does not append');
  assert.equal((await prepare(eml(1))).id,job.id);
  owner='p2-stranger@example.test';assert.equal((await call(`/${job.id}/run`,{confirm:true,cursor:0})).status,409);owner='p2-owner@example.test';

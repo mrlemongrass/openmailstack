@@ -25,10 +25,12 @@ Existing Contacts supports CSV/vCard and Calendar supports ICS. IMAP/SMTP and de
 - Browser fixtures use synthetic mail, notes, drafts and import history; no customer messages were changed.
 - Browser checks cover whole-result selection, keyboard search/range selection, progress after loaded rows empty, Notes Trash/restore, Settings task search, import review/completion at desktop and 390-pixel mobile width, inline image/table authoring and resize, minimized draft round trip, separate-window content retention, blocked-popup fallback and rejection of a competing draft window.
 - MIME tests compile and parse two draft generations, verifying image bytes, CID conversion, table content, alt/width and no duplicate attachment.
-- Disposable MariaDB tests with a controlled IMAP adapter exercise import review without append, owner isolation, duplicate upload, replayed cursors, lost append acknowledgement, cleanup failure/retry, changed mailbox identity, source cancellation, Notes restore linkage, expired reminders and retained/deleted attachment files. The temporary database, restricted user and test files are removed afterward.
+- Disposable MariaDB tests with a controlled IMAP adapter exercise import review without append, owner isolation, duplicate upload, replayed cursors, lost append acknowledgement, cleanup failure/retry, changed mailbox identity, source cancellation, case-sensitive destination identity, Notes restore linkage, expired reminders and retained/deleted attachment files. The temporary database, restricted user and test files are removed afterward.
 - Shared confirmation interaction test verifies duplicate-click locking, visible rejection and successful retry.
 - Independent Standards and Spec reviews found and resolved early-unmounted bulk progress, abandoned snapshot slots, Notes restore linkage and inaccessible import cleanup/history. Follow-up source reviews confirmed the fixes.
 - Final frontend suite: **288 passed**. Final backend suite: **1,026 passed, 9 intentionally skipped**. Both builds and frontend lint passed. Disposable database suite: **2 passed** with cleanup confirmed. Shell syntax and whitespace checks passed. Live proof follows below.
+
+A final import regression reproduced a case-insensitive SQL comparison conflating two distinct IMAP folder names. The correction uses an exact binary folder comparison; the same-destination retry remains idempotent.
 
 ## Remaining boundaries
 

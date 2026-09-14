@@ -11442,3 +11442,35 @@ Compatibility validation: full backend suite 1,014 passed, seven skipped, zero
 failures. First guard exited 20 after restoring the prior runtime and passing
 legacy-compatible public recovery validation. A fresh bridge/active sequence uses
 new canary device IDs and retains the same deployment protections.
+
+### Live release verification
+
+Compatibility implementation `23eff51f` and QoL implementation `1e807a80` are
+pushed to `origin/main`. The corrected bridge deployment exited 0; public IMAPS
+and ActiveSync Mail/Contacts/Calendar passed before and after installation, with
+the post-deploy 60-second Ping gate passing and no cleanup warnings. Its retained
+rollback snapshot is
+`/var/backups/openmailstack/protocol-guarded-webmail-20260914T193703Z`.
+
+The active deployment also exited 0. Public IMAPS and ActiveSync
+Mail/Contacts/Calendar passed before and after installation; the post-deploy
+60-second Ping gate passed, with no cleanup warnings. Its retained snapshot of
+the verified bridge runtime is
+`/var/backups/openmailstack/protocol-guarded-webmail-20260914T194506Z`.
+The corrected bridge/active sequence needed no rollback. The earlier failed
+attempt proved automatic restoration and recovery validation, as recorded above.
+
+Independent `tests/integration/staging_smoke.sh ./config.conf` exited 0: services/listeners, configuration checks, Rspamd functional scan,
+HTTPS/SMTP STARTTLS/IMAPS TLS verification, webmail/admin/autoconfiguration
+endpoints, and unauthenticated API rejection passed.
+
+All 56 frontend distribution files and nine changed backend JavaScript runtime
+files match the tested repository build. Backend/admin VERSION files match
+`0.1.5`. The public index and five referenced/rich-editor assets also match;
+public webmail returns HTTP 200, local/public auth returns HTTP 401, and live
+outbound mode is `active`.
+
+Existing dependency-audit advisories and Postfix/Rspamd configuration warnings
+remain outside this change. Browser QoL tests used synthetic API data; the live
+protocol gates exercise their isolated canary with enforced cleanup. Physical
+clients and all remaining review-backlog workflows are not claimed verified.

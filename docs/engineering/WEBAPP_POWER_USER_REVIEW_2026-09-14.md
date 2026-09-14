@@ -113,3 +113,19 @@ styling or every feature.
 - Browser engine: Chromium. Physical devices, other browsers, screen readers, full provider migration and every existing advanced workflow remain unverified in this pass.
 - Legacy spam API calls without a scope retain move-only behavior; only an explicit sender/domain choice creates a lasting block. New Junk entries are enforced only when the managed rule is successfully compiled/saved/activated. Server security checks still apply. No blanket whitelist, global domain ban, automatic deletion policy or retrospective sweep of other messages is introduced.
 - Large empty-folder operations run bounded UID batches. A connection interruption can leave partial progress; retry uses the same confirmed cutoff. New arrivals and subfolders are retained. Folder cleanup has no bulk Undo; Junk remains recoverable from Trash, while confirmed Trash deletion is permanent.
+
+## Live release
+
+Implementation commits `1e807a80` and `23eff51f` are pushed to `origin/main` and
+live in active mode. Guarded bridge and active deployments passed public IMAPS
+and ActiveSync Mail/Contacts/Calendar before and after installation; both
+post-deploy Ping gates passed, with no cleanup warnings. Service/TLS/endpoint
+smoke checks passed. All 56 frontend files and nine changed backend runtime files
+match the build, as do the public index and five served assets.
+
+The first bridge attempt exposed an older caller that omitted spam scope. The
+guard restored the previous release and passed recovery validation. The
+compatibility correction preserves move-only behavior for older callers and
+requires an explicit choice to create a block in the new UI. The repeated full
+backend suite and corrected bridge/active gates passed. Rollback snapshots and
+remaining release limits are recorded in WORKLOG.md.

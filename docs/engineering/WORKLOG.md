@@ -11337,3 +11337,31 @@ Quill normalizes its blank lines; bullet lists are saved as standard `<ul><li>`
 HTML, not Quill-only editing markup. Rich editor dark-mode styling is verified at
 390×844 in `rich-compose-mobile-final.png`. The final affected tests, lint and
 build were repeated after these corrections and passed.
+
+### Live release result
+
+Implementation `fcd6233e` (following signature/resize/discard commit `29052c50`)
+is deployed and pushed to `origin/main`.
+
+- Guarded bridge and active deployments both exited 0. Public IMAPS and
+  ActiveSync Mail/Contacts/Calendar gates passed before and after each stage;
+  both post-deploy gates also passed the routine 60-second ActiveSync Ping gate.
+  Exact test-device/mail/PIM cleanup completed without cleanup warnings.
+- Original rollback snapshot:
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260914T181345Z`.
+  Active-release rollback snapshot (verified bridge runtime):
+  `/var/backups/openmailstack/protocol-guarded-webmail-20260914T182200Z`.
+- `tests/integration/staging_smoke.sh ./config.conf` exited 0: services/listeners,
+  configuration checks, Rspamd scan, HTTPS/SMTP STARTTLS/IMAPS certificate checks,
+  webmail/admin/autoconfig endpoints and unauthenticated API rejection passed.
+- All 56 frontend distribution files plus the two changed backend runtime files
+  matched the local build (58 checks, zero mismatches). Backend/admin VERSION
+  files match repository version `0.1.5`. Public index, main JavaScript, CSS and
+  rich-editor bundle also matched; public root is HTTP 200 and auth is HTTP 401.
+- Live outbound mode is `active`. No rollback was needed.
+- Existing dependency-audit advisories and Postfix/Rspamd configuration warnings
+  remain; no dependency upgrade or mail-filter tuning was included in this UI
+  release. Physical device confirmation remains outside the scripted gates.
+
+Release logs: `/tmp/oms-editor-live-bridge.log`,
+`/tmp/oms-editor-live-active.log`, `/tmp/oms-editor-live-health.log`.

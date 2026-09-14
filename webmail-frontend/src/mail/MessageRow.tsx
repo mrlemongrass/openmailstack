@@ -10,6 +10,7 @@ interface MessageRowProps {
   message: Message;
   isSelected: boolean;
   isThreaded: boolean;
+  showSnippets?: boolean;
   density: 'compact' | 'cozy' | 'comfortable';
   style?: React.CSSProperties;
   onSelect: (uid: number, shift: boolean) => void;
@@ -28,7 +29,7 @@ interface MessageRowProps {
 export const DENSITY_HEIGHTS = { compact: 48, cozy: 64, comfortable: 80 };
 
 export function MessageRow({
-  message, isSelected, density, style, onSelect, onClick, onStar,
+  message, isSelected, isThreaded, showSnippets = true, density, style, onSelect, onClick, onStar,
   onArchive, onDelete, onMarkRead, onSnooze, isDraft = false,
   onOpenContextMenu, selectionDisabled = false, forwardedRef,
 }: MessageRowProps) {
@@ -72,6 +73,7 @@ export function MessageRow({
         height: DENSITY_HEIGHTS[density],
         background: isSelected ? 'rgba(59,130,246,0.12)' : isRead ? 'transparent' : 'rgba(59,130,246,0.04)',
         borderBottom: '1px solid var(--border-glass)',
+        ...(isThreaded && message.conversationPosition ? { paddingLeft: 26, borderLeft: '3px solid var(--accent-primary)' } : {}),
         ...style,
       }}
       onContextMenu={(event) => {
@@ -145,6 +147,7 @@ export function MessageRow({
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               fontWeight: isRead ? 400 : 500 }}>
               {subject}
+              {isThreaded && message.threadCount && !message.conversationPosition && <span style={{ marginLeft: 8, color: 'var(--accent-primary)' }} aria-label={`${message.threadCount} loaded messages in conversation`}>({message.threadCount})</span>}
             </span>
             {deliveryLabel && (
               <span style={{
@@ -159,7 +162,7 @@ export function MessageRow({
               </span>
             )}
           </span>
-          {density === 'comfortable' && message.preview && (
+          {showSnippets && message.preview && (
             <span style={{
               display: 'block', fontSize: '0.78rem', color: 'var(--text-secondary)',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',

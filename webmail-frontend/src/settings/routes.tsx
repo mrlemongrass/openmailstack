@@ -1,3 +1,4 @@
+import { PolicyDraftContext } from './policy-draft-context';
 import { createSettingsSaveQueue } from './settings-save-queue';
 import { UnsavedChangesGuard } from '../shared/components/UnsavedChangesGuard';
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -27,9 +28,15 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function SettingsLoader() {
   const { tab } = useParams();
+  const [policyDraft, setPolicyDraft] = useState({ dirty: false, busy: false });
+  const [routeBlocked, setRouteBlocked] = useState(false);
 
   // Loading / saving state
-  const [loading, setLoading] = useState(true);
+  type Resource = 'mail' | 'calendar' | 'contacts' | 'appearance' | 'rules' | 'folders' | 'identities' | 'calendars';
+  type LoadState = { status: 'loading' | 'ready' | 'error'; error?: string };
+  const [resources, setResources] = useState<Partial<Record<Resource, LoadState>>>({});
+  const resourceRequests = useRef<Partial<Record<Resource, number>>>({});
+  const mounted = useRef(true);
   const [saving, setSaving] = useState(false);
   const [settingsSyncError, setSettingsSyncError] = useState('');
   const [settingsSaveState, setSettingsSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -42,8 +49,9 @@ function SettingsLoader() {
 
   // Rules and folders (loaded separately)
   const [rules, setRules] = useState<Rule[]>([]);
-  const [rulesLoaded, setRulesLoaded] = useState(false);
   const [rulesDirty, setRulesDirty] = useState(false);
+  const rulesRevision = useRef(0);
+  const ruleSave = useRef<Promise<boolean> | null>(null);
   const [folders, setFolders] = useState<MailFolder[]>([]);
 
   // Identities and calendars
@@ -95,64 +103,55 @@ function SettingsLoader() {
     saveTimer.current = setTimeout(() => { void flushSettings(); }, 800);
   }, [flushSettings]);
 
-  // --- Load all data on mount ---
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        setLoading(true);
-        setSettingsSyncError('');
-
-        const [mail, calendar, contacts, appearanceData, rulesData, foldersData, identitiesData, calendarsData] =
-          await Promise.all([
-            getUserSettings('mail'),
-            getUserSettings('calendar'),
-            getUserSettings('contacts'),
-            getUserSettings('appearance'),
-            fetchRules(),
-            fetchFolders(),
-            fetchIdentities(),
-            fetchCalendars(),
-          ]);
-
-        if (cancelled) return;
-
-        setMailSettings(mail);
-        setCalendarSettings({ ...defaultCalendarSettings, ...calendar });
-        setContactsSettings(contacts);
-        setAppearance(appearanceData);
-        applyAppearancePreferences(appearanceData);
-
-        setRules(rulesData);
-        setRulesLoaded(true);
-        setRulesDirty(false);
-        setFolders(foldersData);
-
-        const senders = [
-          identitiesData.address,
-          ...(identitiesData.aliases || []).map((a) => a.address),
-        ].filter(Boolean);
-        setAvailableSenders(senders);
-        setSetupMailboxAddress(identitiesData.address);
-
-        const calList = calendarsData.calendars || [];
-        setCalendars(calList.map((c) => ({ id: c.id, name: c.name })));
-
-      } catch (err: unknown) {
-        if (!cancelled) {
-          setSettingsSyncError(errorMessage(err, 'Failed to load settings'));
+  // A failed service blocks only the sections that depend on it. Retry never
+  // reloads successful namespaces, so pending edits cannot be replaced by GETs.
+  const loadResource = useCallback(async (key: Resource) => {
+    const request = (resourceRequests.current[key] || 0) + 1;
+    resourceRequests.current[key] = request;
+    setResources(current => ({ ...current, [key]: { status: 'loading' } }));
+    const current = () => mounted.current && resourceRequests.current[key] === request;
+    try {
+      switch (key) {
+        case 'mail': { const value = await getUserSettings('mail'); if (current()) setMailSettings(value); break; }
+        case 'calendar': { const value = await getUserSettings('calendar'); if (current()) setCalendarSettings({ ...defaultCalendarSettings, ...value }); break; }
+        case 'contacts': { const value = await getUserSettings('contacts'); if (current()) setContactsSettings(value); break; }
+        case 'appearance': {
+          const value = await getUserSettings('appearance');
+          if (current()) { setAppearance(value); applyAppearancePreferences(value); }
+          break;
         }
-      } finally {
-        if (!cancelled) setLoading(false);
+        case 'rules': { const value = await fetchRules(); if (current()) setRules(value); break; }
+        case 'folders': { const value = await fetchFolders(); if (current()) setFolders(value); break; }
+        case 'identities': {
+          const value = await fetchIdentities();
+          if (current()) {
+            setAvailableSenders([value.address, ...(value.aliases || []).map(alias => alias.address)].filter(Boolean));
+            setSetupMailboxAddress(value.address);
+          }
+          break;
+        }
+        case 'calendars': { const value = await fetchCalendars(); if (current()) setCalendars((value.calendars || []).map(calendar => ({ id: calendar.id, name: calendar.name }))); break; }
       }
+      if (current()) setResources(previous => ({ ...previous, [key]: { status: 'ready' } }));
+    } catch (error) {
+      if (current()) setResources(previous => ({ ...previous, [key]: { status: 'error', error: errorMessage(error, 'Could not load this section.') } }));
     }
-    load();
-
-    return () => {
-      cancelled = true;
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-    };
   }, []);
+  useEffect(() => {
+    mounted.current = true;
+    const keys: Resource[] = ['mail', 'calendar', 'contacts', 'appearance', 'rules', 'folders', 'identities', 'calendars'];
+    keys.forEach(key => { void loadResource(key); });
+    return () => { mounted.current = false; if (saveTimer.current) clearTimeout(saveTimer.current); };
+  }, [loadResource]);
+
+  const dependencies: Record<SettingsTab, Resource[]> = {
+    appearance: ['appearance'], mail_identity: ['mail', 'identities'], mail_signatures: ['mail'],
+    mail_reading: ['mail'], mail_filters: ['rules', 'folders'], mail_spam: ['mail'],
+    calendar_defaults: ['calendar', 'calendars'], contacts_display: ['contacts'],
+    sync_devices: ['identities'], account_password: [], advanced: [],
+  };
+  const unavailable = dependencies[normalizeSettingsTab(tab)].filter(key => resources[key]?.status !== 'ready');
+  const loading = unavailable.some(key => !resources[key] || resources[key]?.status === 'loading');
 
   // --- Settings change handlers (debounced auto-save) ---
   const handleMailSettingsChange = useCallback((settings: MailUserSettings) => {
@@ -206,17 +205,20 @@ function SettingsLoader() {
       actions: [],
     };
     setRules((prev) => [...prev, newRule]);
+    rulesRevision.current += 1;
     setRulesDirty(true);
     return newRule.id;
   }, []);
 
   const handleUpdateRule = useCallback((id: string, updates: Partial<Rule>) => {
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+    rulesRevision.current += 1;
     setRulesDirty(true);
   }, []);
 
   const handleDeleteRule = useCallback((id: string) => {
     setRules((prev) => prev.filter((r) => r.id !== id));
+    rulesRevision.current += 1;
     setRulesDirty(true);
   }, []);
 
@@ -229,38 +231,47 @@ function SettingsLoader() {
       [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
       return reordered;
     });
+    rulesRevision.current += 1;
     setRulesDirty(true);
   }, []);
 
   const handleReplaceRules = useCallback((nextRules: Rule[], dirty = true) => {
     setRules(nextRules);
+    rulesRevision.current += 1;
     setRulesDirty(dirty);
   }, []);
 
-  const handleSaveRules = useCallback(async () => {
-    setSaving(true);
-    setSettingsSyncError('');
-    try {
-      const response = await fetch('/api/rules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rules }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to save rules');
+  const handleSaveRules = useCallback((): Promise<boolean> => {
+    if (ruleSave.current) return ruleSave.current;
+    const revision = rulesRevision.current;
+    ruleSave.current = (async () => {
+      setSaving(true);
+      setSettingsSyncError('');
+      try {
+        const response = await fetch('/api/rules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rules }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || 'Failed to save rules');
+        }
+        if (revision !== rulesRevision.current) return false;
+        setRulesDirty(false);
+        setSettingsSaveState('saved');
+        setTimeout(() => setSettingsSaveState('idle'), 2000);
+        return true;
+      } catch (err: unknown) {
+        setSettingsSyncError(errorMessage(err, 'Failed to save rules'));
+        setSettingsSaveState('error');
+        return false;
+      } finally {
+        setSaving(false);
+        ruleSave.current = null;
       }
-      setRulesDirty(false);
-      setSettingsSaveState('saved');
-      setTimeout(() => setSettingsSaveState('idle'), 2000);
-      return true;
-    } catch (err: unknown) {
-      setSettingsSyncError(errorMessage(err, 'Failed to save rules'));
-      setSettingsSaveState('error');
-      return false;
-    } finally {
-      setSaving(false);
-    }
+    })();
+    return ruleSave.current;
   }, [rules]);
 
   // --- Password handler ---
@@ -288,69 +299,22 @@ function SettingsLoader() {
     });
   }, []);
 
-  // --- Loading state ---
-  if (loading) {
-    return (
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 40,
-        color: 'var(--text-secondary)',
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{
-            width: 24,
-            height: 24,
-            border: '3px solid rgba(255,255,255,0.2)',
-            borderTopColor: 'var(--accent-primary)',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto 12px',
-          }} />
-          <p>Loading settings...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Rules must load authoritatively before any editable Settings surface appears.
-  if (!rulesLoaded) {
-    return (
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 40,
-        color: 'var(--danger-color)',
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <p>Failed to load settings</p>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: 8 }}>
-            {settingsSyncError || 'Saved rules could not be loaded safely.'}
-          </p>
-          <button
-            className="btn btn-primary"
-            style={{ marginTop: 16 }}
-            onClick={() => window.location.reload()}
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <>
-    <UnsavedChangesGuard dirty={pendingSettings || rulesDirty} onSave={async () => {
+    <UnsavedChangesGuard dirty={pendingSettings || rulesDirty || policyDraft.dirty || policyDraft.busy} locked={saving || policyDraft.busy} onBlockedChange={setRouteBlocked} onSave={policyDraft.dirty ? undefined : async () => {
       if (!await flushSettings()) return false;
       return !rulesDirty || await handleSaveRules();
     }} />
     {pendingSettings && settingsSaveState === 'error' && <button className="btn btn-primary" onClick={() => { void flushSettings(); }}>Retry saving settings</button>}
-    <SettingsContent
+    <PolicyDraftContext.Provider value={{ setState: setPolicyDraft, routeBlocked }}>
+    {unavailable.length > 0 ? <div className="settings-page">
+      <h2>{loading ? 'Loading this section…' : 'This section is unavailable'}</h2>
+      <p>Other Settings sections are still available.</p>
+      {unavailable.map(key => <div key={key} role={resources[key]?.status === 'error' ? 'alert' : 'status'}>
+        <p>{key === 'mail' ? 'Mail settings' : key === 'calendars' ? 'Calendar list' : key.charAt(0).toUpperCase() + key.slice(1)}: {resources[key]?.error || 'Loading…'}</p>
+        {resources[key]?.status === 'error' && <button className="btn btn-primary" onClick={() => void loadResource(key)}>Retry {key}</button>}
+      </div>)}
+    </div> : <SettingsContent
       onFlushSettings={flushSettings}
       activeTab={tab || 'appearance'}
       loading={loading}
@@ -385,7 +349,8 @@ function SettingsLoader() {
       onPasswordChange={handlePasswordChange}
       onAppearanceChange={handleAppearanceChange}
       onCopySetupValue={handleCopySetupValue}
-    />
+    />}
+    </PolicyDraftContext.Provider>
     </>
   );
 }

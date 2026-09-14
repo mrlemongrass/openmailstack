@@ -1,3 +1,4 @@
+import { ruleAddressValues } from './rule-semantics';
 import {
     executableRuleActions,
     executableRuleCriteria,
@@ -69,6 +70,7 @@ export function quoteSieveString(value: unknown): string {
 
 function compileCriterion(criterion: SieveCriterion): string | null {
     if (!criterion.value) return null;
+    if (criterion.operator === 'is_one_of') return `address :all :is "From" [${ruleAddressValues(criterion.value).map(quoteSieveString).join(', ')}]`;
 
     const matchType = criterion.operator === 'equals'
         ? ':is'
@@ -117,9 +119,18 @@ export function compileSieve(jsonData: SieveRulesDocument): string {
 
     for (const rule of jsonData.rules || []) {
         if (rule.enabled === false) continue;
-        const criteriaStrings = executableRuleCriteria(rule)
-            .map(compileCriterion)
-            .filter((criterion): criterion is string => Boolean(criterion));
+        const criteriaStrings = executableRuleCriteria(rule).map(compileCriterion).filter((criterion): criterion is string => Boolean(criterion));
+        let condition = `${rule.condition === 'any' ? 'anyof' : 'allof'} (${criteriaStrings.join(', ')})`;
+        if (rule.exceptions?.length) {
+            const groups = ['from_address', 'from_domain'].flatMap(field => {
+                const blocked = executableRuleCriteria(rule).filter(item => item.field === field).map(compileCriterion).filter(Boolean);
+                if (!blocked.length) return [];
+                const safe = rule.exceptions!.filter(item => item.field === 'from_address' || field === 'from_domain').map(compileCriterion).filter(Boolean);
+                const test = `anyof (${blocked.join(', ')})`;
+                return [safe.length ? `allof (${test}, not anyof (${safe.join(', ')}))` : test];
+            });
+            condition = `anyof (${groups.join(', ')})`;
+        }
         const actionStrings = executableRuleActions(rule)
             .map(compileAction)
             .filter((action): action is string => Boolean(action));
@@ -127,8 +138,7 @@ export function compileSieve(jsonData: SieveRulesDocument): string {
         if (criteriaStrings.length === 0 || actionStrings.length === 0) continue;
 
         script += `# Rule: ${String(rule.name || 'Unnamed').replace(/\r\n|\r|\n/g, ' ')}\n`;
-        const operator = rule.condition === 'any' ? 'anyof' : 'allof';
-        script += `if ${operator} (${criteriaStrings.join(', ')}) {\n`;
+        script += `if ${condition} {\n`;
         script += `${actionStrings.join('\n')}\n`;
         if (rule.stopProcessing !== false) {
             script += `    stop;\n`;

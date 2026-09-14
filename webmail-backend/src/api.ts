@@ -1,3 +1,4 @@
+import { normalizeSenderPolicyEntry, senderPolicyEntries, legacySenderPolicyEntries, updateSenderPolicy } from './sender-policy';
 import { USER_JUNK_RULE_ID, junkEntries, updateJunkRule, withUserRuleLock } from './junk-rules';
 import { senderAddress } from './rule-address';
 import { Router } from 'express';
@@ -1526,6 +1527,43 @@ apiRouter.get('/rules', requireAuth, async (req: any, res) => {
     }
 });
 
+// Save only the reviewed rule, preserving concurrent edits to other rules.
+apiRouter.post('/rules/one', requireAuth, async (req: any, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+    const candidate = { rules: [req.body?.rule] };
+    const normalized = !exceedsRuleAnalysisLimits(candidate) && normalizeRuleDocument(candidate);
+    const rule = normalized && normalized.rules?.[0];
+    if (!rule?.id || rule.id === USER_JUNK_RULE_ID || !rule.criteria?.length || !rule.actions?.length
+        || !rule.criteria.every(isExecutableRuleCriterion)
+        || rule.actions.some(action => !['move', 'reject', 'discard'].includes(action.type) || (action.type === 'move' && !action.folder))) {
+        return res.status(400).json({ error: 'Provide a named rule with valid conditions and actions.' });
+    }
+    const previous = req.body.previous === undefined ? undefined : normalizeRuleDocument({ rules: [req.body.previous] })?.rules?.[0];
+    if (req.body.previous !== undefined && (!previous || previous.id !== rule.id)) return res.status(400).json({ error: 'Invalid previous rule.' });
+    // Property order is not significant in a saved rule document.
+    const stable = (value: any): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+        ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+    try {
+        const result = await withUserRuleLock(user, async () => {
+            const latest = await getActiveRulesDocument(user, pass);
+            const existing = latest.rules?.find(item => item.id === rule.id);
+            if (existing && stable(existing) === stable(rule)) return latest; // Lost-response retry.
+            if ((previous && (!existing || stable(existing) !== stable(previous))) || (!previous && existing)) return null;
+            const next = { ...latest, rules: existing
+                ? latest.rules!.map(item => item.id === rule.id ? rule : item)
+                : [...(latest.rules || []), rule] };
+            if (exceedsRuleAnalysisLimits(next)) throw new Error('The saved rule set exceeds the supported size limit.');
+            await saveActiveRulesDocument(user, pass, next);
+            return next;
+        });
+        if (!result) return res.status(409).json({ error: 'This rule changed elsewhere. Reload the saved rules and review your change again.' });
+        return res.json({ success: true, rules: result.rules });
+    } catch (error: any) {
+        return res.status(503).json({ error: error.message || 'Could not confirm the rule save. Retry to reconcile the same change.' });
+    }
+});
+
 apiRouter.post('/rules', requireAuth, async (req: any, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -1704,6 +1742,53 @@ apiRouter.delete('/rules/junk-list', requireAuth, async (req: any, res) => {
         });
         res.json({ success: true });
     } catch { res.status(503).json({ success: false, error: 'The Junk list could not be updated. Retry.' }); }
+});
+
+apiRouter.get('/rules/sender-policy', requireAuth, async (req: any, res) => {
+    try {
+        const [document, settings] = await Promise.all([
+            getActiveRulesDocument(req.user.username, req.user.password),
+            getUserSettings(req.user.username, 'mail'),
+        ]);
+        res.set('Cache-Control', 'no-store').json({ success: true, entries: senderPolicyEntries(document),
+            legacy: legacySenderPolicyEntries((settings as any).spam) });
+    } catch { res.status(503).json({ success: false, error: 'Sender policy could not be loaded. Retry.' }); }
+});
+
+for (const method of ['put', 'delete', 'post'] as const) apiRouter[method]('/rules/sender-policy', requireAuth, async (req: any, res) => {
+    let entries;
+    try {
+        const input = method === 'post' ? req.body?.entries : [req.body];
+        if (!Array.isArray(input) || input.length < 1 || input.length > 1000) throw new Error('Choose between 1 and 1,000 entries.');
+        if (method === 'post' && req.body.confirm !== true) throw new Error('Confirm the selected legacy entries before activating them.');
+        entries = input.map(normalizeSenderPolicyEntry);
+        const choices = new Map<string, string>();
+        for (const entry of entries) {
+            const key = entry.kind + ':' + entry.value;
+            if (choices.has(key) && choices.get(key) !== entry.disposition) throw new Error('Choose Block or Safe for each entry, not both.');
+            choices.set(key, entry.disposition);
+        }
+    } catch (error) { return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Invalid sender entry.' }); }
+    try {
+        const result = await withUserRuleLock(req.user.username, async () => {
+            if (method === 'post') {
+                const settings = await getUserSettings(req.user.username, 'mail');
+                const legacy = legacySenderPolicyEntries((settings as any).spam).flatMap(item => item.entry ? [JSON.stringify(item.entry)] : []);
+                if (entries.some(entry => !legacy.includes(JSON.stringify(entry)))) throw new Error('The legacy list changed. Reload and review it again.');
+            }
+            const document = await getActiveRulesDocument(req.user.username, req.user.password);
+            const junkFolder = await withDedicatedImap(req.user.username, req.user.password, async imap => {
+                const folders = await imap.client.list();
+                const junk = folders.find(folder => folder.specialUse === '\\Junk');
+                if (!junk) throw new Error('The Junk folder is unavailable.');
+                return junk.path;
+            });
+            const updated = updateSenderPolicy(document, entries, junkFolder, method === 'delete');
+            await saveActiveRulesDocument(req.user.username, req.user.password, updated);
+            return senderPolicyEntries(updated);
+        });
+        res.json({ success: true, entries: result });
+    } catch (error) { res.status(503).json({ success: false, error: error instanceof Error ? error.message : 'Sender policy could not be saved. Retry.' }); }
 });
 
 apiRouter.post('/rules/run', requireAuth, async (req: any, res) => {

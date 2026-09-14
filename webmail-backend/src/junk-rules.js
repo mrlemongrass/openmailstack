@@ -19,6 +19,7 @@ function junkEntries(document) {
 function updateJunkRule(document, addresses, scope, junkFolder) {
     const existing = document.rules?.find(rule => rule.id === exports.USER_JUNK_RULE_ID);
     const criteria = [...(existing?.criteria || [])];
+    let exceptions = [...(existing?.exceptions || [])];
     for (const raw of addresses) {
         const address = (0, rule_address_1.senderAddress)(raw);
         if (!address)
@@ -34,12 +35,13 @@ function updateJunkRule(document, addresses, scope, junkFolder) {
         else {
             const field = scope === 'sender' ? 'from_address' : 'from_domain';
             const value = scope === 'sender' ? address : domain;
+            exceptions = exceptions.filter(item => !(item.field === 'from_address' && item.value === address) && !(item.field === field && item.value === value));
             if (!criteria.some(item => item.field === field && item.value.toLowerCase() === value))
                 criteria.push({ field, operator: 'equals', value });
         }
     }
     return { ...document, rules: [{ id: exports.USER_JUNK_RULE_ID, name: 'User-marked Junk', enabled: true, stopProcessing: true,
-                condition: 'any', criteria, actions: [{ type: 'move', folder: junkFolder }] }, ...(document.rules || []).filter(rule => rule.id !== exports.USER_JUNK_RULE_ID)] };
+                condition: 'any', criteria, ...(exceptions.length ? { exceptions } : {}), actions: [{ type: 'move', folder: junkFolder }] }, ...(document.rules || []).filter(rule => rule.id !== exports.USER_JUNK_RULE_ID)] };
 }
 // Serialize all webmail rule writers across backend processes, without holding a SQL transaction.
 async function withUserRuleLock(username, operation) {

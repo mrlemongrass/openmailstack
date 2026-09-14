@@ -284,6 +284,7 @@ export interface Message {
   delivery_error?: string;
   draftId?: string;
   threadCount?: number;
+  conversationPosition?: number;
   threadUids?: number[];
   calendarData?: CalendarData;
 }

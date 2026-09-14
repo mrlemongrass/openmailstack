@@ -4,6 +4,7 @@ exports.extractJsonFromSieve = extractJsonFromSieve;
 exports.quoteSieveString = quoteSieveString;
 exports.compileSieve = compileSieve;
 const rule_semantics_1 = require("./rule-semantics");
+const rule_semantics_2 = require("./rule-semantics");
 const rule_analysis_1 = require("./rule-analysis");
 const JSON_DATA_BASE64_PATTERN = /\/\* JSON_DATA_BASE64: ([A-Za-z0-9_-]+) \*\//;
 const LEGACY_JSON_DATA_PATTERN = /\/\* JSON_DATA: ([\s\S]*?) \*\//;
@@ -57,6 +58,8 @@ function quoteSieveString(value) {
 function compileCriterion(criterion) {
     if (!criterion.value)
         return null;
+    if (criterion.operator === 'is_one_of')
+        return `address :all :is "From" [${(0, rule_semantics_1.ruleAddressValues)(criterion.value).map(quoteSieveString).join(', ')}]`;
     const matchType = criterion.operator === 'equals'
         ? ':is'
         : criterion.operator === 'matches'
@@ -104,17 +107,26 @@ function compileSieve(jsonData) {
     for (const rule of jsonData.rules || []) {
         if (rule.enabled === false)
             continue;
-        const criteriaStrings = (0, rule_semantics_1.executableRuleCriteria)(rule)
-            .map(compileCriterion)
-            .filter((criterion) => Boolean(criterion));
-        const actionStrings = (0, rule_semantics_1.executableRuleActions)(rule)
+        const criteriaStrings = (0, rule_semantics_2.executableRuleCriteria)(rule).map(compileCriterion).filter((criterion) => Boolean(criterion));
+        let condition = `${rule.condition === 'any' ? 'anyof' : 'allof'} (${criteriaStrings.join(', ')})`;
+        if (rule.exceptions?.length) {
+            const groups = ['from_address', 'from_domain'].flatMap(field => {
+                const blocked = (0, rule_semantics_2.executableRuleCriteria)(rule).filter(item => item.field === field).map(compileCriterion).filter(Boolean);
+                if (!blocked.length)
+                    return [];
+                const safe = rule.exceptions.filter(item => item.field === 'from_address' || field === 'from_domain').map(compileCriterion).filter(Boolean);
+                const test = `anyof (${blocked.join(', ')})`;
+                return [safe.length ? `allof (${test}, not anyof (${safe.join(', ')}))` : test];
+            });
+            condition = `anyof (${groups.join(', ')})`;
+        }
+        const actionStrings = (0, rule_semantics_2.executableRuleActions)(rule)
             .map(compileAction)
             .filter((action) => Boolean(action));
         if (criteriaStrings.length === 0 || actionStrings.length === 0)
             continue;
         script += `# Rule: ${String(rule.name || 'Unnamed').replace(/\r\n|\r|\n/g, ' ')}\n`;
-        const operator = rule.condition === 'any' ? 'anyof' : 'allof';
-        script += `if ${operator} (${criteriaStrings.join(', ')}) {\n`;
+        script += `if ${condition} {\n`;
         script += `${actionStrings.join('\n')}\n`;
         if (rule.stopProcessing !== false) {
             script += `    stop;\n`;

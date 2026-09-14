@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router';
 import { AuthGate } from './shared/layouts/AuthGate';
+import { LogoutPage } from './shared/components/LogoutPage';
 import { AppShell } from './shared/layouts/AppShell';
 import { ErrorBoundary } from './shared/components/ErrorBoundary';
 import { Skeleton } from './shared/components/Skeleton';
@@ -8,6 +9,7 @@ import { ToastProvider } from './shared/components/Toast';
 import { BrandingProvider } from './BrandingProvider';
 import { useBranding } from './branding-context';
 import { Mail, Globe, CalendarDays, Users, Copy, Check, ChevronDown } from 'lucide-react';
+const MessageRulePage = lazy(() => import('./settings/MessageRulePage').then(m => ({ default: m.MessageRulePage })));
 const MailRoutes = lazy(() => import('./mail/routes').then(m => ({ default: m.MailRoutes })));
 const CalendarRoutes = lazy(() => import('./calendar/routes').then(m => ({ default: m.CalendarRoutes })));
 const ContactsRoutes = lazy(() => import('./contacts/routes').then(m => ({ default: m.ContactsRoutes })));
@@ -262,6 +264,8 @@ export default function App() {
           <Route path="scheduler-app/*" element={<Suspense fallback={<Skeleton />}><SchedulerRoutes /></Suspense>} />
           <Route path="settings/*" element={<Suspense fallback={<Skeleton />}><SettingsRoutes /></Suspense>} />
           <Route path="admin/*" element={<Suspense fallback={<Skeleton />}><AdminRoutes /></Suspense>} />
+          <Route path="message-rule" element={<MessageRulePage />} />
+            <Route path="logout" element={<LogoutPage />} />
           <Route path="sync" element={<SyncView />} />
           <Route index element={<Navigate to="/mail/inbox" replace />} />
         </Route>

@@ -1,3 +1,4 @@
+import { groupRelatedMessages } from '../message-grouping';
 import type { MessageRemoval } from '../mail-message-identity';
 import { plainToHtml } from '../compose-content';
 import { useState, useCallback, useEffect, useMemo, useRef, type SetStateAction } from 'react';
@@ -322,6 +323,7 @@ export function useMail(_opts: UseMailOptions) {
 
   // Message state
   const [messages, setMessagesState] = useState<Message[]>([]);
+  const visibleMessages = useMemo(() => groupRelatedMessages(messages, activeFolder, _opts.isThreaded), [messages, activeFolder, _opts.isThreaded]);
   const messagesRef = useRef<Message[]>([]);
   const setMessages = useCallback((update: SetStateAction<Message[]>) => {
     setMessagesState((current) => {
@@ -1789,7 +1791,7 @@ export function useMail(_opts: UseMailOptions) {
     const targetUids = uids || selectedMessages;
     if (!targetUids.length) return false;
     const folder = folderOverride || activeFolder;
-    const before = messagesRef.current;
+    const before = groupRelatedMessages(messagesRef.current, activeFolder, _opts.isThreaded);
     let junkScope: 'sender' | 'domain' | undefined;
     if (action === 'spam' || action === 'notspam') {
       if (junkResolver.current) return false;
@@ -1806,7 +1808,7 @@ export function useMail(_opts: UseMailOptions) {
       if (['delete', 'hardDelete', 'archive', 'spam', 'notspam', 'move'].includes(action) && (action !== 'move' || result.targetFolder)) {
         setMessageRemoval({ folder, uids: targetUids, before });
       }
-      if (action === 'spam' || action === 'notspam') setMailUndo(null);
+      if (action === 'spam' || action === 'notspam') { setMailUndo(null); window.dispatchEvent(new Event('oms:sender-policy')); }
       if (action !== 'spam' && action !== 'notspam' && result.undoUids && result.undoUids.length > 0) {
         setMailUndo({
           message: getUndoMessage(action),
@@ -1840,12 +1842,12 @@ export function useMail(_opts: UseMailOptions) {
       console.error('Action failed', e);
       return false;
     }
-  }, [activeFolder, selectedMessages, fetchMessages, fetchFolders, isSearchActive, setMessages]);
+  }, [activeFolder, selectedMessages, fetchMessages, fetchFolders, isSearchActive, setMessages, _opts.isThreaded]);
 
   const emptyFolder = useCallback(async (snapshot: api.EmptyFolderSnapshot) => {
     try {
       const result = await api.emptyFolder(snapshot.path, snapshot);
-      const before = messagesRef.current;
+      const before = groupRelatedMessages(messagesRef.current, activeFolder, _opts.isThreaded);
       const uids = before.filter(item => mailboxPathsEqual(item.folder || activeFolder, snapshot.path) && item.uid <= snapshot.maxUid).map(item => item.uid);
       setMessageRemoval({ folder: snapshot.path, uids, before });
       setMessages(current => current.filter(item => !mailboxPathsEqual(item.folder || activeFolder, snapshot.path) || item.uid > snapshot.maxUid));
@@ -1855,7 +1857,7 @@ export function useMail(_opts: UseMailOptions) {
       await fetchMessages();
       await fetchFolders();
     }
-  }, [activeFolder, fetchMessages, fetchFolders, setMessages]);
+  }, [activeFolder, fetchMessages, fetchFolders, setMessages, _opts.isThreaded]);
 
   const undoAction = useCallback(async () => {
     if (!mailUndo) return;
@@ -2064,7 +2066,7 @@ export function useMail(_opts: UseMailOptions) {
     removeUnavailableFavorite,
     dismissUnavailableFavorite,
     markingReadFolder,
-    junkPrompt, resolveJunkPrompt, messages, setMessages, messageRemoval, selectedMessages, setSelectedMessages,
+    junkPrompt, resolveJunkPrompt, messages: visibleMessages, setMessages, messageRemoval, selectedMessages, setSelectedMessages,
     viewingThread, setViewingThread,
     mailLowestUid, mailMoreAvailable,
     mailLoading, isRefreshing, loadingOlderMessages, mailPaginationError,

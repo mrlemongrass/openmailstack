@@ -3,8 +3,9 @@ const assert = require('node:assert/strict');
 
 process.env.OMS_DB_PASSWORD = process.env.OMS_DB_PASSWORD || 'test-only';
 
-test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: process.env.OMS_SCHEDULER_PHASE1_DB_TEST !== '1' }, async () => {
+test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: process.env.OMS_SCHEDULER_PHASE1_DB_TEST !== '1' }, async t => {
     const { pool } = require('../src/db.js');
+    t.after(() => pool.end());
     const { ensureCalendarSchema } = require('../src/calendar-utils.js');
     const { SchedulerStore } = require('../src/scheduler/store.js');
     const { SchedulerPhase2Store } = require('../src/scheduler/phase2-store.js');
@@ -37,7 +38,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
         id INT AUTO_INCREMENT PRIMARY KEY, calendar_id INT, shared_with_user_id VARCHAR(255), permission VARCHAR(16)
     ) ENGINE=InnoDB`);
     await pool.query(`CREATE TABLE IF NOT EXISTS calendar_tombstones (
-        id INT AUTO_INCREMENT PRIMARY KEY, calendar_id INT, uid VARCHAR(255), deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id INT AUTO_INCREMENT PRIMARY KEY, calendar_id INT NOT NULL, uid VARCHAR(255), deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB`);
     await ensureCalendarSchema();
 
@@ -729,7 +730,7 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     assert.equal(oneOffLink.state.singleUse, true, 'one-off links must always be single-use');
     assert.deepEqual(oneOffLink.state.oneOffWindows, [{ date: oneOffDate, startMinute: 660, endMinute: 720 }]);
     await pool.query(
-        `INSERT INTO events (calendar_id, uid, ical_data) VALUES (?, 'one-off-busy-test', ?)
+        `INSERT INTO events (calendar_id, uid, resource_name, ical_data) VALUES (?, 'one-off-busy-test', 'one-off-busy-test', ?)
          ON DUPLICATE KEY UPDATE ical_data=VALUES(ical_data)`,
         [calendarId, `BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:one-off-busy-test\r\nDTSTART:${oneOffCompactDate}T180000Z\r\nDTEND:${oneOffCompactDate}T183000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`]
     );
@@ -1203,5 +1204,5 @@ test('Phase 1 mailbox-to-booking-to-cancel lifecycle on MariaDB', { skip: proces
     );
     assert.equal(Number(seriesOutbox[0].total), 3, 'a completed series must enqueue one notification per occurrence');
 
-    await pool.end();
+
 });

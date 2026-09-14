@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useSchedulerDraft } from './draft-context';
+import { useMemo, useRef, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Copy, Plus, Trash2 } from 'lucide-react';
 import { previewDefaultAvailability, saveDefaultAvailability, type SchedulerAvailability, type SchedulerAvailabilityExclusion, type SchedulerWindow } from './api';
 
@@ -96,7 +97,9 @@ export function AvailabilityPanel({ availability, onSaved }: { availability: Sch
   const [exclusion, setExclusion] = useState<SchedulerAvailabilityExclusion>({ kind: 'holiday', startDate: '', endDate: '', label: '' });
   const [preview, setPreview] = useState<{ slots: Array<{ start: string; end: string }>; busyIntervalCount: number; overrideCount: number } | null>(null);
 
+  const saveLock = useRef(false);
   const isDirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(savedDraft), [draft, savedDraft]);
+  useSchedulerDraft(isDirty || Boolean(blockStart || blockEnd || exclusion.startDate || exclusion.endDate || exclusion.label), isSaving);
   const validationMessages = useMemo(() => validateAvailabilityDraft(draft), [draft]);
   const publishValidationMessages = useMemo(
     () => validateAvailabilityDraft({ ...draft, published: true }),
@@ -115,11 +118,13 @@ export function AvailabilityPanel({ availability, onSaved }: { availability: Sch
   const effectiveDayWindows = dateOverride ? dateOverride.windows : windowsFor(selectedWeekday).map(({ startMinute, endMinute }) => ({ startMinute, endMinute }));
 
   const save = async (nextDraft = draft) => {
+    if (saveLock.current) return;
     const messages = validateAvailabilityDraft(nextDraft);
     if (messages.length > 0) {
       setSaveError('Fix the highlighted availability errors before saving.');
       return;
     }
+    saveLock.current = true;
     setIsSaving(true);
     setStatus('');
     setSaveError('');
@@ -132,6 +137,7 @@ export function AvailabilityPanel({ availability, onSaved }: { availability: Sch
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Unable to save availability');
     } finally {
+      saveLock.current = false;
       setIsSaving(false);
     }
   };
@@ -186,7 +192,7 @@ export function AvailabilityPanel({ availability, onSaved }: { availability: Sch
     return Array.from({ length: 42 }, () => { const value = new Date(cursor); cursor.setDate(cursor.getDate() + 1); return value; });
   }, [monthCursor]);
 
-  return <div className="availability-workspace">
+  return <div className="availability-workspace"><fieldset disabled={isSaving} style={{ display: 'contents' }}>
     <div className="scheduler-section-title"><div><h1>Availability</h1><p>Set your normal hours once, then make exceptions for specific dates.</p></div><div className="availability-save"><span className={saveError ? 'error' : ''} role="status" aria-live="polite" aria-atomic="true">{saveStatus}</span><button className="btn btn-primary" type="button" disabled={!isDirty || isSaving || validationMessages.length > 0} onClick={() => void save()}>Save availability</button></div></div>
     {!draft.published && <section className="availability-callout"><CalendarDays size={20} /><div><strong>Publish your default schedule to start taking bookings</strong><span>Until you create an event type, visitors will be offered a private, system-managed 30-minute booking option.</span>{publishValidationMessages.map(message => <span className="availability-callout-error" key={message}>{message}</span>)}</div><button className="btn btn-primary" type="button" disabled={isSaving || publishValidationMessages.length > 0} onClick={() => void enableBooking()}>Enable booking now</button></section>}
     {validationMessages.length > 0 && <div id="availability-validation" className="availability-validation" role="alert"><strong>Fix before saving</strong><ul>{validationMessages.map(message => <li key={message}>{message}</li>)}</ul></div>}
@@ -217,5 +223,5 @@ export function AvailabilityPanel({ availability, onSaved }: { availability: Sch
 
     <section className="availability-card availability-block"><div><h2>Block a date range</h2><p>Turn off a vacation, holiday, salon closure, or any other all-day period.</p></div><label>From<input type="date" value={blockStart} onChange={event => setBlockStart(event.target.value)} /></label><label>Through<input type="date" value={blockEnd} min={blockStart} onChange={event => setBlockEnd(event.target.value)} /></label><button className="btn btn-secondary" type="button" onClick={addBlock}>Block dates</button></section>
     <section className="availability-card availability-exclusions"><header><div><h2>Holidays and out of office</h2><p>Label reusable closure ranges so the reason stays clear to you without appearing publicly.</p></div></header><div className="availability-exclusion-form"><label>Type<select value={exclusion.kind} onChange={event => setExclusion({ ...exclusion, kind: event.target.value as SchedulerAvailabilityExclusion['kind'] })}><option value="holiday">Holiday</option><option value="out_of_office">Out of office</option></select></label><label>From<input type="date" value={exclusion.startDate} onChange={event => setExclusion({ ...exclusion, startDate: event.target.value, endDate: exclusion.endDate || event.target.value })} /></label><label>Through<input type="date" min={exclusion.startDate} value={exclusion.endDate} onChange={event => setExclusion({ ...exclusion, endDate: event.target.value })} /></label><label>Label<input maxLength={160} value={exclusion.label} onChange={event => setExclusion({ ...exclusion, label: event.target.value })} placeholder="Company holiday" /></label><button className="btn btn-secondary" type="button" onClick={addExclusion}>Add range</button></div>{(draft.exclusions || []).length === 0 ? <p className="public-muted">No labeled exclusions.</p> : <div className="availability-exclusion-list">{draft.exclusions.map((item, index) => <article key={item.id || `${item.startDate}-${index}`}><div><strong>{item.label || (item.kind === 'holiday' ? 'Holiday' : 'Out of office')}</strong><span>{item.startDate} through {item.endDate} · {item.kind === 'holiday' ? 'Holiday' : 'Out of office'}</span></div><button type="button" className="icon-button danger" aria-label={`Remove exclusion ${index + 1}`} onClick={() => updateDraft({ ...draft, exclusions: draft.exclusions.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={15} /></button></article>)}</div>}</section>
-  </div>;
+  </fieldset></div>;
 }

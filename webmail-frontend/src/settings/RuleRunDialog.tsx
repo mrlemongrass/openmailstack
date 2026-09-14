@@ -79,6 +79,8 @@ function matchedRuleLabel(
 const CRITERION_FIELD_LABELS: Record<string, string> = {
   subject: 'Subject',
   from: 'From',
+  from_address: 'Sender address',
+  from_domain: 'Sender domain',
   to: 'To',
   body: 'Message body',
 };
@@ -87,6 +89,7 @@ const CRITERION_OPERATOR_LABELS: Record<string, string> = {
   contains: 'contains',
   not_contains: 'does not contain',
   equals: 'equals',
+  is_one_of: 'is one of',
   matches: 'matches pattern',
 };
 

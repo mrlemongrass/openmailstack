@@ -16,13 +16,34 @@ interface MailLayoutProps {
   mail: ReturnType<typeof useMail>;
 }
 
-function ResizeHandle() {
+function ResizeHandle({ vertical = false }: { vertical?: boolean }) {
   return (
-    <PanelResizeHandle style={{ width: 16, cursor: 'col-resize', position: 'relative' }}>
-      <div style={{ position: 'absolute', top: 0, bottom: 0, left: 6, right: 6,
+    <PanelResizeHandle style={{ width: vertical ? '100%' : 16, height: vertical ? 16 : undefined, cursor: vertical ? 'row-resize' : 'col-resize', position: 'relative' }}>
+      <div style={{ position: 'absolute', top: vertical ? 6 : 0, bottom: vertical ? 6 : 0, left: vertical ? 0 : 6, right: vertical ? 0 : 6,
         background: 'rgba(255,255,255,0.08)', borderRadius: 4 }} />
     </PanelResizeHandle>
   );
+}
+
+function ReadingPanes({ mail, showViewer }: MailLayoutProps & { showViewer: boolean }) {
+  const mode = mail.mailSettings.reading.previewPane || 'right';
+  const layout = useDefaultLayout({ id: `oms-reading-${mode}`, panelIds: ['message-list', 'message-view'] });
+  const panelStyle = { display: 'flex', flexDirection: 'column' as const, height: '100%', minWidth: 0, minHeight: 0, overflow: 'hidden' };
+  if (mode === 'off') return <div data-reading-pane="off" style={panelStyle}>
+    <div className="glass-panel" style={{ ...panelStyle, display: showViewer ? 'none' : 'flex' }}><Outlet /></div>
+    {showViewer && <div className="glass-panel" style={panelStyle}><MessageViewer mail={mail} /></div>}
+  </div>;
+  if (!showViewer) return <div data-reading-pane={mode} className="glass-panel" style={panelStyle}><Outlet /></div>;
+  return <PanelGroup key={mode} id={`oms-reading-${mode}`} orientation={mode === 'bottom' ? 'vertical' : 'horizontal'}
+    defaultLayout={layout.defaultLayout} onLayoutChange={layout.onLayoutChange} style={{ width: '100%', height: '100%', minHeight: 0 }}>
+    <Panel id="message-list" defaultSize="45%" minSize="20%">
+      <div data-reading-pane={mode} className="glass-panel" style={panelStyle}><Outlet /></div>
+    </Panel>
+    <ResizeHandle vertical={mode === 'bottom'} />
+    <Panel id="message-view" defaultSize="55%" minSize="20%">
+      <div className="glass-panel" style={panelStyle}><MessageViewer mail={mail} /></div>
+    </Panel>
+  </PanelGroup>;
 }
 
 function OutboundRecoveryNotice({ mail }: MailLayoutProps) {
@@ -30,7 +51,7 @@ function OutboundRecoveryNotice({ mail }: MailLayoutProps) {
     <ConfirmDialog open={Boolean(mail.junkPrompt)} title={mail.junkPrompt?.action === 'notspam' ? 'Mark as not junk?' : 'Mark as spam and block…'}
       message={mail.junkPrompt?.action === 'notspam'
         ? 'Move to Inbox and remove this sender and any domain block covering it from User-marked Junk. Removing a domain block also unblocks other senders at that domain. Other mail rules and spam checks still apply.'
-        : `${mail.junkPrompt?.count === 1 ? mail.junkPrompt.sender : `${mail.junkPrompt?.count} selected messages`}. Block the sender (recommended), or block every sender at the same domain. Future matching mail will go to Junk.`}
+        : `${mail.junkPrompt?.count === 1 ? mail.junkPrompt.sender : `${mail.junkPrompt?.count} selected messages`}. Block the sender (recommended), or block every sender at the same domain. Future matching mail will go to Junk; other explicitly safe senders remain exceptions to a domain block.`}
       confirmLabel={mail.junkPrompt?.action === 'notspam' ? 'Not junk · unblock' : 'Block sender'}
       onConfirm={() => mail.resolveJunkPrompt(mail.junkPrompt?.action === 'notspam' ? 'remove' : 'sender')}
       extraAction={mail.junkPrompt?.action === 'spam' ? { label: 'Block domain', onClick: () => mail.resolveJunkPrompt('domain'), danger: true } : undefined}
@@ -173,8 +194,8 @@ export function MailLayout({ mail }: MailLayoutProps) {
 
   // Persist layout sizes — matches original app pattern
   const webmailPanelLayout = useDefaultLayout({
-    id: 'oms-webmail-v11',
-    panelIds: showViewer ? ['webmail-sidebar', 'message-list', 'message-view'] : ['webmail-sidebar', 'message-list'],
+    id: 'oms-webmail-v12',
+    panelIds: ['webmail-sidebar', 'mail-content'],
   });
 
   if (isMobile) {
@@ -221,7 +242,7 @@ export function MailLayout({ mail }: MailLayoutProps) {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
       <OutboundRecoveryNotice mail={mail} />
       <PanelGroup
-        id="oms-webmail-v11"
+        id="oms-webmail-v12"
         orientation="horizontal"
         defaultLayout={webmailPanelLayout.defaultLayout}
         onLayoutChange={webmailPanelLayout.onLayoutChange}
@@ -235,22 +256,9 @@ export function MailLayout({ mail }: MailLayoutProps) {
 
         <ResizeHandle />
 
-        <Panel id="message-list" defaultSize={showViewer ? '35%' : '80%'} minSize="15%">
-          <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, overflow: 'hidden' }}>
-            <Outlet />
-          </div>
+        <Panel id="mail-content" defaultSize="80%" minSize="40%">
+          <ReadingPanes mail={mail} showViewer={showViewer} />
         </Panel>
-
-        {showViewer && (
-          <>
-            <ResizeHandle />
-            <Panel id="message-view" defaultSize="45%" minSize="18%">
-              <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, overflow: 'hidden' }}>
-                <MessageViewer mail={mail} />
-              </div>
-            </Panel>
-          </>
-        )}
       </PanelGroup>
       <UndoBar mailUndo={mail.mailUndo} onUndo={mail.undoAction} onDismiss={() => mail.setMailUndo(null)} />
     </div>

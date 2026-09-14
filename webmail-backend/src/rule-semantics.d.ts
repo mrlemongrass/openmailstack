@@ -16,6 +16,7 @@ export interface SieveRule {
     stopProcessing?: boolean;
     condition?: 'any' | 'all' | string;
     criteria?: SieveCriterion[];
+    exceptions?: SieveCriterion[];
     actions?: SieveAction[];
 }
 export interface SieveVacation {
@@ -28,6 +29,7 @@ export interface SieveRulesDocument {
     rules?: SieveRule[];
     vacation?: SieveVacation;
 }
+export declare const ruleAddressValues: (value: string) => string[];
 export declare const isExecutableRuleCriterion: (criterion: SieveCriterion) => boolean;
 export declare const executableRuleCriteria: (rule: SieveRule) => SieveCriterion[];
 export declare const executableRuleActions: (rule: SieveRule) => SieveAction[];

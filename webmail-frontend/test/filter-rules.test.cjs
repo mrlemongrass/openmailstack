@@ -751,9 +751,9 @@ test('filters expose ordered priority, stop processing, and preview-first folder
     'utf8',
   );
 
-  assert.match(routesSource, /const \[rulesLoaded, setRulesLoaded\] = useState\(false\)/);
-  assert.match(routesSource, /setRules\(rulesData\);\s*setRulesLoaded\(true\)/);
-  assert.match(routesSource, /if \(!rulesLoaded\)/);
+  assert.match(routesSource, /mail_filters: \['rules', 'folders'\]/);
+  assert.match(routesSource, /case 'rules':.*await fetchRules\(\)/);
+  assert.match(routesSource, /unavailable.length > 0/);
   assert.match(panelSource, /aria-label=\{`Move \$\{rule\.name \|\| 'Untitled Rule'\} up`\}/);
   assert.match(panelSource, /aria-label=\{`Move \$\{rule\.name \|\| 'Untitled Rule'\} down`\}/);
   assert.match(panelSource, /checked=\{rule\.stopProcessing !== false\}/);

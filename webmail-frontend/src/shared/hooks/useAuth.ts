@@ -76,7 +76,8 @@ export function useAuth(): AuthState & {
   }, [fetchMe]);
 
   const logout = useCallback(async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    const response = await fetch('/api/auth/logout', { method: 'POST' });
+    if (!response.ok && response.status !== 401) throw new Error('Could not sign out. Please retry.');
     setUser(null);
     setUserIdentities(null);
     // Force navigation to root so AuthGate renders login page cleanly

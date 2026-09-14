@@ -47,7 +47,7 @@ function useActiveApp(): string {
 }
 
 export function AppShell() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { branding } = useBranding();
   const brandingPresentation = resolveBrandingPresentation(branding);
   const isMobile = useMediaQuery('(max-width: 767px)');
@@ -140,9 +140,9 @@ export function AppShell() {
               <ShieldAlert size={18} />
             </Link>
             <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{user?.email}</span>
-            <button onClick={logout} className="btn btn-ghost" style={{ fontSize: '0.85rem' }}>
+            <Link to="/logout" className="btn btn-ghost" style={{ fontSize: '0.85rem' }}>
               Logout
-            </button>
+            </Link>
           </div>
         </header>
       )}
@@ -188,6 +188,7 @@ export function AppShell() {
             <Link to="/settings" onClick={() => setMoreOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none' }}><Settings size={17} /> Settings</Link>
             <Link to="/sync" onClick={() => setMoreOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none' }}><Activity size={17} /> Sync</Link>
             <Link to="/admin" onClick={() => setMoreOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none' }}><ShieldAlert size={17} /> Admin</Link>
+            <Link to="/logout" onClick={() => setMoreOpen(false)} className="btn btn-ghost" style={{ width: '100%', justifyContent: 'flex-start' }}>Logout</Link>
           </div>}
         </nav>
       )}

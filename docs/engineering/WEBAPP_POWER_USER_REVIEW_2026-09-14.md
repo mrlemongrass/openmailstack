@@ -129,3 +129,12 @@ compatibility correction preserves move-only behavior for older callers and
 requires an explicit choice to create a block in the new UI. The repeated full
 backend suite and corrected bridge/active gates passed. Rollback snapshots and
 remaining release limits are recorded in WORKLOG.md.
+
+## P1 follow-up implemented — 2026-09-14
+
+All six P1 findings above are addressed by the follow-up implementation. The
+original rows are retained as the dated diagnosis. See
+[P1 acceptance and evidence](P1_QOL_ACCEPTANCE_2026-09-14.md) for the implemented
+behavior, mutation matrix, tests, and limits. Message right-click Create rule and
+Add to existing rule are included, with exact-sender alternatives, stale-edit
+protection and optional saved-rule preview. P2/P3 scope remains as listed.

@@ -37,6 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.writeAttachmentResponseChunk = exports.validateAttachmentBundleLimits = exports.ATTACHMENT_DOWNLOAD_MAX_BYTES = exports.ATTACHMENT_SOURCE_MAX_BYTES = exports.ATTACHMENT_BUNDLE_MAX_DECODED_BYTES = exports.ATTACHMENT_BUNDLE_MAX_COUNT = exports.apiRouter = void 0;
+const sender_policy_1 = require("./sender-policy");
 const junk_rules_1 = require("./junk-rules");
 const rule_address_1 = require("./rule-address");
 const express_1 = require("express");
@@ -1341,6 +1342,48 @@ exports.apiRouter.get('/rules', requireAuth, async (req, res) => {
         });
     }
 });
+// Save only the reviewed rule, preserving concurrent edits to other rules.
+exports.apiRouter.post('/rules/one', requireAuth, async (req, res) => {
+    const user = req.user.username;
+    const pass = req.user.password;
+    const candidate = { rules: [req.body?.rule] };
+    const normalized = !(0, rule_analysis_1.exceedsRuleAnalysisLimits)(candidate) && (0, rule_analysis_1.normalizeRuleDocument)(candidate);
+    const rule = normalized && normalized.rules?.[0];
+    if (!rule?.id || rule.id === junk_rules_1.USER_JUNK_RULE_ID || !rule.criteria?.length || !rule.actions?.length
+        || !rule.criteria.every(rule_semantics_1.isExecutableRuleCriterion)
+        || rule.actions.some(action => !['move', 'reject', 'discard'].includes(action.type) || (action.type === 'move' && !action.folder))) {
+        return res.status(400).json({ error: 'Provide a named rule with valid conditions and actions.' });
+    }
+    const previous = req.body.previous === undefined ? undefined : (0, rule_analysis_1.normalizeRuleDocument)({ rules: [req.body.previous] })?.rules?.[0];
+    if (req.body.previous !== undefined && (!previous || previous.id !== rule.id))
+        return res.status(400).json({ error: 'Invalid previous rule.' });
+    // Property order is not significant in a saved rule document.
+    const stable = (value) => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+        ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+    try {
+        const result = await (0, junk_rules_1.withUserRuleLock)(user, async () => {
+            const latest = await getActiveRulesDocument(user, pass);
+            const existing = latest.rules?.find(item => item.id === rule.id);
+            if (existing && stable(existing) === stable(rule))
+                return latest; // Lost-response retry.
+            if ((previous && (!existing || stable(existing) !== stable(previous))) || (!previous && existing))
+                return null;
+            const next = { ...latest, rules: existing
+                    ? latest.rules.map(item => item.id === rule.id ? rule : item)
+                    : [...(latest.rules || []), rule] };
+            if ((0, rule_analysis_1.exceedsRuleAnalysisLimits)(next))
+                throw new Error('The saved rule set exceeds the supported size limit.');
+            await saveActiveRulesDocument(user, pass, next);
+            return next;
+        });
+        if (!result)
+            return res.status(409).json({ error: 'This rule changed elsewhere. Reload the saved rules and review your change again.' });
+        return res.json({ success: true, rules: result.rules });
+    }
+    catch (error) {
+        return res.status(503).json({ error: error.message || 'Could not confirm the rule save. Retry to reconcile the same change.' });
+    }
+});
 exports.apiRouter.post('/rules', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;
@@ -1509,6 +1552,66 @@ exports.apiRouter.delete('/rules/junk-list', requireAuth, async (req, res) => {
         res.status(503).json({ success: false, error: 'The Junk list could not be updated. Retry.' });
     }
 });
+exports.apiRouter.get('/rules/sender-policy', requireAuth, async (req, res) => {
+    try {
+        const [document, settings] = await Promise.all([
+            getActiveRulesDocument(req.user.username, req.user.password),
+            (0, user_settings_1.getUserSettings)(req.user.username, 'mail'),
+        ]);
+        res.set('Cache-Control', 'no-store').json({ success: true, entries: (0, sender_policy_1.senderPolicyEntries)(document),
+            legacy: (0, sender_policy_1.legacySenderPolicyEntries)(settings.spam) });
+    }
+    catch {
+        res.status(503).json({ success: false, error: 'Sender policy could not be loaded. Retry.' });
+    }
+});
+for (const method of ['put', 'delete', 'post'])
+    exports.apiRouter[method]('/rules/sender-policy', requireAuth, async (req, res) => {
+        let entries;
+        try {
+            const input = method === 'post' ? req.body?.entries : [req.body];
+            if (!Array.isArray(input) || input.length < 1 || input.length > 1000)
+                throw new Error('Choose between 1 and 1,000 entries.');
+            if (method === 'post' && req.body.confirm !== true)
+                throw new Error('Confirm the selected legacy entries before activating them.');
+            entries = input.map(sender_policy_1.normalizeSenderPolicyEntry);
+            const choices = new Map();
+            for (const entry of entries) {
+                const key = entry.kind + ':' + entry.value;
+                if (choices.has(key) && choices.get(key) !== entry.disposition)
+                    throw new Error('Choose Block or Safe for each entry, not both.');
+                choices.set(key, entry.disposition);
+            }
+        }
+        catch (error) {
+            return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Invalid sender entry.' });
+        }
+        try {
+            const result = await (0, junk_rules_1.withUserRuleLock)(req.user.username, async () => {
+                if (method === 'post') {
+                    const settings = await (0, user_settings_1.getUserSettings)(req.user.username, 'mail');
+                    const legacy = (0, sender_policy_1.legacySenderPolicyEntries)(settings.spam).flatMap(item => item.entry ? [JSON.stringify(item.entry)] : []);
+                    if (entries.some(entry => !legacy.includes(JSON.stringify(entry))))
+                        throw new Error('The legacy list changed. Reload and review it again.');
+                }
+                const document = await getActiveRulesDocument(req.user.username, req.user.password);
+                const junkFolder = await withDedicatedImap(req.user.username, req.user.password, async (imap) => {
+                    const folders = await imap.client.list();
+                    const junk = folders.find(folder => folder.specialUse === '\\Junk');
+                    if (!junk)
+                        throw new Error('The Junk folder is unavailable.');
+                    return junk.path;
+                });
+                const updated = (0, sender_policy_1.updateSenderPolicy)(document, entries, junkFolder, method === 'delete');
+                await saveActiveRulesDocument(req.user.username, req.user.password, updated);
+                return (0, sender_policy_1.senderPolicyEntries)(updated);
+            });
+            res.json({ success: true, entries: result });
+        }
+        catch (error) {
+            res.status(503).json({ success: false, error: error instanceof Error ? error.message : 'Sender policy could not be saved. Retry.' });
+        }
+    });
 exports.apiRouter.post('/rules/run', requireAuth, async (req, res) => {
     const user = req.user.username;
     const pass = req.user.password;

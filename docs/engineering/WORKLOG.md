@@ -11474,3 +11474,67 @@ Existing dependency-audit advisories and Postfix/Rspamd configuration warnings
 remain outside this change. Browser QoL tests used synthetic API data; the live
 protocol gates exercise their isolated canary with enforced cleanup. Physical
 clients and all remaining review-backlog workflows are not claimed verified.
+
+## 2026-09-14 — Complete P1 QoL follow-up and message rule shortcuts
+
+Authorized scope: complete all six P1 items in the power-user review, plus
+message-context Create rule and Add to existing rule discussed by the operator.
+Continue the established commit/push and guarded live-release workflow.
+
+Acceptance criteria before editing:
+- Logout starts with guarded navigation; no session mutation before every active
+  editor permits leaving. Failed saves retain input/session; duplicate requests
+  are locked. Include Compose, Settings, Calendar, Contacts, Notes and Scheduler.
+- Every offered Reading setting changes the saved/reloaded UI: right/bottom/off
+  pane, grouping, snippets, density, read delay and external-image policy. One
+  clear mail-density authority replaces conflicting controls.
+- One active sender-policy UI supports exact sender/domain blocks and safe
+  exceptions with explicit precedence. Legacy entries activate only after a
+  reviewable user choice; security checks remain enforced. Verify Sieve delivery.
+- Settings dependencies load/retry independently without overwriting pending
+  edits; unavailable sections cannot save empty fallback data.
+- Scheduler mutations have named confirmation where needed, duplicate locks,
+  retained forms and recoverable errors; event/profile/availability edits guard
+  close, navigation and reload.
+- A suite-wide mutation acceptance matrix records concrete success, rejection,
+  uncertain-response, duplicate, navigation and refresh checks, including API
+  persistence round trips. Fix discovered P1 failures rather than hiding them.
+- Message context actions populate an exact sender condition in the existing
+  rule workflow. Existing-rule edits explain any/all semantics, preserve actions,
+  require confirmation and reuse saved-rule preview for existing messages.
+
+
+Implementation and pre-release proof:
+- Wired Reading layout/density/snippets/grouping to saved preferences. Grouping
+  uses message identity relationships in loaded folder data and preserves every
+  message action; it does not merge unrelated same-subject messages.
+- Moved logout behind guarded navigation and added failure/retry recovery. Shared
+  guards remain mounted while Compose/Notes finish closing and refreshing, and
+  proceed exactly once. Inline replies and hidden Scheduler drafts are protected.
+- Unified active sender/domain policy with explicit legacy activation and exact
+  sender precedence. Trusted remote images use active safe addresses. Sieve and
+  preview semantics agree; ordinary filters still run for safe exceptions.
+- Isolated Settings dependency loads and retries; preserved pending edits and
+  serialized saves. Added Scheduler confirmations, request locks, retained-input
+  errors, shared navigation protection and booking retry identity.
+- Added message right-click Create rule / Add to existing rule. Exact-address
+  alternatives preserve ALL restrictions and actions. Reviewed single-rule saves
+  detect stale state, reconcile identical retries and preserve the rest of the
+  rule document. Optional existing-mail preview follows a successful save.
+- Added `P1_QOL_ACCEPTANCE_2026-09-14.md` with the suite mutation matrix and
+  evidence boundaries; marked all six P1 findings addressed in the dated review.
+
+Validation: frontend 283 passed, backend 1,020 passed/eight opt-in skips;
+focused final guard/rule regressions, production build and lint passed. The full
+integration runner passed. Opt-in Scheduler lifecycle and Settings HTTP/database
+persistence tests passed 2/2 against a disposable schema with all migrations;
+its restricted user and schema were cleaned up. Four non-executing real Sieve
+cases passed. Synthetic browser checks covered rule review/failure/duplicate
+save/preview, all pane layouts, grouping/density/snippets, active sender policy
+including mobile and failure recovery, Scheduler event/profile/availability
+save failures and duplicate clicks, hidden edits, inline reply/logout cancellation,
+and rejected logout recovery. Deliberate browser 503s are test fixtures.
+
+Release limitation: these checks do not claim exhaustive manual permutations or
+physical-client confirmation. Remaining P2/P3 tasks are listed in the review.
+Guarded live-release and artifact proof follow below after deployment.

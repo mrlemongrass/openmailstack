@@ -15,6 +15,7 @@ export function junkEntries(document: SieveRulesDocument) {
 export function updateJunkRule(document: SieveRulesDocument, addresses: string[], scope: 'sender' | 'domain' | 'remove', junkFolder: string): SieveRulesDocument {
     const existing = document.rules?.find(rule => rule.id === USER_JUNK_RULE_ID);
     const criteria = [...(existing?.criteria || [])];
+    let exceptions = [...(existing?.exceptions || [])];
     for (const raw of addresses) {
         const address = senderAddress(raw);
         if (!address) throw new Error('The message must have one valid sender address before it can update the Junk list.');
@@ -27,11 +28,12 @@ export function updateJunkRule(document: SieveRulesDocument, addresses: string[]
         } else {
             const field = scope === 'sender' ? 'from_address' : 'from_domain';
             const value = scope === 'sender' ? address : domain;
+            exceptions = exceptions.filter(item => !(item.field === 'from_address' && item.value === address) && !(item.field === field && item.value === value));
             if (!criteria.some(item => item.field === field && item.value.toLowerCase() === value)) criteria.push({ field, operator: 'equals', value });
         }
     }
     return { ...document, rules: [{ id: USER_JUNK_RULE_ID, name: 'User-marked Junk', enabled: true, stopProcessing: true,
-        condition: 'any', criteria, actions: [{ type: 'move', folder: junkFolder }] }, ...(document.rules || []).filter(rule => rule.id !== USER_JUNK_RULE_ID)] };
+        condition: 'any', criteria, ...(exceptions.length ? { exceptions } : {}), actions: [{ type: 'move', folder: junkFolder }] }, ...(document.rules || []).filter(rule => rule.id !== USER_JUNK_RULE_ID)] };
 }
 
 // Serialize all webmail rule writers across backend processes, without holding a SQL transaction.

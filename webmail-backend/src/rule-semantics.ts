@@ -18,6 +18,7 @@ export interface SieveRule {
     stopProcessing?: boolean;
     condition?: 'any' | 'all' | string;
     criteria?: SieveCriterion[];
+    exceptions?: SieveCriterion[];
     actions?: SieveAction[];
 }
 
@@ -34,12 +35,17 @@ export interface SieveRulesDocument {
 }
 
 const supportedFields = new Set(['subject', 'from', 'to', 'body', 'from_address', 'from_domain']);
-const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches']);
+const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches', 'is_one_of']);
+
+export const ruleAddressValues = (value: string): string[] => value.split(/[,\n]/).map(item => item.trim().toLowerCase()).filter(Boolean);
 
 export const isExecutableRuleCriterion = (criterion: SieveCriterion): boolean => (
     Boolean(criterion.value)
     && supportedFields.has(criterion.field)
     && supportedOperators.has(criterion.operator)
+    && (criterion.operator !== 'is_one_of' || (criterion.field === 'from_address'
+        && ruleAddressValues(criterion.value).length > 0
+        && ruleAddressValues(criterion.value).every(value => /^[^\s@<>,]+@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/.test(value))))
 );
 
 export const executableRuleCriteria = (rule: SieveRule): SieveCriterion[] => (

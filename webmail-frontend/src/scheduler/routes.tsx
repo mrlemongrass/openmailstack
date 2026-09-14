@@ -1,3 +1,6 @@
+import { ConfirmDialog } from '../shared/components/ConfirmDialog';
+import { SchedulerDraftProvider } from './SchedulerDraftProvider';
+import { useSchedulerDraft } from './draft-context';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CalendarClock, CalendarDays, Clock3, Copy, ExternalLink, Link2, Plus, Settings2, Trash2, Workflow, Wrench, X } from 'lucide-react';
 import { EmptyState } from '../shared/components/EmptyState';
@@ -74,7 +77,6 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
 }) {
   const { showToast } = useToast();
   const dialogRef = useRef<HTMLFormElement>(null);
-  useModalFocus({ dialogRef, open: true, onClose });
   const [section, setSection] = useState<SchedulerEditorSection>('setup');
   const [form, setForm] = useState<Partial<SchedulerEventType>>({
     title: event?.title || '', slug: event?.slug || '', description: event?.description || '',
@@ -124,6 +126,20 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
   }]);
   const [privateLinkBusy, setPrivateLinkBusy] = useState(false);
   const [privateLinkLoading, setPrivateLinkLoading] = useState(Boolean(event?.id));
+  const mutation = useRef(false);
+  const [closeConfirm, setCloseConfirm] = useState(false);
+  const [privateAction, setPrivateAction] = useState<'rotate' | 'revoke' | null>(null);
+  const [savedForm, setSavedForm] = useState(() => JSON.stringify(form));
+  const linkDraft = JSON.stringify({ privateLinkExpiry, privateLinkSingleUse, privateLinkOneOff, oneOffTimeZone, oneOffWindows });
+  const [savedLinkDraft, setSavedLinkDraft] = useState<string | null>(null);
+  // Capture the server-loaded link options as the baseline for unsaved-change checks.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { if (savedLinkDraft === null && !privateLinkLoading) setSavedLinkDraft(linkDraft); }, [savedLinkDraft, privateLinkLoading, linkDraft]);
+  const dirty = JSON.stringify(form) !== savedForm || (form.visibility === 'private' && savedLinkDraft !== null && savedLinkDraft !== linkDraft);
+  const locked = saving || privateLinkBusy;
+  const routeBlocked = useSchedulerDraft(dirty, locked);
+  const requestClose = () => { if (mutation.current) return; if (dirty) setCloseConfirm(true); else onClose(); };
+  useModalFocus({ dialogRef, open: true, active: !closeConfirm && !privateAction && !routeBlocked, onClose: requestClose });
   const durationMinutes = form.durationMinutes ?? 30;
   const durationHours = Math.floor(durationMinutes / 60);
   const durationMinutePart = durationMinutes % 60;
@@ -191,10 +207,13 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
 
   const submit = async (eventSubmit: React.FormEvent) => {
     eventSubmit.preventDefault();
+    if (mutation.current) return;
     if (!durationValid) { setError('Duration must be between 5 minutes and 24 hours'); return; }
+    mutation.current = true;
     setSaving(true); setError('');
     try {
       const saved = await saveSchedulerEvent(form);
+      setSavedForm(JSON.stringify(saved));
       if (!form.id && saved.visibility === 'private') {
         setForm(saved);
         setSection('advanced');
@@ -202,25 +221,33 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
         const result = await rotateSchedulerPrivateLink(saved.id, privateLinkOptions());
         setPrivateLink(result.privateLink);
         setPrivateLinkUrl(result.url);
+        setSavedLinkDraft(linkDraft);
         showToast({ type: 'success', message: 'Private link created. Copy it before closing.' });
+      } else if (saved.visibility === 'private' && savedLinkDraft !== linkDraft) {
+        setForm(saved);
+        setSection('advanced');
+        await onSaved(false);
+        showToast({ type: 'success', message: 'Event saved. Generate or rotate the link to apply its changed options.' });
       } else {
         await onSaved();
       }
     }
     catch (err) { setError(err instanceof Error ? err.message : 'Unable to save event type'); }
-    finally { setSaving(false); }
+    finally { mutation.current = false; setSaving(false); }
   };
 
   const rotatePrivateLink = async () => {
-    if (!form.id) return;
+    if (!form.id || mutation.current) return;
+    mutation.current = true;
     setPrivateLinkBusy(true); setError('');
     try {
       const result = await rotateSchedulerPrivateLink(form.id, privateLinkOptions());
       setPrivateLink(result.privateLink);
       setPrivateLinkUrl(result.url);
+        setSavedLinkDraft(linkDraft);
       showToast({ type: 'success', message: 'Private link rotated. The previous link no longer works.' });
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to rotate private link'); }
-    finally { setPrivateLinkBusy(false); }
+    finally { mutation.current = false; setPrivateLinkBusy(false); setPrivateAction(null); }
   };
 
   const copyPrivateLink = async () => {
@@ -229,7 +256,8 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
   };
 
   const revokePrivateLink = async () => {
-    if (!form.id || !confirm('Revoke this private link? Anyone using it will lose access immediately.')) return;
+    if (!form.id || mutation.current) return;
+    mutation.current = true;
     setPrivateLinkBusy(true); setError('');
     try {
       await revokeSchedulerPrivateLink(form.id);
@@ -240,7 +268,7 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
       setPrivateLinkUrl('');
       showToast({ type: 'success', message: 'Private link revoked' });
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to revoke private link'); }
-    finally { setPrivateLinkBusy(false); }
+    finally { mutation.current = false; setPrivateLinkBusy(false); setPrivateAction(null); }
   };
 
   const oneOffMinDate = dateInTimeZone(oneOffDateAnchor, oneOffTimeZone);
@@ -257,8 +285,11 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
 
   return (
     <div className="scheduler-modal-backdrop">
+      <ConfirmDialog open={closeConfirm} title="Discard event changes?" message="Changes to this event type or its private-link options have not been saved." confirmLabel="Discard changes" cancelLabel="Keep editing" danger busy={locked} onConfirm={onClose} onCancel={() => setCloseConfirm(false)} />
+      <ConfirmDialog open={Boolean(privateAction)} title={privateAction === 'revoke' ? 'Revoke private link?' : 'Generate a new private link?'} message="The previous link will stop working. People using it will need a new link to book." confirmLabel={privateAction === 'revoke' ? 'Revoke link' : 'Generate link'} busy={locked} onConfirm={() => { if (privateAction === 'revoke') void revokePrivateLink(); else void rotatePrivateLink(); }} onCancel={() => setPrivateAction(null)} />
       <form ref={dialogRef} className="scheduler-modal" role="dialog" aria-modal="true" aria-labelledby="event-editor-title" onSubmit={submit}>
-        <header><div><h2 id="event-editor-title">{form.id ? 'Edit event type' : 'New event type'}</h2><p>Choose the service length, schedule, calendar rules, and booking limits.</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close event type editor"><X size={18} /></button></header>
+        <fieldset disabled={locked} style={{ display: 'contents' }}>
+        <header><div><h2 id="event-editor-title">{form.id ? 'Edit event type' : 'New event type'}</h2><p>Choose the service length, schedule, calendar rules, and booking limits.</p></div><button type="button" className="icon-button" onClick={requestClose} disabled={locked} aria-label="Close event type editor"><X size={18} /></button></header>
         {error && <ErrorBanner error={error} />}
         <nav className="scheduler-editor-tabs" aria-label="Event type settings">{SCHEDULER_EDITOR_SECTIONS.map(item => <button type="button" className={section === item.id ? 'active' : ''} onClick={() => setSection(item.id)} key={item.id}>{item.label}</button>)}</nav>
         <label className="scheduler-editor-mobile-navigation mobile-section-navigation">
@@ -317,11 +348,12 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
             <label className="scheduler-publish scheduler-one-off-toggle"><input type="checkbox" checked={privateLinkOneOff} onChange={e => { setPrivateLinkOneOff(e.target.checked); if (e.target.checked) setPrivateLinkSingleUse(true); }} /><span>Offer only selected one-off times<small>These windows replace the recurring schedule for this link.</small></span></label>
             {privateLinkOneOff && <div className="scheduler-one-off-editor"><div><strong>One-off availability</strong><span>{oneOffTimeZone} · automatically single-use</span></div>{oneOffWindows.map((window, index) => <div className="scheduler-one-off-row" key={`${window.date}-${index}`}><input aria-label={`One-off date ${index + 1}`} type="date" min={oneOffMinDate} max={oneOffMaxDate} value={window.date} onChange={e => updateOneOffWindow(index, { date: e.target.value })} /><input aria-label={`One-off start ${index + 1}`} type="time" value={minutesToTime(window.startMinute)} onChange={e => updateOneOffWindow(index, { startMinute: timeToMinutes(e.target.value) })} /><span>to</span><input aria-label={`One-off end ${index + 1}`} type="time" value={minutesToTime(window.endMinute)} onChange={e => updateOneOffWindow(index, { endMinute: timeToMinutes(e.target.value) })} /><button type="button" className="icon-button danger" aria-label={`Remove one-off window ${index + 1}`} disabled={oneOffWindows.length === 1} onClick={() => setOneOffWindows(current => current.filter((_, windowIndex) => windowIndex !== index))}><Trash2 size={15} /></button></div>)}<button type="button" className="btn btn-secondary" disabled={oneOffWindows.length >= 14} onClick={() => setOneOffWindows(current => [...current, { ...current[current.length - 1] }])}><Plus size={15} /> Add time window</button></div>}
             <label className="scheduler-publish"><input type="checkbox" checked={privateLinkSingleUse || privateLinkOneOff} disabled={privateLinkOneOff} onChange={e => setPrivateLinkSingleUse(e.target.checked)} /><span>Single-use link: disable it after the first successful booking.<small>Viewing times or a failed booking will not use the link.</small></span></label>
-            {form.id ? <><p>{privateLinkStatus}</p>{privateLinkUrl && <div className="scheduler-private-link-reveal"><input aria-label="New private link" readOnly value={privateLinkUrl} /><button type="button" className="btn btn-secondary" onClick={() => void copyPrivateLink()}><Copy size={15} /> Copy</button></div>}<div className="scheduler-private-link-actions"><button type="button" className="btn btn-secondary" disabled={privateLinkBusy || privateLinkLoading} onClick={() => void rotatePrivateLink()}><Link2 size={15} /> {privateLink?.active ? 'Rotate link' : privateLinkOneOff ? 'Generate one-off link' : 'Generate link'}</button>{(privateLink?.active || privateLink?.expired || privateLink?.consumed) && <button type="button" className="btn btn-secondary" disabled={privateLinkBusy || privateLinkLoading} onClick={() => void revokePrivateLink()}>Revoke</button>}</div></> : <p>Save this private event to generate its first link. The new link will remain visible here so you can copy it.</p>}
+            {form.id ? <><p>{privateLinkStatus}</p>{privateLinkUrl && <div className="scheduler-private-link-reveal"><input aria-label="New private link" readOnly value={privateLinkUrl} /><button type="button" className="btn btn-secondary" onClick={() => void copyPrivateLink()}><Copy size={15} /> Copy</button></div>}<div className="scheduler-private-link-actions"><button type="button" className="btn btn-secondary" disabled={privateLinkBusy || privateLinkLoading} onClick={() => setPrivateAction('rotate')}><Link2 size={15} /> {privateLink?.active ? 'Rotate link' : privateLinkOneOff ? 'Generate one-off link' : 'Generate link'}</button>{(privateLink?.active || privateLink?.expired || privateLink?.consumed) && <button type="button" className="btn btn-secondary" disabled={privateLinkBusy || privateLinkLoading} onClick={() => setPrivateAction('revoke')}>Revoke</button>}</div></> : <p>Save this private event to generate its first link. The new link will remain visible here so you can copy it.</p>}
           </section>}
           <label className="scheduler-publish scheduler-event-active"><input type="checkbox" checked={form.active !== false} onChange={e => setForm({ ...form, active: e.target.checked })} /><span>Event type is active and bookable</span></label>
         </div>}
-        <footer><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={saving || !durationValid}>{saving ? 'Saving...' : 'Save event type'}</button></footer>
+        <footer><button type="button" className="btn btn-secondary" onClick={requestClose} disabled={locked}>Cancel</button><button className="btn btn-primary" disabled={saving || !durationValid}>{saving ? 'Saving...' : 'Save event type'}</button></footer>
+        </fieldset>
       </form>
     </div>
   );
@@ -330,14 +362,19 @@ function EventEditor({ event, calendars, defaultAvailability, onClose, onSaved }
 function ProfilePanel({ state, onSaved }: { state: SchedulerState; onSaved: () => void }) {
   const [profile, setProfile] = useState<Partial<SchedulerEntitlement>>(state.entitlement);
   const [status, setStatus] = useState('');
+  const [savedProfile, setSavedProfile] = useState(() => JSON.stringify(state.entitlement));
+  const [saving, setSaving] = useState(false);
+  const saveLock = useRef(false);
+  useSchedulerDraft(JSON.stringify(profile) !== savedProfile, saving);
   const publicUrl = `${state.publicBaseUrl}/scheduler/${state.entitlement.handle}`;
   const hasActiveEvents = state.events.some(event => event.active) || state.defaultAvailability.published;
   const save = async (event: React.FormEvent) => {
-    event.preventDefault(); setStatus('Saving...');
-    try { await saveSchedulerProfile(profile); setStatus('Saved'); onSaved(); }
-    catch (err) { setStatus(err instanceof Error ? err.message : 'Save failed'); }
+    event.preventDefault(); if (saveLock.current) return; saveLock.current = true; setSaving(true); setStatus('Saving...');
+    try { const saved = await saveSchedulerProfile(profile); setProfile(saved); setSavedProfile(JSON.stringify(saved)); setStatus('Saved'); onSaved(); }
+    catch (err) { setStatus(err instanceof Error ? err.message : 'Save failed; your changes are retained'); }
+    finally { saveLock.current = false; setSaving(false); }
   };
-  return <form className="scheduler-settings" onSubmit={save}>
+  return <form className="scheduler-settings" onSubmit={save}><fieldset disabled={saving} style={{ display: 'contents' }}>
     <div className="scheduler-section-title"><div><h2>Public profile</h2><p>{publicUrl}</p></div><a className="btn btn-secondary" href={publicUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Preview</a></div>
     {!hasActiveEvents && profile.published !== false && <div className="scheduler-inline-warning"><AlertTriangle size={18} /><div><strong>Your profile is published but has no bookable availability.</strong><span>Publish your default availability or activate an event type before sharing this page.</span></div></div>}
     <div className="scheduler-form-grid">
@@ -347,11 +384,15 @@ function ProfilePanel({ state, onSaved }: { state: SchedulerState; onSaved: () =
       <label className="span-2">Welcome message<textarea rows={4} value={profile.welcomeMessage || ''} onChange={e => setProfile({ ...profile, welcomeMessage: e.target.value })} /></label>
       <label className="scheduler-publish span-2"><input type="checkbox" checked={profile.published !== false} onChange={e => setProfile({ ...profile, published: e.target.checked })} /><span>Publish profile</span></label>
     </div>
-    <div className="scheduler-actions"><span>{status}</span><button className="btn btn-primary">Save profile</button></div>
-  </form>;
+    <div className="scheduler-actions"><span role="status">{status}</span><button className="btn btn-primary">Save profile</button></div>
+  </fieldset></form>;
 }
 
 export function SchedulerRoutes() {
+  return <SchedulerDraftProvider><SchedulerWorkspace /></SchedulerDraftProvider>;
+}
+
+function SchedulerWorkspace() {
   const { showToast } = useToast();
   const [tab, setTab] = useState<SchedulerTab>(initialSchedulerTab);
   const [visitedTabs, setVisitedTabs] = useState<Set<SchedulerTab>>(() => new Set([initialSchedulerTab()]));
@@ -360,6 +401,10 @@ export function SchedulerRoutes() {
   const [editor, setEditor] = useState<Partial<SchedulerEventType> | null | undefined>(undefined);
   const [selectedBooking, setSelectedBooking] = useState<SchedulerState['bookings'][number] | null>(null);
   const [reviewingBookingId, setReviewingBookingId] = useState('');
+  const mutationRef = useRef(false);
+  const [confirmation, setConfirmation] = useState<{ title: string; message: string; action: () => Promise<unknown>; success: string } | null>(null);
+  const loadRequest = useRef(0);
+  useSchedulerDraft(false, Boolean(reviewingBookingId));
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
@@ -367,17 +412,20 @@ export function SchedulerRoutes() {
   useModalFocus({
     dialogRef: bookingDialogRef,
     open: Boolean(selectedBooking),
+    active: Boolean(selectedBooking) && !confirmation,
     onClose: () => setSelectedBooking(null),
   });
 
   const load = useCallback(async () => {
-    try { setState(await getSchedulerState(filter)); setError(''); }
-    catch (err) { setError(err instanceof Error ? err.message : 'Unable to load Scheduler'); }
-    finally { setLoading(false); }
+    const request = ++loadRequest.current;
+    try { const next = await getSchedulerState(filter); if (request === loadRequest.current) { setState(next); setError(''); } return true; }
+    catch (err) { if (request === loadRequest.current) setError(err instanceof Error ? err.message : 'Unable to load Scheduler'); return false; }
+    finally { if (request === loadRequest.current) setLoading(false); }
   }, [filter]);
   useEffect(() => {
+    const sequence = loadRequest;
     const timer = window.setTimeout(() => { void load(); }, 0);
-    return () => window.clearTimeout(timer);
+    return () => { window.clearTimeout(timer); sequence.current++; };
   }, [load]);
   useEffect(() => {
     const updateCurrentTime = () => setCurrentTime(Date.now());
@@ -390,7 +438,7 @@ export function SchedulerRoutes() {
   }, []);
 
   if (loading) return <div className="scheduler-loading">Loading Scheduler...</div>;
-  if (!state) return <div className="scheduler-loading"><ErrorBanner error={error || 'Scheduler is unavailable'} /></div>;
+  if (!state) return <div className="scheduler-loading"><ErrorBanner error={error || 'Scheduler is unavailable'} /><button className="btn btn-primary" onClick={() => void load()}>Retry Scheduler</button></div>;
 
   const publicUrl = `${state.publicBaseUrl}/scheduler/${state.entitlement.handle}`;
   const activeEvents = state.events.filter(event => event.active);
@@ -406,18 +454,21 @@ export function SchedulerRoutes() {
       showToast({ type: 'error', message: 'Unable to copy the link' });
     }
   };
-  const reviewBooking = async (bookingId: string, decision: 'confirm' | 'reject') => {
-    setReviewingBookingId(bookingId); setError('');
+  const performMutation = async (id: string, action: () => Promise<unknown>, success: string) => {
+    if (mutationRef.current) return;
+    mutationRef.current = true; setReviewingBookingId(id); setError('');
     try {
-      await decideSchedulerBooking(bookingId, decision);
-      showToast({ type: 'success', message: decision === 'confirm' ? 'Booking approved' : 'Booking rejected' });
+      await action();
+      setConfirmation(null);
+      showToast({ type: 'success', message: success });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to review booking');
-    } finally {
-      setReviewingBookingId('');
-    }
+      setConfirmation(null);
+      setError(`${err instanceof Error ? err.message : 'The action could not be completed'}. Refresh to check its saved state before retrying.`);
+    } finally { mutationRef.current = false; setReviewingBookingId(''); }
   };
+  const reviewBooking = (bookingId: string, decision: 'confirm' | 'reject') => performMutation(bookingId,
+    () => decideSchedulerBooking(bookingId, decision), decision === 'confirm' ? 'Booking approved' : 'Booking rejected');
 
   const tabs: Array<{ id: SchedulerTab; label: string; icon: React.ElementType }> = [
     { id: 'events', label: 'Event Types', icon: CalendarClock },
@@ -441,24 +492,25 @@ export function SchedulerRoutes() {
       </label>
     </aside>
     <main className="scheduler-main">
-      {error && <ErrorBanner error={error} />}
+      {error && <><ErrorBanner error={error} /><button className="btn btn-secondary" onClick={() => void load()}>Refresh Scheduler</button></>}
       <section className="scheduler-public-bar" aria-label="Public booking site"><div><span>Your booking site</span><strong>{publicUrl}</strong></div><div className="scheduler-public-actions"><button className="btn btn-secondary" type="button" onClick={() => void copyLink(publicUrl, 'Booking link')}><Copy size={15} /> Copy booking link</button><a className="btn btn-primary" href={publicUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open booking site</a></div></section>
       {tab === 'events' && <>
         <div className="scheduler-section-title"><div><h1>Event Types</h1><p>{activeEvents.length} booking {activeEvents.length === 1 ? 'link' : 'links'}</p></div><button className="btn btn-primary" onClick={() => setEditor(null)}><Plus size={16} /> New event</button></div>
         {state.events.length === 0 ? <section className="scheduler-first-run"><div><span className="scheduler-eyebrow">Get started</span><h2>Create your first booking type</h2><p>Set the meeting length, choose which calendars block busy time, and publish a link guests can book without emailing back and forth.</p><button className="btn btn-primary" type="button" onClick={() => setEditor(null)}><Plus size={16} /> Create first event</button></div><ol><li><span>1</span><div><strong>Create an event type</strong><p>For example, a 30-minute discovery call or 60-minute consultation.</p></div></li><li><span>2</span><div><strong>Set availability and calendars</strong><p>Choose working hours, the destination calendar, and calendars to check for conflicts.</p></div></li><li><span>3</span><div><strong>Preview and share</strong><p>Open your booking site above, then copy the public link wherever you need it.</p></div></li></ol></section> : <div className="scheduler-event-list">{state.events.map(event => <article key={event.id}>
           <div className="scheduler-event-accent" /><div className="scheduler-event-copy"><div><h3>{event.title}{!event.active && <span className="scheduler-event-badge">Inactive</span>}{event.visibility !== 'public' && <span className="scheduler-event-badge">{event.visibility === 'private' ? 'Private' : 'Unlisted'}</span>}</h3><p>{event.durationMinutes} min · {event.locationLabel || 'Location set when booking'}</p></div><code>/{state.entitlement.handle}/{event.slug}</code></div>
-          <div className="scheduler-row-actions">{event.visibility === 'private' ? <button className="icon-button" title="Manage private link" aria-label={`Manage ${event.title} private link`} onClick={() => setEditor(event)}><Link2 size={16} /></button> : <button className="icon-button" title="Copy public link" aria-label={`Copy ${event.title} booking link`} onClick={() => void copyLink(`${publicUrl}/${event.slug}`, `${event.title} link`)}><Copy size={16} /></button>}<button className="icon-button" title="Edit" aria-label={`Edit ${event.title}`} onClick={() => setEditor(event)}><Settings2 size={16} /></button><button className="icon-button danger" title="Delete" aria-label={`Delete ${event.title}`} onClick={async () => { if (confirm(`Delete ${event.title}?`)) { await deleteSchedulerEvent(event.id); await load(); } }}><Trash2 size={16} /></button></div>
+          <div className="scheduler-row-actions">{event.visibility === 'private' ? <button className="icon-button" title="Manage private link" aria-label={`Manage ${event.title} private link`} onClick={() => setEditor(event)}><Link2 size={16} /></button> : <button className="icon-button" title="Copy public link" aria-label={`Copy ${event.title} booking link`} onClick={() => void copyLink(`${publicUrl}/${event.slug}`, `${event.title} link`)}><Copy size={16} /></button>}<button className="icon-button" title="Edit" aria-label={`Edit ${event.title}`} onClick={() => setEditor(event)}><Settings2 size={16} /></button><button className="icon-button danger" title="Delete" aria-label={`Delete ${event.title}`} disabled={Boolean(reviewingBookingId)} onClick={() => setConfirmation({ title: `Delete ${event.title}?`, message: 'Delete this event type and stop accepting bookings through its link?', action: () => deleteSchedulerEvent(event.id), success: 'Event type deleted' })}><Trash2 size={16} /></button></div>
         </article>)}</div>}
       </>}
       {tab === 'bookings' && <>
         <div className="scheduler-section-title"><div><h1>Bookings</h1><p>Calendar-backed meetings and approval requests</p></div><div className="segmented-control">{['upcoming', 'past', 'cancelled', 'rejected'].map(value => <button className={filter === value ? 'active' : ''} onClick={() => setFilter(value)} key={value}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div></div>
-        {state.bookings.length === 0 ? <EmptyState icon={CalendarDays} title={`No ${filter} bookings`} description="" /> : <div className="scheduler-booking-list">{state.bookings.map(booking => <article key={booking.id}><time>{new Date(booking.start).toLocaleDateString([], { month: 'short', day: 'numeric' })}<strong>{new Date(booking.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong></time><div><h3>{booking.event.title}{booking.seriesId && <span className="scheduler-event-badge">Series {booking.seriesIndex}/{booking.seriesCount}</span>}</h3><p>{booking.bookerName} · {booking.bookerEmail}</p></div><span className={`booking-status ${booking.status}`}>{booking.status.replace('_', ' ')}</span><button className="btn btn-secondary" onClick={() => setSelectedBooking(booking)}>View</button>{booking.status === 'requested' && <><button className="btn btn-primary" disabled={reviewingBookingId === booking.id} onClick={() => void reviewBooking(booking.id, 'confirm')}>Approve</button><button className="btn btn-secondary" disabled={reviewingBookingId === booking.id} onClick={() => { if (confirm('Reject this booking request?')) void reviewBooking(booking.id, 'reject'); }}>Reject</button></>}{booking.status === 'confirmed' && <>{currentTime > 0 && new Date(booking.end).getTime() <= currentTime && <><button className="btn btn-secondary" onClick={async () => { await markSchedulerBookingOutcome(booking.id, 'completed'); await load(); }}>Complete</button><button className="btn btn-secondary" onClick={async () => { if (confirm('Mark this guest as a no-show?')) { await markSchedulerBookingOutcome(booking.id, 'no_show'); await load(); } }}>No-show</button></>}<button className="btn btn-secondary" onClick={async () => { if (confirm('Cancel this booking?')) { await cancelSchedulerBooking(booking.id); await load(); } }}>Cancel</button></>}</article>)}</div>}
+        {state.bookings.length === 0 ? <EmptyState icon={CalendarDays} title={`No ${filter} bookings`} description="" /> : <div className="scheduler-booking-list">{state.bookings.map(booking => <article key={booking.id}><time>{new Date(booking.start).toLocaleDateString([], { month: 'short', day: 'numeric' })}<strong>{new Date(booking.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong></time><div><h3>{booking.event.title}{booking.seriesId && <span className="scheduler-event-badge">Series {booking.seriesIndex}/{booking.seriesCount}</span>}</h3><p>{booking.bookerName} · {booking.bookerEmail}</p></div><span className={`booking-status ${booking.status}`}>{booking.status.replace('_', ' ')}</span><button className="btn btn-secondary" onClick={() => setSelectedBooking(booking)}>View</button>{booking.status === 'requested' && <><button className="btn btn-primary" disabled={Boolean(reviewingBookingId)} onClick={() => void reviewBooking(booking.id, 'confirm')}>Approve</button><button className="btn btn-secondary" disabled={Boolean(reviewingBookingId)} onClick={() => setConfirmation({ title: 'Reject booking request?', message: `${booking.bookerName} · ${booking.event.title}. The guest will be notified.`, action: () => decideSchedulerBooking(booking.id, 'reject'), success: 'Booking rejected' })}>Reject</button></>}{booking.status === 'confirmed' && <>{currentTime > 0 && new Date(booking.end).getTime() <= currentTime && <><button className="btn btn-secondary" disabled={Boolean(reviewingBookingId)} onClick={() => void performMutation(booking.id, () => markSchedulerBookingOutcome(booking.id, 'completed'), 'Booking marked complete')}>Complete</button><button className="btn btn-secondary" disabled={Boolean(reviewingBookingId)} onClick={() => setConfirmation({ title: 'Mark guest as a no-show?', message: `${booking.bookerName} · ${booking.event.title}. This updates the booking outcome.`, action: () => markSchedulerBookingOutcome(booking.id, 'no_show'), success: 'Booking marked as a no-show' })}>No-show</button></>}<button className="btn btn-secondary" disabled={Boolean(reviewingBookingId)} onClick={() => setConfirmation({ title: 'Cancel booking?', message: `${booking.bookerName} · ${booking.event.title}. The guest will be notified and the time released.`, action: () => cancelSchedulerBooking(booking.id), success: 'Booking cancelled' })}>Cancel</button></>}</article>)}</div>}
       </>}
-      {visitedTabs.has('availability') && <div hidden={tab !== 'availability'}><AvailabilityPanel availability={state.defaultAvailability} onSaved={load} /></div>}
+      {visitedTabs.has('availability') && <div hidden={tab !== 'availability'}><AvailabilityPanel availability={state.defaultAvailability} onSaved={async () => { await load(); }} /></div>}
       {visitedTabs.has('workflows') && <div hidden={tab !== 'workflows'}><WorkflowsPanel events={state.events} /></div>}
-      {visitedTabs.has('tools') && <div hidden={tab !== 'tools'}><SchedulerToolsPanel state={state} onChanged={load} /></div>}
-      {visitedTabs.has('profile') && <div hidden={tab !== 'profile'}><ProfilePanel state={state} onSaved={load} /></div>}
+      {visitedTabs.has('tools') && <div hidden={tab !== 'tools'}><SchedulerToolsPanel state={state} onChanged={async () => { await load(); }} /></div>}
+      {visitedTabs.has('profile') && <div hidden={tab !== 'profile'}><ProfilePanel state={state} onSaved={async () => { await load(); }} /></div>}
     </main>
+    <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.title || ''} message={confirmation?.message || ''} confirmLabel="Confirm" danger busy={Boolean(reviewingBookingId)} onCancel={() => setConfirmation(null)} onConfirm={() => { if (confirmation) void performMutation('confirmed-action', confirmation.action, confirmation.success); }} />
     {editor !== undefined && <EventEditor event={editor} calendars={state.calendars} defaultAvailability={state.defaultAvailability} onClose={() => setEditor(undefined)} onSaved={async (close = true) => { if (close) setEditor(undefined); await load(); }} />}
     {selectedBooking && <div className="scheduler-modal-backdrop" onMouseDown={() => setSelectedBooking(null)}><section ref={bookingDialogRef} className="scheduler-booking-detail" role="dialog" aria-modal="true" aria-labelledby="booking-detail-title" onMouseDown={event => event.stopPropagation()}><header><div><h2 id="booking-detail-title">{selectedBooking.event.title}</h2><p>{selectedBooking.status.replace('_', ' ')}</p></div><button className="icon-button" onClick={() => setSelectedBooking(null)} aria-label="Close booking details"><X size={18} /></button></header><dl><div><dt>Guest</dt><dd>{selectedBooking.bookerName}<span>{selectedBooking.bookerEmail}</span></dd></div>{selectedBooking.bookedByUsername && <div><dt>Booked by</dt><dd>{selectedBooking.bookedByUsername}</dd></div>}<div><dt>When</dt><dd>{new Date(selectedBooking.start).toLocaleString()}<span>{selectedBooking.event.durationMinutes} minutes · {selectedBooking.seats || 1} {(selectedBooking.seats || 1) === 1 ? 'seat' : 'seats'}{selectedBooking.seriesId ? ` · occurrence ${selectedBooking.seriesIndex} of ${selectedBooking.seriesCount}` : ''}</span></dd></div><div><dt>Location</dt><dd>{selectedBooking.event.locationLabel || 'Not specified'}</dd></div>{(selectedBooking.attendees || []).map(attendee => <div key={attendee.email}><dt>Additional guest</dt><dd>{attendee.name || attendee.email}{attendee.name && <span>{attendee.email}</span>}</dd></div>)}{Object.entries(selectedBooking.attribution || {}).map(([key, value]) => <div key={key}><dt>{key.replace('utm_', 'UTM ')}</dt><dd>{value}</dd></div>)}{selectedBooking.bookerNotes && <div><dt>Notes</dt><dd>{selectedBooking.bookerNotes}</dd></div>}{selectedBooking.cancellationReason && <div><dt>Cancellation reason</dt><dd>{selectedBooking.cancellationReason}</dd></div>}{selectedBooking.rescheduleReason && <div><dt>Reschedule reason</dt><dd>{selectedBooking.rescheduleReason}</dd></div>}{(selectedBooking.bookingAnswers || []).map(answer => <div key={answer.questionId}><dt>{answer.label}</dt><dd>{answer.value}</dd></div>)}</dl></section></div>}
   </div>;

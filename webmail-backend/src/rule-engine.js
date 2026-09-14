@@ -1,8 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.evaluateRulesForMessage = evaluateRulesForMessage;
-const rule_address_1 = require("./rule-address");
 const rule_semantics_1 = require("./rule-semantics");
+const rule_address_1 = require("./rule-address");
+const rule_semantics_2 = require("./rule-semantics");
 const MAX_WILDCARD_MATCH_STEPS_PER_MESSAGE = 250000;
 const BYTE_A = 0x41;
 const BYTE_Z = 0x5a;
@@ -140,6 +141,8 @@ function criterionMatches(criterion, message, wildcardContext) {
     }
     const actual = actualText.toLowerCase();
     const expected = expectedText.toLowerCase();
+    if (criterion.operator === 'is_one_of')
+        return (0, rule_semantics_1.ruleAddressValues)(expectedText).includes(actual);
     const matches = criterion.operator === 'equals' ? actual === expected : actual.includes(expected);
     return criterion.operator === 'not_contains' ? !matches : matches;
 }
@@ -159,12 +162,25 @@ function evaluateRulesForMessage(rules, message) {
     rules.forEach((rule, index) => {
         if (result.stoppedByRuleId || blockedByUndecidableStoppingRule || rule.enabled === false)
             return;
-        const executableCriterionSet = new Set((0, rule_semantics_1.executableRuleCriteria)(rule));
+        const executableCriterionSet = new Set((0, rule_semantics_2.executableRuleCriteria)(rule));
         const executableCriteria = (rule.criteria || []).flatMap((criterion, criterionIndex) => (executableCriterionSet.has(criterion)
             ? [{ criterion, criterionIndex }]
             : []));
-        const criteria = executableCriteria.map(({ criterion }) => (criterionMatches(criterion, message, wildcardContext)));
-        const actions = (0, rule_semantics_1.executableRuleActions)(rule);
+        const exceptionMatches = (rule.exceptions || []).map(item => ({ field: item.field, match: criterionMatches(item, message, wildcardContext) }));
+        const addressExceptions = exceptionMatches.filter(item => item.field === 'from_address').map(item => item.match);
+        const allExceptions = exceptionMatches.map(item => item.match);
+        const addressSafe = addressExceptions.includes(true) ? true : addressExceptions.includes('unknown') ? 'unknown' : false;
+        const domainSafe = allExceptions.includes(true) ? true : allExceptions.includes('unknown') ? 'unknown' : false;
+        const criteria = executableCriteria.map(({ criterion }) => {
+            const match = criterionMatches(criterion, message, wildcardContext);
+            if (match === false)
+                return false;
+            const safe = criterion.field === 'from_domain' ? domainSafe : addressSafe;
+            if (safe === true)
+                return false;
+            return safe === 'unknown' ? 'unknown' : match;
+        });
+        const actions = (0, rule_semantics_2.executableRuleActions)(rule);
         if (criteria.length === 0 || actions.length === 0)
             return;
         const hasUnknown = criteria.includes('unknown');

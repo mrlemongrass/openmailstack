@@ -14,6 +14,7 @@ import {
   Clock,
   ExternalLink,
   FolderInput,
+  ListFilter,
   Inbox,
   Loader,
   Mail,
@@ -279,6 +280,11 @@ export function MessageList({ mail, density }: MessageListProps) {
           icon: Forward,
           onSelect: () => { void startMessageCompose('forward', message); },
         },
+        ...(['create', 'add'] as const).map(mode => ({
+          id: `${mode}-rule`, label: mode === 'create' ? 'Create rule…' : 'Add to existing rule…', icon: ListFilter,
+          separatorBefore: mode === 'create',
+          onSelect: () => navigate('/message-rule', { state: { mode, from: message.from, returnTo: `/mail/${encodeURIComponent(decodedFolder)}` } }),
+        })),
         {
           id: 'read',
           label: message.isRead ? 'Mark unread' : 'Mark read',
@@ -493,7 +499,7 @@ export function MessageList({ mail, density }: MessageListProps) {
             return (
               <MessageRow key={messageIdentityKey(msg, decodedFolder)} message={msg}
                 isSelected={!selectionDisabled && mail.selectedMessages.includes(msg.uid)}
-                isThreaded={false} density={density}
+                isThreaded={mail.mailSettings.reading.threaded} showSnippets={mail.mailSettings.reading.snippets} density={density}
                 isDraft={isDraftFolder(messageFolder(msg, decodedFolder))}
                 selectionDisabled={selectionDisabled}
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}

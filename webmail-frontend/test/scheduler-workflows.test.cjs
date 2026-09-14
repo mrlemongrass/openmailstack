@@ -35,6 +35,8 @@ test('workflow builder presents the complete Phase 3 automation surface', () => 
     if (id === '../shared/components/ErrorBanner') return { ErrorBanner: ({ error }) => React.createElement('p', null, error) };
     if (id === '../shared/components/EmptyState') return { EmptyState: () => React.createElement('p', null, 'Empty') };
     if (id === '../shared/components/Toast') return { useToast: () => ({ showToast: () => undefined }) };
+    if (id === './draft-context') return { useSchedulerDraft: () => false };
+    if (id === '../shared/components/ConfirmDialog') return { ConfirmDialog: () => null };
     if (id === './api') return {};
     return Module.prototype.require.call(workflowModule, id);
   };

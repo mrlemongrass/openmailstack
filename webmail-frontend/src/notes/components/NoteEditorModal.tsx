@@ -7,6 +7,7 @@ import type { useNotes } from '../hooks/useNotes';
 import { NoteSaveConflictError, saveNote } from '../../shared/api';
 import { useToast } from '../../shared/components/Toast';
 import type { Note } from '../../shared/types';
+import { UnsavedChangesGuard } from '../../shared/components/UnsavedChangesGuard';
 import { useModalFocus } from '../../shared/hooks/useModalFocus';
 import { createNoteSaveCoordinator } from '../note-save-coordinator';
 
@@ -28,11 +29,12 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
   const latestDraftRef = useRef<Partial<Note>>(n.editingNote);
   const draftRevisionRef = useRef(0);
   const wasModalOpenRef = useRef(false);
-  const closePromiseRef = useRef<Promise<void> | null>(null);
+  const closePromiseRef = useRef<Promise<boolean> | null>(null);
   const saveCoordinatorRef = useRef(createNoteSaveCoordinator({
     id: n.editingNote.id || null,
     syncToken: n.editingNote.sync_token ?? null,
   }));
+  const [routeBlocked, setRouteBlocked] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | null>(null);
 
   // ── All hooks MUST be before the early return ──────────────────────────
@@ -124,7 +126,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
         await queueLatestSave();
       } catch (error) {
         reportSaveError(error, false);
-        return;
+        return false;
       }
       const latest = latestDraftRef.current;
       const title = titleRef.current?.value ?? latest.title ?? '';
@@ -133,6 +135,7 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
       n.setEditingNote({});
       await n.fetchNotes();
       if (latest.id || title || content) showToast({ type: 'success', message: 'Note saved' });
+      return true;
     })();
     closePromiseRef.current = operation.finally(() => {
       closePromiseRef.current = null;
@@ -170,16 +173,20 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
   useModalFocus({
     dialogRef,
     open: n.isNoteModalOpen,
+    active: n.isNoteModalOpen && !routeBlocked,
     onClose: handleClose,
   });
 
   // ── Early return after all hooks ──────────────────────────────────────
 
-  if (!n.isNoteModalOpen) return null;
+  const navigationGuard = <UnsavedChangesGuard dirty={n.isNoteModalOpen} onSave={n.isNoteModalOpen ? handleClose : undefined} onBlockedChange={setRouteBlocked} />;
+  if (!n.isNoteModalOpen) return <>{navigationGuard}</>;
 
   const note = n.editingNote;
 
   return (
+    <>
+    {navigationGuard}
     <div className="note-modal-overlay" onClick={(e) => {
       if (e.target === e.currentTarget) handleClose();
     }}>
@@ -250,5 +257,6 @@ export function NoteEditorModal({ notesCtx: n }: NoteEditorModalProps) {
         <AttachmentList noteId={note.id} />
       </div>
     </div>
+    </>
   );
 }

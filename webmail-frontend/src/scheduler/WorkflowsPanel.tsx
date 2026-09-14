@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ConfirmDialog } from '../shared/components/ConfirmDialog';
+import { useSchedulerDraft } from './draft-context';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Archive,
@@ -107,6 +109,13 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
   const [mode, setMode] = useState<"builder" | "operations">("builder");
   const [preview, setPreview] = useState<Array<Record<string, string>>>([]);
   const [busy, setBusy] = useState(false);
+  const mutation = useRef(false);
+  const currentDraft = JSON.stringify({ name, eventTypeIds, definition });
+  const [savedDraft, setSavedDraft] = useState(currentDraft);
+  const dirty = currentDraft !== savedDraft;
+  useSchedulerDraft(dirty, busy);
+  const [confirmation, setConfirmation] = useState<{ title: string; message: string; action: () => void } | null>(null);
+
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -144,7 +153,10 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
     [selectedId, workflows],
   );
 
-  const selectWorkflow = (workflow: SchedulerWorkflow) => {
+  const selectWorkflow = (workflow: SchedulerWorkflow, confirmed = false) => {
+    if (mutation.current) return;
+    if (dirty && !confirmed) { setConfirmation({ title: 'Discard workflow changes?', message: 'Your unpublished workflow edits will be lost.', action: () => selectWorkflow(workflow, true) }); return; }
+    setSavedDraft(JSON.stringify({ name: workflow.name, eventTypeIds: workflow.eventTypeIds, definition: workflow.definition || defaultDefinition() }));
     setSelectedId(workflow.id);
     setName(workflow.name);
     setEventTypeIds(workflow.eventTypeIds);
@@ -153,7 +165,10 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
     setMode("builder");
   };
 
-  const createWorkflow = async () => {
+  const createWorkflow = async (confirmed = false) => {
+    if (dirty && !confirmed) { setConfirmation({ title: 'Discard workflow changes?', message: 'Your unpublished workflow edits will be lost.', action: () => { void createWorkflow(true); } }); return; }
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
@@ -164,6 +179,7 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
       setName(proposed);
       setEventTypeIds([]);
       setDefinition(defaultDefinition());
+      setSavedDraft(JSON.stringify({ name: proposed, eventTypeIds: [], definition: defaultDefinition() }));
     } catch (createError) {
       setError(
         createError instanceof Error
@@ -171,12 +187,15 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to create workflow",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
 
   const cloneWorkflow = async () => {
-    if (!selected) return;
+    if (!selected || dirty) return;
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
@@ -186,6 +205,7 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
       setName(`Copy of ${name}`.slice(0, 160));
       setEventTypeIds([...eventTypeIds]);
       setDefinition(structuredClone(definition));
+      setSavedDraft(JSON.stringify({ name: `Copy of ${name}`.slice(0, 160), eventTypeIds, definition }));
       showToast({
         type: "success",
         message: "Workflow cloned as a disabled draft",
@@ -197,17 +217,21 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to clone workflow",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
 
   const publish = async () => {
     if (!selected) return;
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
       await updateSchedulerWorkflow(selected.id, { name, eventTypeIds });
       await publishSchedulerWorkflow(selected.id, definition);
+      setSavedDraft(currentDraft);
       await load();
       showToast({ type: "success", message: "Workflow version published" });
     } catch (publishError) {
@@ -217,6 +241,7 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to publish workflow",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
@@ -243,6 +268,8 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
     jobId: string,
     action: "retry" | "delivered" | "cancel",
   ) => {
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
@@ -255,11 +282,14 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to reconcile delivery",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
 
   const markNotificationRead = async (notificationId: string) => {
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
@@ -272,11 +302,14 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to mark notification read",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
 
   const dismissNotification = async (notificationId: string) => {
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
@@ -289,12 +322,15 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to dismiss notification",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
 
   const toggleWorkflow = async (enabled: boolean) => {
     if (!selected) return;
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
@@ -307,17 +343,21 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to update workflow",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
 
   const archiveWorkflow = async () => {
     if (!selected) return;
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
       await archiveSchedulerWorkflow(selected.id);
       setSelectedId("");
+      setSavedDraft(currentDraft);
       await load();
     } catch (archiveError) {
       setError(
@@ -326,12 +366,15 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to archive workflow",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
 
   const sendTest = async () => {
     if (!selected) return;
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
@@ -350,6 +393,7 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to queue test send",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
@@ -363,6 +407,8 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
       setError("Choose a translation provider and at least one locale.");
       return;
     }
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
@@ -384,11 +430,14 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to generate translations",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
 
   const showPreview = async () => {
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError("");
     try {
@@ -400,12 +449,15 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           : "Unable to render workflow preview",
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   };
 
   return (
     <section className="scheduler-workflows">
+      <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.title || ''} message={confirmation?.message || ''} confirmLabel="Continue" danger busy={busy} onCancel={() => setConfirmation(null)} onConfirm={() => { const action = confirmation?.action; setConfirmation(null); action?.(); }} />
+      <fieldset disabled={busy} style={{ display: 'contents' }}>
       <div className="scheduler-section-title">
         <div>
           <span className="scheduler-eyebrow">Automations</span>
@@ -621,7 +673,8 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
                 <button
                   className="btn btn-secondary"
                   type="button"
-                  disabled={!selected || busy}
+                  disabled={!selected || busy || dirty}
+                  title={dirty ? "Publish your changes before cloning the saved workflow" : "Clone saved workflow"}
                   onClick={() => void cloneWorkflow()}
                 >
                   <Copy size={15} /> Clone
@@ -1143,15 +1196,7 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
                       className="btn btn-ghost danger"
                       type="button"
                       disabled={busy}
-                      onClick={() => {
-                        if (
-                          confirm(
-                            "Archive this workflow? Existing booking versions remain available for audit.",
-                          )
-                        ) {
-                          void archiveWorkflow();
-                        }
-                      }}
+                      onClick={() => setConfirmation({ title: 'Archive workflow?', message: 'Stop using this workflow. Existing booking versions remain available for audit.', action: () => { void archiveWorkflow(); } })}
                     >
                       <Archive size={15} /> Archive
                     </button>
@@ -1180,6 +1225,7 @@ export function WorkflowsPanel({ events }: { events: SchedulerEventType[] }) {
           </div>
         </div>
       )}
+      </fieldset>
     </section>
   );
 }

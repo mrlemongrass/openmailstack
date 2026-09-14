@@ -43,6 +43,7 @@ function loadComposeModule() {
     if (id === '../shared/components/Spinner') {
       return { Spinner: () => React.createElement('span', null, 'Loading') };
     }
+    if (id === '../shared/components/UnsavedChangesGuard') return { UnsavedChangesGuard: () => null };
     if (id === '../shared/components/ConfirmDialog') {
       return { ConfirmDialog: () => null };
     }

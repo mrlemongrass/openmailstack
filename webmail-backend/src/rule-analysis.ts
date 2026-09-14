@@ -51,7 +51,7 @@ export interface RuleAnalysis {
 }
 
 const supportedFields = new Set(['subject', 'from', 'to', 'body', 'from_address', 'from_domain']);
-const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches']);
+const supportedOperators = new Set(['contains', 'not_contains', 'equals', 'matches', 'is_one_of']);
 const MAX_FINDINGS = 500;
 const MAX_FINDING_OCCURRENCES = 12;
 const MAX_OVERLAP_COMPARISONS = 100000;
@@ -105,10 +105,12 @@ export const normalizeRuleDocument = (document: unknown): SieveRulesDocument | n
             || !copyOptionalBoolean(rawRule, normalizedRule, 'stopProcessing')
         ) return null;
 
-        if (rawRule.criteria !== undefined) {
-            if (!Array.isArray(rawRule.criteria)) return null;
+        for (const key of ['criteria', 'exceptions'] as const) {
+            if (rawRule[key] === undefined) continue;
+            if (!Array.isArray(rawRule[key])) return null;
+            if (key === 'exceptions' && (rawRule.id !== 'oms-user-marked-junk' || rawRule.condition !== 'any')) return null;
             const criteria: SieveCriterion[] = [];
-            for (const rawCriterion of rawRule.criteria) {
+            for (const rawCriterion of rawRule[key]) {
                 if (!isRecord(rawCriterion)) return null;
                 const criterion: Record<string, unknown> = {};
                 if (
@@ -120,9 +122,10 @@ export const normalizeRuleDocument = (document: unknown): SieveRulesDocument | n
                     || typeof criterion.operator !== 'string'
                     || typeof criterion.value !== 'string'
                 ) return null;
+                if (key === 'exceptions' && (!['from_address', 'from_domain'].includes(String(criterion.field)) || criterion.operator !== 'equals')) return null;
                 criteria.push(criterion as unknown as SieveCriterion);
             }
-            normalizedRule.criteria = criteria;
+            normalizedRule[key] = criteria;
         }
 
         if (rawRule.actions !== undefined) {
@@ -219,13 +222,14 @@ export const exceedsRuleAnalysisLimits = (document: SieveRulesDocument): boolean
         const rule = rawRule as SieveRule;
         const criteria = Array.isArray(rule.criteria) ? rule.criteria : [];
         const actions = Array.isArray(rule.actions) ? rule.actions : [];
-        itemCount += criteria.length + actions.length;
+        const exceptions = Array.isArray(rule.exceptions) ? rule.exceptions : [];
+        itemCount += criteria.length + actions.length + exceptions.length;
         if (itemCount > RULE_ANALYSIS_LIMITS.items) return true;
 
         measure(rule.id);
         measure(rule.name);
         measure(rule.condition);
-        for (const criterion of criteria) {
+        for (const criterion of [...criteria, ...exceptions]) {
             if (!criterion || typeof criterion !== 'object') continue;
             measure(criterion.id);
             measure(criterion.field);

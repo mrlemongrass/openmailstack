@@ -148,7 +148,7 @@ test('note persistence carries a revision and keeps stale conflicts visible', ()
   assert.match(modal, /expected_sync_token:\s*identity\.syncToken \?\? latest\.sync_token/);
   assert.match(modal, /latestDraftRef/);
   assert.match(modal, /const latest = latestDraftRef\.current/);
-  assert.match(modal, /Save on close failed[\s\S]*showToast[\s\S]*return;/);
+  assert.match(modal, /Save on close failed[\s\S]*showToast[\s\S]*return false;/);
   assert.match(modal, /NoteSaveConflictError/);
   assert.match(api, /res\.status === 409[\s\S]*NoteSaveConflictError/);
   assert.match(backend, /NoteConflictError[\s\S]*status\(409\)/);

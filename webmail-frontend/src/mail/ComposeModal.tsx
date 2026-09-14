@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { X, Send, Paperclip, Clock, Image, FileText, Maximize2, Minimize2, Grip } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
+import { UnsavedChangesGuard } from '../shared/components/UnsavedChangesGuard';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
 import { useToast } from '../shared/components/Toast';
 import type { useMail } from './hooks/useMail';
@@ -49,6 +50,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const insertedSignature = useRef('');
   const closeActionRef = useRef(false);
   const attachmentInput = useRef<HTMLInputElement>(null);
+  const [routeBlocked, setRouteBlocked] = useState(false);
   const [plainConfirm, setPlainConfirm] = useState(false);
   const [simplifyConfirm, setSimplifyConfirm] = useState(false);
   const [attachmentConfirm, setAttachmentConfirm] = useState<{ sendAt?: Date } | null>(null);
@@ -337,11 +339,12 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   useModalFocus({
     dialogRef,
     open: mail.isComposing,
-    active: mail.isComposing && !showCloseConfirm && !plainConfirm && !simplifyConfirm && !attachmentConfirm,
+    active: mail.isComposing && !routeBlocked && !showCloseConfirm && !plainConfirm && !simplifyConfirm && !attachmentConfirm,
     onClose: handleClose,
   });
 
-  if (!mail.isComposing) return null;
+  const navigationGuard = <UnsavedChangesGuard dirty={mail.isComposing || Boolean(mail.replyText || mail.replySending)} locked={composeBusy || mail.replySending} onBlockedChange={setRouteBlocked} onSave={mail.isComposing ? mail.closeComposer : undefined} onDiscard={() => mail.setReplyText('')} />;
+  if (!mail.isComposing) return <>{navigationGuard}</>;
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -372,6 +375,8 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   ];
 
   return (
+    <>
+    {navigationGuard}
     <div className="compose-modal-overlay"
       onDragOver={handleDragOver} onDragEnter={handleDragOver}
       onDragLeave={handleDragLeave} onDrop={handleDrop}>
@@ -882,6 +887,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         />
       )}
     </div>
+    </>
   );
 }
 

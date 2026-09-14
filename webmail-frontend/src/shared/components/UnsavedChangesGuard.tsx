@@ -7,16 +7,19 @@ interface Props {
   locked?: boolean;
   onBlockedChange?: (blocked: boolean) => void;
   onSave?: () => Promise<boolean>;
+  onDiscard?: () => void;
 }
 
-function RouteGuard({ dirty, onSave, onBlockedChange, locked }: Props) {
+function RouteGuard({ dirty, onSave, onDiscard, onBlockedChange, locked }: Props) {
   const blocker = useBlocker(dirty);
   useEffect(() => { onBlockedChange?.(blocker.state === 'blocked'); }, [blocker.state, onBlockedChange]);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const saving = useRef(false);
+  const proceeding = useRef(false);
+  useEffect(() => { if (blocker.state === 'unblocked') proceeding.current = false; }, [blocker.state]);
   const save = async () => {
-    if (!onSave || saving.current || blocker.state !== 'blocked') return;
+    if (!onSave || locked || saving.current || blocker.state !== 'blocked') return;
     saving.current = true;
     setBusy(true);
     let saved = false;
@@ -24,13 +27,16 @@ function RouteGuard({ dirty, onSave, onBlockedChange, locked }: Props) {
     saving.current = false;
     setBusy(false);
     setFailed(!saved);
-    if (saved) blocker.proceed();
+    if (saved && !proceeding.current) { proceeding.current = true; blocker.proceed(); }
   };
   useEffect(() => {
-    if (blocker.state === 'blocked' && onSave && !failed) void save();
+    if (blocker.state === 'blocked' && !onSave && !dirty && !locked && !saving.current && !proceeding.current) { proceeding.current = true; blocker.proceed(); }
+  }, [blocker, dirty, locked, onSave]);
+  useEffect(() => {
+    if (blocker.state === 'blocked' && onSave && !failed && !locked) void save();
     // A blocked navigation starts one save attempt; retries are explicit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocker.state]);
+  }, [blocker.state, locked]);
 
   return <ConfirmDialog open={blocker.state === 'blocked'}
     title={busy || locked ? 'Saving changes…' : onSave ? 'Changes could not be saved' : 'Discard unsaved changes?'}
@@ -38,7 +44,7 @@ function RouteGuard({ dirty, onSave, onBlockedChange, locked }: Props) {
     cancelLabel="Keep editing" confirmLabel={onSave ? 'Retry save' : 'Discard changes'}
     danger={!onSave} busy={busy || locked}
     onCancel={() => { setFailed(false); blocker.reset?.(); }}
-    onConfirm={() => { if (onSave) void save(); else blocker.proceed?.(); }} />;
+    onConfirm={() => { if (onSave) void save(); else if (!proceeding.current) { proceeding.current = true; onDiscard?.(); blocker.proceed?.(); } }} />;
 }
 
 export function UnsavedChangesGuard(props: Props) {

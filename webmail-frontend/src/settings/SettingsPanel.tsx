@@ -8,7 +8,6 @@ import { normalizeSettingsTab, type SettingsTab } from './tabs';
 import { settingsNavGroups } from './settingsNavigation';
 import type { CalendarUserSettings, ContactsUserSettings, MailUserSettings } from './settingsApi';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
-import { useToast } from '../shared/components/Toast';
 import { supportedTimeZones } from '../calendar/calendarTime';
 import { AccountSecurityControls } from './AccountSecurityControls';
 import { RuleRunDialog } from './RuleRunDialog';
@@ -207,7 +206,7 @@ export function SettingsContent(props: SettingsContentProps) {
   else if (activeTab === 'mail_signatures') content = <SignaturesPane {...props} />;
   else if (activeTab === 'mail_reading') content = <MailReadingPane {...props} />;
   else if (activeTab === 'mail_filters') content = <FiltersPane {...props} />;
-  else if (activeTab === 'mail_spam') content = <MailSpamPane {...props} />;
+  else if (activeTab === 'mail_spam') content = <MailSpamPane />;
   else if (activeTab === 'calendar_defaults') content = <CalendarPane {...props} />;
   else if (activeTab === 'contacts_display') content = <ContactsPane {...props} />;
   else if (activeTab === 'sync_devices') content = <SyncDevicesPane {...props} />;
@@ -302,6 +301,7 @@ function AppearancePane({ appearance, onAppearanceChange }: SettingsContentProps
         <section className="settings-section">
           <h3>Density</h3>
           <SegmentedControl options={densityOptions} value={appearance.density} onChange={value => updateAppearance({ density: value })} />
+          <p className="settings-description">General app spacing. Mail list density is set under Mail → Reading.</p>
         </section>
 
         <section className="settings-section">
@@ -580,6 +580,11 @@ function MailReadingPane({ mailSettings, onMailSettingsChange }: SettingsContent
             <span>Show message snippets</span>
             <input type="checkbox" checked={mailSettings.reading.snippets} onChange={event => updateReading({ snippets: event.target.checked })} />
           </label>
+          <label className="settings-toggle-row">
+            <span>Group related messages</span>
+            <input type="checkbox" checked={mailSettings.reading.threaded} onChange={event => updateReading({ threaded: event.target.checked })} />
+          </label>
+          <p className="settings-description">Related messages loaded in this folder appear together. Each message stays visible and has its own actions; loading older mail can add more replies.</p>
         </section>
 
         <section className="settings-section">
@@ -594,11 +599,12 @@ function MailReadingPane({ mailSettings, onMailSettingsChange }: SettingsContent
           </label>
           <p className="settings-description">Previous and next follow the visible list order. If there is no message in that direction, return to the list.</p>
 
+          <label className="settings-field"><span>Mail list density</span>
           <SegmentedControl
             options={densityOptions}
             value={mailSettings.reading.density}
             onChange={value => updateReading({ density: value })}
-          />
+          /></label>
           <label className="settings-field">
             <span>Preview Pane</span>
             <SegmentedControl
@@ -859,121 +865,11 @@ function FiltersPane({
   );
 }
 
-function MailSpamPane({ mailSettings, onMailSettingsChange }: SettingsContentProps) {
-  const { showToast } = useToast();
-  const [newBlocked, setNewBlocked] = React.useState('');
-  const [newSafe, setNewSafe] = React.useState('');
-
-  const updateSpam = (updates: Partial<MailUserSettings['spam']>) => {
-    onMailSettingsChange({
-      ...mailSettings,
-      spam: {
-        ...mailSettings.spam,
-        ...updates
-      }
-    });
-  };
-
-  const addBlocked = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newBlocked.trim() || !newBlocked.includes('@')) return;
-    const list = [...(mailSettings.spam?.blockedSenders || [])];
-    if (!list.includes(newBlocked.trim().toLowerCase())) {
-      updateSpam({ blockedSenders: [...list, newBlocked.trim().toLowerCase()] });
-      showToast({ type: 'success', message: `${newBlocked.trim()} blocked` });
-    }
-    setNewBlocked('');
-  };
-
-  const removeBlocked = (email: string) => {
-    updateSpam({ blockedSenders: (mailSettings.spam?.blockedSenders || []).filter(e => e !== email) });
-    showToast({ type: 'info', message: `${email} removed from blocked` });
-  };
-
-  const addSafe = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSafe.trim() || !newSafe.includes('@')) return;
-    const list = [...(mailSettings.spam?.safeSenders || [])];
-    if (!list.includes(newSafe.trim().toLowerCase())) {
-      updateSpam({ safeSenders: [...list, newSafe.trim().toLowerCase()] });
-      showToast({ type: 'success', message: `${newSafe.trim()} added to safe senders` });
-    }
-    setNewSafe('');
-  };
-
-  const removeSafe = (email: string) => {
-    updateSpam({ safeSenders: (mailSettings.spam?.safeSenders || []).filter(e => e !== email) });
-    showToast({ type: 'info', message: `${email} removed from safe senders` });
-  };
-
-  return (
-    <div className="settings-page">
-      <SettingsHeader title="Spam & Senders" eyebrow="Mail" />
-      <JunkList />
-      
-      <div className="settings-grid">
-        <section className="settings-section">
-          <h3>Blocked Senders</h3>
-          <p className="settings-description">Messages from these addresses will be automatically moved to Spam.</p>
-          <div className="settings-disabled-note" style={{ marginBottom: '16px', padding: '12px', background: 'rgba(255,193,7,0.08)', border: '1px solid rgba(255,193,7,0.15)', borderRadius: '8px', fontSize: '0.85rem' }}>
-            <strong>Note:</strong> These lists are stored with your account but are not yet actively enforced by the mail server. They will be applied to incoming mail in a future update.
-          </div>
-          <form onSubmit={addBlocked} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-            <input 
-              className="glass-input" 
-              style={{ flex: 1 }} 
-              placeholder="user@example.com or @domain.com" 
-              value={newBlocked} 
-              onChange={e => setNewBlocked(e.target.value)} 
-            />
-            <button className="btn btn-primary" type="submit">Add</button>
-          </form>
-          <div className="rules-list">
-            {(mailSettings.spam?.blockedSenders || []).length === 0 ? (
-              <div className="empty-state" style={{ padding: '20px' }}>No blocked senders.</div>
-            ) : (
-              (mailSettings.spam?.blockedSenders || []).map(email => (
-                <div key={email} className="condition-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>{email}</span>
-                  <button className="btn btn-ghost" type="button" onClick={() => removeBlocked(email)}><Trash2 size={16} /></button>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="settings-section">
-          <h3>Safe Senders</h3>
-          <p className="settings-description">Messages from these addresses will never be marked as Spam.</p>
-          <div className="settings-disabled-note" style={{ marginBottom: '16px', padding: '12px', background: 'rgba(255,193,7,0.08)', border: '1px solid rgba(255,193,7,0.15)', borderRadius: '8px', fontSize: '0.85rem' }}>
-            <strong>Note:</strong> These lists are stored with your account but are not yet actively enforced by the mail server. They will be applied to incoming mail in a future update.
-          </div>
-          <form onSubmit={addSafe} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-            <input 
-              className="glass-input" 
-              style={{ flex: 1 }} 
-              placeholder="user@example.com or @domain.com" 
-              value={newSafe} 
-              onChange={e => setNewSafe(e.target.value)} 
-            />
-            <button className="btn btn-primary" type="submit">Add</button>
-          </form>
-          <div className="rules-list">
-            {(mailSettings.spam?.safeSenders || []).length === 0 ? (
-              <div className="empty-state" style={{ padding: '20px' }}>No safe senders.</div>
-            ) : (
-              (mailSettings.spam?.safeSenders || []).map(email => (
-                <div key={email} className="condition-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>{email}</span>
-                  <button className="btn btn-ghost" type="button" onClick={() => removeSafe(email)}><Trash2 size={16} /></button>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
+function MailSpamPane() {
+  return <div className="settings-page">
+    <SettingsHeader title="Spam & Senders" eyebrow="Mail" />
+    <JunkList />
+  </div>;
 }
 
 function CalendarPane({ setupValues, calendarSettings, calendars, onCalendarSettingsChange }: SettingsContentProps) {
@@ -1483,6 +1379,8 @@ function SegmentedControl<T extends string>({ options, value, onChange }: { opti
       {options.map(option => (
         <button
           key={option.value}
+          aria-label={option.label}
+          aria-pressed={value === option.value}
           type="button"
           className={value === option.value ? 'active' : ''}
           onClick={() => onChange(option.value)}
@@ -1494,7 +1392,7 @@ function SegmentedControl<T extends string>({ options, value, onChange }: { opti
   );
 }
 
-function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders: MailFolder[]; onUpdate: (r: Partial<Rule>) => void; onDelete: () => void }) {
+export function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders: MailFolder[]; onUpdate: (r: Partial<Rule>) => void; onDelete?: () => void }) {
   const exactDuplicates = getExactRuleDuplicateIndexes(rule);
   const duplicateCriteria = new Set(exactDuplicates.criteria);
   const duplicateActions = new Set(exactDuplicates.actions);
@@ -1544,9 +1442,9 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
             <span style={{ fontSize: '0.85rem' }}>Enabled</span>
           </label>
         </div>
-        <button className="btn btn-danger" type="button" onClick={onDelete} title="Delete Rule">
+        {onDelete && <button className="btn btn-danger" type="button" onClick={onDelete} title="Delete Rule">
           <Trash2 size={16} />
-        </button>
+        </button>}
       </div>
 
       <div className="builder-section">
@@ -1563,7 +1461,9 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
           <div key={criteria.id} className="condition-row">
             <select className="glass-input glass-select" value={criteria.field} onChange={event => updateCriteria(criteria.id, 'field', event.target.value)}>
               <option value="subject">Subject</option>
-              <option value="from">Sender</option>
+              <option value="from">Sender header</option>
+              <option value="from_address">Sender address</option>
+              <option value="from_domain">Sender domain</option>
               <option value="to">Recipient</option>
               <option value="body">Body</option>
             </select>
@@ -1572,6 +1472,7 @@ function RuleEditor({ rule, folders, onUpdate, onDelete }: { rule: Rule; folders
               <option value="matches">matches pattern</option>
               <option value="not_contains">does not contain</option>
               <option value="equals">equals</option>
+              {criteria.field === 'from_address' && <option value="is_one_of">is one of (comma separated)</option>}
             </select>
             <div className="rule-duplicate-value">
               <input

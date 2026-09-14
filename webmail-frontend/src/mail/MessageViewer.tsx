@@ -1,3 +1,4 @@
+import { useSafeImageSenders } from './useSafeImageSenders';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { Reply, ReplyAll, Forward, Flag, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, ImageOff, ChevronLeft, ShieldAlert } from 'lucide-react';
@@ -31,6 +32,7 @@ import {
 class ReplyIdentitiesUnavailableError extends Error {}
 
 export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
+  const safeImageSenders = useSafeImageSenders();
   const { showToast } = useToast();
   const { folder, uid } = useParams<{ folder: string; uid: string }>();
   const navigate = useNavigate();
@@ -61,6 +63,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     messageAction,
     messages,
     prepareMessageCompose,
+    setReplyText,
   } = mail;
 
   const messageUid = uid ? parseInt(uid, 10) : 0;
@@ -86,12 +89,14 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
     try {
       const result = await prepareMessageCompose(action, message, sourceFolder, body);
       if (typeof result === 'object') showToast({ type: 'error', ...result });
+      else if (result === 'started' && body) setReplyText('');
     } finally {
       setPreparingComposeAction(null);
     }
   }, [
     message,
     prepareMessageCompose,
+    setReplyText,
     preparingComposeAction,
     showToast,
     sourceFolder,
@@ -356,7 +361,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
   const allowRemoteContent = shouldLoadExternalContent(
     mail.mailSettings.reading.externalImages,
     message.from || '',
-    mail.mailSettings.spam.safeSenders,
+    safeImageSenders,
     explicitlyLoadedRemoteContent,
   );
 

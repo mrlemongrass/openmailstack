@@ -4,7 +4,6 @@ import { MailLayout } from './MailLayout';
 import { MessageList } from './MessageList';
 import { ComposeModal } from './ComposeModal';
 import { useMail } from './hooks/useMail';
-import { useAppearance } from '../shared/hooks/useAppearance';
 import {
   defaultMailSettings,
   getUserSettings,
@@ -25,8 +24,6 @@ import {
 } from '../shared/crossSuiteCompose';
 
 export function MailRoutes() {
-  const { appearance } = useAppearance();
-  const density = (appearance.density as 'compact' | 'cozy' | 'comfortable') || 'cozy';
   const [mailSettings, setMailSettings] = useState<MailUserSettings>(defaultMailSettings);
   const [mailSettingsReady, setMailSettingsReady] = useState(false);
   const [mailSettingsError, setMailSettingsError] = useState('');
@@ -67,7 +64,7 @@ export function MailRoutes() {
     mailSettingsError,
     onRetryMailSettings: retryMailSettings,
     onFavoriteSettingsChange: persistFavoriteSettings,
-    isThreaded: false,
+    isThreaded: mailSettings.reading.threaded,
     userIdentities,
     userIdentitiesReady,
     userIdentitiesError,
@@ -120,8 +117,8 @@ export function MailRoutes() {
     <>
       <Routes>
         <Route element={<MailLayout mail={mail} />}>
-          <Route path=":folder" element={<MessageList mail={mail} density={density} />} />
-          <Route path=":folder/:uid" element={<MessageList mail={mail} density={density} />} />
+          <Route path=":folder" element={<MessageList mail={mail} density={mailSettings.reading.density} />} />
+          <Route path=":folder/:uid" element={<MessageList mail={mail} density={mailSettings.reading.density} />} />
         </Route>
       </Routes>
       <ComposeModal mail={mail} />

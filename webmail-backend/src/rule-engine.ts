@@ -1,3 +1,4 @@
+import { ruleAddressValues } from './rule-semantics';
 import { senderAddress } from './rule-address';
 import {
     executableRuleActions,
@@ -196,6 +197,7 @@ function criterionMatches(
 
     const actual = actualText.toLowerCase();
     const expected = expectedText.toLowerCase();
+    if (criterion.operator === 'is_one_of') return ruleAddressValues(expectedText).includes(actual);
     const matches = criterion.operator === 'equals' ? actual === expected : actual.includes(expected);
 
     return criterion.operator === 'not_contains' ? !matches : matches;
@@ -224,9 +226,18 @@ export function evaluateRulesForMessage(rules: SieveRule[], message: RuleMessage
                 ? [{ criterion, criterionIndex }]
                 : []
         ));
-        const criteria = executableCriteria.map(({ criterion }) => (
-            criterionMatches(criterion, message, wildcardContext)
-        ));
+        const exceptionMatches = (rule.exceptions || []).map(item => ({ field: item.field, match: criterionMatches(item, message, wildcardContext) }));
+        const addressExceptions = exceptionMatches.filter(item => item.field === 'from_address').map(item => item.match);
+        const allExceptions = exceptionMatches.map(item => item.match);
+        const addressSafe = addressExceptions.includes(true) ? true : addressExceptions.includes('unknown') ? 'unknown' : false;
+        const domainSafe = allExceptions.includes(true) ? true : allExceptions.includes('unknown') ? 'unknown' : false;
+        const criteria = executableCriteria.map(({ criterion }) => {
+            const match = criterionMatches(criterion, message, wildcardContext);
+            if (match === false) return false;
+            const safe = criterion.field === 'from_domain' ? domainSafe : addressSafe;
+            if (safe === true) return false;
+            return safe === 'unknown' ? 'unknown' : match;
+        });
         const actions = executableRuleActions(rule);
         if (criteria.length === 0 || actions.length === 0) return;
 

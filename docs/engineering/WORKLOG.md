@@ -11538,3 +11538,30 @@ and rejected logout recovery. Deliberate browser 503s are test fixtures.
 Release limitation: these checks do not claim exhaustive manual permutations or
 physical-client confirmation. Remaining P2/P3 tasks are listed in the review.
 Guarded live-release and artifact proof follow below after deployment.
+
+
+### P1 live release verification
+
+Implementation `cfd1599a` is committed and pushed to `origin/main`. Both guarded
+stages exited 0: bridge then active. Each passed public IMAPS and ActiveSync
+Mail/Contacts/Calendar before and after installation; each post-deploy gate also
+passed the routine 60-second Ping check. Canary cleanup passed without warnings.
+No rollback was needed for this release. Retained rollback snapshots:
+- Prior active runtime: `/var/backups/openmailstack/protocol-guarded-webmail-20260914T211332Z`.
+- Verified bridge runtime: `/var/backups/openmailstack/protocol-guarded-webmail-20260914T212123Z`.
+
+Independent `tests/integration/staging_smoke.sh ./config.conf` exited 0:
+services/listeners, configuration checks, Rspamd functional scan, HTTPS/SMTP
+STARTTLS/IMAPS TLS verification, webmail/admin/autoconfiguration endpoints and
+unauthenticated API rejection passed.
+
+All 57 frontend distribution files and seven changed backend JavaScript runtime
+files match the repository build. Public index and six referenced/editor/rule
+assets match as well. Public webmail returns HTTP 200, local/public auth returns
+HTTP 401, backend/admin VERSION is `0.1.5`, and outbound runtime mode is `active`.
+
+Existing dependency-audit advisories and Postfix/Rspamd configuration warnings
+remain outside this change. Browser recovery flows used synthetic API state;
+database persistence used a disposable schema, while live protocols used the
+isolated canary with enforced cleanup. Physical-client confirmation and the
+remaining P2/P3 backlog are not claimed completed.

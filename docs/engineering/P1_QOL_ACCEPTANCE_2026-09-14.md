@@ -72,8 +72,11 @@ release; it is not a claim that every permutation was manually exercised.
   panes, rule preview, Scheduler confirmation, logout failure, mobile sender
   policy. API routes were intercepted with synthetic state and deliberate 503s.
   Browser console failures corresponding to those injected 503s are expected.
-- Live protocol gate, artifact hashes and health checks are recorded in WORKLOG
-  after the guarded release completes.
+- Implementation `cfd1599a` is live. Both bridge and active protocol gates passed,
+  including post-deploy Ping and canary cleanup. Independent live health checks
+  passed; all 57 frontend files and seven changed backend runtime files match
+  the build. Public assets and active outbound mode were verified. Rollback
+  snapshot paths and release limitations are recorded in WORKLOG.
 
 ## Remaining product scope
 

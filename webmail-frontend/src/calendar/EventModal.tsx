@@ -16,6 +16,8 @@ import {
   wallDateToInstant,
   type CalendarTimeKind,
 } from './calendarTime';
+import { ConfirmDialog } from '../shared/components/ConfirmDialog';
+import { UnsavedChangesGuard } from '../shared/components/UnsavedChangesGuard';
 import { freeBusyStatusForUser } from './freeBusy';
 
 function parseWallInput(value: string, allDay: boolean): Date {
@@ -36,9 +38,19 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
 
   // ── All hooks MUST be before the early return ──────────────────────────
 
+  const [dirty, setDirty] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const [routeBlocked, setRouteBlocked] = useState(false);
+  const pendingClose = useRef<(() => void) | null>(null);
+  const saveLock = useRef(false);
   const [guestInput, setGuestInput] = useState('');
   const [guests, setGuests] = useState<string[]>([]);
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  useEffect(() => {
+    if (cal.isEventModalOpen) return;
+    const timer = setTimeout(() => { setDirty(false); setConfirmClose(false); setGuestInput(''); setAttachmentFiles([]); }, 0);
+    return () => clearTimeout(timer);
+  }, [cal.isEventModalOpen]);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Contact autocomplete for guest field
@@ -75,6 +87,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   }, [allGuestContacts]);
 
   const selectGuestSuggestion = useCallback((s: { name: string; email: string }) => {
+    setDirty(true);
     const email = s.email.trim();
     if (email && !guests.includes(email)) {
       setGuests([...guests, email]);
@@ -133,10 +146,16 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   }, [cal.isEventModalOpen, cal.newEvent.guests]);
 
   // ── Early return after all hooks ──────────────────────────────────────
-  const closeEventDialog = () => cal.setIsEventModalOpen(false);
+  const requestClose = (action: () => void = () => cal.setIsEventModalOpen(false)) => {
+    if (cal.eventSaving || saveLock.current) return;
+    if (dirty) { pendingClose.current = action; setConfirmClose(true); }
+    else action();
+  };
+  const closeEventDialog = () => requestClose();
   useModalFocus({
     dialogRef,
     open: cal.isEventModalOpen,
+    active: cal.isEventModalOpen && !confirmClose && !routeBlocked,
     onClose: closeEventDialog,
   });
 
@@ -177,29 +196,37 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   };
 
   const handleSave = async () => {
-    const ok = await cal.saveEvent();
-    if (ok !== false) {
-      showToast({ type: 'success', message: isEditing ? 'Event updated' : 'Event created' });
-    }
+    if (saveLock.current) return;
+    saveLock.current = true;
+    try {
+      const ok = await cal.saveEvent();
+      if (ok !== false) {
+        setDirty(false);
+        showToast({ type: 'success', message: isEditing ? 'Event updated' : 'Event created' });
+      }
+    } finally { saveLock.current = false; }
   };
 
   const openMoreActions = (button: HTMLButtonElement) => {
     if (!cal.editingEvent?.id) return;
     const bounds = button.getBoundingClientRect();
     const event = cal.editingEvent as CalendarEvent;
-    cal.setIsEventModalOpen(false);
-    window.setTimeout(() => {
-      cal.openEventContextMenu({
-        x: Math.min(bounds.right, window.innerWidth - 8),
-        y: Math.min(bounds.bottom + 4, window.innerHeight - 8),
-      }, event);
-    }, 0);
+    requestClose(() => {
+      cal.setIsEventModalOpen(false);
+      window.setTimeout(() => {
+        cal.openEventContextMenu({
+          x: Math.min(bounds.right, window.innerWidth - 8),
+          y: Math.min(bounds.bottom + 4, window.innerHeight - 8),
+        }, event);
+      }, 0);
+    });
   };
 
   // #10 Event attachments
   const attachmentSize = attachmentFiles.reduce((s, f) => s + f.size, 0);
 
   const handleAddGuest = () => {
+    setDirty(true);
     const email = guestInput.trim();
     if (email && email.includes('@') && !guests.includes(email)) {
       setGuests([...guests, email]);
@@ -208,6 +235,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
   };
 
   const handleRemoveGuest = (guest: string) => {
+    setDirty(true);
     const nextGuests = guests.filter((candidate) => candidate !== guest);
     setGuests(nextGuests);
     setNewEvent((previous) => ({ ...previous, guests: nextGuests }));
@@ -243,11 +271,11 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
                 <MoreHorizontal size={16} aria-hidden="true" /> More actions
               </button>
             )}
-            <button className="btn btn-ghost" aria-label="Close event editor" onClick={() => cal.setIsEventModalOpen(false)} style={{ padding: 4 }}><X size={18} /></button>
+            <button className="btn btn-ghost" aria-label="Close event editor" disabled={cal.eventSaving} onClick={closeEventDialog} style={{ padding: 4 }}><X size={18} /></button>
           </div>
         </div>
         {/* Body */}
-        <div className="event-dialog-body">
+        <div className="event-dialog-body" onChangeCapture={() => setDirty(true)}>
           {cal.eventError && <div style={{ padding: '8px 12px', borderRadius: 'var(--radius-md)', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)', fontSize: '0.8rem' }}>{cal.eventError}</div>}
           {isReadOnly && (
             <div className="calendar-read-only-note" role="note">
@@ -255,7 +283,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
             </div>
           )}
 
-          <fieldset className="event-dialog-fields" disabled={isReadOnly}>
+          <fieldset className="event-dialog-fields" disabled={isReadOnly || cal.eventSaving}>
 
           <input className="glass-input" placeholder="Event title" autoFocus={!isReadOnly}
             value={evt.title || ''} onChange={(e) => cal.setNewEvent((prev) => ({ ...prev, title: e.target.value }))} />
@@ -485,7 +513,7 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
         </div>
         {/* Footer */}
         <div className="event-dialog-footer">
-          <button className="btn btn-ghost" onClick={() => cal.setIsEventModalOpen(false)}>{isReadOnly ? 'Close' : 'Cancel'}</button>
+          <button className="btn btn-ghost" disabled={cal.eventSaving} onClick={closeEventDialog}>{isReadOnly ? 'Close' : 'Cancel'}</button>
           {!isReadOnly && (
             <button className="btn btn-primary" onClick={handleSave} disabled={cal.eventSaving || cal.writableCalendars.length === 0}>
               <Save size={14} /> {cal.eventSaving ? 'Saving...' : 'Save event'}
@@ -493,6 +521,9 @@ export function EventModal({ cal }: { cal: ReturnType<typeof useCalendar> }) {
           )}
         </div>
       </div>
+      <UnsavedChangesGuard locked={cal.eventSaving} dirty={dirty || cal.eventSaving} onBlockedChange={setRouteBlocked} />
+      <ConfirmDialog open={confirmClose} title="Discard event changes?" message="Your changes have not been saved." cancelLabel="Keep editing" confirmLabel="Discard changes" danger
+        onCancel={() => setConfirmClose(false)} onConfirm={() => { setConfirmClose(false); setDirty(false); pendingClose.current?.(); }} />
     </div>
   );
 }

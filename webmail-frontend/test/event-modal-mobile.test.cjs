@@ -23,6 +23,8 @@ function renderEventModal() {
   const componentModule = new Module(componentPath, module);
   componentModule.paths = module.paths;
   componentModule.require = id => {
+    if (id === '../shared/components/ConfirmDialog') return { ConfirmDialog: () => null };
+    if (id === '../shared/components/UnsavedChangesGuard') return { UnsavedChangesGuard: () => null };
     if (id === 'lucide-react') {
       return new Proxy({}, {
         get: () => props => React.createElement('svg', props),

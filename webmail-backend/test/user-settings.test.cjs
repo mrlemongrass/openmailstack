@@ -271,3 +271,15 @@ test('generic mail settings writes atomically preserve newer Favorite folders', 
   const update = queries.find(query => query.statement.includes('INSERT INTO webmail_user_settings'));
   assert.match(update.statement, /JSON_EXTRACT\(settings_json, '\$\.folders'\)/);
 });
+
+test('rich templates retain their format while legacy templates remain plain text', () => {
+  assert.deepEqual(normalizeSettings('templates', { templates: [
+    { name: 'Rich', content: '<p><strong>Hello</strong></p>', mode: 'rich' },
+    { name: 'Legacy', content: 'Hello <team>' },
+    { name: 'Invalid', content: 'Hello', mode: 'script' },
+  ] }), { templates: [
+    { name: 'Rich', content: '<p><strong>Hello</strong></p>', mode: 'rich' },
+    { name: 'Legacy', content: 'Hello <team>' },
+    { name: 'Invalid', content: 'Hello' },
+  ] });
+});

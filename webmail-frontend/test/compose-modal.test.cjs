@@ -64,6 +64,7 @@ function loadComposeModule() {
     if (id === '../shared/hooks/useModalFocus') {
       return { useModalFocus: () => undefined };
     }
+    if (id === './compose-content') return loadTypeScriptModule(path.resolve(__dirname, '../src/mail/compose-content.ts'));
     if (id === './outbound-send-feedback') {
       return loadTypeScriptModule(path.resolve(__dirname, '../src/mail/outbound-send-feedback.ts'));
     }

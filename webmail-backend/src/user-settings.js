@@ -209,6 +209,7 @@ function normalizeSettings(namespace, value) {
                 if (!isObject(item) || typeof item.name !== 'string' || !item.name.trim())
                     return [];
                 return [{
+                        ...(item.mode === 'rich' ? { mode: 'rich' } : {}),
                         name: item.name.trim().slice(0, 120),
                         content: typeof item.content === 'string' ? item.content.slice(0, 20000) : '',
                     }];

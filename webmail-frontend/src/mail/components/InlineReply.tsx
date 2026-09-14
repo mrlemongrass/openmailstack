@@ -1,8 +1,11 @@
+import { ConfirmDialog } from '../../shared/components/ConfirmDialog';
+import { mentionsAttachment } from '../compose-content';
 import { Send, Maximize2, Archive } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Spinner } from '../../shared/components/Spinner';
 
 interface InlineReplyProps {
+  attachmentReminder?: boolean;
   replyTo: string;
   replyText: string;
   replySending: boolean;
@@ -19,10 +22,11 @@ interface InlineReplyProps {
 }
 
 export function InlineReply({
-  replyTo, replyText, replySending, onReplyTextChange, onSend, onSendAndArchive,
+  attachmentReminder = true, replyTo, replyText, replySending, onReplyTextChange, onSend, onSendAndArchive,
   onOpenFullCompose, showSendAndArchive = true, sendPhase = 'idle', sendNotice = null,
   checkingEarlierSend = false, onCheckEarlierSend, onVerifiedNonDelivery,
 }: InlineReplyProps) {
+  const [pendingSend, setPendingSend] = useState<'send' | 'archive' | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [replyActionPending, setReplyActionPending] = useState(false);
   const replyActionPendingRef = useRef(false);
@@ -38,6 +42,11 @@ export function InlineReply({
       replyActionPendingRef.current = false;
       setReplyActionPending(false);
     }
+  };
+
+  const requestSend = (kind: 'send' | 'archive') => {
+    if (attachmentReminder && mentionsAttachment('', replyText)) setPendingSend(kind);
+    else void runReplyAction(kind === 'archive' ? onSendAndArchive : onSend).catch(() => undefined);
   };
 
   return (
@@ -96,7 +105,7 @@ export function InlineReply({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
         <div className="inline-reply-actions">
           <button className="btn btn-primary" disabled={!replyText.trim() || replyBusy || sendBlocked}
-            onClick={() => { void runReplyAction(onSend).catch(() => undefined); }}
+            onClick={() => { requestSend('send'); }}
             style={{ fontSize: '0.85rem', padding: '6px 14px' }}>
             <Send size={14} /> {replySending
               ? <><Spinner size={12} /> Sending...</>
@@ -105,7 +114,7 @@ export function InlineReply({
           </button>
           {showSendAndArchive && (
             <button className="btn btn-ghost" disabled={!replyText.trim() || replyBusy || sendBlocked}
-              onClick={() => { void runReplyAction(onSendAndArchive).catch(() => undefined); }}
+              onClick={() => { requestSend('archive'); }}
               style={{ fontSize: '0.8rem' }} title="Send & Archive">
               <Archive size={14} /> Send & Archive
             </button>
@@ -117,6 +126,10 @@ export function InlineReply({
           </button>
         </div>
       </div>
+      <ConfirmDialog open={!!pendingSend} title="Send without an attachment?" message="Your reply mentions an attachment. Open the full editor to add files, or send without one."
+        confirmLabel="Send anyway" cancelLabel="Keep editing" onCancel={() => setPendingSend(null)}
+        extraAction={{ label: 'Add attachment', onClick: () => { setPendingSend(null); void runReplyAction(onOpenFullCompose).catch(() => undefined); } }}
+        onConfirm={() => { const action = pendingSend === 'archive' ? onSendAndArchive : onSend; setPendingSend(null); void runReplyAction(action).catch(() => undefined); }} />
     </div>
   );
 }

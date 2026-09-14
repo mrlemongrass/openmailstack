@@ -23,6 +23,8 @@ function renderInlineReply(overrides = {}) {
   const componentModule = new Module(componentPath, module);
   componentModule.paths = module.paths;
   componentModule.require = id => {
+    if (id === '../../shared/components/ConfirmDialog') return { ConfirmDialog: () => null };
+    if (id === '../compose-content') return { mentionsAttachment: () => false };
     if (id === 'lucide-react') {
       return new Proxy({}, {
         get: () => props => React.createElement('svg', props),

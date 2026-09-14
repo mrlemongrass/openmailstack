@@ -75,6 +75,7 @@ export interface TemplateSettings {
     templates: {
         name: string;
         content: string;
+        mode?: 'rich' | 'plain';
     }[];
 }
 
@@ -298,6 +299,7 @@ export function normalizeSettings(namespace: SettingsNamespace, value: unknown):
             templates: templates.slice(0, 50).flatMap(item => {
                 if (!isObject(item) || typeof item.name !== 'string' || !item.name.trim()) return [];
                 return [{
+                    ...(item.mode === 'rich' ? { mode: 'rich' as const } : {}),
                     name: item.name.trim().slice(0, 120),
                     content: typeof item.content === 'string' ? item.content.slice(0, 20000) : '',
                 }];

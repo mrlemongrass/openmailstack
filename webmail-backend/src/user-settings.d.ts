@@ -68,6 +68,7 @@ export interface TemplateSettings {
     templates: {
         name: string;
         content: string;
+        mode?: 'rich' | 'plain';
     }[];
 }
 export type UserSettings = MailSettings | CalendarSettings | ContactsSettings | AppearanceSettings | TemplateSettings;

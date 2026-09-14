@@ -83,6 +83,7 @@ interface SettingsContentProps {
   loading: boolean;
   saving: boolean;
   settingsSyncError: string;
+  onFlushSettings?: () => Promise<boolean>;
   settingsSaveState: 'idle' | 'saving' | 'saved' | 'error';
   rules: Rule[];
   folders: MailFolder[];
@@ -387,13 +388,13 @@ function MailIdentityPane({ mailSettings, availableSenders, setupMailboxAddress,
 
         <section className="settings-section">
           <h3>Compose</h3>
-          <div className="settings-field">
-            <span>Message format</span>
-            <strong>Plain text</strong>
-            <p className="settings-description">
-              Plain text is the available message format. Rich formatting controls will appear here when the editor supports them.
-            </p>
-          </div>
+          <label className="settings-field">
+            <span>Default message format</span>
+            <select className="glass-input glass-select" value={mailSettings.compose.defaultMode} onChange={event => updateCompose({ defaultMode: event.target.value as 'rich' | 'plain' })}>
+              <option value="plain">Plain text</option>
+              <option value="rich">Rich text</option>
+            </select>
+          </label>
           <label className="settings-field">
             <span>Undo Send</span>
             <select className="glass-input glass-select" value={mailSettings.compose.undoSendSeconds} onChange={event => updateCompose({ undoSendSeconds: Number(event.target.value) as MailUserSettings['compose']['undoSendSeconds'] })}>
@@ -414,9 +415,8 @@ function MailIdentityPane({ mailSettings, availableSenders, setupMailboxAddress,
   );
 }
 
-function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: SettingsContentProps) {
+function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures, onFlushSettings, settingsSaveState }: SettingsContentProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [saveMessage, setSaveMessage] = useState('');
   const selected = signatures.find(s => s.id === selectedId) || (signatures.length > 0 && !selectedId ? signatures[0] : null);
 
   // Auto-select first signature on mount
@@ -427,10 +427,6 @@ function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: Sett
     }
   }, [selectedId, signatures]);
 
-  const handleSave = () => {
-    setSaveMessage('Saved');
-    setTimeout(() => setSaveMessage(''), 2000);
-  };
 
   return (
     <div className="settings-page">
@@ -465,8 +461,8 @@ function SignaturesPane({ signatures, onAddSignature, onUpdateSignatures }: Sett
           </select>
           {selected && (
             <div style={{ display: 'flex', gap: 4 }}>
-              <button className="btn btn-primary" onClick={handleSave} style={{ fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
-                <Check size={14} /> {saveMessage || 'Save'}
+              <button className="btn btn-primary" onClick={() => { void onFlushSettings?.(); }} disabled={settingsSaveState === 'saving'} style={{ fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
+                <Check size={14} /> {settingsSaveState === 'saving' ? 'Saving…' : settingsSaveState === 'saved' ? 'Saved' : 'Save'}
               </button>
               <button className="btn btn-ghost" style={{ color: 'var(--danger)', padding: '6px 10px', whiteSpace: 'nowrap' }}
                 onClick={() => {

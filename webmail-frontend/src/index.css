@@ -4827,3 +4827,17 @@ li[data-checked="true"] .ql-checkbox {
     justify-content: flex-end;
   }
 }
+
+/* The composer owns scrolling; formatting remains usable at narrow widths. */
+.compose-format-select { display: flex; align-items: center; gap: 12px; font-size: .8rem; color: var(--text-secondary); }
+.compose-format-select select { width: auto; padding: 4px 8px; }
+.compose-rich-editor { display: flex; flex-direction: column; flex: 1; min-height: 240px; color: var(--text-primary); }
+.compose-rich-editor .ql-toolbar.ql-snow { border-color: var(--border-glass); border-radius: 8px 8px 0 0; background: var(--surface-color); }
+.compose-rich-editor .ql-container.ql-snow { flex: 1; font-family: inherit; font-size: .95rem; border-color: var(--border-glass); border-radius: 0 0 8px 8px; }
+.compose-rich-editor .ql-editor { min-height: 190px; overflow-wrap: anywhere; background: var(--surface-color); color: var(--text-primary); }
+.compose-rich-editor .ql-editor.ql-blank::before { color: var(--text-secondary); }
+.compose-rich-editor .ql-stroke { stroke: var(--text-secondary); }
+.compose-rich-editor .ql-fill { fill: var(--text-secondary); }
+.compose-rich-editor .ql-toolbar button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.compose-rich-editor .ql-tooltip { left: 0 !important; max-width: 100%; white-space: normal; background: var(--surface-color); color: var(--text-primary); }
+.compose-rich-editor .ql-tooltip input { max-width: 100%; color: var(--text-primary); background: var(--surface-color); }

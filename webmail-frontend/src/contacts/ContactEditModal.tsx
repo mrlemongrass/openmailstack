@@ -1,4 +1,6 @@
 import { useRef, useState } from 'react';
+import { ConfirmDialog } from '../shared/components/ConfirmDialog';
+import { UnsavedChangesGuard } from '../shared/components/UnsavedChangesGuard';
 import { X, Save } from 'lucide-react';
 import type { Contact } from '../shared/types';
 import * as api from '../shared/api';
@@ -16,13 +18,24 @@ export function ContactEditModal({ contact, onClose, onSaved }: {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const dialogRef = useRef<HTMLDivElement>(null);
-    useModalFocus({ dialogRef, open: true, onClose });
+    const [confirmClose, setConfirmClose] = useState(false);
+    const [routeBlocked, setRouteBlocked] = useState(false);
+    const saveLock = useRef(false);
+    const dirty = JSON.stringify(form) !== JSON.stringify(contact);
+    const requestClose = () => {
+        if (saveLock.current) return;
+        if (dirty) setConfirmClose(true);
+        else onClose();
+    };
+    useModalFocus({ dialogRef, open: true, active: !confirmClose && !routeBlocked, onClose: requestClose });
 
     const handleChange = (field: string, value: string) => {
         setForm((prev) => ({ ...prev, [field]: value }));
     };
 
     const handleSave = async () => {
+        if (saveLock.current) return;
+        saveLock.current = true;
         setSaving(true);
         setError('');
         try {
@@ -37,6 +50,7 @@ export function ContactEditModal({ contact, onClose, onSaved }: {
         } catch {
             setError('Network error');
         }
+        saveLock.current = false;
         setSaving(false);
     };
 
@@ -59,9 +73,9 @@ export function ContactEditModal({ contact, onClose, onSaved }: {
                         <div className="sync-setup-eyebrow">{isNew ? 'New' : 'Edit'} Contact</div>
                         <h3 id="contact-dialog-title">{isNew ? 'Create Contact' : form.name || form.email || 'Edit Contact'}</h3>
                     </div>
-                    <button className="btn btn-ghost" aria-label="Close contact editor" onClick={onClose}><X size={18} /></button>
+                    <button className="btn btn-ghost" aria-label="Close contact editor" disabled={saving} onClick={requestClose}><X size={18} /></button>
                 </div>
-                <div className="contact-dialog-body">
+                <fieldset className="contact-dialog-body" disabled={saving} style={{ border: 0, margin: 0, minWidth: 0 }}>
                     <div className="contact-name-fields">
                         <div className="settings-field">
                             <label htmlFor="contact-first-name" style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>First Name</label>
@@ -96,15 +110,17 @@ export function ContactEditModal({ contact, onClose, onSaved }: {
                         <label htmlFor="contact-notes" style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>Notes</label>
                         <textarea id="contact-notes" className="glass-input" rows={3} value={form.notes || ''} onChange={(e) => handleChange('notes', e.target.value)} style={{ resize: 'vertical' }} />
                     </div>
-                    {error && <div className="settings-error-banner">{error}</div>}
-                </div>
+                    {error && <div role="alert" className="settings-error-banner">{error}</div>}
+                </fieldset>
                 <div className="contact-dialog-footer">
-                    <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                    <button className="btn btn-ghost" disabled={saving} onClick={requestClose}>Cancel</button>
                     <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={{ alignSelf: 'flex-end' }}>
                         <Save size={14} /> {saving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
             </div>
+            <UnsavedChangesGuard locked={saving} dirty={dirty || saving} onBlockedChange={setRouteBlocked} />
+            <ConfirmDialog open={confirmClose} title="Discard contact changes?" message="Your changes have not been saved." cancelLabel="Keep editing" confirmLabel="Discard changes" danger onCancel={() => setConfirmClose(false)} onConfirm={onClose} />
         </div>
     );
 }

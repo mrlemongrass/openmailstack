@@ -316,7 +316,7 @@ test('Drafts viewer opens the real composer without reply controls and sends sta
   const row = fs.readFileSync(path.resolve(__dirname, '../src/mail/MessageRow.tsx'), 'utf8');
   const toolbar = fs.readFileSync(path.resolve(__dirname, '../src/mail/MailToolbar.tsx'), 'utf8');
 
-  assert.match(hook, /const resumeDraft = useCallback[\s\S]*hydrateDraftAttachments[\s\S]*draftSaveCoordinatorRef\.current\.reset\([\s\S]*setDraftUid/);
+  assert.match(hook, /const resumeDraft = useCallback[\s\S]*loadDraftForEditing[\s\S]*draftSaveCoordinatorRef\.current\.reset\([\s\S]*setDraftUid/);
   assert.match(hook, /formData\.append\('draftId',\s*currentDraft\.draftId\)/);
   assert.match(hook, /formData\.append\('draftUid',\s*currentDraft\.draftUid\)/);
   assert.match(hook, /formData\.append\('inReplyTo',\s*composeInReplyTo\)/);
@@ -325,7 +325,7 @@ test('Drafts viewer opens the real composer without reply controls and sends sta
   assert.match(hook, /formData\.append\(composeBodyField,\s*composeBody\)/);
   assert.match(hook, /setComposeMode\(state\.mode\)/);
   assert.match(hook, /composePreparationCoordinatorRef/);
-  assert.match(hook, /const requestId = composePreparationCoordinatorRef\.current\.begin\(\)[\s\S]*hydrateDraftAttachments[\s\S]*claimComposeIntent\(requestId\)/);
+  assert.match(hook, /const requestId = composePreparationCoordinatorRef\.current\.begin\(\)[\s\S]*loadDraftForEditing[\s\S]*claimComposeIntent\(requestId\)/);
   assert.match(hook, /formData\.append\('subject',\s*subject\)/);
   assert.match(viewer, /Edit draft/);
   assert.match(viewer, /!isScheduled && !isDraft && <InlineReply/);
@@ -335,4 +335,26 @@ test('Drafts viewer opens the real composer without reply controls and sends sta
   assert.match(row, /isDraft \? \([\s\S]*Delete draft[\s\S]*: !isScheduled &&/);
   assert.match(toolbar, /draftMode \? \([\s\S]*onBulkAction\('delete'\)[\s\S]*Delete/);
   assert.match(cache, /cc:\s*detail\.cc[\s\S]*bcc:\s*detail\.bcc[\s\S]*replyTo:\s*detail\.replyTo[\s\S]*draftId:\s*detail\.draftId/);
+});
+
+
+test('editing a draft loads fresh HTML and attachments instead of reusing a stale preview', async () => {
+  const { loadDraftForEditing } = loadModule();
+  const requests = [];
+  const state = await loadDraftForEditing(draft.uid, 'Team/Drafts', async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith(`/messages/${draft.uid}`)) return new Response(JSON.stringify({ message: { ...draft,
+      html: '<p><strong>Latest edit</strong></p>', text: 'Latest edit', bodyMode: 'rich',
+      attachments: [{ id: 9, filename: 'latest.txt', contentType: 'text/plain' }],
+    } }));
+    return new Response('latest attachment');
+  });
+  assert.equal(state.body, '<p><strong>Latest edit</strong></p>');
+  assert.equal(state.mode, 'rich');
+  assert.equal(state.attachments[0].name, 'latest.txt');
+  assert.equal(await state.attachments[0].text(), 'latest attachment');
+  assert.equal(requests[0].options.cache, 'no-store');
+  assert.match(requests[1].url, /attachments\/9/);
+  await assert.rejects(loadDraftForEditing(draft.uid, 'Drafts', async () => new Response('', {status:503})), /latest draft could not be loaded/);
+  await assert.rejects(loadDraftForEditing(draft.uid, 'Drafts', async () => new Response(JSON.stringify({message:{...draft,uid:draft.uid+1}}))), /requested draft/);
 });

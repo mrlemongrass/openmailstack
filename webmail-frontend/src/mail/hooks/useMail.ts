@@ -1,3 +1,4 @@
+import { plainToHtml } from '../compose-content';
 import { useState, useCallback, useEffect, useMemo, useRef, type SetStateAction } from 'react';
 import type {
   Message, MailFolder, Signature, Rule, SavedSearch, FolderPathMutationResult,
@@ -25,7 +26,7 @@ import { createMailSearchInputController } from '../mail-search-input';
 import { createMailSearchRequestCoordinator, isMailSearchAbort } from '../mail-search-request';
 import { mailIdentities, resolveComposeIdentity, selectComposeFrom } from '../mail-runtime-settings';
 import { createDraftSaveCoordinator } from '../draft-save-coordinator';
-import { draftComposeState, hydrateDraftAttachments, hydrateForwardContent } from '../draft-resume';
+import { loadDraftForEditing, hydrateForwardContent, type DraftComposeState } from '../draft-resume';
 import { createComposePreparationCoordinator } from '../compose-preparation-coordinator';
 import {
   messageComposeActionLabel,
@@ -590,17 +591,17 @@ export function useMail(_opts: UseMailOptions) {
     setComposeInReplyTo(initial.inReplyTo || '');
     setComposeReferences(initial.references || '');
     setComposeSubject(initial.subject || '');
-    setComposeBody(initial.body || '');
+    setComposeBody(_opts.mailSettings.compose.defaultMode === 'rich' ? (initial.body ? plainToHtml(initial.body) : '') : initial.body || '');
     setComposeAttachments(initial.attachments || []);
     setComposeFrom(initial.from || '');
     setComposeSignature('none');
-    setComposeMode('plain');
+    setComposeMode(_opts.mailSettings.compose.defaultMode);
     setShowCc(Boolean(initial.cc));
     setShowBcc(Boolean(initial.bcc));
     setComposeDocked(false);
     setIsComposing(true);
     return true;
-  }, [claimComposeIntent]);
+  }, [claimComposeIntent, _opts.mailSettings.compose.defaultMode]);
 
   // ---- Data fetching (must be before handleSend) ----
   const fetchFolders = useCallback(async () => {
@@ -1085,16 +1086,15 @@ export function useMail(_opts: UseMailOptions) {
       draftTimerRef.current = null;
     }
     await draftSaveCoordinatorRef.current.flush();
-    let attachments: File[];
+    let state: DraftComposeState;
     try {
-      attachments = await hydrateDraftAttachments(message, folder, fetch, preparationSignal);
+      state = await loadDraftForEditing(message.uid, folder, fetch, preparationSignal);
     } catch (error) {
       if (!composePreparationCoordinatorRef.current.isCurrent(requestId)) {
         return { senderChanged: false, opened: false };
       }
       throw error;
     }
-    const state = draftComposeState(message, attachments);
     const restoredFrom = selectComposeFrom(
       state.from,
       identities,

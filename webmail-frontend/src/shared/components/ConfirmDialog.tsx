@@ -10,6 +10,7 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  busy?: boolean;
   extraAction?: { label: string; onClick: () => void; danger?: boolean };
   onConfirm: () => void;
   onCancel: () => void;
@@ -22,12 +23,13 @@ export function ConfirmDialog({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   danger = false,
+  busy = false,
   extraAction,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
-  useModalFocus({ dialogRef, open, onClose: onCancel });
+  useModalFocus({ dialogRef, open, onClose: () => { if (!busy) onCancel(); } });
 
   if (!open) return null;
 
@@ -39,7 +41,7 @@ export function ConfirmDialog({
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: 20,
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+      onClick={(e) => { if (!busy && e.target === e.currentTarget) onCancel(); }}
     >
       <div
         ref={dialogRef}
@@ -74,18 +76,19 @@ export function ConfirmDialog({
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', marginTop: 20 }}>
-          <button className="btn btn-ghost" onClick={onCancel} style={{ fontSize: '0.85rem' }}>
+          <button className="btn btn-ghost" disabled={busy} onClick={onCancel} style={{ fontSize: '0.85rem' }}>
             {cancelLabel}
           </button>
           {extraAction && (
             <button className={extraAction.danger ? 'btn btn-danger' : 'btn btn-ghost'}
-              onClick={extraAction.onClick} style={{ fontSize: '0.85rem' }}>
+              disabled={busy} onClick={extraAction.onClick} style={{ fontSize: '0.85rem' }}>
               {extraAction.label}
             </button>
           )}
           <button
             className={danger ? 'btn btn-danger' : 'btn btn-primary'}
             onClick={onConfirm}
+            disabled={busy}
             style={{ fontSize: '0.85rem' }}
           >
             {confirmLabel}

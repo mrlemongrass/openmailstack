@@ -11275,3 +11275,65 @@ any request is made. Dirty-form protection in Calendar/Contacts, rich draft
 editing, disconnected attachment reminders, and keyboard/error handling for
 Templates remain in the review backlog. Suite screenshots cover initial/empty
 states, not every workflow or long-content case.
+
+## 2026-09-14 — Four editor priorities and requested live release
+
+### Acceptance
+
+The operator explicitly requested all four priorities from the editor review,
+commit/push, and live deployment. Settings navigation must save pending edits or
+retain them on error. Compose must edit and round-trip supported rich content.
+Calendar/Contacts must protect dirty forms. Attachment reminders, keyboard entry
+and template save recovery must work through the visible controls.
+
+### Changes
+
+- `settings-save-queue.ts`, Settings routes/panel: serialize acknowledged saves,
+  coalesce edits by namespace, flush before route navigation, retain failures for
+  retry, and make Signature Save truthful. Expose the default message format.
+- `main.tsx`, `UnsavedChangesGuard.tsx`, `ConfirmDialog.tsx`: data-router navigation
+  blocking, unload warning, failed-save recovery and busy confirmation state.
+  Calendar/Contacts use the guard plus local discard prompts and save locks.
+- `RichComposeEditor.tsx`, `compose-content.ts`, Compose, draft resume and mail
+  hook: rich/plain editor, safe supported formatting, labelled toolbar, explicit
+  format conversion, HTML-aware signatures/templates and latest-draft fetching.
+  The browser round-trip exposed stale cached bodies; fetching the latest draft
+  before hydration fixes this and now has an executable regression.
+- Compose and InlineReply/MessageViewer: attachment reminders for send/schedule,
+  inline Send and Send & Archive; keyboard Attach button; recipient combobox
+  semantics; template name form, save errors, retry and rich template content.
+- Backend `user-settings.ts` and generated artifacts: retain optional rich template
+  mode, keeping existing plain templates compatible. No schema migration.
+- Regression tests and `WEBAPP_EDITOR_UX_REVIEW_2026-09-14.md`/`UX_AUDIT.md` updated.
+
+### Proof before deployment
+
+- Frontend full suite: 274 passed, zero failures. ESLint and production build pass.
+- Backend full suite: 1,004 passed, seven skipped, zero failures. Backend build
+  and focused settings/outbound tests (43/43) pass.
+- Full integration runner passed, including guarded deployment, rollback,
+  protocol and backup fixtures. The final frontend draft-loader correction was
+  followed by the full frontend suite, lint and production build again.
+- Chromium against the real frontend with synthetic APIs: failed Settings save
+  blocks navigation, retry persists the pending name; both PIM editors retain
+  changed fields when close/navigation is cancelled; rich formatting, HTML draft
+  and send payloads, retained body after send rejection, and latest-text reopening;
+  attachment reminder, template failure/retry and keyboard file chooser.
+- Screenshots under `output/playwright/editor-audit-20260914/`. Fixture setup
+  mistakes and intentional 400/503/SSE responses are not product errors. No real
+  user mail/PIM/settings was mutated and no message was sent by these UI tests.
+
+### Limits and next task
+
+Rich text supports text formatting, links and lists. Images and complex layouts
+require explicit simplification before editing and otherwise keep the original
+body. Previously flattened signatures cannot be reconstructed automatically.
+Separate-window pop-out, physical mobile keyboards and device sync confirmation
+remain outside this change. Next: section-specific Settings load/retry, then
+single-owner separate-window Compose. Live gates and rollback paths follow below.
+
+Final rich-editor checks: No signature removes an untouched rich signature after
+Quill normalizes its blank lines; bullet lists are saved as standard `<ul><li>`
+HTML, not Quill-only editing markup. Rich editor dark-mode styling is verified at
+390×844 in `rich-compose-mobile-final.png`. The final affected tests, lint and
+build were repeated after these corrections and passed.

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { X, Send, Paperclip, Clock, Image, FileText, Maximize2, Minimize2, Grip } from 'lucide-react';
 import { Spinner } from '../shared/components/Spinner';
 import { ConfirmDialog } from '../shared/components/ConfirmDialog';
@@ -11,23 +11,13 @@ import { uniqueContactSuggestions, type ContactSuggestion } from '../shared/cont
 import { useModalFocus } from '../shared/hooks/useModalFocus';
 import { outboundSendFeedback, scheduledDateFromLocalInputs } from './outbound-send-feedback';
 
+import { htmlToPlainText as stripHtml, plainToHtml, safeComposeHtml, mentionsAttachment } from './compose-content';
+const RichComposeEditor = lazy(() => import('./RichComposeEditor'));
+
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB warning
 const BLOCK_SIZE = 50 * 1024 * 1024; // 50MB block
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
-
-function stripHtml(html: string): string {
-  // Signature settings store HTML; plain Compose must retain its line boundaries.
-  const fragment = document.createElement('template');
-  fragment.innerHTML = html;
-  fragment.content.querySelectorAll('script, style, template').forEach(node => node.remove());
-  fragment.content.querySelectorAll('br').forEach(node => node.replaceWith(document.createTextNode('\n')));
-  Array.from(fragment.content.querySelectorAll('p, div, li, tr, h1, h2, h3, h4, h5, h6, blockquote'))
-    .reverse().forEach(node => {
-      if (!node.textContent?.endsWith('\n')) node.append(document.createTextNode('\n'));
-    });
-  return (fragment.content.textContent || '').replace(/\u00a0/g, ' ').trim();
-}
 
 function totalSize(files: File[]): number {
   return files.reduce((sum, f) => sum + f.size, 0);
@@ -58,6 +48,12 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   const signatureInitialized = useRef(false);
   const insertedSignature = useRef('');
   const closeActionRef = useRef(false);
+  const attachmentInput = useRef<HTMLInputElement>(null);
+  const [plainConfirm, setPlainConfirm] = useState(false);
+  const [simplifyConfirm, setSimplifyConfirm] = useState(false);
+  const [attachmentConfirm, setAttachmentConfirm] = useState<{ sendAt?: Date } | null>(null);
+  const rich = mail.composeMode === 'rich';
+  const complexLayout = rich && /<(?:img|table|video|audio|iframe|object|svg)\b/i.test(mail.composeBody);
 
   const resizeComposer = (width: number, height: number) => {
     setEditorSize({
@@ -156,10 +152,14 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   // Templates
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateError, setTemplateError] = useState('');
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const templateSaveLock = useRef(false);
+  const loadTemplates = () => getUserSettings('templates').then(settings => { setTemplates(settings.templates); setTemplatesLoaded(true); setTemplateError(''); }).catch(() => setTemplateError('Templates could not be loaded. Try again.'));
   useEffect(() => {
-    getUserSettings('templates')
-      .then((settings) => setTemplates(settings.templates))
-      .catch(() => {});
+    void loadTemplates();
   }, []);
 
   // Toast for send confirmation
@@ -241,11 +241,11 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
       signatureInitialized.current = true;
       if (mail.draftUid || composeSignature !== 'none') return;
       const def = signatures.find((s: Signature) => s.isDefault);
-      if (!def || !def.content || composeBody || mail.composeMode === 'rich') return;
-      const text = stripHtml(def.content);
+      if (!def || !def.content || composeBody) return;
+      const text = mail.composeMode === 'rich' ? safeComposeHtml(def.content) : stripHtml(def.content);
       insertedSignature.current = text;
       setComposeSignature(def.id);
-      setComposeBody(text + '\n\n');
+      setComposeBody(text + (mail.composeMode === 'rich' ? '<p><br></p>' : '\n\n'));
     }, 0);
     return () => window.clearTimeout(timer);
   }, [isComposing, signatures, composeSignature, composeBody, mail.draftUid, mail.composeMode,
@@ -255,14 +255,38 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
     signatureInitialized.current = true;
     const previous = insertedSignature.current;
     const signature = signatures.find((item: Signature) => item.id === id);
-    const next = signature?.content ? stripHtml(signature.content) : '';
+    const next = signature?.content ? (rich ? safeComposeHtml(signature.content) : stripHtml(signature.content)) : '';
+    const separator = rich ? '<p><br></p>' : '\n\n';
     setComposeSignature(id);
     setComposeBody(body => {
-      const remainder = previous && body.startsWith(previous + '\n\n')
-        ? body.slice(previous.length + 2) : body;
-      return next ? next + '\n\n' + remainder : remainder;
+      const prefix = rich ? previous : previous + separator;
+      let remainder = previous && body.startsWith(prefix) ? body.slice(prefix.length) : body;
+      if (rich && previous && body.startsWith(prefix) && remainder.startsWith(separator)) {
+        remainder = remainder.slice(separator.length);
+      }
+      return next ? next + separator + remainder : remainder;
     });
     insertedSignature.current = next;
+  };
+
+  const sendMessage = (sendAt?: Date, skipReminder = false) => {
+    if (!skipReminder && mail.mailSettings?.compose.attachmentReminder !== false && !mail.composeAttachments.length
+      && mentionsAttachment(mail.composeSubject, rich ? stripHtml(mail.composeBody) : mail.composeBody)) {
+      setAttachmentConfirm({ sendAt });
+      return;
+    }
+    setDidSend(true);
+    setShowSchedule(false);
+    void mail.handleSend(sendAt).then(sent => {
+      if (sent) { setScheduleDate(''); setScheduleTime(''); }
+      else setDidSend(false);
+    });
+  };
+  const switchToPlain = () => {
+    mail.setComposeBody(stripHtml(mail.composeBody));
+    mail.setComposeMode('plain');
+    insertedSignature.current = insertedSignature.current ? stripHtml(insertedSignature.current) : '';
+    setPlainConfirm(false);
   };
 
   const size = totalSize(mail.composeAttachments);
@@ -312,7 +336,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
   useModalFocus({
     dialogRef,
     open: mail.isComposing,
-    active: mail.isComposing && !showCloseConfirm,
+    active: mail.isComposing && !showCloseConfirm && !plainConfirm && !simplifyConfirm && !attachmentConfirm,
     onClose: handleClose,
   });
 
@@ -446,7 +470,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
             </div>
           )}
           <div style={{ position: 'relative' }}>
-            <input className="glass-input" placeholder="To" aria-label="To" value={mail.composeTo}
+            <input className="glass-input" placeholder="To" aria-label="To" role="combobox" aria-autocomplete="list"
+                aria-expanded={autocompleteField === 'to' && suggestions.length > 0}
+                aria-controls="compose-recipient-suggestions" aria-activedescendant={autocompleteField === 'to' && suggestions.length ? `compose-suggestion-${selectedIndex}` : undefined} value={mail.composeTo}
               autoFocus
               disabled={composeBusy}
               onChange={(e) => handleFieldChange(e.target.value, 'to')}
@@ -455,10 +481,10 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
               onBlur={handleFieldBlur}
               autoComplete="off" style={{ width: '100%' }} />
             {autocompleteField === 'to' && suggestions.length > 0 && (
-              <div className="glass-panel compose-popover" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+              <div id="compose-recipient-suggestions" role="listbox" className="glass-panel compose-popover" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
                 marginTop: 2, maxHeight: 200, overflow: 'auto', padding: 4 }}>
                 {suggestions.map((s, i) => (
-                  <div key={s.email}
+                  <div key={s.email} id={`compose-suggestion-${i}`} role="option" aria-selected={i === selectedIndex}
                     onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
                     style={{
                       padding: '8px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
@@ -475,7 +501,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           </div>
           {mail.showCc && (
             <div style={{ position: 'relative' }}>
-              <input className="glass-input" placeholder="Cc" aria-label="Cc" value={mail.composeCc}
+              <input className="glass-input" placeholder="Cc" aria-label="Cc" role="combobox" aria-autocomplete="list"
+                aria-expanded={autocompleteField === 'cc' && suggestions.length > 0}
+                aria-controls="compose-recipient-suggestions" aria-activedescendant={autocompleteField === 'cc' && suggestions.length ? `compose-suggestion-${selectedIndex}` : undefined} value={mail.composeCc}
                 disabled={composeBusy}
                 onChange={(e) => handleFieldChange(e.target.value, 'cc')}
                 onKeyDown={(e) => handleFieldKeyDown(e, 'cc')}
@@ -483,10 +511,10 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                 onBlur={handleFieldBlur}
                 autoComplete="off" style={{ width: '100%' }} />
               {autocompleteField === 'cc' && suggestions.length > 0 && (
-                <div className="glass-panel compose-popover" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                <div id="compose-recipient-suggestions" role="listbox" className="glass-panel compose-popover" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
                   marginTop: 2, maxHeight: 200, overflow: 'auto', padding: 4 }}>
                   {suggestions.map((s, i) => (
-                    <div key={s.email}
+                    <div key={s.email} id={`compose-suggestion-${i}`} role="option" aria-selected={i === selectedIndex}
                       onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
                       style={{
                         padding: '8px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
@@ -504,7 +532,9 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           )}
           {mail.showBcc && (
             <div style={{ position: 'relative' }}>
-              <input className="glass-input" placeholder="Bcc" aria-label="Bcc" value={mail.composeBcc}
+              <input className="glass-input" placeholder="Bcc" aria-label="Bcc" role="combobox" aria-autocomplete="list"
+                aria-expanded={autocompleteField === 'bcc' && suggestions.length > 0}
+                aria-controls="compose-recipient-suggestions" aria-activedescendant={autocompleteField === 'bcc' && suggestions.length ? `compose-suggestion-${selectedIndex}` : undefined} value={mail.composeBcc}
                 disabled={composeBusy}
                 onChange={(e) => handleFieldChange(e.target.value, 'bcc')}
                 onKeyDown={(e) => handleFieldKeyDown(e, 'bcc')}
@@ -512,10 +542,10 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                 onBlur={handleFieldBlur}
                 autoComplete="off" style={{ width: '100%' }} />
               {autocompleteField === 'bcc' && suggestions.length > 0 && (
-                <div className="glass-panel compose-popover" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                <div id="compose-recipient-suggestions" role="listbox" className="glass-panel compose-popover" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
                   marginTop: 2, maxHeight: 200, overflow: 'auto', padding: 4 }}>
                   {suggestions.map((s, i) => (
-                    <div key={s.email}
+                    <div key={s.email} id={`compose-suggestion-${i}`} role="option" aria-selected={i === selectedIndex}
                       onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
                       style={{
                         padding: '8px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
@@ -555,15 +585,34 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         </div>
         {/* Scrollable body area — textarea + attachments + previews */}
         <div className="compose-body">
-          <textarea className="glass-input" placeholder="Write your message..." aria-label="Message body"
+          <label className="compose-format-select">Message format
+            <select aria-label="Message format" className="glass-input glass-select" value={rich ? 'rich' : 'plain'} disabled={composeBusy}
+              onChange={event => {
+                if (event.target.value === 'plain') setPlainConfirm(true);
+                else { mail.setComposeBody(plainToHtml(mail.composeBody)); mail.setComposeMode('rich'); insertedSignature.current = insertedSignature.current ? plainToHtml(insertedSignature.current) : ''; }
+              }}>
+              <option value="plain">Plain text</option><option value="rich">Rich text</option>
+            </select>
+          </label>
+          {complexLayout ? <div className="compose-layout-notice">
+            <p>This draft contains images or a layout that this text editor cannot preserve. Its original content is kept until you choose to simplify it.</p>
+            <button className="btn btn-ghost" disabled={composeBusy} onClick={() => setSimplifyConfirm(true)}>Simplify and edit</button>
+            <div className="compose-layout-preview" dangerouslySetInnerHTML={{ __html: safeComposeHtml(mail.composeBody) }} />
+          </div> : rich ? <Suspense fallback={<div role="status">Loading message editor…</div>}>
+            <RichComposeEditor value={mail.composeBody} onChange={mail.setComposeBody} disabled={composeBusy}
+              onNormalize={(html, normalizeFragment) => {
+                if (insertedSignature.current) insertedSignature.current = normalizeFragment(insertedSignature.current);
+                mail.setComposeBody(html);
+              }} />
+          </Suspense> : <textarea className="glass-input" placeholder="Write your message..." aria-label="Message body"
             disabled={composeBusy}
             value={mail.composeBody} onChange={(e) => mail.setComposeBody(e.target.value)}
-            style={{ flex: 1, minHeight: 180, resize: 'vertical' }} />
+            style={{ flex: 1, minHeight: 180, resize: 'vertical' }} />}
           {mail.composeBody && (
             <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textAlign: 'right', marginTop: 2 }}>
-              {mail.composeBody.replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(Boolean).length} words
+              {(rich ? stripHtml(mail.composeBody) : mail.composeBody).trim().split(/\s+/).filter(Boolean).length} words
               {' · '}
-              {mail.composeBody.replace(/<[^>]*>/g, '').length} chars
+              {(rich ? stripHtml(mail.composeBody) : mail.composeBody).length} chars
             </div>
           )}
 
@@ -675,12 +724,13 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
         {/* Footer */}
         <div className="compose-footer" style={{ borderTop: mail.composeError || immediateSendNotice ? 'none' : undefined }}>
           <div className="compose-footer-tools">
-            <label className="btn btn-ghost" aria-label="Attach files" style={{ cursor: 'pointer' }}>
+            <button type="button" className="btn btn-ghost" aria-label="Attach files" disabled={composeBusy} onClick={() => attachmentInput.current?.click()}>
               <Paperclip size={16} />
-              <input type="file" multiple hidden onChange={(e) => {
+            </button>
+              <input ref={attachmentInput} type="file" multiple hidden onChange={(e) => {
                 if (e.target.files) mail.setComposeAttachments((prev) => [...prev, ...Array.from(e.target.files!)]);
+                e.target.value = '';
               }} disabled={composeBusy} />
-            </label>
             {/* Templates (#13) */}
             <div style={{ position: 'relative' }}>
               <button className="btn btn-ghost" disabled={composeBusy}
@@ -695,11 +745,11 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                     <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)',
                       padding: '4px 8px', marginBottom: 4 }}>Insert Template</div>
                     {templates.map((t) => (
-                      <div key={t.name} className="nav-item" style={{ padding: '6px 10px', cursor: 'pointer',
+                      <button type="button" key={t.name} className="btn btn-ghost" style={{ padding: '6px 10px', cursor: 'pointer',
                         borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}
-                        onClick={() => { mail.setComposeBody((prev) => prev + '\n\n' + t.content); setShowTemplates(false); }}>
+                        onClick={() => { mail.setComposeBody((prev) => prev + (rich ? '<p><br></p>' + (t.mode === 'rich' ? safeComposeHtml(t.content) : plainToHtml(t.content)) : '\n\n' + (t.mode === 'rich' ? stripHtml(t.content) : t.content))); setShowTemplates(false); }}>
                         {t.name}
-                      </div>
+                      </button>
                     ))}
                     {templates.length === 0 && (
                       <div style={{ padding: 8, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
@@ -707,21 +757,27 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                       </div>
                     )}
                     <div style={{ borderTop: '1px solid var(--border-glass)', margin: '4px 0' }} />
-                    <div className="nav-item" style={{ padding: '6px 10px', cursor: 'pointer',
-                      borderRadius: 'var(--radius-sm)', fontSize: '0.85rem', color: 'var(--accent-primary)' }}
-                      onClick={() => {
-                        const name = prompt('Template name:');
-                        if (name) {
-                          const updated = [...templates.filter((t) => t.name !== name), { name, content: mail.composeBody }];
-                          setTemplates(updated);
-                          saveUserSettings('templates', { templates: updated })
-                            .then((settings) => setTemplates(settings.templates))
-                            .catch(() => {});
-                          setShowTemplates(false);
-                        }
-                      }}>
-                      + Save current as template
-                    </div>
+                    {templateError && <div role="alert" className="settings-error-banner">{templateError}</div>}
+                    {!templatesLoaded ? <button className="btn btn-ghost" onClick={() => { void loadTemplates(); }}>Retry loading templates</button> : <form onSubmit={async event => {
+                      event.preventDefault();
+                      const name = templateName.trim();
+                      if (!name || templateSaveLock.current) return;
+                      templateSaveLock.current = true;
+                      setSavingTemplate(true);
+                      setTemplateError('');
+                      try {
+                        const updated = [...templates.filter(t => t.name !== name), { name, content: rich ? safeComposeHtml(mail.composeBody) : mail.composeBody, mode: rich ? 'rich' as const : 'plain' as const }];
+                        const settings = await saveUserSettings('templates', { templates: updated });
+                        setTemplates(settings.templates);
+                        setTemplateName('');
+                        showToast({ type: 'success', message: 'Template saved' });
+                      } catch (error) {
+                        setTemplateError(error instanceof Error ? error.message : 'Template could not be saved. Try again.');
+                      } finally { templateSaveLock.current = false; setSavingTemplate(false); }
+                    }}>
+                      <label>Template name<input className="glass-input" aria-label="Template name" value={templateName} disabled={savingTemplate} onChange={event => setTemplateName(event.target.value)} /></label>
+                      <button type="submit" className="btn btn-ghost" disabled={savingTemplate || !templateName.trim()}>{savingTemplate ? 'Saving…' : 'Save current as template'}</button>
+                    </form>}
                   </div>
                 </div>
               )}
@@ -776,16 +832,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
                           setScheduleError('Choose a future date and time.');
                           return;
                         }
-                        setDidSend(true);
-                        setShowSchedule(false);
-                        void mail.handleSend(sendAt).then((sent) => {
-                          if (sent) {
-                            setScheduleDate('');
-                            setScheduleTime('');
-                          } else {
-                            setDidSend(false);
-                          }
-                        });
+                        sendMessage(sendAt);
                       }}>
                       Schedule
                     </button>
@@ -794,10 +841,7 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
               )}
             </div>
             <button className="btn btn-primary" disabled={composeBusy || sizeExceedsBlock || unchangedSendBlocked || !mail.composeIdentityReady}
-              onClick={() => {
-                setDidSend(true);
-                void mail.handleSend().then((sent) => { if (!sent) setDidSend(false); });
-              }}>
+              onClick={() => sendMessage()}>
               <Send size={16} /> {sending
                 ? <><Spinner size={14} /> {immediateSendPhase === 'pending' ? 'Confirming delivery...' : 'Sending...'}</>
                 : immediateSendPhase === 'retryable'
@@ -807,6 +851,12 @@ export function ComposeModal({ mail }: { mail: ReturnType<typeof useMail> }) {
           </div>
         </div>
       </div>
+      <ConfirmDialog open={plainConfirm} title="Switch to plain text?" message="Text will be kept. Formatting and links will be removed." confirmLabel="Use plain text" cancelLabel="Keep formatting" onConfirm={switchToPlain} onCancel={() => setPlainConfirm(false)} />
+      <ConfirmDialog open={simplifyConfirm} title="Simplify this draft?" message="Text and supported formatting will be kept. Images and complex layout will be removed." confirmLabel="Simplify and edit" cancelLabel="Keep original" onConfirm={() => { mail.setComposeBody(safeComposeHtml(mail.composeBody)); setSimplifyConfirm(false); }} onCancel={() => setSimplifyConfirm(false)} />
+      <ConfirmDialog open={!!attachmentConfirm} title="Send without an attachment?" message="Your message mentions an attachment, but no files are attached."
+        confirmLabel={attachmentConfirm?.sendAt ? 'Schedule anyway' : 'Send anyway'} cancelLabel="Keep editing"
+        extraAction={{ label: 'Add attachment', onClick: () => { setAttachmentConfirm(null); attachmentInput.current?.click(); } }}
+        onCancel={() => setAttachmentConfirm(null)} onConfirm={() => { const sendAt = attachmentConfirm?.sendAt; setAttachmentConfirm(null); sendMessage(sendAt, true); }} />
       {showCloseConfirm && (
         <ConfirmDialog
           open={showCloseConfirm}

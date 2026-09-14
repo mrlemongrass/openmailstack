@@ -65,6 +65,7 @@ export interface ContactsUserSettings {
 }
 
 export interface MessageTemplate {
+  mode?: 'rich' | 'plain';
   name: string;
   content: string;
 }

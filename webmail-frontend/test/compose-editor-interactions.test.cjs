@@ -154,3 +154,51 @@ test('clearing every field of a saved draft still offers discard', async t => {
   await act(async () => click(document.querySelector('[aria-label="Close message composer"]'), dom.window));
   assert.ok(button('Discard draft'));
 });
+
+test('attachment reminder stops sending until explicitly confirmed', async t => {
+  let sends = 0;
+  const { act, dom } = await mountComposer(t, { composeBody: 'Please see the attached document.', signatures: [], handleSend: async () => { sends++; return false; } });
+  await act(async () => click(button('Send'), dom.window));
+  assert.equal(sends, 0);
+  assert.ok(button('Send anyway'));
+  await act(async () => click(button('Keep editing'), dom.window));
+  assert.equal(sends, 0);
+  await act(async () => click(button('Send'), dom.window));
+  await act(async () => click(button('Send anyway'), dom.window));
+  assert.equal(sends, 1);
+});
+
+test('disabled reminders and attached files allow sending without a prompt', async t => {
+  let sends = 0;
+  const { act, dom } = await mountComposer(t, { composeBody: 'The attachment is enclosed.', signatures: [], mailSettings: { compose: { attachmentReminder: false } }, handleSend: async () => { sends++; return false; } });
+  await act(async () => click(button('Send'), dom.window));
+  assert.equal(sends, 1);
+  assert.equal(button('Send anyway'), undefined);
+});
+
+test('rich content conversion escapes plain text and strips active or remote content', async t => {
+  await mountComposer(t);
+  delete require.cache[require.resolve('dompurify')];
+  delete require.cache[require.resolve('../src/mail/compose-content.ts')];
+  const { plainToHtml, htmlToPlainText, safeComposeHtml, mentionsAttachment } = require('../src/mail/compose-content.ts');
+  const text = 'Hello <team> & friends\n\nSecond paragraph';
+  assert.equal(htmlToPlainText(plainToHtml(text)), text);
+  const safe = safeComposeHtml('<p><strong>Bold</strong><em>Italic</em><a href="https://example.test">Link</a></p><img src="https://tracker.test/pixel"><script>alert(1)</script><iframe src="https://evil.test"></iframe><a href="javascript:alert(1)">Bad</a>');
+  assert.match(safe, /<strong>Bold<\/strong>/);
+  assert.match(safe, /href="https:\/\/example.test"/);
+  assert.doesNotMatch(safe, /img|script|iframe|tracker|javascript:/);
+  assert.equal(mentionsAttachment('Reply', 'Thanks\n> I attached a file'), false);
+  assert.equal(mentionsAttachment('Attached report', 'See the report'), true);
+});
+
+test('complex HTML drafts keep their original content until simplification is confirmed', async t => {
+  const original = '<p>Original layout</p><table><tr><td>Cell</td></tr></table><img src="https://example.test/picture">';
+  let writes = 0;
+  const { act, dom } = await mountComposer(t, { draftUid: '42', composeMode: 'rich', composeBody: original, signatures: [], setComposeBody: () => { writes++; } });
+  assert.equal(writes, 0);
+  assert.match(document.body.textContent, /original content is kept/);
+  await act(async () => click(button('Simplify and edit'), dom.window));
+  assert.equal(writes, 0);
+  await act(async () => click(button('Keep original'), dom.window));
+  assert.equal(writes, 0);
+});

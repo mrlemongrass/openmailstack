@@ -2,17 +2,12 @@
 
 ## 2026-09-14 — Editor and suite interaction review
 
-See [the current editor review](WEBAPP_EDITOR_UX_REVIEW_2026-09-14.md) for verified
-signature, sizing, discard, and Settings-toolbar fixes; desktop/mobile screenshots;
-and a prioritized remaining backlog. Settings navigation can still drop pending
-edits, and rich Compose, dirty-form protection, attachment reminders, and keyboard
-interaction need further work. Local candidate only; not deployed.
-
-
-> Last updated: 2026-07-29
-> Method: Playwright desktop/mobile review plus source tracing. Public/login routes used the live site; the initial authenticated audit used deterministic API fixtures, followed by read-only validation with the established `localtest@housevo.us` admin test account.
-
-OpenMailStack is a full suite: Mail, Calendar, Contacts, Notes, Settings, Admin, Sync, and mobile. Do not optimize only the mail app unless there is a critical mail emergency.
+See [the current editor review](WEBAPP_EDITOR_UX_REVIEW_2026-09-14.md) for
+signature/sizing/discard fixes and the four completed follow-up priorities:
+acknowledged Settings saves, rich Compose, Calendar/Contacts unsaved protection,
+and attachment reminders plus keyboard/template recovery. Remaining priorities
+are section-specific Settings loading, separate-window composition, and Scheduler
+confirmation/error consistency.
 
 ## 2026-07-29 Suite Playwright Audit
 

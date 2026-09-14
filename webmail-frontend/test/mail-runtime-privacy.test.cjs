@@ -249,9 +249,10 @@ test('unimplemented mail controls are absent while inline Send and Archive remai
   assert.doesNotMatch(viewer, /Mute thread/);
   assert.doesNotMatch(hook, /muteThread/);
   assert.doesNotMatch(panel, /updateReading\(\{ threaded:/);
-  assert.doesNotMatch(panel, /Rich text/);
+  assert.match(panel, /Default message format/);
+  assert.match(panel, /Rich text/);
   assert.doesNotMatch(panel, /Default Font/);
-  assert.match(panel, /Plain text is the available message format/);
+  assert.match(panel, /Plain text/);
   assert.doesNotMatch(inlineReply, /Rich editor/);
   assert.match(inlineReply, /Open full editor/);
   assert.doesNotMatch(navigation, /mail_forwarding|mail_vacation|Auto-Responder/);

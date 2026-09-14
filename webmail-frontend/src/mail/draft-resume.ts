@@ -18,6 +18,22 @@ export interface DraftComposeState {
   draftUid: string;
 }
 
+// Restore one authoritative version of both the body and attachment manifest;
+// message-list previews can outlive a draft save or an edit on another client.
+export async function loadDraftForEditing(
+  uid: number,
+  folder: string,
+  fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<DraftComposeState> {
+  const response = await fetcher(`/api/folders/${encodeURIComponent(folder)}/messages/${uid}`, { signal, cache: 'no-store' });
+  if (!response.ok) throw new Error('The latest draft could not be loaded. Refresh Drafts and try again.');
+  const { message } = await response.json() as { message?: Message };
+  if (!message || message.uid !== uid) throw new Error('The server did not return the requested draft.');
+  const attachments = await hydrateDraftAttachments(message, folder, fetcher, signal);
+  return draftComposeState(message, attachments);
+}
+
 function mailboxAddress(value: string): string {
   const angleAddress = /<([^<>]+)>/.exec(value);
   return (angleAddress?.[1] || value).trim();

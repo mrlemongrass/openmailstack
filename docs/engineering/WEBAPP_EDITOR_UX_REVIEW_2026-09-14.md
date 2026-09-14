@@ -28,24 +28,27 @@ Send remained visible at 390×844 and 390×500 with Cc and Bcc expanded. Manual
 window dimensions are overridden on mobile. Actual on-screen keyboard behavior
 on physical iOS/Android remains unverified.
 
-## Prioritized remaining work
+## Four follow-up priorities implemented
+
+The operator authorized all four priorities, deployment, commit, and push.
+
+| Priority | Delivered behavior | Evidence |
+| --- | --- | --- |
+| Settings saves | Serialized, coalesced writes retain pending values until acknowledged. App navigation flushes the queue; failure retains the editor and offers Retry. Rules participate in the navigation guard. Reload/close uses the browser's unsaved warning. Signature Save now reflects the actual server result. | Queue tests cover immediate flush, edits during a write, failure and superseding retries. Browser failed a signature save, stayed in Settings, retried, and reopened the saved name. `settings-save-recovery.png` |
+| Rich composition | Plain/rich selector, labelled formatting toolbar, links/lists, default-format preference, format-aware signatures/templates, safe HTML, and confirmed conversion to plain text. Draft reopening fetches the authoritative body and attachment manifest, preventing a cached preview from overwriting a later save. | HTML payloads observed for draft/save and send; send fixture rejected delivery and retained body. Save/reopen retained revised text after the fresh-load fix. Loader tests cover latest HTML, attachments, failures, wrong UID, and no-store requests. `rich-draft-reopened.png` |
+| Unsaved Calendar and Contacts forms | Close, Cancel, Escape, app navigation and browser unload protect edits. Keep editing preserves the form; discard is explicit. Save locks prevent double submission and fields are disabled during save. | Both real editors retained changed values after close and navigation cancellation. Router regression covers failed automatic save, retry, form discard and unload. `calendar-unsaved-guard.png` |
+| Reminders, keyboard access and errors | Attachment reminder applies to Compose, scheduling, inline replies and Send & Archive. Attach is a keyboard button. Recipient suggestions expose combobox/listbox and highlighted-option semantics. Templates use buttons and an inline name form, persist only after success, retain input on failure, and support rich content. | Component reminder and disabled-setting tests, actual browser reminder, template 503/retry and keyboard file chooser. Backend test preserves rich template mode and legacy plain templates. |
+
+## Remaining review backlog
 
 | Priority | Finding | Evidence | Acceptance for a follow-up |
 | --- | --- | --- | --- |
-| P1 | Settings edits can disappear on quick navigation | **Browser reproduced:** rename a signature and click Mail before 800 ms; no settings write occurs even after a further second. `settings/routes.tsx` clears pending debounce timers on unmount | Pending edits visibly mark unsaved state; app navigation saves or prompts; failed saves retain a recoverable value |
-| P1 | HTML draft editing is incomplete | **Source confirmed:** `draft-resume.ts` can restore HTML with mode `rich`, but `ComposeModal.tsx` always renders a textarea. Stored formatting in signatures is converted to plain text for Compose | One rich/plain editing workflow with toolbar, safe paste, links/lists, appropriate mode conversion, and save/reopen/send round-trip tests |
-| P1 | Unsaved-edit protection differs between editors | **Source confirmed:** `ContactEditModal.tsx` close/Escape calls `onClose` directly; `EventModal.tsx` close directly clears the open flag. Notes has a save-on-close coordinator | New and edited Contacts/Calendar forms warn before losing changes and keep work on save failure; confirm by browser |
-| P2 | Attachment reminder setting is disconnected | **Source confirmed:** `attachmentReminder` is editable in Settings; no compose/send runtime reads it | A message referring to an attachment with no files prompts before Send; setting controls behavior |
-| P2 | Templates are hard to use with a keyboard and can fail silently | **Source confirmed:** template choices are clickable `div`s; saving uses a browser prompt and ignores persistence errors | Keyboard-operable menu, named form, visible pending/success/error states and retry |
-| P2 | Attachment picker and recipient suggestions lack complete keyboard/screen-reader interaction | **Source confirmed:** attachment action is a label wrapping a hidden input; suggestion choices lack a combobox/listbox relationship | Tab reaches Attach; Enter opens picker; recipient suggestions expose highlighted option and selection semantics |
 | P2 | Settings has an all-or-nothing loading dependency | **Browser observed with invalid fixture rules, source confirmed:** one failed rules request blocks Signatures and other settings because the page loads all resources with `Promise.all` | Each section shows its own retry/error and unrelated settings remain usable |
 | P2 | Native pop-out, minimizing to the inbox, and multiple concurrent drafts are absent | **Source confirmed:** `composeDocked` state is unused in rendered UI; this change adds in-app expansion/resizing only | Define one-owner draft state and handoff/recovery first, then add dock/minimize and a separate-window option without duplicate saves |
 | P2 | Scheduler recovery/confirmation patterns remain inconsistent | **Source confirmed:** some event-type and booking mutation handlers use browser `confirm` and have no local failure handling | Named confirmations, progress locks, recoverable errors, and preserved form state across booking/event actions |
 
-The next bounded implementation should address Settings navigation loss. Rich
-Compose should follow with an explicit content-format contract and draft/send
-round-trip proof. Avoid adding more controls while existing controls misrepresent
-save state or lose work.
+The next bounded task is section-specific Settings loading/retry, followed by
+separate-window composition with one owner of each draft.
 
 ## Suite observations
 
@@ -54,10 +57,10 @@ save state or lose work.
   keyboard access, and trustworthy state transitions.
 - **Calendar:** desktop sidebar and mobile view/navigation render within the
   viewport. Recurrence/invitation actions already exist in source; they should
-  not be listed as wholly missing. Dirty-form closing needs attention.
+  not be listed as wholly missing. Dirty-form closing is now protected.
 - **Contacts:** primary empty-state create action is available on mobile and
   desktop. Import, labels/groups, and duplicate workflows exist. Dirty-form
-  closing and consistent confirmations need attention.
+  closing is protected; other destructive confirmations still merit review.
 - **Notes:** empty-state create action and mobile navigation render correctly;
   source already contains save-on-close handling. No Notes synchronization,
   collaboration, or data change is included in this review.
@@ -65,25 +68,27 @@ save state or lose work.
   empty state render on mobile. Error handling and confirmation consistency need
   improvement; booking and public availability behavior was not exercised here.
 - **Settings:** direct Signatures navigation exposed the missing theme styles and
-  clipped option, now fixed. The navigation-loss reproduction is a separate open
-  issue, not a completed save-reliability fix.
+  clipped option, now fixed. The navigation-loss reproduction is fixed by the acknowledged save queue and navigation guard.
 
 ## Validation and release limits
 
-Frontend tests pass 265/265; lint and the production build pass. Focused backend
-outbound route checks pass 30/30, and the backend build passes. The backend change only adds `draftFolder` to the
-existing save response, and its generated JavaScript/source map are refreshed.
+Frontend: 274/274 tests, lint and production build pass. Backend: 1,004 passed,
+seven skipped, no failures; build and focused settings/outbound checks (43/43)
+pass. Full local integration passed, including deployment, rollback, protocol and
+backup fixture suites. The final draft-loader change was followed by another full
+frontend suite and build/lint pass.
 
-Browser checks used synthetic responses, including explicit 503 and delayed-save
-cases. Early fixture setup produced branding/rules/appearance schema errors and
-an SSE content-type error; those are fixture failures, not reported product bugs.
-Realtime sync was not verified. No production deployment, protocol release gate,
-SMTP send, or physical-client verification is claimed.
+Browser checks use synthetic API data and intentional failure responses. No real
+user mailbox/PIM/settings data was changed, and no real message was sent in these
+UI tests. Initial fixture setup had malformed authentication, branding and message
+shapes; those were corrected and are not product failures. Realtime sync and
+physical-client behavior are outside this browser proof.
 
-Previously flattened saved drafts contain no recoverable line-break metadata;
-this fix cannot infer where those old lines belonged. Reinsert the saved signature
-when repairing such a draft. Modified/moved signature text is retained rather than
-being removed by a heuristic. Separate-window pop-out and rich-text fidelity are
-still open. A frontend deployed ahead of the new save response fails closed for a
-new draft whose folder is unavailable; Save & Close and reopening supplies the
-exact folder. Deploy backend before frontend through the normal guarded workflow.
+Previously flattened drafts cannot be reconstructed automatically; reinsert their
+saved signature. Separate-window pop-out remains a follow-up; this release offers
+in-app expansion and resizing. Rich text supports ordinary text formatting, links
+and lists. Drafts containing images/tables/embedded layouts keep their original
+body and require explicit confirmation before simplifying for editing; no inline
+image/table authoring is claimed. Physical mobile keyboards remain unverified.
+
+Deployment results and rollback snapshot paths are recorded in WORKLOG.md.

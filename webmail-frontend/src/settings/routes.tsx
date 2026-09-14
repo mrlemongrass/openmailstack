@@ -1,3 +1,5 @@
+import { createSettingsSaveQueue } from './settings-save-queue';
+import { UnsavedChangesGuard } from '../shared/components/UnsavedChangesGuard';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Routes, Route } from 'react-router';
 import { SettingsContent, SettingsSidebar } from './SettingsPanel';
@@ -67,28 +69,35 @@ function SettingsLoader() {
     smtpPort: '587',
   };
 
-  // --- Debounced auto-save helpers ---
-  const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-
-  const debouncedSave = useCallback((key: string, fn: () => void, delay = 800) => {
-    if (debounceTimers.current[key]) clearTimeout(debounceTimers.current[key]);
-    debounceTimers.current[key] = setTimeout(async () => {
-      setSettingsSaveState('saving');
-      try {
-        await fn();
-        setSettingsSaveState('saved');
-        setTimeout(() => setSettingsSaveState('idle'), 2000);
-      } catch (err: unknown) {
-        setSettingsSaveState('error');
-        setSettingsSyncError(errorMessage(err, 'Failed to save settings'));
-      }
-    }, delay);
+  const saveQueue = useRef(createSettingsSaveQueue());
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [pendingSettings, setPendingSettings] = useState(false);
+  const flushSettings = useCallback(async () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSettingsSaveState('saving');
+    setSettingsSyncError('');
+    try {
+      await saveQueue.current.flush();
+      setPendingSettings(saveQueue.current.pending);
+      setSettingsSaveState('saved');
+      return true;
+    } catch (err) {
+      setSettingsSaveState('error');
+      setSettingsSyncError(errorMessage(err, 'Failed to save settings'));
+      return false;
+    }
   }, []);
+  const debouncedSave = useCallback((key: string, fn: () => Promise<unknown>) => {
+    saveQueue.current.schedule(key, fn);
+    setPendingSettings(true);
+    setSettingsSaveState('saving');
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { void flushSettings(); }, 800);
+  }, [flushSettings]);
 
   // --- Load all data on mount ---
   useEffect(() => {
     let cancelled = false;
-    const debounceTimersForCleanup = debounceTimers.current;
     async function load() {
       try {
         setLoading(true);
@@ -141,7 +150,7 @@ function SettingsLoader() {
 
     return () => {
       cancelled = true;
-      Object.values(debounceTimersForCleanup).forEach(clearTimeout);
+      if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, []);
 
@@ -335,7 +344,14 @@ function SettingsLoader() {
   }
 
   return (
+    <>
+    <UnsavedChangesGuard dirty={pendingSettings || rulesDirty} onSave={async () => {
+      if (!await flushSettings()) return false;
+      return !rulesDirty || await handleSaveRules();
+    }} />
+    {pendingSettings && settingsSaveState === 'error' && <button className="btn btn-primary" onClick={() => { void flushSettings(); }}>Retry saving settings</button>}
     <SettingsContent
+      onFlushSettings={flushSettings}
       activeTab={tab || 'appearance'}
       loading={loading}
       saving={saving}
@@ -370,6 +386,7 @@ function SettingsLoader() {
       onAppearanceChange={handleAppearanceChange}
       onCopySetupValue={handleCopySetupValue}
     />
+    </>
   );
 }
 

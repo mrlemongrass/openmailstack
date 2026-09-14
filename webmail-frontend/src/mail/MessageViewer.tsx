@@ -625,6 +625,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
         )}
       </div>
       {!isScheduled && !isDraft && <InlineReply
+        attachmentReminder={mail.mailSettings.compose.attachmentReminder}
         replyTo={(message.replyTo || message.from)?.replace(/<.+?>/, '').trim()
           || message.replyTo || message.from || ''}
         replyText={mail.replyText || ''}

@@ -11763,3 +11763,13 @@ full preview, collapse, lazy loading/cleanup, all size fallback cases, metadata
 mismatch recovery and remote privacy. All 96 backend files matched the preceding
 live contact-group release before deployment. Release evidence and acceptance
 limits: `INLINE_ATTACHMENT_PREVIEWS_2026-09-15.md`.
+
+Inline preview live release: `f1b50cbd` pushed and deployed from a clean isolated
+checkout. A missing local dependency stopped the first preflight before mutation;
+locked dependency installation and verified stale-canary cleanup resolved it.
+Both bridge and active pre/post gates passed, including Ping and cleanup, without
+rollback. Snapshots: `protocol-guarded-webmail-20260915T222555Z` and
+`protocol-guarded-webmail-20260915T223416Z`. Live synthetic desktop/mobile browser
+checks, 260 frontend/96 backend hashes, eleven public assets, staging smoke,
+local/public 401 probes, active outbound mode and zero-restart service health all
+passed. Original-message and physical-device acceptance remains a user check.

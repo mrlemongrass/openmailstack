@@ -59,3 +59,39 @@ revisited. Existing PDF password/corruption errors and manual Download recovery
 remain. Browser fixtures use synthetic messages, not private mailbox content;
 physical Safari/Android and original customer attachment confirmation remain
 separate acceptance checks.
+
+## Release evidence
+
+Runtime commit `f1b50cbd` was pushed to `origin/main`. Deployment runs from an
+isolated checkout at that commit, including the already released contact-group
+changes. The isolated frontend build matched all 260 tested distribution files.
+
+The first guard attempt stopped before mutation because the fresh checkout lacked
+backend Node dependencies. After installing the locked dependencies, the next
+run cleared the pending canary journal and proved zero database, EAS/PIM, mailbox,
+Postfix and web-session residue before proceeding.
+
+Bridge deployment passed both public protocol gates, including post-deploy Ping,
+with enforced canary cleanup. Rollback snapshot:
+`/var/backups/openmailstack/protocol-guarded-webmail-20260915T222555Z`.
+
+The public site passed the same synthetic Chromium workflow at desktop/390px,
+with zero browser console errors/warnings. All 260 frontend and 96 backend files
+matched the isolated build. Eleven public index/assets matched their hashes;
+JavaScript worker and WebAssembly MIME types were correct. Both anonymous auth
+probes returned 401. Backend was active/running with zero unexpected restarts.
+After the final active installation, the same 260/96 file parity, eleven public
+responses, auth checks and zero-restart service health were reverified. Outbound
+release mode is active. Staging smoke passed secure web/SMTP/IMAPS handshakes,
+service/config checks, the Rspamd scan, discovery, DKIM and web endpoint checks.
+It retained the existing Postfix `smtpd_use_tls` deprecation and Rspamd
+`task_timeout` warnings. The final active guard passed both public protocol gates, including Ping and
+enforced canary cleanup, with no cleanup warnings or skips. Its rollback snapshot
+is `/var/backups/openmailstack/protocol-guarded-webmail-20260915T223416Z`.
+Both snapshots are root-owned mode 0700. No rollback was needed or exercised.
+The pending canary-run journal directory is empty.
+
+No dependencies were changed. Existing audit findings remain: two frontend
+development-tool advisories (one high, one moderate), and six backend advisories
+(two high, four moderate), as documented in the preceding mail-reading release.
+No dependency fixes are bundled into this bounded UI change.

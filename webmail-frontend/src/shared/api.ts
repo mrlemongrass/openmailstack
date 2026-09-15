@@ -414,12 +414,13 @@ export async function runRulesPage(
 }
 
 // ---- Contacts ----
-export async function fetchContacts(limit = 200, offset = 0, sortBy = 'firstName', query = ''): Promise<ContactsResponse> {
+export async function fetchContacts(limit = 200, offset = 0, sortBy = 'firstName', query = '', groupId: number | null = null): Promise<ContactsResponse> {
   const params = new URLSearchParams({
     limit: String(limit),
     offset: String(offset),
     sortBy,
   });
+  if (groupId !== null) params.set('groupId', String(groupId));
   const trimmedQuery = query.trim();
   if (trimmedQuery) params.set('q', trimmedQuery);
   const res = await fetch(`/api/apps/contacts?${params.toString()}`);
@@ -502,7 +503,8 @@ export async function saveContactGroup(group: Partial<ContactGroup>): Promise<Co
     body: JSON.stringify(group),
   });
   const data = await res.json();
-  return data.group;
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save contact group');
+  return data.group || { ...group, id: data.id || group.id } as ContactGroup;
 }
 
 export async function deleteContactGroup(id: number): Promise<void> {

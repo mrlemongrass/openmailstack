@@ -1,3 +1,4 @@
+import { ContactGroupError, isGroupVCard, vCardCategories } from './contact-groups';
 import express, { Request, Response } from 'express';
 import xml2js from 'xml2js';
 import { davBasicAuth } from './dav-auth';
@@ -403,6 +404,14 @@ async function handlePut(req: Request, res: Response, user: string) {
     const vcard = req.body ? req.body.toString('utf-8') : '';
     if (!vcard.trim()) {
         return res.status(400).send();
+    }
+
+    try {
+        if (isGroupVCard(vcard)) throw new ContactGroupError('Use per-contact categories for contact groups', 403);
+        vCardCategories(vcard);
+    } catch (error) {
+        if (error instanceof ContactGroupError) return res.status(error.status).type('text/plain').send(error.message);
+        throw error;
     }
 
     const mutation = await withContactMutation(user, async connection => {

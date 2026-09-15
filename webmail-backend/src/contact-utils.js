@@ -46,6 +46,7 @@ exports.purgeExpiredContacts = purgeExpiredContacts;
 exports.addressBookSyncToken = addressBookSyncToken;
 exports.getContactCollectionRevisionOnConnection = getContactCollectionRevisionOnConnection;
 exports.contactVCard = contactVCard;
+const contact_groups_1 = require("./contact-groups");
 const crypto_1 = require("crypto");
 const db_1 = require("./db");
 const birthday_calendar_1 = require("./birthday-calendar");
@@ -867,6 +868,9 @@ async function findContactDavUidByVCardUidOnConnection(connection, user, vcardUi
 }
 /** @internal Call only from inside withContactMutation. */
 async function saveContactFromVCardOnConnection(connection, user, davUid, vcard, expectedSyncToken) {
+    if ((0, contact_groups_1.isGroupVCard)(vcard))
+        throw new contact_groups_1.ContactGroupError('Separate group vCards are not supported; use per-contact categories', 403);
+    const categories = (0, contact_groups_1.vCardCategories)(vcard);
     const normalizedDavUid = normalizeDavUid(davUid);
     const birthday = extractVCardBirthday(vcard);
     const canonicalVCard = canonicalizeVCardBirthday(vcard, birthday);
@@ -886,7 +890,7 @@ async function saveContactFromVCardOnConnection(connection, user, davUid, vcard,
     const addressesJson = parsed.address
         ? JSON.stringify([{ value: parsed.address, label: 'Other' }])
         : null;
-    const [existingRows] = await connection.query(`SELECT id, dav_uid, sync_token, name, email, birthday, deleted_at IS NULL AS is_active
+    const [existingRows] = await connection.query(`SELECT id, dav_uid, sync_token, name, email, birthday, vcard_data, deleted_at IS NULL AS is_active
          FROM contacts
          WHERE username = ? AND dav_uid = ?
          ORDER BY deleted_at IS NULL DESC, id ASC LIMIT 1`, [user, normalizedDavUid]);
@@ -961,6 +965,9 @@ async function saveContactFromVCardOnConnection(connection, user, davUid, vcard,
         ]);
         if (expectedSyncToken !== undefined && !updateResult.affectedRows)
             return null;
+        if (categories.length || (0, contact_groups_1.hasVCardCategories)(String(existingRows[0].vcard_data || ''))) {
+            await (0, contact_groups_1.syncContactCategoryMemberships)(connection, user, existing.id, categories);
+        }
         await clearContactTombstone(connection, user, normalizedDavUid);
         const contact = {
             id: existing.id,
@@ -1001,6 +1008,8 @@ async function saveContactFromVCardOnConnection(connection, user, davUid, vcard,
         parsed.birthday || null,
         parsed.websiteUrl || null,
     ]);
+    if (categories.length)
+        await (0, contact_groups_1.syncContactCategoryMemberships)(connection, user, Number(result.insertId), categories);
     const contact = {
         id: Number(result.insertId),
         dav_uid: normalizedDavUid,
@@ -1137,6 +1146,6 @@ function contactVCard(contact) {
         email: contact.email || '',
         phone: contact.phone || ''
     };
-    return normalizeVCardData(contact.vcard_data || '', davUid, fallback);
+    return (0, contact_groups_1.foldVCardCategoryLines)(normalizeVCardData(contact.vcard_data || '', davUid, fallback));
 }
 //# sourceMappingURL=contact-utils.js.map

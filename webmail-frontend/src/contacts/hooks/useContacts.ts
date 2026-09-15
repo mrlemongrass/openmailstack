@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { io as createSocket } from 'socket.io-client';
 import type { Contact, ContactLabel, ContactGroup } from '../../shared/types';
 import * as api from '../../shared/api';
@@ -39,10 +39,14 @@ export function useContacts() {
     const [contactsError, setContactsError] = useState('');
     const [contactsSettings, setContactsSettings] = useState<ContactsUserSettings>(defaultContactsSettings);
 
+    const contactRequestRevision = useRef(0);
+
     const refreshContacts = useCallback(async () => {
+        const revision = ++contactRequestRevision.current;
         setIsLoading(true);
         try {
-            const data = await api.fetchContacts(CONTACTS_PAGE_SIZE, 0, contactsSettings.sortBy, debouncedContactSearchQuery);
+            const data = await api.fetchContacts(CONTACTS_PAGE_SIZE, 0, contactsSettings.sortBy, debouncedContactSearchQuery, selectedGroupId);
+            if (revision !== contactRequestRevision.current) return;
             if (data.contacts) {
                 setContacts(data.contacts);
                 setOffset(data.contacts.length);
@@ -50,14 +54,16 @@ export function useContacts() {
                 setHasMore(data.hasMore ?? data.contacts.length >= CONTACTS_PAGE_SIZE);
                 setContactsError('');
             }
-        } catch (e: unknown) { setContactsError(errorMessage(e, 'Failed to load contacts')); console.error('Failed to fetch contacts', e); }
-        setIsLoading(false);
-    }, [contactsSettings.sortBy, debouncedContactSearchQuery]);
+        } catch (e: unknown) { if (revision !== contactRequestRevision.current) return; setContactsError(errorMessage(e, 'Failed to load contacts')); console.error('Failed to fetch contacts', e); }
+        if (revision === contactRequestRevision.current) setIsLoading(false);
+    }, [contactsSettings.sortBy, debouncedContactSearchQuery, selectedGroupId]);
 
     const loadMoreContacts = useCallback(async () => {
         if (!hasMore) return;
+        const revision = contactRequestRevision.current;
         try {
-            const data = await api.fetchContacts(CONTACTS_PAGE_SIZE, offset, contactsSettings.sortBy, debouncedContactSearchQuery);
+            const data = await api.fetchContacts(CONTACTS_PAGE_SIZE, offset, contactsSettings.sortBy, debouncedContactSearchQuery, selectedGroupId);
+            if (revision !== contactRequestRevision.current) return;
             if (data.contacts) {
                 const nextOffset = offset + data.contacts.length;
                 setContacts((prev) => [...prev, ...data.contacts!]);
@@ -66,7 +72,7 @@ export function useContacts() {
                 setHasMore(data.hasMore ?? nextOffset < (data.total ?? nextOffset));
             }
         } catch (e) { console.error('Failed to load more contacts', e); }
-    }, [offset, hasMore, contactsSettings.sortBy, debouncedContactSearchQuery]);
+    }, [offset, hasMore, contactsSettings.sortBy, debouncedContactSearchQuery, selectedGroupId]);
 
     const updateContactsSettings = useCallback(async (updates: Partial<ContactsUserSettings>) => {
         const next = { ...contactsSettings, ...updates };
@@ -128,7 +134,7 @@ export function useContacts() {
     useEffect(() => {
         const timer = window.setTimeout(() => { void refreshContacts(); }, 0);
         return () => window.clearTimeout(timer);
-    }, [refreshContacts]);
+    }, [refreshContacts, refreshGroups]);
     useEffect(() => {
         let isActive = true;
         let socket: ReturnType<typeof createSocket> | null = null;
@@ -139,6 +145,7 @@ export function useContacts() {
             if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
             refreshTimer = window.setTimeout(() => {
                 void refreshContacts();
+                void refreshGroups();
             }, 250);
         };
 
@@ -169,7 +176,7 @@ export function useContacts() {
             socket?.off('contacts_updated', scheduleRefresh);
             socket?.disconnect();
         };
-    }, [refreshContacts]);
+    }, [refreshContacts, refreshGroups]);
     useEffect(() => {
         const timer = window.setTimeout(() => {
             void refreshLabels();

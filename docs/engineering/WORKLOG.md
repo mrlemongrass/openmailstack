@@ -11659,6 +11659,35 @@ P3 implementation complete: opt-in retention with first-observed residence age, 
 
 P3 live proof: implementation ac2f3884 pushed and deployed through successful bridge and active guards, including post-release Ping and canary cleanup. Rollback snapshots: protocol-guarded-webmail-20260915T015341Z and protocol-guarded-webmail-20260915T020159Z. Staging smoke, all 60 frontend/six backend runtime hashes, public assets, authenticated canary P3 endpoints and all five app server checks passed. Four ownership cascades verified; zero cleanup policies enabled. Backend active with zero restarts. Canary web session logged out. Physical accessibility acceptance remains the next task; full evidence is in WEBAPP_P3_RELEASE_2026-09-14.md.
 
+
+## 2026-09-15 — Contact group synchronization
+
+DAVx5 onboarding exposed missing group interoperability despite existing
+individual-vCard support. Acceptance criteria: webmail group membership must
+round-trip through CardDAV categories and ActiveSync persistence; group changes
+must advance contact revisions; owner isolation and atomic rollback must hold;
+webmail group selection must filter results before pagination.
+
+Reproduced missing category projection/import and two ownership failures using
+a disposable MariaDB schema, then implemented a category/membership bridge under
+the existing per-owner contact lock. Added strict ownership checks, transactional
+rename/delete/member changes, explicit rejection of unsupported group vCards,
+read-only preview plus additive legacy reconciliation, server-side group filters,
+sidebar refresh and visible duplicate-name errors.
+
+Proof: backend build/full suite 1,035 passed, 12 gated skips; explicit disposable
+database suite 14 passed with cleanup; frontend 290 passed, build/lint passed.
+Rendered React regression fails against the original selector and passes with
+the fix. Chromium fixture confirms group filtering and retained input with the
+duplicate-name error. Browser settings/socket services were deliberately mocked
+or unavailable; this is not a full application-health or physical-device claim.
+
+No deployment or production data changes. Separate KIND/MEMBER group-vCard
+resources, empty-group/color interoperability and physical Samsung/Apple checks
+remain outstanding. Existing data needs a reviewed reconciliation preview
+before an authorized guarded release. Details and commands:
+`CONTACT_GROUP_SYNC_2026-09-15.md`.
+
 ## 2026-09-15 — Dark-mode mail readability and attachment previews
 
 User selected automatic text-contrast correction while preserving sender

@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const contact_groups_1 = require("./contact-groups");
 const express_1 = __importDefault(require("express"));
 const xml2js_1 = __importDefault(require("xml2js"));
 const dav_auth_1 = require("./dav-auth");
@@ -363,6 +364,16 @@ async function handlePut(req, res, user) {
     const vcard = req.body ? req.body.toString('utf-8') : '';
     if (!vcard.trim()) {
         return res.status(400).send();
+    }
+    try {
+        if ((0, contact_groups_1.isGroupVCard)(vcard))
+            throw new contact_groups_1.ContactGroupError('Use per-contact categories for contact groups', 403);
+        (0, contact_groups_1.vCardCategories)(vcard);
+    }
+    catch (error) {
+        if (error instanceof contact_groups_1.ContactGroupError)
+            return res.status(error.status).type('text/plain').send(error.message);
+        throw error;
     }
     const mutation = await (0, contact_utils_1.withContactMutation)(user, async (connection) => {
         const current = await (0, contact_utils_1.getContactMutationMetadataOnConnection)(connection, user, davUid);

@@ -34,7 +34,7 @@ export function ContactSidebar({ contacts: c, onNewContact }: { contacts: Return
       setShowNewGroup(false);
       c.refreshGroups();
       showToast({ type: 'success', message: `Group "${newGroupName.trim()}" created` });
-    } catch { showToast({ type: 'error', message: 'Failed to create group' }); }
+    } catch (error) { showToast({ type: 'error', message: error instanceof Error ? error.message : 'Failed to create group' }); }
   };
 
   const handleMergeDuplicates = async (group: ReturnType<typeof useContacts>['duplicateGroups'][number]) => {

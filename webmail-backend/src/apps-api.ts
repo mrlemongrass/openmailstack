@@ -1,3 +1,4 @@
+import { ContactGroupError, createContactGroup, updateContactGroup, changeContactGroupMembers, hasVCardCategories, isGroupVCard, syncContactCategoryMemberships, vCardCategories } from './contact-groups';
 import { Router, Request, Response, NextFunction } from 'express';
 import * as crypto from 'crypto';
 import { pool } from './db';
@@ -737,6 +738,15 @@ appsApiRouter.get('/contacts', async (req: Request, res: Response) => {
         await purgeExpiredContacts(user);
         const whereParts = ['username = ?', 'deleted_at IS NULL'];
         const whereParams: any[] = [user];
+        if (req.query.groupId !== undefined) {
+            const groupId = Number(req.query.groupId);
+            if (!/^[1-9]\d*$/.test(String(req.query.groupId)) || !Number.isSafeInteger(groupId)) {
+                return res.status(400).json({ success: false, error: 'Invalid group ID' });
+            }
+            whereParts.push(`EXISTS (SELECT 1 FROM contact_group_members m JOIN contact_groups g ON g.id = m.group_id
+                WHERE m.contact_id = contacts.id AND g.username = contacts.username COLLATE utf8mb4_unicode_ci AND g.id = ?)`);
+            whereParams.push(groupId);
+        }
         if (query) {
             const likeQuery = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
             const searchFields = [
@@ -797,6 +807,8 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
     try {
         const davUid = createContactUid();
         const suppliedVCard = typeof vcard_data === 'string' && vcard_data.trim() ? vcard_data : '';
+        if (isGroupVCard(suppliedVCard)) throw new ContactGroupError('Use per-contact categories for contact groups');
+        const categories = vCardCategories(suppliedVCard);
         const suppliedContact = suppliedVCard ? parseVCard(suppliedVCard) : null;
         const prefix = req.body.prefix ?? suppliedContact?.prefix ?? '';
         const firstName = req.body.first_name ?? suppliedContact?.firstName ?? '';
@@ -894,6 +906,7 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
                     websiteUrl || null,
                 ],
             );
+            if (categories.length) await syncContactCategoryMemberships(connection, user, Number(insertResult.insertId), categories);
             await syncContactBirthdayEvent(connection, user, {
                 contactId: insertResult.insertId,
                 davUid,
@@ -905,6 +918,7 @@ appsApiRouter.post('/contacts', async (req: Request, res: Response) => {
         emitContactsUpdated(user, { contactId: result.insertId });
         res.json({ success: true, id: result.insertId });
     } catch (e: any) {
+        if (e instanceof ContactGroupError) return res.status(e.status).json({ success: false, error: e.message });
         if (e instanceof InvalidContactBirthdayError) {
             return res.status(400).json({ success: false, error: e.message });
         }
@@ -916,6 +930,7 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     const { name, email, phone, vcard_data, emails_json, phones_json, addresses_json, job_title, organization, notes, labels_json, photo_url, prefix, first_name, middle_name, last_name, suffix, nickname, department, birthday, website_url } = req.body;
     try {
+        if (typeof vcard_data === 'string' && isGroupVCard(vcard_data)) throw new ContactGroupError('Use per-contact categories for contact groups');
         const requestedBirthday: string | null | undefined = Object.prototype.hasOwnProperty.call(req.body, 'birthday')
             ? normalizeContactBirthday(birthday)
             : typeof vcard_data === 'string'
@@ -1006,6 +1021,9 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
             updateSql += ` WHERE id=? AND username=?`;
             queryParams.push(req.params.id as string, user);
             await connection.query(updateSql, queryParams);
+            if (hasVCardCategories(newVcardData) || hasVCardCategories(String(existingContact.vcard_data || ''))) {
+                await syncContactCategoryMemberships(connection, user, Number(existingContact.id), vCardCategories(newVcardData));
+            }
             const currentBirthdayIdentity: BirthdayContactIdentity = {
                 contactId: existingContact.id,
                 davUid: existingContact.dav_uid || `contact-${existingContact.id}`,
@@ -1025,6 +1043,7 @@ appsApiRouter.put('/contacts/:id', async (req: Request, res: Response) => {
         emitContactsUpdated(user, { contactId: req.params.id });
         res.json({ success: true });
     } catch (e: any) {
+        if (e instanceof ContactGroupError) return res.status(e.status).json({ success: false, error: e.message });
         if (e instanceof InvalidContactBirthdayError) {
             return res.status(400).json({ success: false, error: e.message });
         }
@@ -1511,6 +1530,7 @@ appsApiRouter.post('/contacts-import', async (req: Request, res: Response) => {
         if (imported > 0) emitContactsUpdated(user, { imported });
         res.json({ success: true, imported, skippedDuplicate, skippedNoFields, total: imported + skippedDuplicate + skippedNoFields });
     } catch (e: any) {
+        if (e instanceof ContactGroupError) return res.status(e.status).json({ success: false, error: e.message });
         if (e instanceof InvalidContactBirthdayError) {
             return res.status(400).json({ success: false, error: e.message });
         }
@@ -1767,7 +1787,7 @@ appsApiRouter.get('/contact-groups', async (req: Request, res: Response) => {
             `SELECT g.*, COUNT(c.id) as member_count
              FROM contact_groups g
              LEFT JOIN contact_group_members m ON g.id = m.group_id
-             LEFT JOIN contacts c ON c.id = m.contact_id AND c.deleted_at IS NULL
+             LEFT JOIN contacts c ON c.id = m.contact_id AND c.username COLLATE utf8mb4_unicode_ci = g.username AND c.deleted_at IS NULL
              WHERE g.username = ? GROUP BY g.id ORDER BY g.name`,
             [user]
         );
@@ -1777,46 +1797,36 @@ appsApiRouter.get('/contact-groups', async (req: Request, res: Response) => {
     }
 });
 
+function contactGroupFailure(res: Response, error: unknown) {
+    if (error instanceof ContactGroupError) return res.status(error.status).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: 'Unable to update contact group' });
+}
+
 appsApiRouter.post('/contact-groups', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { name, color } = req.body;
-    if (!name || !name.trim()) return res.status(400).json({ success: false, error: 'Group name is required' });
     try {
-        const [result]: any = await pool.query(
-            'INSERT INTO contact_groups (username, name, color) VALUES (?, ?, ?)',
-            [user, name.trim(), color || '#60a5fa']
-        );
-        res.json({ success: true, id: result.insertId });
-    } catch (e: any) {
-        res.status(500).json({ success: false, error: e.message });
-    }
+        const id = await createContactGroup(user, req.body?.name, req.body?.color);
+        emitContactsUpdated(user);
+        res.json({ success: true, id });
+    } catch (error) { contactGroupFailure(res, error); }
 });
 
 appsApiRouter.put('/contact-groups/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { name, color } = req.body;
     try {
-        const [result]: any = await pool.query(
-            'UPDATE contact_groups SET name = COALESCE(?, name), color = COALESCE(?, color) WHERE id = ? AND username = ?',
-            [name?.trim() || null, color || null, req.params.id, user]
-        );
-        if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Group not found' });
+        await updateContactGroup(user, req.params.id, { name: req.body?.name, color: req.body?.color });
+        emitContactsUpdated(user);
         res.json({ success: true });
-    } catch (e: any) {
-        res.status(500).json({ success: false, error: e.message });
-    }
+    } catch (error) { contactGroupFailure(res, error); }
 });
 
 appsApiRouter.delete('/contact-groups/:id', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        await pool.query('DELETE FROM contact_group_members WHERE group_id = ?', [req.params.id]);
-        const [result]: any = await pool.query('DELETE FROM contact_groups WHERE id = ? AND username = ?', [req.params.id, user]);
-        if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Group not found' });
+        await updateContactGroup(user, req.params.id, null);
+        emitContactsUpdated(user);
         res.json({ success: true });
-    } catch (e: any) {
-        res.status(500).json({ success: false, error: e.message });
-    }
+    } catch (error) { contactGroupFailure(res, error); }
 });
 
 appsApiRouter.get('/contact-groups/:id/members', async (req: Request, res: Response) => {
@@ -1826,7 +1836,7 @@ appsApiRouter.get('/contact-groups/:id/members', async (req: Request, res: Respo
             `SELECT m.contact_id, c.name, c.email FROM contact_group_members m
              JOIN contacts c ON c.id = m.contact_id AND c.deleted_at IS NULL
              JOIN contact_groups g ON g.id = m.group_id
-             WHERE m.group_id = ? AND g.username = ?`,
+             WHERE m.group_id = ? AND g.username = ? AND c.username COLLATE utf8mb4_unicode_ci = g.username`,
             [req.params.id, user]
         );
         res.json({ success: true, members: rows });
@@ -1837,38 +1847,20 @@ appsApiRouter.get('/contact-groups/:id/members', async (req: Request, res: Respo
 
 appsApiRouter.post('/contact-groups/:id/members', async (req: Request, res: Response) => {
     const user = (req as any).username;
-    const { contactIds } = req.body;
-    if (!Array.isArray(contactIds)) return res.status(400).json({ success: false, error: 'contactIds array required' });
     try {
-        const [group]: any = await pool.query('SELECT id FROM contact_groups WHERE id = ? AND username = ?', [req.params.id, user]);
-        if (group.length === 0) return res.status(404).json({ success: false, error: 'Group not found' });
-
-        let added = 0;
-        for (const contactId of contactIds) {
-            try {
-                await pool.query('INSERT IGNORE INTO contact_group_members (group_id, contact_id) VALUES (?, ?)', [req.params.id, contactId]);
-                added++;
-            } catch {}
-        }
+        const added = await changeContactGroupMembers(user, req.params.id, req.body?.contactIds);
+        emitContactsUpdated(user);
         res.json({ success: true, added });
-    } catch (e: any) {
-        res.status(500).json({ success: false, error: e.message });
-    }
+    } catch (error) { contactGroupFailure(res, error); }
 });
 
 appsApiRouter.delete('/contact-groups/:id/members/:contactId', async (req: Request, res: Response) => {
     const user = (req as any).username;
     try {
-        await pool.query(
-            `DELETE m FROM contact_group_members m
-             JOIN contact_groups g ON g.id = m.group_id
-             WHERE m.group_id = ? AND m.contact_id = ? AND g.username = ?`,
-            [req.params.id, req.params.contactId, user]
-        );
+        await changeContactGroupMembers(user, req.params.id, [req.params.contactId], true);
+        emitContactsUpdated(user);
         res.json({ success: true });
-    } catch (e: any) {
-        res.status(500).json({ success: false, error: e.message });
-    }
+    } catch (error) { contactGroupFailure(res, error); }
 });
 
 // ==========================================

@@ -1,3 +1,4 @@
+import { ContactGroupError, foldVCardCategoryLines, hasVCardCategories, isGroupVCard, syncContactCategoryMemberships, vCardCategories } from './contact-groups';
 import { createHash, randomUUID } from 'crypto';
 import type { PoolConnection } from 'mysql2/promise';
 import { pool } from './db';
@@ -1043,6 +1044,8 @@ export async function saveContactFromVCardOnConnection(
     vcard: string,
     expectedSyncToken?: number | null,
 ): Promise<SavedContactMutation | null> {
+    if (isGroupVCard(vcard)) throw new ContactGroupError('Separate group vCards are not supported; use per-contact categories', 403);
+    const categories = vCardCategories(vcard);
     const normalizedDavUid = normalizeDavUid(davUid);
     const birthday = extractVCardBirthday(vcard);
     const canonicalVCard = canonicalizeVCardBirthday(vcard, birthday);
@@ -1064,7 +1067,7 @@ export async function saveContactFromVCardOnConnection(
         : null;
 
     const [existingRows]: any = await connection.query(
-        `SELECT id, dav_uid, sync_token, name, email, birthday, deleted_at IS NULL AS is_active
+        `SELECT id, dav_uid, sync_token, name, email, birthday, vcard_data, deleted_at IS NULL AS is_active
          FROM contacts
          WHERE username = ? AND dav_uid = ?
          ORDER BY deleted_at IS NULL DESC, id ASC LIMIT 1`,
@@ -1144,6 +1147,9 @@ export async function saveContactFromVCardOnConnection(
             ],
         );
         if (expectedSyncToken !== undefined && !updateResult.affectedRows) return null;
+        if (categories.length || hasVCardCategories(String(existingRows[0].vcard_data || ''))) {
+            await syncContactCategoryMemberships(connection, user, existing.id, categories);
+        }
         await clearContactTombstone(connection, user, normalizedDavUid);
         const contact: ContactMutationMetadata = {
             id: existing.id,
@@ -1194,6 +1200,7 @@ export async function saveContactFromVCardOnConnection(
             parsed.websiteUrl || null,
         ],
     );
+    if (categories.length) await syncContactCategoryMemberships(connection, user, Number(result.insertId), categories);
     const contact: ContactMutationMetadata = {
         id: Number(result.insertId),
         dav_uid: normalizedDavUid,
@@ -1396,5 +1403,5 @@ export function contactVCard(contact: ContactRow): string {
         email: contact.email || '',
         phone: contact.phone || ''
     };
-    return normalizeVCardData(contact.vcard_data || '', davUid, fallback);
+    return foldVCardCategoryLines(normalizeVCardData(contact.vcard_data || '', davUid, fallback));
 }

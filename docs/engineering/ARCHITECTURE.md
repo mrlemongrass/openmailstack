@@ -1657,6 +1657,19 @@ confirmation:
   validation, and complete staging smoke pass. Rollback is
   `/var/backups/openmailstack/protocol-guarded-webmail-20260807T224814Z/`.
 
+Contact group category bridge, locally verified 2026-09-15 (not deployed):
+
+- `contact-groups.ts` maps owner-scoped webmail group membership to per-contact
+  vCard `CATEGORIES`. CardDAV/ActiveSync persistence and native supplied-vCard
+  writes update memberships; web group changes update contact revisions in the
+  same transaction. Group reads and mutations enforce both group/contact owners.
+- Legacy memberships and raw categories need the explicit, additive
+  `scripts/reconcile-contact-groups.cjs` preview/apply workflow. Preview uses a
+  read-only transaction without schema initialization. No production repair ran.
+- Separate `KIND:group`/Apple group-vCard resources remain unsupported and are
+  rejected rather than stored as people. Empty groups/colors do not round-trip
+  through categories. See `CONTACT_GROUP_SYNC_2026-09-15.md` for proof and limits.
+
 JMAP remains aspirational. Do not advertise it until a native authenticated
 implementation, capability document, state model, and interoperability suite
 exist.

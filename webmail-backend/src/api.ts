@@ -1,4 +1,6 @@
 import { createMailImportRouter } from './mail-import';
+import { createRetentionRouter } from './mail-retention';
+import { createActivityRouter } from './user-activity';
 import { mailSelections, type SelectionGroup } from './mail-selection';
 import { normalizeSenderPolicyEntry, senderPolicyEntries, legacySenderPolicyEntries, updateSenderPolicy } from './sender-policy';
 import { USER_JUNK_RULE_ID, junkEntries, updateJunkRule, withUserRuleLock } from './junk-rules';
@@ -4107,6 +4109,8 @@ apiRouter.get('/drafts/resolve/:id', requireAuth, async (req: any, res) => {
 });
 
 apiRouter.use('/mail-import', requireAuth, createMailImportRouter(withDedicatedImap));
+apiRouter.use('/retention', requireAuth, rateLimit(60 * 1000, 30), createRetentionRouter());
+apiRouter.use('/activity', requireAuth, rateLimit(60 * 1000, 30), createActivityRouter());
 
 apiRouter.post('/messages/selection', requireAuth, async (req: any, res) => {
     const { query = '', field = 'all', scope = 'folder', folder = 'INBOX', messages } = req.body || {};

@@ -132,12 +132,12 @@ export function CalendarToolbar({
       )}
 
       {/* #7 Quick create */}
-      <div style={{ display: 'flex', flex: 1, gap: 6, alignItems: 'center' }}>
+      <div style={{ display: 'flex', flex: '1 1 240px', minWidth: 0, gap: 6, alignItems: 'center' }}>
         <Search size={14} style={{ color: 'var(--text-secondary)' }} />
         <input className="glass-input" placeholder='Quick create: "Lunch Friday at noon"'
           value={cal.quickCreateText} onChange={(e) => cal.setQuickCreateText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') handleQuickCreate(); }}
-          style={{ flex: 1, fontSize: '0.8rem', padding: '6px 10px' }} />
+          style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', padding: '6px 10px' }} />
         <button className="btn btn-ghost" onClick={handleQuickCreate}
           style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>Create</button>
       </div>

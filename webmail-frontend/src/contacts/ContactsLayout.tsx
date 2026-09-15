@@ -93,7 +93,7 @@ export function ContactsLayout() {
             );
         }
         return (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
                 <ContactGrid contacts={contacts} density={density} isMobile onNewContact={handleNewContact} />
                 {contactEditor}{confirmation.dialog}
             </div>

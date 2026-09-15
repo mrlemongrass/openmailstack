@@ -43,6 +43,7 @@ function useActiveApp(): string {
   if (pathname.startsWith('/settings')) return 'settings';
   if (pathname.startsWith('/admin')) return 'admin';
   if (pathname.startsWith('/sync')) return 'sync';
+  if (pathname.startsWith('/activity')) return 'activity';
   return 'mail';
 }
 
@@ -76,10 +77,10 @@ export function AppShell() {
       {!isMobile && (
         <header style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '0 20px', height: 56, borderBottom: '1px solid var(--border-glass)',
+          padding: '8px 20px', minHeight: 56, flexShrink: 0, flexWrap: 'wrap', gap: 8, borderBottom: '1px solid var(--border-glass)',
           background: 'var(--bg-glass)', backdropFilter: 'blur(12px)',
         }}>
-          <nav style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <nav style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,
               fontWeight: 700, fontSize: '1.1rem', marginRight: 16,
@@ -110,7 +111,7 @@ export function AppShell() {
               </Link>
             ))}
           </nav>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
             {!calendarSettingsLoading && !calendarSettingsError && calendarSettings.showHeaderClock && (
               <HeaderClock timeZone={displayTimeZone} clockFormat={calendarSettings.clockFormat} />
             )}
@@ -125,6 +126,7 @@ export function AppShell() {
                 Clock unavailable · Retry
               </button>
             )}
+            <Link to="/activity" className="btn btn-ghost" aria-current={activeApp === 'activity' ? 'page' : undefined}>Activity</Link>
             <Link to="/sync" style={{
               padding: '8px 12px', borderRadius: 'var(--radius-md)',
               color: activeApp === 'sync' ? 'var(--accent-primary)' : 'var(--text-secondary)',
@@ -174,7 +176,7 @@ export function AppShell() {
             style={{
               flex: 1, display: 'flex', flexDirection: 'column',
               alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-              color: ['settings', 'sync', 'admin'].includes(activeApp) ? 'var(--accent-primary)' : 'var(--text-secondary)',
+              color: ['settings', 'sync', 'activity', 'admin'].includes(activeApp) ? 'var(--accent-primary)' : 'var(--text-secondary)',
               background: 'transparent', border: 0, fontSize: '0.7rem', gap: 2,
             }}>
             <MoreHorizontal size={20} />
@@ -185,6 +187,7 @@ export function AppShell() {
             border: '1px solid var(--border-glass)', borderRadius: 'var(--radius-md)',
             background: 'var(--bg-primary)', boxShadow: '0 12px 36px rgba(0,0,0,.3)', zIndex: 120,
           }}>
+            <Link to="/activity" onClick={() => setMoreOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none' }}><Activity size={17} /> Activity & health</Link>
             <Link to="/settings" onClick={() => setMoreOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none' }}><Settings size={17} /> Settings</Link>
             <Link to="/sync" onClick={() => setMoreOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none' }}><Activity size={17} /> Sync</Link>
             <Link to="/admin" onClick={() => setMoreOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none' }}><ShieldAlert size={17} /> Admin</Link>

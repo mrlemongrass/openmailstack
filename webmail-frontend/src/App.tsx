@@ -247,6 +247,8 @@ function SyncView() {
   );
 }
 
+const ActivityPage = lazy(() => import('./shared/components/ActivityPage').then(module => ({ default: module.ActivityPage })));
+
 export default function App() {
   return (
     <BrandingProvider>
@@ -268,6 +270,7 @@ export default function App() {
           <Route path="message-rule" element={<MessageRulePage />} />
             <Route path="logout" element={<LogoutPage />} />
           <Route path="sync" element={<SyncView />} />
+          <Route path="activity" element={<Suspense fallback={<Skeleton />}><ActivityPage /></Suspense>} />
           <Route index element={<Navigate to="/mail/inbox" replace />} />
         </Route>
       </Route>

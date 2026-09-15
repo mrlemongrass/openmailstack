@@ -620,9 +620,9 @@ body {
 }
 
 .calendar-mini-days button.is-today {
-  color: white;
+  color: #fff;
   font-weight: 700;
-  background: var(--accent-primary);
+  background: #245fc7;
 }
 
 .calendar-mini-days button.is-outside {
@@ -4841,3 +4841,14 @@ li[data-checked="true"] .ql-checkbox {
 .compose-rich-editor .ql-toolbar button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
 .compose-rich-editor .ql-tooltip { left: 0 !important; max-width: 100%; white-space: normal; background: var(--surface-color); color: var(--text-primary); }
 .compose-rich-editor .ql-tooltip input { max-width: 100%; color: var(--text-primary); background: var(--surface-color); }
+
+/* Keep dense navigation usable with touch and operating-system accessibility preferences. */
+#notes-sidebar button.nav-item { min-height: 32px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+@media (forced-colors: active) {
+  button, input, select, textarea, .btn { border: 1px solid ButtonText; }
+  :focus-visible { outline: 2px solid Highlight !important; outline-offset: 2px; }
+  [aria-selected="true"], [aria-pressed="true"] { outline: 2px solid Highlight; }
+}

@@ -6,13 +6,13 @@ const path = require('node:path');
 const { startApplicationAfterRequiredMigrations } = require('../src/application-startup.js');
 
 const prerequisiteNames = [
-  'mail-search', 'mail-import', 'session', 'user-settings', 'admin-settings', 'branding',
+  'mail-search', 'mail-import', 'mail-retention', 'user-activity', 'session', 'user-settings', 'admin-settings', 'branding',
   'account-security', 'calendar', 'subscriptions', 'scheduled-send', 'notes',
   'reminders', 'attachments', 'contacts', 'eas-mail', 'eas-pim', 'birthdays',
 ];
 
 const activationNames = [
-  'search-worker', 'scheduled-sender', 'subscription-worker', 'listener',
+  'search-worker', 'scheduled-sender', 'subscription-worker', 'retention-worker', 'activity-maintenance', 'listener',
 ];
 
 function startupDependencies(failingPrerequisite = null) {
@@ -30,6 +30,8 @@ function startupDependencies(failingPrerequisite = null) {
     dependencies: {
       ensureMailSearchSchema: prerequisite('mail-search'),
       ensureMailImportSchema: prerequisite('mail-import'),
+      ensureMailRetentionSchema: prerequisite('mail-retention'),
+      ensureUserActivitySchema: prerequisite('user-activity'),
       initializeSessionStore: prerequisite('session'),
       ensureUserSettingsSchema: prerequisite('user-settings'),
       ensureAdminSettingsSchema: prerequisite('admin-settings'),
@@ -48,6 +50,8 @@ function startupDependencies(failingPrerequisite = null) {
       startSearchWorker: activate('search-worker'),
       startScheduledSender: activate('scheduled-sender'),
       startCalendarSubscriptionWorker: activate('subscription-worker'),
+      startRetentionWorker: activate('retention-worker'),
+      startActivityMaintenance: activate('activity-maintenance'),
       listen: activate('listener'),
     },
     calls,
@@ -65,7 +69,7 @@ test('all prerequisites complete in order before each application worker and the
   );
 });
 
-for (const prerequisiteName of ['mail-search', 'subscriptions', 'birthdays']) {
+for (const prerequisiteName of ['mail-search', 'mail-retention', 'user-activity', 'subscriptions', 'birthdays']) {
   test(`a rejected ${prerequisiteName} prerequisite keeps application workers and the listener stopped`, async () => {
     const harness = startupDependencies(prerequisiteName);
     await assert.rejects(

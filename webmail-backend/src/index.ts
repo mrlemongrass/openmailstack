@@ -1,4 +1,6 @@
 import { ensureMailImportSchema } from './mail-import';
+import { ensureMailRetentionSchema, startRetentionWorker } from './mail-retention';
+import { ensureUserActivitySchema, startActivityMaintenance, observeUserActivity } from './user-activity';
 import http from 'http';
 import { performance } from 'node:perf_hooks';
 import { Server as SocketIOServer } from 'socket.io';
@@ -624,6 +626,7 @@ function isContactsCollection(collectionId: string): boolean {
 }
 
 app.use('/api/auth/login', rateLimit(15 * 60 * 1000, 20));
+app.use('/api', observeUserActivity);
 app.use('/api', apiRouter);
 app.use('/api/apps', appsApiRouter);
 app.use('/api', schedulerRouter);
@@ -2616,6 +2619,8 @@ async function startServer(): Promise<void> {
         await startApplicationAfterRequiredMigrations({
             ensureMailSearchSchema,
             ensureMailImportSchema,
+            ensureMailRetentionSchema,
+            ensureUserActivitySchema,
             initializeSessionStore,
             ensureUserSettingsSchema,
             ensureAdminSettingsSchema,
@@ -2634,6 +2639,8 @@ async function startServer(): Promise<void> {
             startSearchWorker,
             startScheduledSender,
             startCalendarSubscriptionWorker,
+            startRetentionWorker,
+            startActivityMaintenance,
             listen: () => server.listen(serverConfig.port, serverConfig.host, () => {
                 console.log(`OpenMailStack webmail backend listening on ${serverConfig.host}:${serverConfig.port}`);
             }),

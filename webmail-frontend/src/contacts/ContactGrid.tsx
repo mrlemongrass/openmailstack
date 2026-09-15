@@ -81,7 +81,7 @@ export function ContactGrid({ contacts: c, density, isMobile = false, onNewConta
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <input type="text" className="glass-input" placeholder="Search contacts..."
@@ -188,7 +188,7 @@ export function ContactGrid({ contacts: c, density, isMobile = false, onNewConta
           </div>
         </div>
       </div>
-      <div ref={parentRef} style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+      <div ref={parentRef} style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {virtualizer.getVirtualItems().map((vr) => {
             const startIdx = isListMode ? vr.index : vr.index * cols;
@@ -272,7 +272,7 @@ function ContactCard({ contact, nameFormat, isListMode, onClick, isSelected, onT
                     onClick={onToggleSelect}
                     style={{
                         position: 'absolute', top: 8, right: 8, zIndex: 2,
-                        width: 20, height: 20, padding: 0, borderRadius: 4,
+                        width: 28, height: 28, padding: 0, borderRadius: 4,
                         border: `2px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-glass)'}`,
                         background: isSelected ? 'var(--accent-primary)' : 'transparent',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',

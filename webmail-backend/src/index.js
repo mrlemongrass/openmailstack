@@ -38,6 +38,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.io = void 0;
 const mail_import_1 = require("./mail-import");
+const mail_retention_1 = require("./mail-retention");
+const user_activity_1 = require("./user-activity");
 const http_1 = __importDefault(require("http"));
 const node_perf_hooks_1 = require("node:perf_hooks");
 const socket_io_1 = require("socket.io");
@@ -486,6 +488,7 @@ function isContactsCollection(collectionId) {
     return collectionId === CONTACTS_COLLECTION_ID;
 }
 app.use('/api/auth/login', (0, security_1.rateLimit)(15 * 60 * 1000, 20));
+app.use('/api', user_activity_1.observeUserActivity);
 app.use('/api', api_1.apiRouter);
 app.use('/api/apps', apps_api_1.appsApiRouter);
 app.use('/api', router_1.schedulerRouter);
@@ -2388,6 +2391,8 @@ async function startServer() {
         await (0, application_startup_1.startApplicationAfterRequiredMigrations)({
             ensureMailSearchSchema: search_index_1.ensureMailSearchSchema,
             ensureMailImportSchema: mail_import_1.ensureMailImportSchema,
+            ensureMailRetentionSchema: mail_retention_1.ensureMailRetentionSchema,
+            ensureUserActivitySchema: user_activity_1.ensureUserActivitySchema,
             initializeSessionStore: auth_1.initializeSessionStore,
             ensureUserSettingsSchema: user_settings_1.ensureUserSettingsSchema,
             ensureAdminSettingsSchema: admin_settings_1.ensureAdminSettingsSchema,
@@ -2406,6 +2411,8 @@ async function startServer() {
             startSearchWorker: search_worker_1.startSearchWorker,
             startScheduledSender: scheduled_send_1.startScheduledSender,
             startCalendarSubscriptionWorker: calendar_subscription_1.startCalendarSubscriptionWorker,
+            startRetentionWorker: mail_retention_1.startRetentionWorker,
+            startActivityMaintenance: user_activity_1.startActivityMaintenance,
             listen: () => server.listen(config_1.serverConfig.port, config_1.serverConfig.host, () => {
                 console.log(`OpenMailStack webmail backend listening on ${config_1.serverConfig.host}:${config_1.serverConfig.port}`);
             }),

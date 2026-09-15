@@ -11633,3 +11633,26 @@ match the build. Webmail returns 200, public/local auth returns 401, VERSION is
 openmailstack). The dated review links the completed P2 report and preserves P3
 as the next backlog. Physical screen-reader and device confirmation remain
 outside the scripted/browser evidence; no customer mail was used for UI tests.
+
+## 2026-09-14 — Remaining P3 workflows
+
+Operator authorized all three remaining P3 items, retaining commit/push and
+guarded live deployment authorization. Acceptance criteria before editing:
+
+- Cleanup schedules are off by default, user-scoped, previewed and explicitly
+  confirmed. Junk moves to Trash; Trash deletion is permanent. Retention measures
+  time first observed in that folder, with a full grace period for existing mail.
+  Bound work, preserve mailbox identity, check cancellation between batches,
+  record progress and stop uncertain writes until user review. No account is
+  opted in during deployment or tests.
+- Activity shows private, content-free action outcomes and per-app health with
+  honest freshness/unknown states. Recovery uses existing scoped workflows;
+  destructive or uncertain mutations are never blindly replayed.
+- Stress checks cover long folders, 10k mail rows, large Contacts/Notes sets,
+  zoom/reflow, reduced motion, high contrast, touch, keyboard and focus behavior.
+  Record measured latency and fix reproducible issues. Physical screen-reader
+  confirmation is reported separately from browser accessibility evidence.
+- Run regression checks, full suites/build/lint, independent code review, then
+  guarded deployment and live health/artifact checks; preserve rollback proof.
+
+P3 implementation complete: opt-in retention with first-observed residence age, immutable account generation and cascade cleanup; fixed-label user action history with honest delivery outcomes; per-app server and sync observations; Notes pagination, mobile Contacts virtualization and accessibility/reflow corrections. Full suites passed (frontend 289; backend 1,032 with 11 gated skips); separate disposable database suite passed 2 tests and removed its schema/user. Browser workflows, reduced motion, forced colors and 320px reflow passed. Final Notes axe rescan cleared the pagination overlap. Physical screen-reader/device acceptance remains explicit. Guarded release proof will be recorded in WEBAPP_P3_RELEASE_2026-09-14.md.

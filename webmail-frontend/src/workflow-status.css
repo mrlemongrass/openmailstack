@@ -1,0 +1,17 @@
+.activity-page { flex: 1; overflow: auto; padding: clamp(16px, 3vw, 36px); min-width: 0; }
+.activity-page > * { max-width: 1100px; margin-left: auto; margin-right: auto; }
+.activity-page section { margin-top: 28px; }
+.activity-page p, .cleanup-page p { color: var(--text-secondary); line-height: 1.6; }
+.activity-page a, .cleanup-page a { color: var(--accent-primary); text-underline-offset: 3px; }
+.workflow-heading, .workflow-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.workflow-actions { justify-content: flex-start; margin: 16px 0; }
+.workflow-heading h1, .workflow-heading h2 { margin: 0; }
+.workflow-status { border: 1px solid var(--border-glass); border-radius: var(--radius-md); padding: 16px; margin: 14px 0; min-width: 0; overflow-wrap: anywhere; }
+.health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; }
+.health-grid .workflow-status { margin: 0; }
+.health-grid h3 { margin-top: 0; }
+.cleanup-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 16px; border: 0; padding: 12px 0; }
+.cleanup-options label { display: grid; gap: 8px; }
+.workflow-history { list-style: none; padding: 0; }
+.workflow-history > li { padding: 16px 0; border-bottom: 1px solid var(--border-glass); overflow-wrap: anywhere; }
+.workflow-history time, .health-grid small { color: var(--text-secondary); font-size: .8rem; }

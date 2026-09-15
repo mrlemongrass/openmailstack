@@ -89,7 +89,7 @@ export function MessageRow({
           : selectionDisabled ? 'Open a result to act on its folder' : undefined}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => { e.stopPropagation(); onSelect(message.uid, false); }}
-        style={{ flexShrink: 0 }} />
+        style={{ flexShrink: 0, width: 24, height: 24, margin: 0 }} />
       {isScheduled ? (
         <Clock size={16} aria-hidden="true" style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
       ) : isDraft ? (
@@ -98,7 +98,7 @@ export function MessageRow({
         <button onClick={(e) => { e.stopPropagation(); onStar(message.uid); }}
           aria-label={message.isStarred ? 'Unflag message' : 'Flag message'}
           title={message.isStarred ? 'Unflag' : 'Flag'}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, width: 24, height: 24,
             color: message.isStarred ? 'var(--danger)' : 'var(--text-secondary)', flexShrink: 0 }}>
           <Flag size={16} fill={message.isStarred ? 'currentColor' : 'none'} />
         </button>

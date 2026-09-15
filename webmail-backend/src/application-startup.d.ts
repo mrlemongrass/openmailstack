@@ -1,4 +1,6 @@
 export interface ApplicationStartupDependencies {
+    ensureMailRetentionSchema: () => Promise<unknown>;
+    ensureUserActivitySchema: () => Promise<unknown>;
     ensureMailImportSchema: () => Promise<unknown>;
     ensureMailSearchSchema: () => Promise<unknown>;
     initializeSessionStore: () => Promise<unknown>;
@@ -19,6 +21,8 @@ export interface ApplicationStartupDependencies {
     startSearchWorker: () => void;
     startScheduledSender: () => void;
     startCalendarSubscriptionWorker: () => void;
+    startRetentionWorker: () => void;
+    startActivityMaintenance: () => void;
     listen: () => void;
 }
 /**

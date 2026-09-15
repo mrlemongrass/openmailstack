@@ -9,6 +9,8 @@ exports.startApplicationAfterRequiredMigrations = startApplicationAfterRequiredM
 async function startApplicationAfterRequiredMigrations(dependencies) {
     await dependencies.ensureMailSearchSchema();
     await dependencies.ensureMailImportSchema();
+    await dependencies.ensureMailRetentionSchema();
+    await dependencies.ensureUserActivitySchema();
     await dependencies.initializeSessionStore();
     await dependencies.ensureUserSettingsSchema();
     await dependencies.ensureAdminSettingsSchema();
@@ -27,6 +29,8 @@ async function startApplicationAfterRequiredMigrations(dependencies) {
     dependencies.startSearchWorker();
     dependencies.startScheduledSender();
     dependencies.startCalendarSubscriptionWorker();
+    dependencies.startRetentionWorker();
+    dependencies.startActivityMaintenance();
     dependencies.listen();
 }
 //# sourceMappingURL=application-startup.js.map

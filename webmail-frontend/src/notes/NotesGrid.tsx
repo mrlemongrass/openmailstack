@@ -40,6 +40,8 @@ export function NotesGrid({ notesCtx: n, isMobile = false }: {
   isMobile?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pageKey = `${n.notesView}\0${n.notesSearchQuery}\0${n.notesSort}`;
+  const [pageState, setPageState] = useState({ key: pageKey, index: 0 });
   const openNewNote = () => {
     n.setEditingNote({});
     n.setIsNoteModalOpen(true);
@@ -74,6 +76,14 @@ export function NotesGrid({ notesCtx: n, isMobile = false }: {
     }
   });
 
+  const pageCount = Math.max(1, Math.ceil(filtered.length / 60));
+  const pageIndex = Math.min(pageState.key === pageKey ? pageState.index : 0, pageCount - 1);
+  const visible = filtered.slice(pageIndex * 60, (pageIndex + 1) * 60);
+  const turnPage = (index: number) => {
+    setPageState({ key: pageKey, index });
+    scrollRef.current?.scrollTo({ top: 0, behavior: 'instant' });
+  };
+
   if (n.isLoading && n.notes.length === 0) return <NoteSkeleton count={12} />;
 
   if (n.notesError) {
@@ -96,12 +106,13 @@ export function NotesGrid({ notesCtx: n, isMobile = false }: {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-glass)' }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <input type="text" className="glass-input" placeholder="Search notes..."
+            aria-label="Search notes"
             value={n.notesSearchQuery} onChange={(e) => n.setNotesSearchQuery(e.target.value)}
-            style={{ flex: 1, fontSize: '0.85rem' }} />
+            style={{ flex: '1 1 140px', minWidth: 0, fontSize: '0.85rem' }} />
           <SortDropdown value={n.notesSort} onChange={n.setNotesSort} />
         </div>
         {isMobile && (
@@ -110,10 +121,10 @@ export function NotesGrid({ notesCtx: n, isMobile = false }: {
           </button>
         )}
       </div>
-      <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: 16,
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16,
+      <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16,
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 16,
         alignContent: 'start' }}>
-        {filtered.map((note) => (<NoteCard key={note.id} note={note} n={n} />))}
+        {visible.map((note) => (<NoteCard key={note.id} note={note} n={n} />))}
         {filtered.length === 0 && !n.isLoading && (
           <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 60,
             color: 'var(--text-secondary)' }}>
@@ -123,6 +134,11 @@ export function NotesGrid({ notesCtx: n, isMobile = false }: {
           </div>
         )}
       </div>
+      {filtered.length > 60 && <nav aria-label="Notes pages" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexShrink: 0, position: 'relative', zIndex: 1, background: 'var(--bg-primary)', padding: '8px 12px', borderTop: '1px solid var(--border-glass)' }}>
+        <button className="btn btn-ghost" disabled={pageIndex === 0} onClick={() => turnPage(pageIndex - 1)}>Previous page</button>
+        <span role="status">Page {pageIndex + 1} of {pageCount} · {filtered.length.toLocaleString()} notes</span>
+        <button className="btn btn-ghost" disabled={pageIndex >= pageCount - 1} onClick={() => turnPage(pageIndex + 1)}>Next page</button>
+      </nav>}
       <ScrollToTop scrollRef={scrollRef} />
     </div>
   );

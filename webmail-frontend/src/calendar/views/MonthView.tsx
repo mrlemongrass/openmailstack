@@ -39,14 +39,14 @@ export function MonthView({ cal }: { cal: ReturnType<typeof useCalendar> }) {
       </div>
       {/* Day grid */}
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '24px repeat(7, minmax(0, 1fr))',
-        gridTemplateRows: 'repeat(6, 1fr)' }} role="grid" aria-label={format(cal.currentDate, 'MMMM yyyy')}>
-        {Array.from({ length: 6 }).map((_, weekIdx) => {
+        gridTemplateRows: `repeat(${Math.ceil(days.length / 7)}, 1fr)` }} role="grid" aria-label={format(cal.currentDate, 'MMMM yyyy')}>
+        {Array.from({ length: Math.ceil(days.length / 7) }).map((_, weekIdx) => {
           const weekDays = days.slice(weekIdx * 7, (weekIdx + 1) * 7);
           const weekNum = weekDays.length > 0 ? getWeek(weekDays[0]) : '';
           return (
             <div key={weekIdx} style={{ display: 'contents' }} role="row">
               {/* #8 Week number */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+              <div role="rowheader" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '0.6rem', color: 'var(--text-secondary)', border: '1px solid var(--border-glass)',
                 borderRight: 'none' }}>
                 {weekNum}

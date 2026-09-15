@@ -16,7 +16,7 @@ export function SortDropdown({ value, onChange }: SortDropdownProps) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
       <ArrowUpDown size={14} style={{ color: 'var(--text-secondary)' }} />
-      <select
+      <select aria-label="Sort notes"
         className="glass-input"
         value={value}
         onChange={(e) => onChange(e.target.value)}

@@ -1,4 +1,6 @@
 export interface ApplicationStartupDependencies {
+    ensureMailRetentionSchema: () => Promise<unknown>;
+    ensureUserActivitySchema: () => Promise<unknown>;
     ensureMailImportSchema: () => Promise<unknown>;
     ensureMailSearchSchema: () => Promise<unknown>;
     initializeSessionStore: () => Promise<unknown>;
@@ -19,6 +21,8 @@ export interface ApplicationStartupDependencies {
     startSearchWorker: () => void;
     startScheduledSender: () => void;
     startCalendarSubscriptionWorker: () => void;
+    startRetentionWorker: () => void;
+    startActivityMaintenance: () => void;
     listen: () => void;
 }
 
@@ -32,6 +36,8 @@ export async function startApplicationAfterRequiredMigrations(
 ): Promise<void> {
     await dependencies.ensureMailSearchSchema();
     await dependencies.ensureMailImportSchema();
+    await dependencies.ensureMailRetentionSchema();
+    await dependencies.ensureUserActivitySchema();
     await dependencies.initializeSessionStore();
     await dependencies.ensureUserSettingsSchema();
     await dependencies.ensureAdminSettingsSchema();
@@ -50,5 +56,7 @@ export async function startApplicationAfterRequiredMigrations(
     dependencies.startSearchWorker();
     dependencies.startScheduledSender();
     dependencies.startCalendarSubscriptionWorker();
+    dependencies.startRetentionWorker();
+    dependencies.startActivityMaintenance();
     dependencies.listen();
 }

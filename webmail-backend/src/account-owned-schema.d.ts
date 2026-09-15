@@ -1,0 +1,2 @@
+export declare function ensureAccountOwnedTable(table: 'mail_retention' | 'mail_retention_seen' | 'mail_retention_runs' | 'user_activity'): Promise<void>;
+//# sourceMappingURL=account-owned-schema.d.ts.map

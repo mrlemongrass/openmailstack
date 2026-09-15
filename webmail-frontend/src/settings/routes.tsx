@@ -147,7 +147,7 @@ function SettingsLoader() {
 
   const dependencies: Record<SettingsTab, Resource[]> = {
     appearance: ['appearance'], mail_identity: ['mail', 'identities'], mail_signatures: ['mail'],
-    mail_reading: ['mail'], mail_filters: ['rules', 'folders'], mail_spam: ['mail'], mail_import: ['folders'],
+    mail_reading: ['mail'], mail_filters: ['rules', 'folders'], mail_spam: ['mail'], mail_import: ['folders'], mail_cleanup: [],
     calendar_defaults: ['calendar', 'calendars'], contacts_display: ['contacts'],
     sync_devices: ['identities'], account_password: [], advanced: [],
   };

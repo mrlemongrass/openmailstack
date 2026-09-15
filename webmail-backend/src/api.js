@@ -38,6 +38,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.writeAttachmentResponseChunk = exports.validateAttachmentBundleLimits = exports.ATTACHMENT_DOWNLOAD_MAX_BYTES = exports.ATTACHMENT_SOURCE_MAX_BYTES = exports.ATTACHMENT_BUNDLE_MAX_DECODED_BYTES = exports.ATTACHMENT_BUNDLE_MAX_COUNT = exports.apiRouter = void 0;
 const mail_import_1 = require("./mail-import");
+const mail_retention_1 = require("./mail-retention");
+const user_activity_1 = require("./user-activity");
 const mail_selection_1 = require("./mail-selection");
 const sender_policy_1 = require("./sender-policy");
 const junk_rules_1 = require("./junk-rules");
@@ -3669,6 +3671,8 @@ exports.apiRouter.get('/drafts/resolve/:id', requireAuth, async (req, res) => {
     }
 });
 exports.apiRouter.use('/mail-import', requireAuth, (0, mail_import_1.createMailImportRouter)(withDedicatedImap));
+exports.apiRouter.use('/retention', requireAuth, (0, security_1.rateLimit)(60 * 1000, 30), (0, mail_retention_1.createRetentionRouter)());
+exports.apiRouter.use('/activity', requireAuth, (0, security_1.rateLimit)(60 * 1000, 30), (0, user_activity_1.createActivityRouter)());
 exports.apiRouter.post('/messages/selection', requireAuth, async (req, res) => {
     const { query = '', field = 'all', scope = 'folder', folder = 'INBOX', messages } = req.body || {};
     if (typeof query !== 'string' || query.length > 128 || !allowedSearchFields.includes(field)

@@ -1,4 +1,5 @@
 import { MailImportPane } from './MailImportPane';
+import { MailCleanupPane } from './MailCleanupPane';
 import { JunkList } from './JunkList';
 import React, { useState, lazy, Suspense, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Check, Copy, Filter, ListChecks, PenTool, Play, Plus, Trash2 } from 'lucide-react';
@@ -208,6 +209,7 @@ export function SettingsContent(props: SettingsContentProps) {
   else if (activeTab === 'mail_reading') content = <MailReadingPane {...props} />;
   else if (activeTab === 'mail_filters') content = <FiltersPane {...props} />;
   else if (activeTab === 'mail_import') content = <MailImportPane folders={props.folders} />;
+  else if (activeTab === 'mail_cleanup') content = <MailCleanupPane />;
   else if (activeTab === 'mail_spam') content = <MailSpamPane />;
   else if (activeTab === 'calendar_defaults') content = <CalendarPane {...props} />;
   else if (activeTab === 'contacts_display') content = <ContactsPane {...props} />;

@@ -11719,3 +11719,26 @@ backend runtime hashes, eleven public asset responses, active mode, local/public
 401 readiness, zero restarts, and public-asset browser fixtures pass. No rollback
 was needed. Original private-message/physical-device confirmation remains open;
 existing dependency/configuration advisories are detailed in the release report.
+
+
+## 2026-09-15 — Contact group live release
+
+Runtime `13f842cb` was committed and pushed, then released after the other task's
+mail-readability/PDF/image rollout completed. A read-only preview caught mixed
+legacy username collations; explicit query collation fixed all four joins without
+a production schema migration. The disposable mixed-collation fixture failed
+before the correction and all 14 checks passed after; 25 focused tests and the
+backend build also passed. Combined frontend validation passed 304 tests,
+build and lint. Full backend suite passed 1,035 with 12 gated skips before the
+query correction. The account preview checked 487 contacts with zero repairs.
+
+Both guarded bridge and active deployments passed their pre/post public protocol
+gates, including final Ping and enforced cleanup. Rollback snapshots retained:
+`protocol-guarded-webmail-20260915T214708Z` and
+`protocol-guarded-webmail-20260915T215502Z` under `/var/backups/openmailstack`.
+No rollback was required or exercised. All 96 backend JavaScript/260 frontend
+files match; public index/PDF worker, staging smoke, auth rejection, service
+health and active outbound mode passed. Authenticated canary group-list,
+member-list, filtering and invalid-ID checks passed, and logout invalidated the
+session. No production reconciliation was applied. Physical Samsung group-edit
+round trips remain next. Evidence and limits: `CONTACT_GROUP_SYNC_2026-09-15.md`.

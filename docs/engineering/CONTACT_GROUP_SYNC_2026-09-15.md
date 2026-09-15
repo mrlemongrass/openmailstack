@@ -1,7 +1,9 @@
 # Contact group synchronization — 2026-09-15
 
-Status: implemented and checked locally; not deployed. No production contacts,
-groups, credentials, or device state were accessed or changed for this work.
+Status: committed, pushed and deployed through both guarded release stages.
+Runtime commit: `13f842cb`. The release retains the preceding dark-mode mail and
+PDF/image preview changes. Production contact reconciliation was previewed
+read-only and required no changes; no reconciliation was applied.
 
 ## Diagnosis
 
@@ -84,8 +86,8 @@ existing account as part of an authorized release.
   deduplication or group-management UX.
 - Physical Samsung/DAVx⁵ and Apple device checks remain outstanding. Scripted
   ActiveSync conversion/persistence is not physical-client proof.
-- Release must use the required bridge-then-active guarded deployment and public
-  IMAPS/ActiveSync checks. None were run against production for this local task.
+- Both required bridge-then-active guarded deployments and public IMAPS/ActiveSync
+  checks passed. Physical group-edit round trips remain a separate acceptance step.
 
 ## Validation
 
@@ -136,7 +138,54 @@ no production reconciliation was applied.
 
 Combined release validation: 304 frontend tests, frontend build and lint passed;
 backend full suite passed 1,035 tests with 12 gated skips before the collation
-correction. Backend build and disposable database checks passed after it.
+correction. Backend build, 25 focused contact/identity/ActiveSync tests and all
+14 disposable database checks passed after it. The isolated release checkout
+built successfully and remained clean.
+
+## Live release proof
+
+The mail-readability/attachment-preview task completed its release first. Contact
+groups were then deployed from the clean detached checkout
+`/root/openmailstack-contacts-release-20260915` at `13f842cb`; intervening `3f3c55ea`
+only updated the other task's documentation.
+
+- Bridge and active deployment commands both exited zero. All four pre/post gates
+  passed; post-deploy gates included ActiveSync Ping. Checks cover public IMAPS
+  body retrieval, full MIME, read/unread and Junk/Trash propagation, contacts,
+  calendars, SMTP submission, sessions and enforced synthetic canary cleanup.
+  The gate generated unique run-derived device IDs. No cleanup warning or failure
+  occurred, and no rollback was needed or exercised.
+- Final artifact verification matched all 96 JavaScript runtime files (including
+  nested files) and all 260 frontend distribution files. Public index and PDF
+  worker matched the build, with the worker served as JavaScript.
+- Staging smoke passed service/listener/configuration checks, Rspamd functional
+  scanning, HTTPS/SMTP STARTTLS/IMAPS TLS, web/admin/autoconfiguration endpoints
+  and unauthenticated API rejection. Public and local auth checks returned 401.
+- The backend was active/running with `NRestarts=0`; outbound release mode was
+  `active`.
+- Authenticated public checks using the dedicated protocol canary passed group
+  listing, member listing, contact filtering and invalid-group-ID rejection. No
+  contacts or groups were written by these checks. The session was logged out,
+  and reuse returned 401.
+- The read-only reconciliation preview checked 487 contacts and reported zero
+  requiring repair, both before and after installation.
+
+Retained rollback snapshots:
+
+- `/var/backups/openmailstack/protocol-guarded-webmail-20260915T214708Z`
+- `/var/backups/openmailstack/protocol-guarded-webmail-20260915T215502Z`
+
+Local evidence: `/tmp/oms-contact-release-{bridge,active,staging}.log`,
+`/tmp/oms-contact-release-manifest.json`, and the release test/build logs under
+`/tmp/oms-contact-release-*`. Existing dependency advisories remain separate
+maintenance work, as recorded in `MAIL_READING_PREVIEWS_2026-09-15.md`. Staging
+also emitted the existing Rspamd task-timeout advisory; its configuration and
+functional checks passed.
+
+Next acceptance step: with DAVx⁵ set to per-contact categories, change a group
+membership on the Samsung, sync, and verify it in webmail; repeat from webmail
+back to the phone. Successful individual contacts/calendar sync reported by the
+user does not yet prove this new group-edit round trip.
 
 ## Protocol sources
 

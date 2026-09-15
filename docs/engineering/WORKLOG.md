@@ -11708,3 +11708,14 @@ cleanup. Runtime dependency audit is clean; two unchanged development-tool
 advisories remain. Existing contact-group edits are preserved. No deployment
 or production mailbox access. Limits and evidence:
 `MAIL_READING_PREVIEWS_2026-09-15.md`.
+
+Live release: feature `18155137` and worker-MIME correction `1aa89c7a` pushed;
+`1aa89c7a` deployed from a clean checkout excluding unrelated contact-group work.
+Isolated suite: 303 passed; lint and both builds passed. Bridge and active public
+pre/post gates passed with Ping and no cleanup warnings. Both mode-0700 rollback
+snapshots remain: `protocol-guarded-webmail-20260915T212900Z` and
+`protocol-guarded-webmail-20260915T213741Z`. Staging smoke, all 260 frontend/76
+backend runtime hashes, eleven public asset responses, active mode, local/public
+401 readiness, zero restarts, and public-asset browser fixtures pass. No rollback
+was needed. Original private-message/physical-device confirmation remains open;
+existing dependency/configuration advisories are detailed in the release report.

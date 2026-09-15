@@ -69,12 +69,12 @@ mobile layout, and visible loading/error recovery.
   `contrast-desktop.png`, `pdf-desktop.png`, `pdf-mobile.png`, image screenshots,
   fixtures, and the setup/check/verify/failures browser scripts.
 
-## Boundaries and next step
+## Boundaries
 
-No deployment, commit/push, backend changes, production data access, or customer
-mailbox mutations occurred. Existing contact-group work in the checkout was
-preserved. Browser API responses were fixtures, so this is not a live mailbox
-or physical-device acceptance claim.
+Initial implementation was locally verified before release authorization.
+Existing contact-group work in the checkout was preserved. Browser API responses
+were fixtures, so browser results do not claim verification of the original
+private messages or physical devices. Live release evidence follows below.
 
 Automatic contrast uses computed RGB/RGBA solid backgrounds. Image/gradient
 backgrounds, blending, opacity effects, non-RGB color spaces, and text embedded
@@ -87,7 +87,60 @@ Encrypted/corrupt PDFs have a Download fallback. Interactive PDF forms,
 annotations, text selection over the page canvas, and HEIC/TIFF/SVG/Office
 preview are outside this change. Page text is available when the PDF provides
 it; scanned images do not gain OCR. Browser/device support for image formats
-still applies. Next: release the frontend through the repository's deployment
-workflow, then confirm the original two messages and Safari/Android behavior.
+still applies. Confirmation of the original two messages and physical
+Safari/Android behavior remains a user acceptance step.
 
 PDF.js integration reference: https://mozilla.github.io/pdf.js/examples/
+
+
+## Live release — 2026-09-15
+
+User explicitly authorized commit, push, and deployment. The feature commit
+`18155137` and worker MIME correction `1aa89c7a` were pushed to `origin/main`.
+Runtime release is **`1aa89c7a`**, built/deployed from the clean detached checkout
+`/root/openmailstack-mail-release-20260915`. Uncommitted contact-group work was
+not included; all 76 committed backend JavaScript runtime files matched the
+pre-release live backend.
+
+Release validation found the host's Nginx MIME table recognizes `.js` but not
+`.mjs`. The build now emits the PDF module worker with a `.js` suffix, preserving
+module-worker behavior without changing global server MIME configuration. The
+public worker responds as `application/javascript`, and an actual browser
+renders the PDF using public production assets.
+
+The isolated release suite passed **303 tests** (the earlier 304 included the
+unrelated local contact-group regression). Frontend lint/build and backend
+build passed. Public-site Chromium fixture checks passed mixed-background
+contrast, PDF pages/zoom, picture decoding, Escape/focus restoration, remote
+image blocking, readable fallback, and desktop/390px controls. These used
+synthetic API responses, not customer messages; physical Safari/Android and the
+original private GCU/classroom messages remain outside this evidence.
+
+Both guarded stages ran public pre/post IMAPS and ActiveSync suites. Both
+post-deploy suites passed routine Ping; both guarded commands exited 0 with no
+cleanup warnings. No rollback was needed or exercised. Snapshots are root-owned
+mode 0700:
+
+- Bridge: `/var/backups/openmailstack/protocol-guarded-webmail-20260915T212900Z`
+- Active: `/var/backups/openmailstack/protocol-guarded-webmail-20260915T213741Z`
+
+Final staging smoke passed services/listeners, configuration, Rspamd functional
+scan, HTTPS/SMTP STARTTLS/IMAPS, webmail/admin/autoconfiguration endpoints, and
+anonymous API rejection. All **260 frontend files** and **76 backend JavaScript
+files** match the clean release. The public index and ten selected runtime/PDF
+assets match; local/public readiness returns 401. Backend is active/running with
+zero restarts, outbound mode is active, and the warning/error-priority journal
+had zero entries since release began.
+
+Evidence logs: `/tmp/oms-mail-reading-release-tests.log`,
+`/tmp/oms-mail-reading-release-build.log`, `/tmp/oms-mail-reading-bridge.log`,
+`/tmp/oms-mail-reading-active.log`, `/tmp/oms-mail-reading-staging.log`, and
+`/tmp/oms-mail-reading-artifacts.json`. Public browser setup and screenshots are
+under `output/playwright/mail-contrast/`.
+
+Existing advisories remain outside this feature release: frontend full audit
+reports browserslist (high) and baseline-browser-mapping (moderate); frontend
+runtime-only audit is clean. The unchanged backend runtime audit reports
+multer/nodemailer (high) and imapflow/mailparser/mysql2/qs (moderate). Staging also
+prints existing Postfix deprecated-option and Rspamd timeout notices while its
+checks pass. A separate dependency/configuration maintenance pass is recommended.

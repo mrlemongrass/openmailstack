@@ -40,4 +40,30 @@ Next recommended task: the P3 accessibility and performance stress pass, includi
 
 ## Live release
 
-Pending guarded deployment and artifact verification.
+Implementation commits: `4c53a7fd` and destination-identity correction `47f55912`.
+Both are pushed to the remote.
+
+The corrected bridge deployment passed its pre/post public IMAPS, ActiveSync mail,
+Ping, Contacts and Calendar gates with enforced canary cleanup. Its rollback
+snapshot is `/var/backups/openmailstack/protocol-guarded-webmail-20260914T235621Z`.
+The corrected active deployment also passed its pre/post gates and cleanup.
+Its rollback snapshot is
+`/var/backups/openmailstack/protocol-guarded-webmail-20260915T000434Z`.
+Both guarded commands exited successfully. No rollback was needed or exercised;
+the snapshots are retained recovery points with compatible forward schema.
+
+Live code revision: **`47f55912`**. Deployment logs are
+`/tmp/oms-p2-folder-live-bridge.log` and `/tmp/oms-p2-folder-live-active.log`.
+
+After active installation, staging smoke passed service/listener checks,
+configuration checks, the Rspamd functional scan, HTTPS/SMTP STARTTLS/IMAPS TLS,
+webmail/admin/autoconfiguration endpoints and unauthenticated API rejection.
+All **58 frontend distribution files** and **nine changed backend JavaScript
+runtime files** match the build. The public index and six referenced/editor
+assets match too. Public webmail returns HTTP 200; local/public auth returns 401.
+Backend/admin VERSION is `0.1.5`, outbound mode is `active`, and the import staging
+directory is private (`700`, `openmailstack:openmailstack`).
+
+Health and artifact evidence: `/tmp/oms-p2-staging-smoke.log` and
+`/tmp/oms-p2-artifact-check.log`. All P2 implementation tasks are deployed;
+the physical-client/accessibility boundaries above remain explicit.

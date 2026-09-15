@@ -11616,3 +11616,20 @@ guarded bridge/active sequence will release the corrected revision.
 The folder-identity regression failed against the initial compiled runtime and
 passed after the correction. The rebuilt backend and both disposable database
 workflows passed; uppercase/lowercase INBOX remains one canonical destination.
+
+Corrected code `47f55912` is pushed and live. Both guarded bridge and active
+deployments exited successfully with pre/post public IMAPS, ActiveSync mail,
+Ping, Contacts and Calendar gates and enforced canary cleanup. Retained rollback
+snapshots are `protocol-guarded-webmail-20260914T235621Z` and
+`protocol-guarded-webmail-20260915T000434Z` under `/var/backups/openmailstack`.
+No rollback was required or exercised.
+
+Staging smoke passed service/listener/configuration checks, Rspamd functional
+scan, HTTPS/SMTP STARTTLS/IMAPS TLS, web/admin/autoconfiguration endpoints and
+unauthenticated API rejection. All 58 frontend distribution files, nine changed
+backend JavaScript runtime files, public index and six referenced/editor assets
+match the build. Webmail returns 200, public/local auth returns 401, VERSION is
+0.1.5, and outbound mode is active. Import staging remains private (700, owned by
+openmailstack). The dated review links the completed P2 report and preserves P3
+as the next backlog. Physical screen-reader and device confirmation remain
+outside the scripted/browser evidence; no customer mail was used for UI tests.

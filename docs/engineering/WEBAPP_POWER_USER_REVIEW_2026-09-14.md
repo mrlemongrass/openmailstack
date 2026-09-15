@@ -1,5 +1,15 @@
 # WebApp power-user and quality-of-life review — 2026-09-14
 
+## Follow-up status
+
+The findings below preserve the original review baseline. P1 was delivered and
+confirmed working by the operator. All P2 implementation tasks are now deployed.
+The implementation and verification are
+recorded in [the P2 release report](WEBAPP_P2_RELEASE_2026-09-14.md), including
+explicit import, selection and browser-window limits. Its Live release section
+records deployment status. P3 remains the next backlog; physical screen-reader
+and device checks are not covered by synthetic browser or protocol tests.
+
 ## Outcome and scope
 
 This review follows the editor release and the user's Junk/Trash, default-format,

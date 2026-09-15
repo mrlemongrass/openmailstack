@@ -11742,3 +11742,24 @@ health and active outbound mode passed. Authenticated canary group-list,
 member-list, filtering and invalid-ID checks passed, and logout invalidated the
 session. No production reconciliation was applied. Physical Samsung group-edit
 round trips remain next. Evidence and limits: `CONTACT_GROUP_SYNC_2026-09-15.md`.
+
+
+## 2026-09-15 — Inline image and PDF previews
+
+User approved automatic inline pictures/PDF first pages with a combined 25 MB
+per-message limit, followed by commit, push and deployment. Acceptance: preserve
+manual Preview/Download, use compact cards above the combined limit or with
+unknown sizes, avoid automatic below-fold downloads, and preserve remote-image
+privacy and mobile layout.
+
+Added aggregate policy, visibility-driven rendering, per-message collapse, and
+shared inline/modal content. Each automatic response is also bounded by its
+reported attachment size. Individual files over the existing manual 25 MB limit
+are download-only. No new backend contracts or dependencies.
+
+Proof: 310 frontend tests, lint, production build and backend build passed.
+Development and production Chromium fixtures passed desktop/390px inline PDF/image,
+full preview, collapse, lazy loading/cleanup, all size fallback cases, metadata
+mismatch recovery and remote privacy. All 96 backend files matched the preceding
+live contact-group release before deployment. Release evidence and acceptance
+limits: `INLINE_ATTACHMENT_PREVIEWS_2026-09-15.md`.

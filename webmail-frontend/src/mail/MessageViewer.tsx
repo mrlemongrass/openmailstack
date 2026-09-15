@@ -5,7 +5,7 @@ import { useParams, useNavigate } from 'react-router';
 import { Reply, ReplyAll, Forward, Flag, Trash2, Archive, Mail, MailOpen, Code, Clock, FolderOpen, ImageOff, ChevronLeft, ShieldAlert } from 'lucide-react';
 import { format } from 'date-fns';
 import DOMPurify from 'dompurify';
-import { AttachmentCard } from './components/AttachmentCard';
+import { MessageAttachments } from './components/MessageAttachments';
 import { EmailBody } from './components/EmailBody';
 import { InlineReply } from './components/InlineReply';
 import { RawMessageModal } from './components/RawMessageModal';
@@ -639,15 +639,8 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
           )}
         </div>
         {message.attachments && message.attachments.length > 0 && (
-          <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-glass)' }}>
-            <h4 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 8 }}>Attachments ({message.attachments.length})</h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {message.attachments.map((att) => (
-                <AttachmentCard key={`${sourceFolder}:${message.uid}:${att.id}`} attachment={att}
-                  sourceFolder={sourceFolder} messageUid={message.uid} />
-              ))}
-            </div>
-          </div>
+          <MessageAttachments key={remoteContentKey} attachments={message.attachments}
+            sourceFolder={sourceFolder} messageUid={message.uid} />
         )}
       </div>
       {!isScheduled && !isDraft && (mail.mailSettings.compose.replyMode || mail.mailSettings.compose.defaultMode) !== 'plain' && <div style={{ padding: 16 }}>

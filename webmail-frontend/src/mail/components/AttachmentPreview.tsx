@@ -35,15 +35,16 @@ export default function AttachmentPreview({ url, filename, kind, onClose }: {
   );
 }
 
-function PreviewContent({ url, filename, kind, onRetry }: {
-  url: string; filename: string; kind: AttachmentPreviewKind; onRetry: () => void;
+export function PreviewContent({ url, filename, kind, onRetry, maxBytes, inline = false, onOpen }: {
+  url: string; filename: string; kind: AttachmentPreviewKind; onRetry?: () => void;
+  maxBytes?: number; inline?: boolean; onOpen?: () => void;
 }) {
   const [file, setFile] = useState<{ blob: Blob; imageUrl: string } | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     const controller = new AbortController();
     let imageUrl = '';
-    void loadAttachmentPreview(url, kind, controller.signal).then(blob => {
+    void loadAttachmentPreview(url, kind, controller.signal, undefined, maxBytes).then(blob => {
       if (controller.signal.aborted) return;
       if (kind === 'image') imageUrl = URL.createObjectURL(blob);
       setFile({ blob, imageUrl });
@@ -54,14 +55,19 @@ function PreviewContent({ url, filename, kind, onRetry }: {
       controller.abort();
       if (imageUrl) URL.revokeObjectURL(imageUrl);
     };
-  }, [url, kind]);
+  }, [url, kind, maxBytes]);
   if (error) return <div className="attachment-preview-status" role="alert">
-    <p>{error}</p><button type="button" className="btn btn-ghost" onClick={onRetry}>Try again</button>
+    <p>{error}</p>{onRetry && <button type="button" className="btn btn-ghost" onClick={onRetry}>Try again</button>}
   </div>;
   if (!file) return <p className="attachment-preview-status" role="status">Loading preview…</p>;
-  if (kind === 'pdf') return <Suspense fallback={<p role="status">Opening PDF…</p>}>
-    <PdfPreview blob={file.blob} />
-  </Suspense>;
-  return <img className="attachment-preview-image" src={file.imageUrl} alt={filename}
+  const content = kind === 'pdf' ? <Suspense fallback={<p role="status">Opening PDF…</p>}>
+    <PdfPreview blob={file.blob} inline={inline} />
+  </Suspense> : <img className="attachment-preview-image" src={file.imageUrl} alt={filename} decoding="async"
     onError={() => setError('This picture could not be displayed. Download it to view it.')} />;
+  return inline ? <div className="inline-preview-media">
+    {content}
+    <button type="button" className="inline-preview-open" aria-label={`Open preview ${filename}`} onClick={onOpen}>
+      <span>Open preview</span>
+    </button>
+  </div> : content;
 }

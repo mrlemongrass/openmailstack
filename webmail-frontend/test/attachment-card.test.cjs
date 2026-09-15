@@ -23,6 +23,7 @@ function loadComponent() {
   const loaded = new Module(componentPath, module);
   loaded.paths = module.paths;
   loaded.require = id => {
+    if (id === './InlineAttachment') return { InlineAttachment: () => null };
     if (id === 'lucide-react') {
       return new Proxy({}, { get: () => props => React.createElement('svg', props) });
     }
@@ -63,7 +64,19 @@ test('mail attachment download uses its encoded folder and message identity', ()
   assert.match(markup, /aria-label="Preview quarterly report\.pdf"/);
 
   const viewer = fs.readFileSync(path.resolve(__dirname, '../src/mail/MessageViewer.tsx'), 'utf8');
-  assert.match(viewer, /<AttachmentCard[\s\S]{0,160}sourceFolder=\{sourceFolder\}[\s\S]{0,160}messageUid=\{message\.uid\}/);
+  assert.match(viewer, /<MessageAttachments[\s\S]{0,160}sourceFolder=\{sourceFolder\}[\s\S]{0,160}messageUid=\{message\.uid\}/);
+});
+
+test('individual attachments above 25 MB offer Download only', () => {
+  const AttachmentCard = loadComponent();
+  for (const size of [25 * 1024 * 1024, 25 * 1024 * 1024 + 1]) {
+    const markup = renderToStaticMarkup(React.createElement(AttachmentCard, {
+      sourceFolder: 'INBOX', messageUid: 42,
+      attachment: { id: 1, filename: 'large.pdf', contentType: 'application/pdf', size },
+    }));
+    assert.equal(markup.includes('aria-label="Preview large.pdf"'), size === 25 * 1024 * 1024);
+    assert.ok(markup.includes('aria-label="Download large.pdf"'));
+  }
 });
 
 test('image attachments offer Preview while unsupported attachments keep Download', () => {

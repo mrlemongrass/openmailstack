@@ -11,8 +11,41 @@ loaded.paths = module.paths;
 loaded._compile(ts.transpileModule(fs.readFileSync(sourcePath, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, sourcePath);
-const { loadAttachmentPreview, MAX_PREVIEW_BYTES } = loaded.exports;
+const { loadAttachmentPreview, MAX_PREVIEW_BYTES, inlineAttachmentPolicy } = loaded.exports;
 const signal = () => new AbortController().signal;
+
+const attachment = (size, contentType = 'application/pdf') => ({ id: 1, filename: 'file', contentType, size });
+
+test('inline policy uses the combined supported attachment size, including the exact boundary', () => {
+  assert.equal(inlineAttachmentPolicy([attachment(MAX_PREVIEW_BYTES)]), 'inline');
+  assert.equal(inlineAttachmentPolicy([attachment(MAX_PREVIEW_BYTES - 1), attachment(1, 'image/png')]), 'inline');
+  assert.equal(inlineAttachmentPolicy([attachment(MAX_PREVIEW_BYTES), attachment(1)]), 'too-large');
+  assert.equal(inlineAttachmentPolicy(Array(3).fill(attachment(10 * 1024 * 1024))), 'too-large');
+  assert.equal(inlineAttachmentPolicy([attachment(100), attachment(MAX_PREVIEW_BYTES * 2, 'application/zip')]), 'inline');
+  assert.equal(inlineAttachmentPolicy([attachment(100, 'application/zip')]), 'none');
+  assert.equal(inlineAttachmentPolicy([]), 'none');
+});
+
+test('unreliable sizes never automatically fetch supported attachments', () => {
+  for (const size of [undefined, null, 0, -1, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(inlineAttachmentPolicy([attachment(100), attachment(size)]), 'unknown-size');
+  }
+});
+
+test('inline loads enforce their declared share of the per-message budget', async () => {
+  for (const withHeader of [true, false]) {
+    let cancelled = false;
+    const body = new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array(101)); },
+      cancel() { cancelled = true; },
+    });
+    await assert.rejects(loadAttachmentPreview('/attachment', 'pdf', signal(), async () =>
+      new Response(body, { headers: withHeader ? { 'Content-Length': '101' } : {} }), 100), /larger than expected/);
+    assert.equal(cancelled, true);
+  }
+  const blob = await loadAttachmentPreview('/attachment', 'pdf', signal(), async () => new Response('%PDF-1.7'), 8);
+  assert.equal(blob.size, 8);
+});
 
 test('preview fetches the exact authenticated attachment and keeps PDF bytes local', async () => {
   let request;

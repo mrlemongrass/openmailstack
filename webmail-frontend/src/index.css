@@ -72,6 +72,56 @@ html, body, #root {
   margin-bottom: 8px;
 }
 
+.message-attachments {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-glass);
+}
+
+.message-attachments-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.message-attachments-heading h4 { font-size: 0.85rem; }
+.message-attachments-heading button { font-size: 0.8rem; }
+.message-attachments-list { display: grid; gap: 12px; }
+.inline-preview-note { color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 8px; }
+.inline-attachment { max-width: 760px; margin-top: 8px; }
+.inline-preview-media { position: relative; }
+.inline-preview-media .attachment-preview-image { max-height: none; height: auto; margin: 0; }
+.pdf-preview-inline .pdf-preview-page { padding: 0; overflow: hidden; }
+.pdf-preview-inline canvas { max-width: 100%; height: auto !important; }
+
+.inline-preview-open {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.inline-preview-open span {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-main);
+  color: var(--text-primary);
+  opacity: 0;
+}
+
+.inline-preview-open:hover span,
+.inline-preview-open:focus-visible span { opacity: 1; }
+.inline-preview-open:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+
 .attachment-preview-trigger {
   display: flex;
   align-items: center;

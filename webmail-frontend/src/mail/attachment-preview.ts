@@ -3,6 +3,18 @@ import type { MessageAttachment } from '../shared/types';
 export type AttachmentPreviewKind = 'pdf' | 'image';
 export const MAX_PREVIEW_BYTES = 25 * 1024 * 1024;
 
+export function inlineAttachmentPolicy(attachments: MessageAttachment[]): 'inline' | 'too-large' | 'unknown-size' | 'none' {
+  const supported = attachments.filter(attachment => attachmentPreviewKind(attachment));
+  if (!supported.length) return 'none';
+  if (supported.some(attachment => !Number.isSafeInteger(attachment.size) || attachment.size <= 0)) return 'unknown-size';
+  let total = 0;
+  for (const attachment of supported) {
+    total += attachment.size;
+    if (total > MAX_PREVIEW_BYTES) return 'too-large';
+  }
+  return 'inline';
+}
+
 export function attachmentPreviewKind(attachment: MessageAttachment): AttachmentPreviewKind | null {
   const type = attachment.contentType.toLowerCase().split(';')[0].trim();
   if (type === 'application/pdf') return 'pdf';
@@ -30,11 +42,19 @@ function previewContentType(bytes: Uint8Array): string | null {
 export async function loadAttachmentPreview(
   url: string, kind: AttachmentPreviewKind, signal: AbortSignal,
   fetcher: typeof fetch = fetch,
+  maxBytes = MAX_PREVIEW_BYTES,
 ): Promise<Blob> {
+  // Inline callers reserve each attachment's declared share of the message
+  // budget. Do not let incorrect metadata expand that share while streaming.
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > MAX_PREVIEW_BYTES) {
+    throw new Error('The attachment size could not be verified. Use Preview or Download.');
+  }
   const response = await fetcher(url, { signal, cache: 'no-store', credentials: 'same-origin' });
   if (!response.ok) throw new Error('The attachment could not be loaded. Try again or download it.');
-  const tooLarge = () => new Error('This attachment is too large to preview. Download it to view it.');
-  if (Number(response.headers.get('content-length')) > MAX_PREVIEW_BYTES) {
+  const tooLarge = () => new Error(maxBytes < MAX_PREVIEW_BYTES
+    ? 'This attachment is larger than expected. Use Preview or Download.'
+    : 'This attachment is too large to preview. Download it to view it.');
+  if (Number(response.headers.get('content-length')) > maxBytes) {
     await response.body?.cancel();
     throw tooLarge();
   }
@@ -47,7 +67,7 @@ export async function loadAttachmentPreview(
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_PREVIEW_BYTES) {
+      if (size > maxBytes) {
         await reader.cancel();
         throw tooLarge();
       }

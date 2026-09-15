@@ -5,7 +5,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 GlobalWorkerOptions.workerSrc = workerUrl;
 const assetBase = import.meta.env.DEV ? '/node_modules/pdfjs-dist/' : `${import.meta.env.BASE_URL}pdfjs/${version}/`;
 
-export default function PdfPreview({ blob }: { blob: Blob }) {
+export default function PdfPreview({ blob, inline = false }: { blob: Blob; inline?: boolean }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState('');
   const [page, setPage] = useState(1);
@@ -39,23 +39,23 @@ export default function PdfPreview({ blob }: { blob: Blob }) {
     return () => observer.disconnect();
   }, []);
 
-  return <div ref={containerRef} className="pdf-preview">
+  return <div ref={containerRef} className={inline ? 'pdf-preview pdf-preview-inline' : 'pdf-preview'}>
     {error ? <p role="alert" className="attachment-preview-status">{error}</p> : !pdf ?
       <p role="status" className="attachment-preview-status">Opening PDF…</p> : <>
-        <div className="pdf-preview-controls" aria-label="PDF controls">
+        {inline ? <p className="inline-preview-note">Page 1 of {pdf.numPages}</p> : <div className="pdf-preview-controls" aria-label="PDF controls">
           <button type="button" className="btn btn-ghost" disabled={page === 1} onClick={() => setPage(value => value - 1)}>Previous</button>
           <span role="status">Page {page} of {pdf.numPages}</span>
           <button type="button" className="btn btn-ghost" disabled={page === pdf.numPages} onClick={() => setPage(value => value + 1)}>Next</button>
           <label>Zoom <select value={zoom} onChange={event => setZoom(Number(event.target.value))}>
             <option value={1}>Fit width</option><option value={1.5}>150%</option><option value={2}>200%</option>
           </select></label>
-        </div>
-        <PdfPage key={`${page}:${zoom}:${width}`} pdf={pdf} pageNumber={page} width={width * zoom} />
+        </div>}
+        <PdfPage key={`${page}:${zoom}:${width}`} pdf={pdf} pageNumber={inline ? 1 : page} width={width * zoom} showText={!inline} />
       </>}
   </div>;
 }
 
-function PdfPage({ pdf, pageNumber, width }: { pdf: PDFDocumentProxy; pageNumber: number; width: number }) {
+function PdfPage({ pdf, pageNumber, width, showText }: { pdf: PDFDocumentProxy; pageNumber: number; width: number; showText: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
@@ -81,11 +81,12 @@ function PdfPage({ pdf, pageNumber, width }: { pdf: PDFDocumentProxy; pageNumber
       await render.promise;
       if (cancelled) return;
       setReady(true);
+      if (!showText) return;
       const content = await page.getTextContent();
       if (!cancelled) setText(content.items.map(item => 'str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : '').join(''));
     }).catch(() => { if (!cancelled) setError('This page could not be displayed. Download the PDF to view it.'); });
     return () => { cancelled = true; render?.cancel(); };
-  }, [pdf, pageNumber, width]);
+  }, [pdf, pageNumber, width, showText]);
   return <>
     {error ? <p role="alert">{error}</p> : !ready && <p role="status">Rendering page…</p>}
     <div className="pdf-preview-page"><canvas ref={canvasRef} role="img" aria-label={`PDF page ${pageNumber}`} style={{ visibility: ready ? 'visible' : 'hidden' }} /></div>

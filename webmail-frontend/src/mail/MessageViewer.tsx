@@ -6,6 +6,7 @@ import { Reply, ReplyAll, Forward, Flag, Trash2, Archive, Mail, MailOpen, Code, 
 import { format } from 'date-fns';
 import DOMPurify from 'dompurify';
 import { AttachmentCard } from './components/AttachmentCard';
+import { EmailBody } from './components/EmailBody';
 import { InlineReply } from './components/InlineReply';
 import { RawMessageModal } from './components/RawMessageModal';
 import { SnoozePopover } from './components/SnoozePopover';
@@ -630,7 +631,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
               <Spinner size={16} /> Loading message...
             </div>
           ) : message.html ? (
-            <div className="message-body" dangerouslySetInnerHTML={{ __html: filteredMessageHtml ? filteredMessageHtml.html : '' }} style={{ lineHeight: 1.6, fontSize: '0.95rem' }} />
+            <EmailBody key={remoteContentKey} html={filteredMessageHtml ? filteredMessageHtml.html : ''} />
           ) : (
             <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', lineHeight: 1.6, fontSize: '0.95rem' }}>
               {message.text || '(no content)'}
@@ -642,7 +643,7 @@ export function MessageViewer({ mail }: { mail: ReturnType<typeof useMail> }) {
             <h4 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 8 }}>Attachments ({message.attachments.length})</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {message.attachments.map((att) => (
-                <AttachmentCard key={att.id} attachment={att}
+                <AttachmentCard key={`${sourceFolder}:${message.uid}:${att.id}`} attachment={att}
                   sourceFolder={sourceFolder} messageUid={message.uid} />
               ))}
             </div>

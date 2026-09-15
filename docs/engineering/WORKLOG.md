@@ -11658,3 +11658,24 @@ guarded live deployment authorization. Acceptance criteria before editing:
 P3 implementation complete: opt-in retention with first-observed residence age, immutable account generation and cascade cleanup; fixed-label user action history with honest delivery outcomes; per-app server and sync observations; Notes pagination, mobile Contacts virtualization and accessibility/reflow corrections. Full suites passed (frontend 289; backend 1,032 with 11 gated skips); separate disposable database suite passed 2 tests and removed its schema/user. Browser workflows, reduced motion, forced colors and 320px reflow passed. Final Notes axe rescan cleared the pagination overlap. Physical screen-reader/device acceptance remains explicit. Guarded release proof will be recorded in WEBAPP_P3_RELEASE_2026-09-14.md.
 
 P3 live proof: implementation ac2f3884 pushed and deployed through successful bridge and active guards, including post-release Ping and canary cleanup. Rollback snapshots: protocol-guarded-webmail-20260915T015341Z and protocol-guarded-webmail-20260915T020159Z. Staging smoke, all 60 frontend/six backend runtime hashes, public assets, authenticated canary P3 endpoints and all five app server checks passed. Four ownership cascades verified; zero cleanup policies enabled. Backend active with zero restarts. Canary web session logged out. Physical accessibility acceptance remains the next task; full evidence is in WEBAPP_P3_RELEASE_2026-09-14.md.
+
+## 2026-09-15 — Dark-mode mail readability and attachment previews
+
+User selected automatic text-contrast correction while preserving sender
+backgrounds, and requested in-app PDF/picture viewing. Acceptance: reproduce
+mixed white/dark unreadable text, preserve readable branding and remote-image
+blocking, handle theme changes, and open attachments with accessible closing,
+Download, responsive layout, and recoverable failures.
+
+Reproduced both contrast failures in the actual MessageViewer using synthetic
+mail, then added computed-color repair and a Readable colors fallback. Added
+authenticated, size/signature-checked attachment previews, lazy PDF.js rendering
+with pages/zoom/page text, image viewing, and locally bundled PDF assets.
+
+Proof: 304 frontend tests pass, production build and final lint pass, development and built
+app browser checks pass at desktop/390px, including theme changes, PDF pages,
+zoom, image decoding, Escape/focus, retry, invalid-file errors, and image URL
+cleanup. Runtime dependency audit is clean; two unchanged development-tool
+advisories remain. Existing contact-group edits are preserved. No deployment
+or production mailbox access. Limits and evidence:
+`MAIL_READING_PREVIEWS_2026-09-15.md`.

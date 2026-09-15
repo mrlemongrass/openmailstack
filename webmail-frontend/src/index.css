@@ -66,6 +66,154 @@ html, body, #root {
   overflow: hidden;
 }
 
+.message-reading-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.attachment-preview-trigger {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.attachment-preview-trigger span {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  text-decoration: underline;
+}
+
+.attachment-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(8px, 2vw, 24px);
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.attachment-preview-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1200px, 100%);
+  height: 94dvh;
+  overflow: hidden;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--bg-main);
+}
+
+.attachment-preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border-glass);
+}
+
+.attachment-preview-toolbar h2 {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.attachment-preview-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.attachment-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  margin: auto;
+}
+
+.attachment-preview-status {
+  padding: 32px 12px;
+  text-align: center;
+}
+
+.pdf-preview-controls {
+  position: sticky;
+  top: -12px;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg-main);
+}
+
+.pdf-preview-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pdf-preview-controls select {
+  width: auto;
+}
+
+.pdf-preview-page {
+  overflow: auto;
+  padding: 12px 0;
+}
+
+.pdf-preview-page canvas {
+  display: block;
+  margin: auto;
+  background: white;
+}
+
+.pdf-preview-text p {
+  white-space: pre-wrap;
+  padding: 12px;
+}
+
+.message-body-contrast {
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+  line-height: 1.6;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.message-body-contrast a {
+  text-decoration: underline !important;
+}
+
+/* An explicit escape hatch for text over artwork, gradients, or faded text. */
+.message-body-readable,
+.message-body-readable * {
+  color: var(--text-primary) !important;
+  -webkit-text-fill-color: currentColor !important;
+  background: var(--bg-main) !important;
+  text-shadow: none !important;
+  opacity: 1 !important;
+  filter: none !important;
+  mix-blend-mode: normal !important;
+}
+
 /* Allow resizable panels to shrink - critical for react-resizable-panels. */
 [data-group],
 [data-panel-group-direction] {

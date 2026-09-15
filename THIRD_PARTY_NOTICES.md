@@ -1,5 +1,12 @@
 # Third-Party Notices
 
+## PDF.js
+
+The webmail attachment preview uses Mozilla PDF.js (`pdfjs-dist`), licensed
+under Apache License 2.0. Source: <https://github.com/mozilla/pdf.js>.
+The distribution includes its license and the bundled character-map, font,
+and image-decoder notices under `pdfjs/<version>/` in the webmail build.
+
 ## Unicode Common Locale Data Repository (CLDR)
 
 `webmail-backend/src/windows-timezones.ts` contains the CLDR 48 canonical

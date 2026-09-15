@@ -1,6 +1,10 @@
 import { Paperclip, Download } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
 import type { MessageAttachment } from '../../shared/types';
 import { messageAttachmentUrl } from '../draft-resume';
+import { attachmentPreviewKind } from '../attachment-preview';
+
+const AttachmentPreview = lazy(() => import('./AttachmentPreview'));
 
 interface AttachmentCardProps {
   attachment: MessageAttachment;
@@ -9,6 +13,8 @@ interface AttachmentCardProps {
 }
 
 export function AttachmentCard({ attachment, sourceFolder, messageUid }: AttachmentCardProps) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewKind = attachmentPreviewKind(attachment);
   const sizeStr = attachment.size >= 1048576
     ? `${(attachment.size / 1048576).toFixed(1)} MB`
     : `${Math.round(attachment.size / 1024)} KB`;
@@ -19,14 +25,21 @@ export function AttachmentCard({ attachment, sourceFolder, messageUid }: Attachm
       border: '1px solid var(--border-glass)' }}>
       <Paperclip size={16} style={{ color: 'var(--text-secondary)' }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: '0.85rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {previewKind ? <button type="button" className="attachment-preview-trigger"
+          aria-label={`Preview ${attachment.filename}`} onClick={() => setPreviewOpen(true)}>
+          {attachment.filename}<span>Preview</span>
+        </button> : <div style={{ fontSize: '0.85rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {attachment.filename}
-        </div>
+        </div>}
         <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{sizeStr}</div>
       </div>
       <a href={downloadUrl} download={attachment.filename}
         aria-label={`Download ${attachment.filename}`}
         className="btn btn-ghost" style={{ padding: '4px 8px' }}><Download size={14} /></a>
+      {previewOpen && previewKind && <Suspense fallback={<span role="status">Opening preview…</span>}>
+        <AttachmentPreview key={downloadUrl} url={downloadUrl} filename={attachment.filename}
+          kind={previewKind} onClose={() => setPreviewOpen(false)} />
+      </Suspense>}
     </div>
   );
 }

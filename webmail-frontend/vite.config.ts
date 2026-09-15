@@ -24,6 +24,16 @@ const pdfAssets = () => ({
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), pdfAssets()],
+  build: {
+    rolldownOptions: {
+      output: {
+        // Common Nginx MIME tables recognize .js but not .mjs. The PDF module
+        // worker still uses module semantics; emit a JavaScript-served suffix.
+        assetFileNames: asset => asset.names.some(name => name.endsWith('pdf.worker.min.mjs'))
+          ? 'assets/[name]-[hash].js' : 'assets/[name]-[hash][extname]',
+      },
+    },
+  },
   server: {
     host: '0.0.0.0',
     proxy: {

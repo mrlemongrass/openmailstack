@@ -43,4 +43,21 @@ A physical screen-reader session and physical touch-device/browser zoom confirma
 - Single-run local browser samples: Notes search to a result near the end of 3,000 records took **80 ms**; keyboard page advance took **1,280 ms**, including browser automation focus/key processing. These are development-fixture observations, not production latency guarantees.
 - Evidence: `/tmp/oms-p3-backend-full.log`, `/tmp/oms-p3-frontend-full.log`, `/tmp/oms-p3-db-final.log`, `/tmp/oms-p3-flows3.log`, `/tmp/oms-p3-baseline5.log`, `/tmp/oms-p3-axe2.log`, `/tmp/oms-p3-notes-axe2.log`, and screenshots under `output/playwright/p3/`.
 
-Guarded deployment pending.
+Live implementation: **`ac2f3884`**, pushed to `origin/main` and deployed in active mode.
+
+Both bridge and active guarded deployments passed pre/post public IMAPS and ActiveSync Mail/Contacts/Calendar gates; both post-deployment Ping gates passed. Neither reported cleanup warnings. Both guarded commands exited successfully. Rollback snapshots remain root-owned mode 0700:
+
+- Bridge: `/var/backups/openmailstack/protocol-guarded-webmail-20260915T015341Z`
+- Active: `/var/backups/openmailstack/protocol-guarded-webmail-20260915T020159Z`
+
+No rollback was needed or exercised. These are retained recovery snapshots; the additive forward schema can remain if application files are restored.
+
+Post-release staging smoke passed services/listeners, configuration, Rspamd functional scan, HTTPS/SMTP STARTTLS/IMAPS TLS, webmail/admin/autoconfiguration endpoints and unauthenticated API rejection. The backend is active/running with **zero restarts**. All **60 frontend distribution files** and **six changed backend JavaScript files** match live runtime. The public index and seven referenced/editor/Activity assets match. Backend/admin VERSION is `0.1.5`; outbound mode is `active`.
+
+A dedicated canary login verified the live cleanup and Activity endpoints and all five app server checks, then logged out. Its sync observations correctly remain unknown where the protocol gate has removed temporary device state. Read-only schema verification confirmed all four ownership cascades and **zero cleanup policy rows / zero enabled schedules**. No customer mailbox was opted in or used for destructive tests.
+
+Final large-mailbox keyboard testing rendered 22 rows from 10,000 messages, with a two-key navigation sample of 302 ms; filtering 500 long folder names to the last project took 244 ms. These are single local automation samples, not production latency guarantees. Final Activity axe scan also returned no violations after its visual refinement.
+
+Live evidence: `/tmp/oms-p3-live-bridge.log`, `/tmp/oms-p3-live-active.log`, `/tmp/oms-p3-staging-smoke.log`, `/tmp/oms-p3-artifact-check.log`, `/tmp/oms-p3-live-api.log`, `/tmp/oms-p3-live-db.log`. Final keyboard evidence: `/tmp/oms-p3-keyboard-final.log`.
+
+Next acceptance task: physical VoiceOver/NVDA and touch-device/browser-zoom checks across the same workflows. The software implementation and scripted P3 checks are released; that physical accessibility acceptance remains open.

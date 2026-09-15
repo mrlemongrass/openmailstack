@@ -148,3 +148,8 @@ original rows are retained as the dated diagnosis. See
 behavior, mutation matrix, tests, and limits. Message right-click Create rule and
 Add to existing rule are included, with exact-sender alternatives, stale-edit
 protection and optional saved-rule preview. P2/P3 scope remains as listed.
+
+
+## P2 and P3 delivery follow-up — 2026-09-14
+
+The dated findings above are retained as the original diagnosis. P2 implementation is live; see [P2 release evidence](WEBAPP_P2_RELEASE_2026-09-14.md). The remaining P3 software work is now deployed: opt-in Junk/Trash retention, Activity & health, and the accessibility/large-collection corrections. See [P3 acceptance and live proof](WEBAPP_P3_RELEASE_2026-09-14.md) for bounds, tests and rollback snapshots. Scripted P3 checks passed; physical screen-reader, touch-device and browser-zoom acceptance remains open.
